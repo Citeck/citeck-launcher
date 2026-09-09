@@ -138,7 +138,7 @@ func (d *Daemon) resolveReloadPlanInputs(act activeNamespace) (*reloadPlanInputs
 	// The runtime's pins as they stand — read-only, like everything else here.
 	// Without them the plan would generate the bundle's candidate images and
 	// report a recreate of every dependency a real reload would hold back.
-	genOpts.DependencyPins = act.runtime.DependencyPins()
+	genOpts.DependencyStates = act.runtime.DependencyStates()
 	genOpts.SecretReader = d.nsSecretReader()
 	genOpts.DetachedApps = act.runtime.ManualStoppedApps()
 	fileEdits := act.runtime.FileEditsSnapshot()

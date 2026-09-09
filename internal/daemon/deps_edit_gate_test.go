@@ -157,3 +157,47 @@ func TestTheEditGateAnswersBeforeTheReloadLock(t *testing.T) {
 		"the operator must be told the version is locked, not to wait for a reload")
 	assert.Nil(t, rt.AppPatch("postgres"))
 }
+
+// A BACKWARDS breaking edit is refused like any other — the older binary
+// cannot read the newer data — but the advice has to change with it. Sending
+// the operator to `citeck deps upgrade` is sending them nowhere: that command
+// refuses a backwards pair (DEPENDENCY_BACKWARDS), so the message would end a
+// dead end of exactly the class this codebase keeps closing. The one deliberate
+// way back is the rollback onto the volume the migration retained.
+func TestABackwardsImageEditIsRefusedTowardsTheRollbackNotTheUpgrade(t *testing.T) {
+	_, mux, rt := newEditGateDaemon(t, map[deps.ID]deps.DependencyState{
+		deps.Postgres: {Image: "postgres:18.6", VolumeGen: 2, PrevImage: "postgres:17.5", PrevVolumeGen: 1},
+	})
+	rec := putAppConfig(mux, "postgres", "name: postgres\nimage: postgres:17.5\n")
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), `"DEPENDENCY_VERSION_LOCKED"`)
+	assert.Contains(t, rec.Body.String(), "citeck deps rollback postgres")
+	assert.NotContains(t, rec.Body.String(), "citeck deps upgrade")
+	assert.Nil(t, rt.AppPatch("postgres"), "a refused edit must not be persisted")
+}
+
+// …and the FORWARD refusal keeps its own words, so the split cannot collapse
+// into one sentence that is wrong half the time.
+func TestAForwardBreakingEditStillNamesTheUpgrade(t *testing.T) {
+	_, mux, _ := newPinnedEditGateDaemon(t)
+	rec := putAppConfig(mux, "postgres", "name: postgres\nimage: postgres:18.6\n")
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "citeck deps upgrade postgres")
+	assert.NotContains(t, rec.Body.String(), "citeck deps rollback")
+}
+
+// A same-format backwards edit — a patch downgrade — is ACCEPTED, and that is
+// a decision rather than a gap (user ruling, 2026-09-09: "патчи не надо
+// откатывать. В патчах как правило все ок с совместимостью. Только «переломы»
+// откатываем"). deps.Breaking keeps exactly its format semantics, so the
+// generator applies such a bundle silently and the gate must not be stricter
+// than the generator: refusing here would forbid by hand what the bundle does
+// on its own.
+func TestASameFormatPatchDowngradeEditIsAccepted(t *testing.T) {
+	_, mux, rt := newEditGateDaemon(t, map[deps.ID]deps.DependencyState{
+		deps.RabbitMQ: {Image: "rabbitmq:4.2.9-management"},
+	})
+	rec := putAppConfig(mux, "rabbitmq", "name: rabbitmq\nimage: rabbitmq:4.2.3-management\n")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.NotNil(t, rt.AppPatch("rabbitmq"))
+}

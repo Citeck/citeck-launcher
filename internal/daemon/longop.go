@@ -34,6 +34,17 @@ const (
 	// namespace Start/Stop and the per-app toggles run right beside the volume
 	// rewrite it exists to protect, with no error anywhere.
 	longOpMigration longOpKind = "migration"
+	// longOpDepsRollback is a dependency ROLLBACK: it stops the namespace,
+	// moves the pin back an image AND a volume generation, and starts it again
+	// on the retained volume. Like longOpMigration it is in NO tolerance set,
+	// and for a sharper reason than "it rewrites data" — it rewrites nothing.
+	// The window between the stop and the pin write is the whole hazard: a
+	// namespace Start landing in it brings the OLD container back up, and
+	// syncDependencyPinsUnderLock then re-pins that image forward while the
+	// generation stays behind, i.e. postgres:18 mounted on the volume that
+	// holds 17 data. It must therefore be claimed the same way — an explicit
+	// d.longOp.TryLock(longOpDepsRollback), never through tryLongOp.
+	longOpDepsRollback longOpKind = "deps-rollback"
 	// longOpUpdatePass is an asynchronous pass that re-drives the namespace on
 	// the user's behalf — the queued Update & Start pass, and the attach-toggle
 	// regeneration. Together with longOpRequest it is tolerated by the five
@@ -53,6 +64,11 @@ func (k longOpKind) busyMessage() string {
 		return "a snapshot is in progress"
 	case longOpMigration:
 		return "a dependency migration is in progress"
+	case longOpDepsRollback:
+		// Deliberately NOT "migration": an operator told a migration is running
+		// would go looking for one, and there is none — a rollback opens no
+		// journal and appears nowhere a migration does.
+		return "a dependency rollback is running"
 	case longOpUpdatePass:
 		return "an update pass is in progress"
 	case longOpRequest:

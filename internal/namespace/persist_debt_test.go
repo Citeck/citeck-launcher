@@ -52,7 +52,7 @@ func TestTheLoopTailRetriesUntilTheWriteLands(t *testing.T) {
 
 	// The inline write plus the next two tail retries.
 	p.arm(3)
-	r.SetDependencyPin(deps.Postgres, "postgres:17.5")
+	r.SetDependencyState(deps.Postgres, deps.DependencyState{Image: "postgres:17.5"})
 
 	require.True(t, waitUntil(10*time.Second, func() bool {
 		var st NsPersistedState
@@ -88,15 +88,37 @@ func (b *syncBuffer) String() string {
 	return b.buf.String()
 }
 
-// countLines counts full log lines carrying both substrings.
-func countLines(buf *syncBuffer, a, b string) int {
+// countLines counts full log lines carrying every substring.
+//
+// It is variadic, and every count below passes "namespace=<id>", because
+// captureLogs installs its buffer as the GLOBAL slog default: a line written
+// by ANY runtime alive at that moment lands in it, not only by the one under
+// test. That is not hypothetical — the fixtures elsewhere in this file and in
+// deps_state_test.go run a real runtimeLoop whose last write and whose
+// recovery line are emitted AFTER the waitUntil that let their test return,
+// so a straggler "Failed to persist namespace state" or "Namespace state write
+// recovered" from namespace=test can arrive while an nsX/nsA/nsB test holds
+// the handler and turn an exact 1 into a 2. Three package failures were traced
+// to exactly that. Scoping each count to its own namespace closes the class
+// without weakening anything: every assertion here is about ONE namespace's
+// streak reporting.
+func countLines(buf *syncBuffer, parts ...string) int {
 	n := 0
 	for ln := range strings.SplitSeq(buf.String(), "\n") {
-		if strings.Contains(ln, a) && strings.Contains(ln, b) {
+		if hasAll(ln, parts) {
 			n++
 		}
 	}
 	return n
+}
+
+func hasAll(line string, parts []string) bool {
+	for _, p := range parts {
+		if !strings.Contains(line, p) {
+			return false
+		}
+	}
+	return true
 }
 
 // captureLogs redirects slog to a buffer for the duration of the test.
@@ -133,23 +155,23 @@ func TestAFailingStoreIsLoggedOncePerStreakNotOncePerAttempt(t *testing.T) {
 	for i := range 5 {
 		require.Error(t, persist(), "attempt %d", i+1)
 	}
-	require.Equal(t, 1, countLines(buf, "level=WARN", "Failed to persist namespace state"),
+	require.Equal(t, 1, countLines(buf, "level=WARN", "Failed to persist namespace state", "namespace=nsX"),
 		"a failing store must be reported once per streak, not once per attempt")
 	assert.Contains(t, buf.String(), "nsX", "the line must name the namespace that owes the write")
 
 	// The store comes back: the operator is told, and how much was refused.
 	require.NoError(t, persist())
-	require.Equal(t, 1, countLines(buf, "level=INFO", "Namespace state write recovered"),
+	require.Equal(t, 1, countLines(buf, "level=INFO", "Namespace state write recovered", "namespace=nsX"),
 		"the end of the streak is the other half of the report")
 	assert.Contains(t, buf.String(), "refusedWrites=5")
 
 	// A NEW streak is a new event, not a continuation of the old one.
 	p.arm(1)
 	require.Error(t, persist())
-	assert.Equal(t, 2, countLines(buf, "level=WARN", "Failed to persist namespace state"),
+	assert.Equal(t, 2, countLines(buf, "level=WARN", "Failed to persist namespace state", "namespace=nsX"),
 		"a store that breaks again after recovering must be reported again")
 	require.NoError(t, persist())
-	assert.Equal(t, 2, countLines(buf, "level=INFO", "Namespace state write recovered"))
+	assert.Equal(t, 2, countLines(buf, "level=INFO", "Namespace state write recovered", "namespace=nsX"))
 }
 
 // The streak counter is per Runtime, so one namespace's broken store cannot
@@ -168,10 +190,13 @@ func TestThePersistFailureStreakIsPerNamespace(t *testing.T) {
 		require.Error(t, r.persistUnderLock("loop-tail"))
 		r.mu.Unlock()
 	}
-	assert.Equal(t, 2, countLines(buf, "level=WARN", "Failed to persist namespace state"),
-		"each namespace reports its own first failure")
-	assert.Equal(t, 1, countLines(buf, "namespace=nsA", "Failed to persist namespace state"))
-	assert.Equal(t, 1, countLines(buf, "namespace=nsB", "Failed to persist namespace state"))
+	// One per namespace, counted per namespace. The un-scoped total that used
+	// to stand beside these two said only "and nobody else logged one", which
+	// is not this test's subject and was the line a foreign runtime's straggler
+	// broke (see countLines).
+	assert.Equal(t, 1, countLines(buf, "level=WARN", "Failed to persist namespace state", "namespace=nsA"),
+		"each namespace reports its own first failure — once, whatever the other one did")
+	assert.Equal(t, 1, countLines(buf, "level=WARN", "Failed to persist namespace state", "namespace=nsB"))
 }
 
 // The retry is per iteration, so a permanently broken store would have the
@@ -242,7 +267,7 @@ func TestTheLoopTailDoesNotSpinOnABrokenStore(t *testing.T) {
 
 	p.arm(1 << 30)
 	before, _, _ := p.stats()
-	r.SetDependencyPin(deps.Postgres, "postgres:17.5")
+	r.SetDependencyState(deps.Postgres, deps.DependencyState{Image: "postgres:17.5"})
 	time.Sleep(500 * time.Millisecond)
 	after, _, _ := p.stats()
 

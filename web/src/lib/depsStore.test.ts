@@ -178,4 +178,46 @@ describe('depsStore', () => {
     await useDepsStore.getState().refresh()
     expect(getDependencies).toHaveBeenCalledTimes(2)
   })
+  // A namespace has ONE progress channel and ONE result slot, shared by the
+  // migration and the rollback. The SSE events carry no discriminator at all,
+  // so the kind has to survive from the start of the run to its verdict — or
+  // "postgres 18.6 → 17.5 succeeded" is indistinguishable from a migration
+  // onto an older version.
+  it('carries the rollback kind from the start through to the verdict', () => {
+    const s = useDepsStore.getState()
+    s.onStart('postgres', 3, 'rollback')
+    s.onProgress({ appName: 'postgres', phase: 'switch-generation', current: 2, total: 3, percent: 0, after: '' })
+    expect(useDepsStore.getState().migration!.kind).toBe('rollback')
+    s.onComplete('postgres', 'rolled back')
+    expect(useDepsStore.getState().result).toMatchObject({ kind: 'rollback', success: true })
+
+    // A migration is the default, and it must not inherit the last kind.
+    s.onStart('postgres', 10)
+    expect(useDepsStore.getState().migration!.kind).toBe('')
+    s.onError('postgres', 'boom')
+    expect(useDepsStore.getState().result).toMatchObject({ kind: '', success: false })
+  })
+
+  // A rollback started elsewhere (the CLI, another window) reaches this client
+  // as an ordinary `deps_migration_start` with no kind on it. The namespace
+  // DTO is what says which it is, so hydrate has to teach the view.
+  it('learns the kind from the namespace DTO when the events did not carry it', () => {
+    const s = useDepsStore.getState()
+    s.onStart('postgres', 3)
+    expect(useDepsStore.getState().migration!.kind).toBe('')
+    s.hydrate({ id: 'postgres', step: 'switch-generation', stepIndex: 2, stepCount: 3, kind: 'rollback' })
+    expect(useDepsStore.getState().migration!.kind).toBe('rollback')
+
+    // ...and on the path that deliberately KEEPS the live view: the DTO
+    // describes a step SSE has already reported, so every other field of it is
+    // refused as stale (it would drag percent and message backwards on each
+    // refetch). The kind is the exception, because the events never carry it
+    // at all — refusing it there is refusing the only source there is.
+    s.onStart('rabbitmq', 3)
+    s.onProgress({ appName: 'rabbitmq', phase: 'switch-generation', current: 2, total: 3, percent: 55, after: 'x' })
+    s.hydrate({ id: 'rabbitmq', step: 'switch-generation', stepIndex: 2, stepCount: 3, percent: 0, kind: 'rollback' })
+    const m = useDepsStore.getState().migration!
+    expect(m.kind).toBe('rollback')
+    expect(m.percent).toBe(55)
+  })
 })

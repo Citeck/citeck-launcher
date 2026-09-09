@@ -44,21 +44,23 @@ func (d *Daemon) recoverInterruptedMigration(ctx context.Context, act activeName
 		return false
 	}
 	rollback := func(ctx context.Context, j *deps.MigrationJournal) error {
-		switch j.ID {
-		case deps.Postgres:
-			// WasRunning is cleared for the rollback itself: restarting the
-			// namespace is the CALLER's decision here, because at this point
-			// the namespace is not installed as the daemon's active one and
-			// ReloadAndStart would act on whichever namespace is.
-			jj := *j
-			jj.WasRunning = false
-			return migrate.RollbackPostgres(ctx, env, &jj)
-		default:
+		undo, wired := migrate.RollbackFor(j.ID)
+		if !wired {
 			// Never clear a journal we cannot undo: it is the only record of
 			// what was left behind, and the id is what tells the operator
-			// which launcher version could finish the job.
+			// which launcher version could finish the job. The lookup is the
+			// registry's rather than a switch here precisely because the
+			// journal may have been written by a launcher this one is older
+			// than.
 			return fmt.Errorf("this launcher has no rollback for an interrupted migration of %q", j.ID)
 		}
+		// WasRunning is cleared for the rollback itself: restarting the
+		// namespace is the CALLER's decision here, because at this point the
+		// namespace is not installed as the daemon's active one and
+		// ReloadAndStart would act on whichever namespace is.
+		jj := *j
+		jj.WasRunning = false
+		return undo(ctx, env, &jj)
 	}
 	if _, err := migrate.RollbackInterrupted(ctx, rt, rollback); err != nil {
 		//nolint:gosec // G706: the id comes from the persisted journal, whose values this launcher wrote

@@ -2,11 +2,15 @@ import { useCallback, useEffect, useState } from 'react'
 import { AlertTriangle, Check, Loader2 } from 'lucide-react'
 import { Modal } from './Modal'
 import { LauncherUpdateHint } from './LauncherUpdateHint'
-import { getDependencyPreflight, postDependencyMigrate } from '../lib/api'
-import type { DependencyDto, PreflightResult } from '../lib/types'
+import {
+  getDependencyPreflight, postDependencyMigrate,
+  getDependencyRollbackPreflight, postDependencyRollback,
+} from '../lib/api'
+import type { DependencyDto, DependencyRollbackDto, PreflightResult } from '../lib/types'
 import { useDepsStore, type DepsMigrationView } from '../lib/depsStore'
 import { useTranslation } from '../lib/i18n'
 import { formatBytes } from '../lib/format'
+import { formatDateTime } from '../lib/datetime'
 import { showError } from '../lib/errorModal'
 
 interface Props {
@@ -17,31 +21,71 @@ interface Props {
 type View =
   | { kind: 'list' }
   | { kind: 'confirm'; item: DependencyDto }
+  // The rollback's confirm screen is its OWN view and not a flag on 'confirm':
+  // the two share no sentence, no preflight endpoint and no button. One screen
+  // with two modes would have had to be true of both, and no wording is — one
+  // of them destroys the reachability of recent data and the other destroys
+  // nothing.
+  | { kind: 'rollbackConfirm'; item: DependencyDto; rollback: DependencyRollbackDto }
   | { kind: 'progress' }
   | { kind: 'result' }
 
 /**
- * The steps of the PostgreSQL plan, in order. Keep in sync with
- * `migrate.PostgresStepIDs()` (internal/deps/migrate/preflight.go), which is
- * the list the plan itself is built from and which the Go tests and the CLI's
- * locale keys read; TypeScript cannot import it.
+ * The steps of each plan, in order, keyed by DEPENDENCY id. Keep in sync with
+ * `migrate.PostgresStepIDs()` and `migrate.CopyStepIDs()`
+ * (internal/deps/migrate/preflight.go and copy_upgrade.go), which are the
+ * lists the plans themselves are built from and which the Go tests and the
+ * CLI's locale keys read; TypeScript cannot import them.
+ *
+ * PostgreSQL dumps and restores; RabbitMQ and ZooKeeper copy the data volume
+ * and upgrade the copy. They share four ids out of eleven, so one hardcoded
+ * list rendered a dump and a restore for a migration that does neither and hid
+ * the copy that IS the operation.
  *
  * Rendering the whole list up front — rather than only the step that is
  * running — is what makes the wait legible: the user can see what is still to
  * come and that nothing has been skipped. A step id the launcher does not know
- * (a newer plan on an older UI) is appended rather than dropped.
+ * (a newer plan on an older UI) is appended rather than dropped, and a
+ * DEPENDENCY it does not know contributes no base list at all: inventing one
+ * would promise ten steps that will never happen, while the events still fill
+ * the list in as they arrive.
  */
-const STEP_IDS = [
+const POSTGRES_STEPS = [
   'stop-namespace', 'pull-image', 'start-source', 'dump', 'stop-source',
   'create-volume', 'start-target', 'restore', 'verify', 'stop-target',
 ] as const
+
+const COPY_STEPS = [
+  'stop-namespace', 'pull-image', 'create-volume', 'copy-volume',
+  'start-old', 'pre-upgrade', 'stop-old', 'start-new', 'post-upgrade',
+  'verify', 'stop-new',
+] as const
+
+/** Go: migrate.RollbackStepIDs(). Three steps on the migration's own progress
+ *  channel — deliberately no second rendering path. */
+const ROLLBACK_STEPS = ['stop-namespace', 'switch-generation', 'start-namespace'] as const
+
+const PLAN_STEPS: Record<string, readonly string[]> = {
+  postgres: POSTGRES_STEPS,
+  rabbitmq: COPY_STEPS,
+  zookeeper: COPY_STEPS,
+}
+
+/** The dependencies whose plan COPIES the data volume instead of dumping it —
+ *  the confirm screen describes the wrong operation otherwise. */
+const copyPlan = (id: string) => PLAN_STEPS[id] === COPY_STEPS
+
 
 const BTN_PRIMARY = 'rounded-md bg-primary text-primary-foreground px-3 py-1.5 text-xs font-medium hover:bg-primary/90 disabled:opacity-50'
 const BTN_SECONDARY = 'rounded-md border border-border px-3 py-1.5 text-xs hover:bg-muted disabled:opacity-50'
 
 /** The step ids to render: the known plan, plus anything the events mention that it does not cover. */
 function stepIdsFor(migration: DepsMigrationView): string[] {
-  const ids: string[] = [...STEP_IDS]
+  // A rollback runs its own three steps whatever dependency it belongs to, so
+  // the kind is asked BEFORE the id: postgres' ten would be a list of things
+  // that are never going to happen.
+  const plan = migration.kind === ROLLBACK_KIND ? ROLLBACK_STEPS : PLAN_STEPS[migration.id]
+  const ids: string[] = [...(plan ?? [])]
   for (const id of [...migration.done, migration.step]) {
     if (id && !ids.includes(id)) ids.push(id)
   }
@@ -61,6 +105,9 @@ function isPreparing(migration: DepsMigrationView): boolean {
 /** The step id the daemon publishes while it has no plan yet (Go:
  *  api.DependencyMigrationStepPreparing). */
 const PREPARING_STEP = 'preparing'
+
+/** Go: deps.ResultKindRollback. "" is a migration. */
+const ROLLBACK_KIND = 'rollback'
 
 /**
  * Free space on the ONE filesystem both halves land on (Go: `smallerFree`).
@@ -110,6 +157,14 @@ export function DependenciesDialog({ open, onClose }: Props) {
   const [preflight, setPreflight] = useState<PreflightResult | null>(null)
   const [replaceVolume, setReplaceVolume] = useState(false)
   const [starting, setStarting] = useState(false)
+  // What the rollback this client started was going back TO, and for WHICH
+  // dependency. The verdict's events carry no target, and the one result slot
+  // still holds the migration being undone until the next refresh lands — so
+  // without this the success screen would have to say "rolled back" and name
+  // nothing. It is keyed by dependency because it outlives its own screen: a
+  // rollback of another dependency, started from the CLI while this dialog is
+  // open, would otherwise be reported as going to THIS one's version.
+  const [rollbackTo, setRollbackTo] = useState<{ id: string; to: string } | null>(null)
 
   const reload = useCallback(() => {
     refresh().catch((e) => showError(e as Error))
@@ -151,6 +206,12 @@ export function DependenciesDialog({ open, onClose }: Props) {
   }
 
   const lastResult = data?.lastResult
+  // Where the rollback went. This client's own click is the first source; a
+  // rollback started elsewhere (the CLI, another window) is read off the
+  // result slot once the post-verdict refresh has landed, and until then the
+  // screen says it without naming a version rather than naming a wrong one.
+  const rolledBackTo = (rollbackTo && rollbackTo.id === result?.id ? rollbackTo.to : '')
+    || (lastResult?.kind === ROLLBACK_KIND && lastResult.id === result?.id ? lastResult.to : '')
 
   const openConfirm = (item: DependencyDto) => {
     setPreflight(null)
@@ -159,9 +220,49 @@ export function DependenciesDialog({ open, onClose }: Props) {
     getDependencyPreflight(item.id).then(setPreflight).catch((e) => showError(e as Error))
   }
 
+  const openRollbackConfirm = (item: DependencyDto, rollback: DependencyRollbackDto) => {
+    setPreflight(null)
+    setView({ kind: 'rollbackConfirm', item, rollback })
+    getDependencyRollbackPreflight(item.id).then(setPreflight).catch((e) => showError(e as Error))
+  }
+
+  /**
+   * What to show once the POST has been accepted, shared by the migration and
+   * the rollback because the race is the same for both: the daemon answers
+   * only after it has already broadcast `deps_migration_start`, and the whole
+   * operation can be over before the answer lands.
+   */
+  const afterAccepted = (id: string, clickedAt: number, kind: string) => {
+    const s = useDepsStore.getState()
+    const settled = !!s.result && s.result.id === id && s.result.at >= clickedAt
+    if (settled) {
+      // Nothing rendered between the start and the end, so the render-time
+      // derivation below never saw a progress screen to leave — show the
+      // verdict from here, where the intent (this click) is known.
+      setView({ kind: 'result' })
+    } else if (!s.migration) {
+      s.onStart(id, 0, kind)
+    }
+  }
+
+  const startRollback = async (item: DependencyDto, rollback: DependencyRollbackDto) => {
+    setStarting(true)
+    const clickedAt = Date.now()
+    setRollbackTo({ id: item.id, to: rollback.toVersion || rollback.toImage })
+    try {
+      await postDependencyRollback(item.id)
+      afterAccepted(item.id, clickedAt, ROLLBACK_KIND)
+    } catch (e) {
+      showError(e as Error)
+    } finally {
+      setStarting(false)
+    }
+  }
+
   const start = async (item: DependencyDto) => {
     setStarting(true)
     const clickedAt = Date.now()
+    setRollbackTo(null)
     try {
       await postDependencyMigrate(item.id, replaceVolume)
       // The daemon answers 202 once the plan is built and has already
@@ -174,16 +275,7 @@ export function DependenciesDialog({ open, onClose }: Props) {
       // verdict that had already arrived: an empty progress screen forever,
       // with the error lost. A migration already in the store needs no help
       // either — `onStart` would be a no-op with worse information.
-      const s = useDepsStore.getState()
-      const settled = !!s.result && s.result.id === item.id && s.result.at >= clickedAt
-      if (settled) {
-        // Nothing rendered between the start and the end, so the render-time
-        // derivation below never saw a progress screen to leave — show the
-        // verdict from here, where the intent (this click) is known.
-        setView({ kind: 'result' })
-      } else if (!s.migration) {
-        s.onStart(item.id, 0)
-      }
+      afterAccepted(item.id, clickedAt, '')
     } catch (e) {
       showError(e as Error)
     } finally {
@@ -201,19 +293,44 @@ export function DependenciesDialog({ open, onClose }: Props) {
     switch (item.status) {
       case 'upgrade-available': return t('deps.status.upgradeAvailable')
       case 'requires-launcher-update': return t('deps.status.requiresLauncherUpdate')
+      // Neither of the next two is "update the launcher": a vendor-forbidden
+      // hop is not lifted by a newer launcher, and a bundle offering something
+      // OLDER is not an upgrade being held back at all. Both carry the
+      // daemon's own sentence in statusDetail, which is the only part that
+      // says what to do — and neither gets a <LauncherUpdateHint/>.
+      case 'upgrade-blocked': return t('deps.status.blocked')
+      case 'bundle-older': return t('deps.status.bundleOlder')
       case 'pending-minor': return t('deps.status.pendingMinor', { version: item.targetVersion ?? item.targetImage })
       default: return t('deps.status.upToDate')
     }
   }
 
+  // The daemon fills StatusDetail only for the statuses a fixed label cannot
+  // explain, so it is rendered wherever it is non-empty rather than switched
+  // on again here (Go: api.DependencyDto.StatusDetail, "so a renderer may
+  // print it unconditionally"). It is English, like every sentence built in
+  // internal/deps/migrate; the LABEL above is the localized half.
   const canStart = !!preflight && preflight.ok
     && (!preflight.existingTargetVolume || replaceVolume)
     && !starting && !rollbackPending
 
+  // A rollback has no volume to confirm and nothing to measure — only the
+  // preflight's own verdict, and the two daemon states that refuse it.
+  const canRollBack = !!preflight && preflight.ok && !starting && !rollbackPending && !migration
+
+  /** Why the per-row actions are disabled, or undefined when they are not. The
+   *  daemon refuses both with a 409, so a live button could only ever produce
+   *  an error modal. */
+  const busyReason = () => rollbackPending
+    || (migration ? t(migration.kind === ROLLBACK_KIND ? 'deps.controls.rollingBack' : 'deps.controls.migrating') : undefined)
+
   return (
     <Modal
       open={open}
-      title={t('deps.title')}
+      // The rollback gets its own title: it is a different action with a
+      // different risk, and "Dependencies" over a confirm screen about
+      // unreachable data is not what the user is being asked about.
+      title={view.kind === 'rollbackConfirm' ? t('deps.rollback.title', { id: view.item.id }) : t('deps.title')}
       onClose={close}
       width="lg"
       footer={
@@ -231,6 +348,22 @@ export function DependenciesDialog({ open, onClose }: Props) {
               >
                 {starting && <Loader2 size={12} className="mr-1 inline animate-spin" />}
                 {t('deps.confirm.start')}
+              </button>
+            </>
+          )}
+          {view.kind === 'rollbackConfirm' && (
+            <>
+              <button type="button" className={BTN_SECONDARY} onClick={() => setView({ kind: 'list' })}>
+                {t('common.back')}
+              </button>
+              <button
+                type="button"
+                className={BTN_PRIMARY}
+                disabled={!canRollBack}
+                onClick={() => { void startRollback(view.item, view.rollback) }}
+              >
+                {starting && <Loader2 size={12} className="mr-1 inline animate-spin" />}
+                {t('deps.rollback.confirm')}
               </button>
             </>
           )}
@@ -287,13 +420,18 @@ export function DependenciesDialog({ open, onClose }: Props) {
                     <td className="py-1.5">{item.id}</td>
                     <td className="py-1.5 font-mono text-xs">{item.currentImage}</td>
                     <td className="py-1.5 font-mono text-xs">{item.targetImage}</td>
-                    <td className="py-1.5 text-xs">{statusLabel(item)}</td>
-                    <td className="py-1.5 text-right">
+                    <td className="py-1.5 text-xs">
+                      <div>{statusLabel(item)}</div>
+                      {item.statusDetail && (
+                        <div className="mt-0.5 max-w-md text-[11px] text-muted-foreground">{item.statusDetail}</div>
+                      )}
+                    </td>
+                    <td className="space-y-1 py-1.5 text-right">
                       {item.status === 'upgrade-available' && (
                         // Disabled while a rollback is pending or a migration
                         // runs: the daemon refuses both with a 409, so the
                         // button could only ever produce an error modal.
-                        <span title={rollbackPending || (migration ? t('deps.controls.migrating') : undefined)}>
+                        <span title={busyReason()}>
                           <button
                             type="button"
                             className={BTN_PRIMARY}
@@ -305,6 +443,33 @@ export function DependenciesDialog({ open, onClose }: Props) {
                         </span>
                       )}
                       {item.status === 'requires-launcher-update' && <LauncherUpdateHint />}
+                      {/* The offer to go back to what this dependency ran on
+                          before its last migration. It is independent of the
+                          status: a namespace that migrated is up to date and
+                          still has somewhere to go back to. When the launcher
+                          cannot use the target — the retained volume it told
+                          the operator they may reclaim is gone — the reason is
+                          shown INSTEAD of a button whose only answer is a
+                          refusal. */}
+                      {item.rollback?.available && (
+                        <span title={busyReason()}>
+                          <button
+                            type="button"
+                            className={BTN_SECONDARY}
+                            disabled={!!rollbackPending || !!migration}
+                            onClick={() => openRollbackConfirm(item, item.rollback!)}
+                          >
+                            {t('deps.rollback.action', {
+                              version: item.rollback.toVersion || item.rollback.toImage,
+                            })}
+                          </button>
+                        </span>
+                      )}
+                      {item.rollback && !item.rollback.available && item.rollback.problem && (
+                        <div className="max-w-xs text-left text-[11px] text-muted-foreground">
+                          {t('deps.rollback.unavailable', { problem: item.rollback.problem })}
+                        </div>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -315,8 +480,18 @@ export function DependenciesDialog({ open, onClose }: Props) {
       )}
 
       {view.kind === 'confirm' && (
-        <div className="space-y-2 text-sm">
-          <p>{t('deps.confirm.intro', { id: view.item.id, from: view.item.currentImage, to: view.item.targetImage })}</p>
+        <div className="space-y-2 text-sm" data-testid="deps-confirm">
+          {/* The two plans do different things to the data, and one sentence
+              cannot describe both: PostgreSQL dumps and restores, RabbitMQ and
+              ZooKeeper copy the volume and upgrade the copy. */}
+          <p>{t(copyPlan(view.item.id) ? 'deps.confirm.introCopy' : 'deps.confirm.intro',
+            { id: view.item.id, from: view.item.currentImage, to: view.item.targetImage })}</p>
+          {/* ZooKeeper 3.8 and 3.9 share one on-disk format, so its "migration"
+              is a container swap. Saying so is the honest version of a screen
+              that otherwise implies a data conversion. */}
+          {view.item.id === 'zookeeper' && (
+            <p className="text-xs text-muted-foreground">{t('deps.zk.note')}</p>
+          )}
           {!preflight && <Loader2 size={16} className="animate-spin" />}
           {preflight && (
             <>
@@ -325,10 +500,15 @@ export function DependenciesDialog({ open, onClose }: Props) {
                     measured nothing, and its zeros are not facts: rendering
                     them claims the namespace holds no data and the host has no
                     free space, above the line with the actual reason.
-                    requiredHostBytes is the discriminator (Go: Measured()) —
-                    the space check always sets it to the data size plus the
-                    margin, so a measured result cannot have it at zero. */}
-                {preflight.requiredHostBytes > 0 && (
+                    spaceChecked is the discriminator (Go: Measured()). It
+                    replaced `requiredHostBytes > 0`, which stopped being true
+                    the moment a plan appeared that writes NOTHING to the host:
+                    a copy upgrade legitimately needs zero bytes there, and
+                    reading that zero as "unmeasured" hid the one requirement
+                    that does exist. Which is also why the host line is skipped
+                    on its own below — printing it would claim a second
+                    requirement of 0 B. */}
+                {preflight.spaceChecked && (
                   <>
                     <li>{t('deps.preflight.data', { size: formatBytes(preflight.dataSizeBytes) })}</li>
                     {/* One filesystem carrying both writes is ONE line with the
@@ -343,7 +523,9 @@ export function DependenciesDialog({ open, onClose }: Props) {
                       })}</li>
                     ) : (
                       <>
-                        <li>{t('deps.preflight.host', { need: formatBytes(preflight.requiredHostBytes), free: formatBytes(preflight.freeHostBytes) })}</li>
+                        {preflight.requiredHostBytes > 0 && (
+                          <li>{t('deps.preflight.host', { need: formatBytes(preflight.requiredHostBytes), free: formatBytes(preflight.freeHostBytes) })}</li>
+                        )}
                         <li>{t('deps.preflight.volume', { need: formatBytes(preflight.requiredVolumeBytes), free: formatBytes(preflight.freeVolumeBytes) })}</li>
                       </>
                     )}
@@ -390,9 +572,66 @@ export function DependenciesDialog({ open, onClose }: Props) {
         </div>
       )}
 
+      {view.kind === 'rollbackConfirm' && (
+        <div className="space-y-2 text-sm" data-testid="deps-rollback-confirm">
+          {/* FIELDS, not prose. What this operation DOES is said once, by the
+              daemon, as the preflight warnings below — the same channel that
+              already carries the existing-volume warning, the Khepri notice
+              and the image-not-local heads-up, and whose Go builder documents
+              why those sentences are warnings rather than dialog body text.
+              Restating them here in the user's language would have made the
+              dialog correct only while the Go function emitted exactly three
+              of them in exactly that position: a cross-language contract with
+              a magic number in it, maintained twice (the CLI would need the
+              same count).
+
+              What IS here is what the warnings cannot carry: both volume names
+              as fields the user can read off at a glance rather than out of a
+              paragraph, and the DATE — which the Go preflight deliberately
+              does not have, because it holds no migration result to read it
+              from, so it travels on the offer instead. */}
+          <dl data-testid="deps-rollback-fields" className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs">
+            <dt className="text-muted-foreground">{t('deps.rollback.field.version')}</dt>
+            <dd className="font-mono">{view.rollback.toVersion || view.rollback.toImage}</dd>
+            <dt className="text-muted-foreground">{t('deps.rollback.field.volume')}</dt>
+            <dd className="font-mono">{view.rollback.volume}</dd>
+            <dt className="text-muted-foreground">{t('deps.rollback.field.frozen')}</dt>
+            <dd className="font-mono">{view.rollback.frozenVolume}</dd>
+            {/* Omitted rather than rendered empty when the one result slot no
+                longer holds the migration this would undo: the warnings still
+                say "as it was when the migration finished", which is true
+                without a date, and a labelled blank is only noise. */}
+            {!!view.rollback.migratedAt && (
+              <>
+                <dt className="text-muted-foreground">{t('deps.rollback.field.migratedAt')}</dt>
+                <dd>{formatDateTime(view.rollback.migratedAt)}</dd>
+              </>
+            )}
+          </dl>
+          {!preflight && <Loader2 size={16} className="animate-spin" />}
+          {preflight && (
+            <>
+              {(preflight.warnings ?? []).map((w) => (
+                <p key={w} className="flex items-start gap-1 text-xs text-amber-600 dark:text-amber-400">
+                  <AlertTriangle size={14} className="mt-0.5 shrink-0" />{w}
+                </p>
+              ))}
+              {(preflight.problems ?? []).map((p) => (
+                <p key={p} role="alert" className="flex items-start gap-1 text-xs text-destructive">
+                  <AlertTriangle size={14} className="mt-0.5 shrink-0" />{p}
+                </p>
+              ))}
+            </>
+          )}
+        </div>
+      )}
+
       {view.kind === 'progress' && migration && (
         <div className="space-y-2 text-sm" data-testid="deps-progress">
-          <p className="text-xs text-muted-foreground">{t('deps.progress.title', { id: migration.id })}</p>
+          <p className="text-xs text-muted-foreground">
+            {t(migration.kind === ROLLBACK_KIND ? 'deps.progress.rollbackTitle' : 'deps.progress.title',
+              { id: migration.id })}
+          </p>
           {isPreparing(migration) && (
             <p data-testid="deps-preparing" className="flex items-center gap-2 text-xs">
               <Loader2 size={14} className="shrink-0 animate-spin" />
@@ -454,22 +693,42 @@ export function DependenciesDialog({ open, onClose }: Props) {
           {result.success ? (
             <>
               <p className="flex items-center gap-1 text-success">
-                <Check size={16} />{t('deps.result.success', { id: result.id })}
+                <Check size={16} />{result.kind === ROLLBACK_KIND
+                  ? rolledBackTo
+                    ? t('deps.result.rolledBack.to', { id: result.id, to: rolledBackTo })
+                    : t('deps.result.rolledBackDone', { id: result.id })
+                  : t('deps.result.success', { id: result.id })}
               </p>
               <p className="text-xs text-muted-foreground">{result.message}</p>
+              {/* The volume left behind. After a MIGRATION it is the old data,
+                  which the user may reclaim; after a ROLLBACK it is the newer
+                  data, which becomes unreachable — the same field, two very
+                  different sentences, so the verdict's kind decides. */}
               {lastResult?.oldVolume && (
-                <p className="text-xs text-muted-foreground">{t('deps.result.oldVolume', { volume: lastResult.oldVolume })}</p>
+                <p className="text-xs text-muted-foreground">{t(
+                  result.kind === ROLLBACK_KIND ? 'deps.result.frozenVolume' : 'deps.result.oldVolume',
+                  { volume: lastResult.oldVolume },
+                )}</p>
               )}
             </>
           ) : (
             <>
               <p className="flex items-center gap-1 text-destructive">
-                <AlertTriangle size={16} />{t('deps.result.failed', { id: result.id })}
+                <AlertTriangle size={16} />{t(
+                  result.kind === ROLLBACK_KIND ? 'deps.result.rollbackFailed' : 'deps.result.failed',
+                  { id: result.id },
+                )}
               </p>
               <p className="text-xs">{result.message}</p>
-              {/* Only when the daemon says the rollback finished — a pending
-                  one is reported by the list's own notice instead. */}
-              {!rollbackPending && <p className="text-xs text-muted-foreground">{t('deps.result.rolledBack')}</p>}
+              {/* A failed MIGRATION undoes itself, and says so — but only when
+                  the daemon says that undo finished; a pending one is reported
+                  by the list's own notice instead. A failed ROLLBACK has
+                  nothing to undo: it moves the pin in one atomic write, so
+                  either it happened or it did not, and every failure path
+                  leaves the dependency on the version it was already running. */}
+              {result.kind === ROLLBACK_KIND
+                ? <p className="text-xs text-muted-foreground">{t('deps.result.rollbackUnchanged')}</p>
+                : !rollbackPending && <p className="text-xs text-muted-foreground">{t('deps.result.rolledBack')}</p>}
             </>
           )}
         </div>

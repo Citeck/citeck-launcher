@@ -92,8 +92,8 @@ func TestSeedFromRunningContainerWins(t *testing.T) {
 		volumes:    map[string]map[string]string{"postgres2": {"PG_VERSION": "17\n"}},
 	}
 	got := seedDependencyPins(context.Background(), nil, p, nil, nil)
-	assert.Equal(t, "postgres:17.11", got[deps.Postgres])
-	assert.Equal(t, "rabbitmq:4.2.9-management", got[deps.RabbitMQ])
+	assert.Equal(t, "postgres:17.11", got[deps.Postgres].Image)
+	assert.Equal(t, "rabbitmq:4.2.9-management", got[deps.RabbitMQ].Image)
 	_, hasZK := got[deps.Zookeeper]
 	assert.False(t, hasZK, "no container, no volume → no pin")
 }
@@ -101,7 +101,7 @@ func TestSeedFromRunningContainerWins(t *testing.T) {
 func TestSeedFromPGVersionWhenNoContainer(t *testing.T) {
 	p := fakeProbe{volumes: map[string]map[string]string{"postgres2": {"PG_VERSION": "17\n"}}}
 	got := seedDependencyPins(context.Background(), nil, p, nil, nil)
-	assert.Equal(t, "postgres:17", got[deps.Postgres])
+	assert.Equal(t, "postgres:17", got[deps.Postgres].Image)
 }
 
 func TestSeedPrefers18LayoutUnlessSnapshotSaysOtherwise(t *testing.T) {
@@ -109,26 +109,27 @@ func TestSeedPrefers18LayoutUnlessSnapshotSaysOtherwise(t *testing.T) {
 		"postgres2": {"PG_VERSION": "17\n"},
 		"postgres3": {"18/docker/PG_VERSION": "18\n"},
 	}}
-	assert.Equal(t, "postgres:18", seedDependencyPins(context.Background(), nil, p, nil, nil)[deps.Postgres])
-	assert.Equal(t, "postgres:17", seedDependencyPins(context.Background(), nil, p, map[string]bool{"postgres2": true}, nil)[deps.Postgres])
+	assert.Equal(t, "postgres:18", seedDependencyPins(context.Background(), nil, p, nil, nil)[deps.Postgres].Image)
+	assert.Equal(t, "postgres:17", seedDependencyPins(context.Background(), nil, p, map[string]bool{"postgres2": true}, nil)[deps.Postgres].Image)
 }
 
 func TestSeedFallsBackToLegacyImageOnUnreadableData(t *testing.T) {
 	p := fakeProbe{volumes: map[string]map[string]string{"postgres2": {}}, readErr: errors.New("permission denied")}
 	got := seedDependencyPins(context.Background(), nil, p, nil, nil)
-	assert.Equal(t, deps.PostgresLegacyImage, got[deps.Postgres])
+	assert.Equal(t, deps.PostgresLegacyImage, got[deps.Postgres].Image)
 }
 
 func TestSeedUsesLegacyImageForDependenciesWithoutADataFile(t *testing.T) {
 	p := fakeProbe{volumes: map[string]map[string]string{"rabbitmq2": {}, "zookeeper2": {}}}
 	got := seedDependencyPins(context.Background(), nil, p, nil, nil)
-	assert.Equal(t, "rabbitmq:4.1-management", got[deps.RabbitMQ])
-	assert.Equal(t, "zookeeper:3.9", got[deps.Zookeeper])
+	assert.Equal(t, "rabbitmq:4.1-management", got[deps.RabbitMQ].Image)
+	assert.Equal(t, "zookeeper:3.9", got[deps.Zookeeper].Image)
 }
 
 func TestSeedLeavesExistingPinsAlone(t *testing.T) {
 	p := fakeProbe{containers: map[string]string{"postgres": "postgres:18"}}
-	got := seedDependencyPins(context.Background(), map[deps.ID]string{deps.Postgres: "postgres:17.5"}, p, nil, nil)
+	got := seedDependencyPins(context.Background(),
+		map[deps.ID]deps.DependencyState{deps.Postgres: {Image: "postgres:17.5"}}, p, nil, nil)
 	_, touched := got[deps.Postgres]
 	assert.False(t, touched)
 }
@@ -150,8 +151,8 @@ func TestSeedNeverAsksAboutAnEmptyVolumeName(t *testing.T) {
 // data is fresh and takes the candidate.
 func TestSeedKeycloakFollowsThePostgresData(t *testing.T) {
 	withData := fakeProbe{volumes: map[string]map[string]string{"postgres2": {"PG_VERSION": "17\n"}}}
-	assert.Equal(t, "keycloak/keycloak:26",
-		seedDependencyPins(context.Background(), nil, withData, nil, nil)[deps.Keycloak])
+	assert.Equal(t, keycloakLegacyImage(t),
+		seedDependencyPins(context.Background(), nil, withData, nil, nil)[deps.Keycloak].Image)
 
 	empty := fakeProbe{volumes: map[string]map[string]string{"postgres2": {}}}
 	_, pinned := seedDependencyPins(context.Background(), nil, empty, nil, nil)[deps.Keycloak]
@@ -169,12 +170,12 @@ func TestSeedAssumesTheLegacyImageWhenTheContainerProbeFailsOverExistingData(t *
 		},
 	}
 	got := seedDependencyPins(context.Background(), nil, p, nil, nil)
-	assert.Equal(t, "postgres:17", got[deps.Postgres], "the data still answers when the container probe cannot")
+	assert.Equal(t, "postgres:17", got[deps.Postgres].Image, "the data still answers when the container probe cannot")
 	for _, d := range deps.All() {
 		if d.ID() == deps.Postgres {
 			continue
 		}
-		assert.Equal(t, d.LegacyImage(), got[d.ID()], string(d.ID()))
+		assert.Equal(t, d.LegacyImage(), got[d.ID()].Image, string(d.ID()))
 	}
 }
 
@@ -190,7 +191,9 @@ func TestSeedAssumesTheLegacyImageWhenTheVolumeProbeFails(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			got := seedDependencyPins(context.Background(), nil, p, nil, nil)
 			for _, d := range deps.All() {
-				assert.Equal(t, d.LegacyImage(), got[d.ID()], string(d.ID()))
+				assert.Equal(t, d.LegacyImage(), got[d.ID()].Image, string(d.ID()))
+				assert.Equal(t, 1, got[d.ID()].Gen(),
+					"a probe that could not answer may not invent a generation")
 			}
 		})
 	}
@@ -213,7 +216,7 @@ func TestSeedLeavesAFreshNamespaceUnpinnedWhenOnlyTheContainerProbeFails(t *test
 func TestSeedAssumesTheLegacyImageWhenPGVersionIsGarbage(t *testing.T) {
 	p := fakeProbe{volumes: map[string]map[string]string{"postgres2": {"PG_VERSION": "seventeen"}}}
 	assert.Equal(t, deps.PostgresLegacyImage,
-		seedDependencyPins(context.Background(), nil, p, nil, nil)[deps.Postgres])
+		seedDependencyPins(context.Background(), nil, p, nil, nil)[deps.Postgres].Image)
 }
 
 // Ruling 2: a volume that exists but holds no PG_VERSION holds no cluster —
@@ -234,7 +237,7 @@ func TestSeedSkipsAnEmptyLayoutAndKeepsLookingForTheCluster(t *testing.T) {
 		"postgres3": {},
 		"postgres2": {"PG_VERSION": "17\n"},
 	}}
-	assert.Equal(t, "postgres:17", seedDependencyPins(context.Background(), nil, p, nil, nil)[deps.Postgres])
+	assert.Equal(t, "postgres:17", seedDependencyPins(context.Background(), nil, p, nil, nil)[deps.Postgres].Image)
 }
 
 func TestSeedNothingForAFreshNamespace(t *testing.T) {
@@ -359,23 +362,25 @@ func TestResolveDependencyPinsMergesPersistedWithSeeded(t *testing.T) {
 		volumes:    map[string]map[string]string{"postgres2": {"PG_VERSION": "17\n"}},
 	}
 	pins, seeded := resolveDependencyPins(context.Background(),
-		map[deps.ID]string{deps.Postgres: "postgres:17.5"}, p, nil)
+		map[deps.ID]deps.DependencyState{deps.Postgres: {Image: "postgres:17.5"}}, p, nil)
 
-	assert.Equal(t, "postgres:17.5", pins[deps.Postgres], "a persisted pin is never re-derived")
-	assert.Equal(t, "rabbitmq:4.1.2-management", pins[deps.RabbitMQ], "a missing pin is seeded from the data")
-	assert.Equal(t, map[deps.ID]string{
-		deps.RabbitMQ: "rabbitmq:4.1.2-management",
-		// keycloak's data is the postgres cluster this fixture has.
-		deps.Keycloak: "keycloak/keycloak:26",
+	assert.Equal(t, "postgres:17.5", pins[deps.Postgres].Image, "a persisted pin is never re-derived")
+	assert.Equal(t, "rabbitmq:4.1.2-management", pins[deps.RabbitMQ].Image, "a missing pin is seeded from the data")
+	assert.Equal(t, map[deps.ID]deps.DependencyState{
+		deps.RabbitMQ: {Image: "rabbitmq:4.1.2-management"},
+		// keycloak's data is the postgres cluster this fixture has. It keeps
+		// its state IN that database and has no volume of its own, so its pin
+		// carries no generation.
+		deps.Keycloak: {Image: keycloakLegacyImage(t)},
 	}, seeded, "only the additions are reported as seeded")
 }
 
 func TestResolveDependencyPinsDoesNotAliasThePersistedMap(t *testing.T) {
-	persisted := map[deps.ID]string{deps.Postgres: "postgres:17.5"}
+	persisted := map[deps.ID]deps.DependencyState{deps.Postgres: {Image: "postgres:17.5"}}
 	p := fakeProbe{containers: map[string]string{"rabbitmq": "rabbitmq:4.1.2-management"}}
 	pins, _ := resolveDependencyPins(context.Background(), persisted, p, nil)
-	pins[deps.Keycloak] = "keycloak/keycloak:26"
-	assert.Equal(t, map[deps.ID]string{deps.Postgres: "postgres:17.5"}, persisted,
+	pins[deps.Keycloak] = deps.DependencyState{Image: keycloakLegacyImage(t)}
+	assert.Equal(t, map[deps.ID]deps.DependencyState{deps.Postgres: {Image: "postgres:17.5"}}, persisted,
 		"the caller's map must not be written through")
 }
 
@@ -415,22 +420,22 @@ func TestPinsAreWiredIntoEveryGenerateCallSite(t *testing.T) {
 	}{
 		{"namespace_loader.go", "loadNamespace", "resolveDependencyPins"},
 		{"server.go", "doReloadEx", "resolveDependencyPins"},
-		{"routes_reloadplan.go", "resolveReloadPlanInputs", "DependencyPins"},
+		{"routes_reloadplan.go", "resolveReloadPlanInputs", "DependencyStates"},
 	}
 	for _, c := range cases {
 		t.Run(c.fn, func(t *testing.T) {
 			fn := parseFuncDecl(t, c.file, c.fn)
-			assert.True(t, assignsField(fn, "genOpts", "DependencyPins"),
-				"%s must set genOpts.DependencyPins — the generator falls back to the bundle image without it", c.fn)
-			ok, why := assignsFieldFrom(fn, "genOpts", "DependencyPins", c.wantSource)
+			assert.True(t, assignsField(fn, "genOpts", "DependencyStates"),
+				"%s must set genOpts.DependencyStates — the generator falls back to the bundle image without it", c.fn)
+			ok, why := assignsFieldFrom(fn, "genOpts", "DependencyStates", c.wantSource)
 			assert.True(t, ok,
-				"%s must assign genOpts.DependencyPins from %s(...): %s", c.fn, c.wantSource, why)
+				"%s must assign genOpts.DependencyStates from %s(...): %s", c.fn, c.wantSource, why)
 			if c.fn == "loadNamespace" {
-				// SetDependencyPin persists, and persistState writes
+				// SetDependencyState persists, and persistState writes
 				// Status: r.status — STOPPED at load time, before the caller
 				// has acted on ShouldStart. The load path installs pins
 				// through the non-persisting RestoreDependencyState instead.
-				assert.False(t, callsMethod(fn, "SetDependencyPin"),
+				assert.False(t, callsMethod(fn, "SetDependencyState"),
 					"loadNamespace must not persist pins: that would overwrite the stored namespace status")
 				assert.True(t, callsMethod(fn, "RestoreDependencyState"),
 					"loadNamespace must install the resolved pins into the runtime")
@@ -635,11 +640,19 @@ func TestSeedSkipsDependenciesTheNamespaceDoesNotHave(t *testing.T) {
 
 	got := seedDependencyPins(context.Background(), nil, p, nil, present)
 
-	assert.Equal(t, "postgres:17.11", got[deps.Postgres], "a dependency the namespace HAS is seeded exactly as before")
+	assert.Equal(t, "postgres:17.11", got[deps.Postgres].Image, "a dependency the namespace HAS is seeded exactly as before")
 	assert.NotContains(t, got, deps.Keycloak, "a dependency the namespace does not generate gets no pin")
 	assert.NotContains(t, got, deps.MongoDB)
-	assert.Empty(t, askedVolumes,
-		"nothing needed the data: postgres' container answered, and keycloak is not part of this namespace")
+	// The volume walk still runs for a dependency whose CONTAINER answered —
+	// the container names an image and says nothing about which GENERATION of
+	// the volume it has mounted — but it must never reach a dependency the
+	// namespace does not have.
+	require.NotEmpty(t, askedVolumes, "the generation still comes from the data — this guard is out of date without it")
+	for _, v := range askedVolumes {
+		id, _, ok := deps.ParseVolumeName(v)
+		require.True(t, ok, "%q is not a dependency volume name", v)
+		assert.True(t, present[id], "%s belongs to a dependency this namespace does not have", v)
+	}
 	assert.NotContains(t, askedApps, "keycloak", "an absent dependency is not even inspected")
 	assert.NotContains(t, askedApps, "mongodb")
 	assert.Contains(t, askedApps, "postgres")
@@ -701,4 +714,164 @@ func TestNamespaceDependenciesMatchesWhatTheGeneratorEmits(t *testing.T) {
 				"the seeding filter and the generator must agree about which dependencies this namespace has")
 		})
 	}
+}
+
+// --- the volume generation --------------------------------------------------
+
+// TestSeedTakesTheHighestGenerationEvenWithAGapBelowIt is why the walk is
+// DESCENDING and not ascending-until-the-first-gap.
+//
+// A gap is a state the launcher actively creates: `citeck deps` tells the
+// operator they may delete the old volume once they trust the new version. An
+// ascending walk would stop at the missing generation-1 volume and answer
+// "generation 1", and the generator would then create a brand-new EMPTY
+// rabbitmq2 beside the live rabbitmq3 — a broker reporting healthy with none
+// of the namespace's queues in it, which is the empty-cluster-beside-real-data
+// failure this whole design exists to prevent.
+func TestSeedTakesTheHighestGenerationEvenWithAGapBelowIt(t *testing.T) {
+	// The ordinary shape right after a migration: BOTH volumes are on disk,
+	// because the launcher never deletes the old one. Only a descending walk
+	// answers 2 here; an ascending one answers 1 and remounts the data the
+	// migration moved away from.
+	both := fakeProbe{volumes: map[string]map[string]string{"rabbitmq2": {}, "rabbitmq3": {}}}
+	got := seedDependencyPins(context.Background(), nil, both, nil, nil)
+	assert.Equal(t, 2, got[deps.RabbitMQ].Gen(), "the HIGHEST existing generation is the data")
+	assert.Equal(t, "rabbitmq:4.1-management", got[deps.RabbitMQ].Image)
+
+	// And once the operator takes `citeck deps` up on reclaiming the old
+	// volume, the sequence has a hole in it. A walk that stopped at the first
+	// gap would answer generation 1, and the generator would create a
+	// brand-new EMPTY rabbitmq2 beside the live rabbitmq3.
+	gapped := fakeProbe{volumes: map[string]map[string]string{"rabbitmq3": {}}}
+	got = seedDependencyPins(context.Background(), nil, gapped, nil, nil)
+	assert.Equal(t, 2, got[deps.RabbitMQ].Gen(), "a missing generation below is not the end of the walk")
+}
+
+// The container names the IMAGE and says nothing about which generation of the
+// volume it has mounted, so the generation still comes from the data. Without
+// this a namespace that had been migrated and then lost its state file would
+// be re-pinned at generation 1, and the next reload would mount the
+// PRE-migration volume under the post-migration image — PostgreSQL 18 over a
+// 17 data directory.
+func TestSeedTakesTheGenerationFromTheDataEvenWhenTheContainerNamesTheImage(t *testing.T) {
+	p := fakeProbe{
+		containers: map[string]string{"postgres": "postgres:18.6", "rabbitmq": "rabbitmq:4.2.9-management"},
+		volumes: map[string]map[string]string{
+			"postgres3": {"18/docker/PG_VERSION": "18\n"},
+			"rabbitmq3": {},
+		},
+	}
+	got := seedDependencyPins(context.Background(), nil, p, nil, nil)
+	assert.Equal(t, deps.DependencyState{Image: "postgres:18.6", VolumeGen: 2}, got[deps.Postgres])
+	assert.Equal(t, deps.DependencyState{Image: "rabbitmq:4.2.9-management", VolumeGen: 2}, got[deps.RabbitMQ])
+}
+
+// For PostgreSQL the two questions compose: the generation is the highest
+// volume that HOLDS A CLUSTER, not merely the highest that exists. A
+// half-built volume left behind by a rollback that could not finish has no
+// PG_VERSION, and pinning the namespace to it would mount an empty directory
+// as if it were the data.
+func TestSeedSkipsAGenerationWhoseVolumeHoldsNoCluster(t *testing.T) {
+	p := fakeProbe{volumes: map[string]map[string]string{
+		"postgres3": {},                     // the abandoned half-built volume
+		"postgres2": {"PG_VERSION": "17\n"}, // the real cluster
+	}}
+	got := seedDependencyPins(context.Background(), nil, p, nil, nil)
+	assert.Equal(t, deps.DependencyState{Image: "postgres:17", VolumeGen: 1}, got[deps.Postgres])
+}
+
+// Keycloak answers to the postgres DATA, but it has no volume of its own — so
+// the postgres generation must not be copied onto its pin, where it would name
+// a volume nobody mounts.
+func TestSeedGivesKeycloakNoGeneration(t *testing.T) {
+	p := fakeProbe{volumes: map[string]map[string]string{
+		"postgres3": {"18/docker/PG_VERSION": "18\n"},
+	}}
+	got := seedDependencyPins(context.Background(), nil, p, nil, nil)
+	require.Equal(t, 2, got[deps.Postgres].VolumeGen, "the fixture's postgres data IS at generation 2")
+	assert.Zero(t, got[deps.Keycloak].VolumeGen, "keycloak keeps its state in that database, not in a volume")
+	assert.Equal(t, keycloakLegacyImage(t), got[deps.Keycloak].Image)
+}
+
+// The bounded walk is the cost this design accepted (a generation advances only
+// when an operator runs a migration, and ten is more upgrades than any of these
+// dependencies has shipped since the launcher existed). It is asserted so that
+// widening it is a deliberate act: on a DESKTOP every one of these is a Docker
+// API round trip, and the walk runs on the load of any namespace with no pin.
+func TestSeedProbesABoundedNumberOfGenerations(t *testing.T) {
+	var asked []string
+	p := fakeProbe{askedVolumes: &asked}
+	seedDependencyPins(context.Background(), nil, p, nil, nil)
+
+	perDependency := map[deps.ID]int{}
+	for _, v := range asked {
+		id, gen, ok := deps.ParseVolumeName(v)
+		require.True(t, ok, "%q is not a dependency volume name", v)
+		require.LessOrEqual(t, gen, deps.MaxProbedVolumeGen)
+		perDependency[id]++
+	}
+	// postgres, rabbitmq, zookeeper and mongodb have volumes; keycloak does
+	// not and must never be probed with an empty name (in server mode that
+	// stats the volumes ROOT, which always exists).
+	assert.Len(t, perDependency, 4)
+	assert.NotContains(t, perDependency, deps.Keycloak)
+	for id, n := range perDependency {
+		assert.Equal(t, deps.MaxProbedVolumeGen, n, "%s", id)
+	}
+}
+
+// A snapshot import re-derives BOTH halves of the pin, and which dependency a
+// restored volume belongs to is asked of the registry rather than of a table
+// here — the names are a function of the generation now, so a hard-coded list
+// would have gone stale the first time anybody migrated anything.
+func TestReseedAfterSnapshotImportDerivesTheGenerationFromTheImportedVolume(t *testing.T) {
+	rt := namespace.NewRuntime(&namespace.Config{ID: "ns1"}, planStubDocker{}, t.TempDir())
+	t.Cleanup(rt.Shutdown)
+	rt.RestoreDependencyState(map[deps.ID]deps.DependencyState{
+		deps.Postgres: {Image: "postgres:18", VolumeGen: 2},
+		deps.RabbitMQ: {Image: "rabbitmq:4.2.9-management", VolumeGen: 2},
+	}, nil, nil)
+	p := fakeProbe{volumes: map[string]map[string]string{
+		"postgres2": {"PG_VERSION": "17\n"},
+		"postgres3": {"18/docker/PG_VERSION": "18\n"}, // left over from the migration
+		"rabbitmq3": {},
+	}}
+
+	reseedAfterSnapshotImport(context.Background(), rt, p, []string{"postgres2"}, nil)
+
+	states := rt.DependencyStates()
+	assert.Equal(t, deps.DependencyState{Image: "postgres:17", VolumeGen: 1}, states[deps.Postgres],
+		"the imported volume wins over the leftover generation-2 volume, image AND generation")
+	assert.Equal(t, deps.DependencyState{Image: "rabbitmq:4.2.9-management", VolumeGen: 2}, states[deps.RabbitMQ],
+		"an untouched dependency keeps its whole pin")
+}
+
+// A volume name that belongs to no registered dependency ("pgadmin2") must not
+// move any pin: pgadmin is not a dependency and its volume is not dependency
+// data.
+func TestReseedAfterSnapshotImportIgnoresAVolumeThatIsNotADependencys(t *testing.T) {
+	rt := namespace.NewRuntime(&namespace.Config{ID: "ns1"}, planStubDocker{}, t.TempDir())
+	t.Cleanup(rt.Shutdown)
+	rt.RestoreDependencyState(map[deps.ID]deps.DependencyState{
+		deps.Postgres: {Image: "postgres:18", VolumeGen: 2},
+	}, nil, nil)
+	p := fakeProbe{volumes: map[string]map[string]string{"postgres2": {"PG_VERSION": "17\n"}}}
+
+	reseedAfterSnapshotImport(context.Background(), rt, p, []string{"pgadmin2"}, nil)
+
+	assert.Equal(t, deps.DependencyState{Image: "postgres:18", VolumeGen: 2},
+		rt.DependencyStates()[deps.Postgres], "nothing a dependency owns was imported")
+}
+
+// keycloakLegacyImage is what the REGISTRY says a namespace with postgres data
+// and no keycloak container has been running. It is asked rather than spelled
+// out because the seeding contract is "the descriptor's legacy image", not any
+// particular string — and that string moved once already
+// (keycloak/keycloak:26 is a 404 on Docker Hub, there is no bare-major
+// Keycloak tag), so a literal here would have failed for the fix.
+func keycloakLegacyImage(t *testing.T) string {
+	t.Helper()
+	d, ok := deps.Lookup(deps.Keycloak)
+	require.True(t, ok)
+	return d.LegacyImage()
 }

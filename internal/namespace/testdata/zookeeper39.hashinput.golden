@@ -1,0 +1,16 @@
+name=zookeeper
+image=zookeeper:3.9.5
+cmd=
+shmSize=
+vch=
+env:ALLOW_ANONYMOUS_LOGIN=yes
+env:CITECK_EXPORT_DIR=/citeck/export
+env:ZOO_4LW_COMMANDS_WHITELIST=srvr,mntr,ruok,stat
+env:ZOO_AUTOPURGE_PURGEINTERVAL=1
+env:ZOO_AUTOPURGE_SNAPRETAINCOUNT=3
+env:ZOO_DATA_DIR=/citeck/zookeeper/data
+env:ZOO_DATA_LOG_DIR=/citeck/zookeeper/datalog
+vol=zookeeper2:/citeck/zookeeper
+vol=./export/zookeeper:/citeck/export
+initContainer=registry.citeck.ru/community/launcher-utils:1.0
+mem=512m

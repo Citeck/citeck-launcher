@@ -129,10 +129,47 @@ export interface DependencyDto {
   /** What the user would move to: the held-back upgrade, else the candidate. */
   targetImage: string
   targetVersion?: string
-  /** up-to-date | pending-minor | upgrade-available | requires-launcher-update */
+  /** up-to-date | pending-minor | upgrade-available | upgrade-blocked |
+   *  requires-launcher-update */
   status: string
+  /** Explains a status a fixed label cannot: today, why a vendor-forbidden
+   *  pair is blocked and which intermediate version to take. Empty for every
+   *  other status, so it can be rendered unconditionally. English only, like
+   *  every other sentence built in internal/deps/migrate — the short status
+   *  LABEL is the localized half. */
+  statusDetail?: string
   /** Whether THIS launcher ships a migration plan for the dependency at all. */
   migratable: boolean
+  /** The "go back to what this dependency ran on before the last migration"
+   *  offer; absent when there is nothing to go back to. */
+  rollback?: DependencyRollbackDto
+}
+
+/** Offer to put one dependency back on the image AND the data-volume
+ *  generation it ran on before its last completed migration.
+ *
+ *  Absent when there is nothing to go back to (nothing has migrated it, or it
+ *  has already been rolled back — a rollback clears its own target, since
+ *  there is no roll-forward). Present with `available: false` and a `problem`
+ *  when the pin names a target the launcher cannot use, which is a state the
+ *  launcher actively creates by telling the operator they may reclaim the
+ *  retained volume. */
+export interface DependencyRollbackDto {
+  toImage: string
+  toVersion?: string
+  /** The RETAINED volume the rollback would run on — the one the migration
+   *  copied from and never wrote to. */
+  volume: string
+  /** The volume the namespace runs on today. A rollback keeps it and never
+   *  reads it again, so everything written since the migration becomes
+   *  unreachable: that is the whole content of the confirmation. */
+  frozenVolume: string
+  /** When the migration being undone finished (epoch ms), 0 when the one
+   *  result slot no longer holds it. */
+  migratedAt?: number
+  available: boolean
+  /** Why an existing target cannot be used. Empty when `available`. */
+  problem?: string
 }
 
 /** Live progress of the running migration. `percent` is the STEP's own
@@ -144,6 +181,9 @@ export interface DependencyMigrationDto {
   stepCount: number
   percent?: number
   message?: string
+  /** "" (absent) = a migration, "rollback" = a rollback. The two share this
+   *  channel, so only the title differs. */
+  kind?: string
 }
 
 /** Verdict of the last migration, kept until the next one replaces it. */
@@ -156,6 +196,9 @@ export interface DependencyMigrationResultDto {
   error?: string
   /** Volume the previous data was left in (success only) — never deleted. */
   oldVolume?: string
+  /** "" (absent) = a migration, "rollback" = a rollback. They share the one
+   *  result slot a namespace has. */
+  kind?: string
 }
 
 export interface DependenciesDto {
@@ -173,7 +216,21 @@ export interface DependencyUpgradeDto {
   app: string
   from: string
   to: string
+  /** This launcher can move THIS PAIR: it ships a plan for the dependency and
+   *  the pair is one the plan accepts. */
   migratable: boolean
+  /** Non-empty when the hop is refused by the DEPENDENCY'S OWN vendor — a
+   *  refusal a newer launcher would not lift — carrying the sentence that says
+   *  so, including the intermediate version to take first when one exists.
+   *  It is the discriminator the upgrades banner splits on and is NOT derivable
+   *  from `migratable`, which is false for a blocked pair too. */
+  blocked?: string
+  /** The held-back candidate is OLDER than what the data runs on: not an
+   *  upgrade at all, so the upgrades banner leaves it out entirely. Not
+   *  derivable from the two fields above — a backwards hold reports
+   *  `migratable: false` with no `blocked`, which is the shape of "a newer
+   *  launcher is needed". */
+  bundleOlder?: boolean
 }
 
 export interface DependencyMigrateRequestDto {
@@ -211,6 +268,13 @@ export interface PreflightResult {
   requiredTotalBytes: number
   existingTargetVolume?: ExistingVolume
   wasRunning: boolean
+  /** The space checks actually ran. It replaces the old
+   *  `requiredHostBytes > 0` discriminator, which stopped being true the
+   *  moment a plan appeared that writes no host file at all: a copy upgrade
+   *  legitimately needs zero bytes on the host, and rendering a refused
+   *  preflight's zeros verbatim reads as a namespace with no data and a full
+   *  disk, printed above the real reason. */
+  spaceChecked: boolean
 }
 
 /** A target volume that is already there — size and version are what let the

@@ -12,6 +12,7 @@ import (
 
 	"github.com/citeck/citeck-launcher/internal/api"
 	"github.com/citeck/citeck-launcher/internal/client"
+	"github.com/citeck/citeck-launcher/internal/deps"
 	"github.com/citeck/citeck-launcher/internal/deps/migrate"
 	"github.com/citeck/citeck-launcher/internal/fsutil"
 	"github.com/citeck/citeck-launcher/internal/i18n"
@@ -49,10 +50,12 @@ func newDepsCmd() *cobra.Command {
 		Short: "Show infra dependency versions and run version migrations",
 		Long: "Lists PostgreSQL, RabbitMQ, ZooKeeper, Keycloak and MongoDB with the version the\n" +
 			"namespace's data runs on and the version the bundle offers. A breaking change is never\n" +
-			"applied silently: it is reported here and migrated with `citeck deps upgrade <id>`.",
+			"applied silently: it is reported here and migrated with `citeck deps upgrade <id>`.\n\n" +
+			"`citeck deps rollback <id>` puts a dependency back on the version it ran on before its\n" +
+			"last migration, on the volume that migration left.",
 		RunE: func(_ *cobra.Command, _ []string) error { return runDepsList() },
 	}
-	cmd.AddCommand(newDepsListCmd(), newDepsUpgradeCmd())
+	cmd.AddCommand(newDepsListCmd(), newDepsUpgradeCmd(), newDepsRollbackCmd())
 	return cmd
 }
 
@@ -92,11 +95,12 @@ func printDependencies(dto *api.DependenciesDto) {
 }
 
 // depsListLines is the text rendering of the dependency list: the table (one
-// multi-line entry) followed by everything a migration left behind. The three
-// notices are deliberately separate lines rather than table columns — each one
-// is a sentence about the namespace, not a fact about a single dependency.
+// multi-line entry), then the sentences a status could not fit, then what a
+// migration left behind. Every one of those is a separate line rather than a
+// table column, and for the same reason: a column is padded to its widest
+// value, so one paragraph in a cell would push every other row off the screen.
 func depsListLines(dto *api.DependenciesDto) []string {
-	lines := make([]string, 0, len(dto.Items)+4)
+	lines := make([]string, 0, 2*len(dto.Items)+5)
 	if len(dto.Items) == 0 {
 		lines = append(lines, t("deps.empty"))
 	} else {
@@ -114,6 +118,11 @@ func depsListLines(dto *api.DependenciesDto) []string {
 		}, rows))
 	}
 
+	lines = append(lines, statusDetailLines(dto)...)
+	if offer := rollbackAvailableLine(dto); offer != "" {
+		lines = append(lines, offer)
+	}
+
 	// A pending rollback outranks everything else on this screen: the version
 	// is frozen until it succeeds and no new migration is accepted.
 	if dto.RollbackPending != "" {
@@ -128,19 +137,86 @@ func depsListLines(dto *api.DependenciesDto) []string {
 	return lines
 }
 
-// lastResultLines reports the verdict of the last migration. A success names
-// the volume the previous data is still in: the launcher never deletes it, so
-// that name is the only way for the user to reclaim the space once they trust
-// the new version.
+// statusDetailLines renders the sentence behind a status a fixed label cannot
+// explain — a vendor-forbidden hop naming the intermediate version, a bundle
+// offering something older than the data.
+//
+// It is VERBATIM: the daemon builds these in internal/deps/migrate, where
+// every other migration sentence lives, and re-wording them here would be a
+// second account of one refusal. It is below the TABLE and not in the status
+// cell because a column is padded to its widest value, and these run to
+// several hundred characters — one blocked row would push every other row's
+// status past the edge of the terminal. Each line names its dependency, or two
+// of them would be two anonymous paragraphs.
+func statusDetailLines(dto *api.DependenciesDto) []string {
+	lines := make([]string, 0, len(dto.Items))
+	for _, it := range dto.Items {
+		if it.StatusDetail == "" {
+			continue
+		}
+		lines = append(lines, t("deps.statusDetail", "id", it.ID, "detail", it.StatusDetail))
+	}
+	return lines
+}
+
+// rollbackAvailableLine advertises the rollbacks this namespace could take,
+// or "" when there are none. Without it the action is invisible: nothing else
+// in the CLI mentions it, and a namespace that migrated last week has no other
+// way to learn it can go back.
+//
+// An offer with Available=false is deliberately NOT reported. The one reason
+// it happens in practice is a retained volume the operator deleted — which is
+// what `deps.oldVolume` told them to do after the migration — so reporting it
+// on every list would be the launcher arguing with its own advice. The reason
+// is still there for anyone who runs `citeck deps rollback`, where the
+// preflight names the volume.
+func rollbackAvailableLine(dto *api.DependenciesDto) string {
+	offers := make([]string, 0, len(dto.Items))
+	for _, it := range dto.Items {
+		if it.Rollback == nil || !it.Rollback.Available {
+			continue
+		}
+		offers = append(offers, fmt.Sprintf("%s → %s", it.ID, versionOr(it.Rollback.ToVersion, it.Rollback.ToImage)))
+	}
+	if len(offers) == 0 {
+		return ""
+	}
+	return t("deps.rollbackAvailable", "list", strings.Join(offers, ", "))
+}
+
+// lastResultLines reports the verdict of the last migration OR rollback — a
+// namespace has one result slot and the two share it, which is why every line
+// here is chosen by Kind. "postgres:18.6 → postgres:17.5 succeeded" reported as
+// a migration would claim the launcher moved data backwards, which is the one
+// thing it will never do.
+//
+// A success names the volume the data it is NOT using is in: the launcher
+// never deletes either one. For a migration that is the previous data, and the
+// advice is to reclaim it once the new version is trusted; for a rollback it is
+// everything written since the migration, which the launcher keeps and never
+// reads again — the same volume role, the opposite advice.
 func lastResultLines(r *api.DependencyMigrationResultDto) []string {
+	rollback := r.Kind == deps.ResultKindRollback
 	if !r.Success {
-		return []string{output.Colorize(output.Red, t("deps.lastFailed",
+		// A rollback failure is REPORTED and not recorded today (the result
+		// slot still holds the migration being undone, and dating a live offer
+		// by a failure that changed nothing would be worse than silence), so
+		// this arm answers a newer daemon rather than anything shipping now.
+		key := "deps.lastFailed"
+		if rollback {
+			key = "deps.rollback.failed"
+		}
+		return []string{output.Colorize(output.Red, t(key,
 			"id", r.ID, "from", r.From, "to", r.To, "error", r.Error))}
 	}
-	lines := []string{t("deps.lastSucceeded",
+	key, volumeKey := "deps.lastSucceeded", "deps.oldVolume"
+	if rollback {
+		key, volumeKey = "deps.rollback.done", "deps.rollback.frozenVolume"
+	}
+	lines := []string{t(key,
 		"id", r.ID, "from", r.From, "to", r.To, "time", formatEpochMillis(r.FinishedAt))}
 	if r.OldVolume != "" {
-		lines = append(lines, t("deps.oldVolume", "volume", r.OldVolume))
+		lines = append(lines, t(volumeKey, "volume", r.OldVolume))
 	}
 	return lines
 }
@@ -159,6 +235,15 @@ func versionOr(version, image string) string {
 // unknown status reads as "up to date": a newer daemon's extra state is not
 // something this launcher can act on, and inventing an upgrade prompt for it
 // would send the user after a command that does nothing.
+//
+// The two held-back statuses the daemon explains in prose (upgrade-blocked and
+// bundle-older) render a SHORT label here and their sentence below the table
+// (statusDetailLines). A table cell is padded to the width of the longest
+// value in its column, so a 300-character vendor refusal in one row would push
+// every other row's status off the screen — and StatusDetail is exactly that
+// long. Neither label borrows an upgrade's words: "requires a newer launcher"
+// is false for both, since no launcher lifts a vendor refusal and none moves
+// data backwards.
 func formatDependencyStatus(it api.DependencyDto) string {
 	switch it.Status {
 	case api.DependencyPendingMinor:
@@ -167,6 +252,10 @@ func formatDependencyStatus(it api.DependencyDto) string {
 		return t("deps.status.upgradeAvailable", "id", it.ID)
 	case api.DependencyRequiresLauncherUpdate:
 		return t("deps.status.requiresLauncherUpdate")
+	case api.DependencyUpgradeBlocked:
+		return t("deps.status.blocked")
+	case api.DependencyBundleOlder:
+		return t("deps.status.bundleOlder", "version", versionOr(it.CurrentVersion, it.CurrentImage))
 	default:
 		return t("deps.status.upToDate")
 	}
@@ -189,11 +278,35 @@ func dependencyHintLine(ns *api.NamespaceDto, dto *api.DependenciesDto) string {
 	if ns == nil || len(ns.DependencyUpgrades) == 0 {
 		return ""
 	}
-	parts := make([]string, 0, len(ns.DependencyUpgrades))
+	// A backwards hold is NOT an upgrade: there is nothing to migrate and
+	// nothing to wait for, and folded into "Upgrades available" it would send
+	// the operator to `citeck deps upgrade`, which refuses it (409
+	// DEPENDENCY_BACKWARDS). It still gets a clause of its own rather than
+	// being dropped, so an operator who never opens `citeck deps` still learns
+	// the bundle is offering something older than their data.
+	var upgrades, older []string
 	for _, u := range ns.DependencyUpgrades {
-		parts = append(parts, fmt.Sprintf("%s %s → %s", u.ID, u.From, u.To))
+		entry := fmt.Sprintf("%s %s → %s", u.ID, u.From, u.To)
+		if u.BundleOlder {
+			older = append(older, entry)
+			continue
+		}
+		upgrades = append(upgrades, entry)
 	}
-	return t("deps.statusHint", "list", strings.Join(parts, ", "))
+	clauses := make([]string, 0, 2)
+	if len(upgrades) > 0 {
+		clauses = append(clauses, t("deps.statusHint", "list", strings.Join(upgrades, ", ")))
+	}
+	if len(older) > 0 {
+		clauses = append(clauses, t("deps.bundleOlderHint", "list", strings.Join(older, ", ")))
+	}
+	if len(clauses) == 0 {
+		return ""
+	}
+	// One line, because `citeck status` prints it after a "Deps:" label — and
+	// the "see `citeck deps`" pointer belongs to the line, not to each clause,
+	// or a namespace with both conditions would be told twice where to look.
+	return t("deps.hintLine", "hints", strings.Join(clauses, "; "))
 }
 
 // runningMigration answers the migration in progress from whichever DTO the
@@ -208,8 +321,15 @@ func runningMigration(ns *api.NamespaceDto, dto *api.DependenciesDto) *api.Depen
 	return nil
 }
 
+// migrationRunningLine reports the operation running on the shared progress
+// channel. Kind is what tells the two apart: a rollback announced as a
+// migration sends the operator looking for one they did not start.
 func migrationRunningLine(m *api.DependencyMigrationDto) string {
-	return t("deps.migrationRunning", "id", m.ID, "step", stepTitle(m.Step),
+	key := "deps.migrationRunning"
+	if m.Kind == deps.ResultKindRollback {
+		key = "deps.rollbackRunning"
+	}
+	return t(key, "id", m.ID, "step", stepTitle(m.Step),
 		"index", strconv.Itoa(m.StepIndex), "total", strconv.Itoa(m.StepCount))
 }
 
@@ -285,9 +405,11 @@ func newDepsUpgradeCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "upgrade <dependency>",
 		Short: "Migrate a dependency's data to the version the bundle offers (e.g. PostgreSQL 17 → 18)",
-		Long: "Stops the namespace, dumps the data, builds a new cluster in a NEW volume, restores and\n" +
-			"verifies it, then switches the namespace over. The old volume is left untouched; any failure\n" +
-			"rolls back to it. Use --replace-existing to allow deleting a leftover target volume.\n\n" +
+		Long: "Stops the namespace and moves the data into a NEW volume, leaving the old one untouched;\n" +
+			"any failure rolls back to it. PostgreSQL is dumped and restored into the new cluster;\n" +
+			"RabbitMQ and ZooKeeper have their data volume copied and the COPY upgraded, so the original\n" +
+			"is only ever read. Either way the result is verified before the namespace switches over.\n" +
+			"Use --replace-existing to allow deleting a leftover target volume.\n\n" +
 			"The migration runs in the daemon: interrupting this command stops the progress output, not\n" +
 			"the migration. `citeck deps` reports what happened.\n\n" +
 			"With --format json nothing is printed until it is over: the whole answer is one object with\n" +
@@ -303,16 +425,55 @@ func newDepsUpgradeCmd() *cobra.Command {
 	return cmd
 }
 
-// depsUpgradeAPI is the daemon surface `citeck deps upgrade` drives. The
-// command is built from a package-global client, so without this seam its
-// orchestration — which refusal comes before which request, what the follow
-// loop makes of an event, what the verdict and the exit code are — could only
-// be exercised against a live daemon, i.e. never.
-type depsUpgradeAPI interface {
+// depsAPI is the daemon surface `citeck deps upgrade` and `citeck deps
+// rollback` drive. The commands are built from a package-global client, so
+// without this seam their orchestration — which refusal comes before which
+// request, what the follow loop makes of an event, what the verdict and the
+// exit code are — could only be exercised against a live daemon, i.e. never.
+type depsAPI interface {
 	GetDependencies() (*api.DependenciesDto, error)
 	DependencyPreflight(id string) (*migrate.PreflightResult, error)
 	MigrateDependency(id string, replaceExisting bool) (*api.ActionResultDto, error)
+	DependencyRollbackPreflight(id string) (*migrate.PreflightResult, error)
+	RollbackDependency(id string) (*api.ActionResultDto, error)
 	StreamEvents(ctx context.Context) (<-chan api.EventDto, error)
+}
+
+// depsAction is everything that differs between the two operations inside the
+// shared confirm → start → follow orchestration: what to POST, which of the
+// two verdicts in the namespace's ONE result slot belongs to it, and what a
+// success is called. Everything else — the pending-rollback refusal, the
+// preflight, the confirmation, the event stream, the poll, the JSON verdict —
+// is the same code, which is what makes "the rollback needs no rendering path
+// of its own" true rather than aspirational.
+type depsAction struct {
+	// kind is deps.ResultKindMigration or deps.ResultKindRollback: the
+	// discriminator the poll uses, because a namespace has one result slot and
+	// the other operation's verdict must not end this one's follow.
+	kind string
+	// success is the outcome reported in --format json. A rollback that
+	// answered "migrated" would tell a script the launcher moved data
+	// backwards, which is the one thing it will never do.
+	success string
+	start   func(c depsAPI, id string) (*api.ActionResultDto, error)
+}
+
+func migrateAction(replaceExisting bool) depsAction {
+	return depsAction{
+		kind: deps.ResultKindMigration, success: depsOutcomeMigrated,
+		start: func(c depsAPI, id string) (*api.ActionResultDto, error) {
+			return c.MigrateDependency(id, replaceExisting)
+		},
+	}
+}
+
+func rollbackAction() depsAction {
+	return depsAction{
+		kind: deps.ResultKindRollback, success: depsOutcomeRolledBack,
+		start: func(c depsAPI, id string) (*api.ActionResultDto, error) {
+			return c.RollbackDependency(id)
+		},
+	}
 }
 
 // depsFollow are the two durations the follow loop is built on, kept together
@@ -322,21 +483,22 @@ type depsFollow struct {
 	timeout time.Duration
 }
 
-// depsUpgradeOpts is one invocation of the command. confirm is injected for
+// depsActionOpts is one invocation of either command. confirm is injected for
 // the same reason the client is: promptConfirm needs a terminal, and "the user
-// said no" is a branch that must not start a migration.
-type depsUpgradeOpts struct {
+// said no" is a branch that must not start anything. replaceExisting is unused
+// by the rollback, which creates no volume.
+type depsActionOpts struct {
 	detach          bool
 	replaceExisting bool
 	confirm         func(id string, pre *migrate.PreflightResult) bool
 	follow          depsFollow
 }
 
-func defaultDepsUpgradeOpts(detach, replaceExisting bool) depsUpgradeOpts {
-	return depsUpgradeOpts{
+func defaultDepsActionOpts(detach, replaceExisting bool, confirm func(string, *migrate.PreflightResult) bool) depsActionOpts {
+	return depsActionOpts{
 		detach:          detach,
 		replaceExisting: replaceExisting,
-		confirm:         confirmMigration,
+		confirm:         confirm,
 		follow:          depsFollow{poll: depsPollInterval, timeout: depsMigrationTimeout},
 	}
 }
@@ -354,16 +516,22 @@ const (
 	depsOutcomeCanceled = "canceled"
 	depsOutcomeStarted  = "started"
 	depsOutcomeMigrated = "migrated"
-	depsOutcomeFailed   = "failed"
-	depsOutcomeUnknown  = "unknown"
+	// depsOutcomeRolledBack is the rollback's success. It is NOT "migrated":
+	// the two share every line of the orchestration, but a script told a
+	// dependency was "migrated" when its data went back a generation has been
+	// told the opposite of what happened.
+	depsOutcomeRolledBack = "rolled-back"
+	depsOutcomeFailed     = "failed"
+	depsOutcomeUnknown    = "unknown"
 )
 
-// depsUpgradeReport is the whole of stdout under `--format json`. Every field
+// depsActionReport is the whole of stdout under `--format json`, for both the
+// upgrade and the rollback — one shape, so a script needs one parser. Every field
 // is filled from something every path has: the preflight (which is also what
 // carries the reason for a refusal) and the outcome. Nothing that only ONE
 // path could fill belongs here — a shape that changes with the route taken is
 // not a machine contract.
-type depsUpgradeReport struct {
+type depsActionReport struct {
 	ID        string                   `json:"id"`
 	From      string                   `json:"from,omitempty"`
 	To        string                   `json:"to,omitempty"`
@@ -380,14 +548,14 @@ func runDepsUpgrade(id string, detach, replaceExisting bool) error {
 		return fmt.Errorf("connect to daemon: %w", err)
 	}
 	defer c.Close()
-	return depsUpgrade(c, id, defaultDepsUpgradeOpts(detach, replaceExisting))
+	return depsUpgrade(c, id, defaultDepsActionOpts(detach, replaceExisting, confirmMigration))
 }
 
 // depsUpgrade runs the command and prints its answer. The error is returned
 // unchanged for the exit code AND copied into the report, because in JSON mode
 // Execute() prints nothing to stderr: a report without the reason would leave
 // a script with an exit code and no way to learn what happened.
-func depsUpgrade(c depsUpgradeAPI, id string, opts depsUpgradeOpts) error {
+func depsUpgrade(c depsAPI, id string, opts depsActionOpts) error {
 	report, err := depsUpgradeSteps(c, id, opts)
 	if err != nil {
 		report.Error = err.Error()
@@ -401,8 +569,8 @@ func depsUpgrade(c depsUpgradeAPI, id string, opts depsUpgradeOpts) error {
 // depsUpgradeSteps is the orchestration itself: the two refusals that come
 // before any work, the confirmation, and then either the detached start or the
 // follow. It always returns a report — a refusal is an answer too.
-func depsUpgradeSteps(c depsUpgradeAPI, id string, opts depsUpgradeOpts) (*depsUpgradeReport, error) {
-	report := &depsUpgradeReport{ID: id, Outcome: depsOutcomeRefused}
+func depsUpgradeSteps(c depsAPI, id string, opts depsActionOpts) (*depsActionReport, error) {
+	report := &depsActionReport{ID: id, Outcome: depsOutcomeRefused}
 
 	// A pending rollback is refused here rather than after the preflight: it
 	// freezes the pin and the daemon will not accept a new migration either
@@ -438,8 +606,18 @@ func depsUpgradeSteps(c depsUpgradeAPI, id string, opts depsUpgradeOpts) (*depsU
 		return report, nil
 	}
 
+	return startAndFollow(c, id, report, opts, migrateAction(opts.replaceExisting))
+}
+
+// startAndFollow is the tail both commands share: either dispatch and return,
+// or dispatch and watch. It is the only place either of them starts anything,
+// so "the daemon answered, therefore the outcome is no longer `refused`" is one
+// rule rather than two.
+func startAndFollow(c depsAPI, id string, report *depsActionReport,
+	opts depsActionOpts, act depsAction,
+) (*depsActionReport, error) {
 	if opts.detach {
-		res, startErr := startMigration(c, id, opts.replaceExisting)
+		res, startErr := startAction(c, id, act)
 		if startErr != nil {
 			return report, startErr
 		}
@@ -447,7 +625,124 @@ func depsUpgradeSteps(c depsUpgradeAPI, id string, opts depsUpgradeOpts) (*depsU
 		sayProgress(res.Message)
 		return report, nil
 	}
-	return migrateAndFollow(c, id, report, opts)
+	return runAndFollow(c, id, report, opts, act)
+}
+
+func newDepsRollbackCmd() *cobra.Command {
+	var detach bool
+	cmd := &cobra.Command{
+		Use:   "rollback <dependency>",
+		Short: "Put a dependency back on the version it ran on before its last migration",
+		Long: "Stops the namespace, points the dependency back at the image AND the data volume it ran\n" +
+			"on before its last completed migration, and starts the namespace again. Nothing is created\n" +
+			"and nothing is deleted: the volume the namespace is leaving is KEPT and never read again,\n" +
+			"so everything written since that migration becomes unreachable. There is no roll-forward.\n\n" +
+			"It is offered only where this launcher performed the migration and its volume is still on\n" +
+			"the host — `citeck deps` says when there is one.\n\n" +
+			"The rollback runs in the daemon: interrupting this command stops the progress output, not\n" +
+			"the rollback. `citeck deps` reports what happened.\n\n" +
+			"With --format json nothing is printed until it is over: the whole answer is one object with\n" +
+			"the outcome (refused / canceled / started / rolled-back / failed / unknown) and the preflight.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			return runDepsRollback(args[0], detach)
+		},
+	}
+	cmd.Flags().BoolVarP(&detach, "detach", "d", false, "Start the rollback and return immediately")
+	return cmd
+}
+
+func runDepsRollback(id string, detach bool) error {
+	ensureI18n()
+	c, err := client.New(clientOpts())
+	if err != nil {
+		return fmt.Errorf("connect to daemon: %w", err)
+	}
+	defer c.Close()
+	// replaceExisting is false and stays false: a rollback creates no volume,
+	// so there is nothing it could be asked to replace.
+	return depsRollback(c, id, defaultDepsActionOpts(detach, false, confirmRollback))
+}
+
+// depsRollback runs the command and prints its answer, on the same rules as
+// depsUpgrade: the error is returned unchanged for the exit code AND copied
+// into the report, because in JSON mode Execute() prints nothing to stderr.
+func depsRollback(c depsAPI, id string, opts depsActionOpts) error {
+	report, err := depsRollbackSteps(c, id, opts)
+	if err != nil {
+		report.Error = err.Error()
+	}
+	if output.IsJSON() {
+		output.PrintJSON(report)
+	}
+	return err
+}
+
+// depsRollbackSteps is the rollback's orchestration. It is deliberately the
+// same shape as depsUpgradeSteps — the pending-rollback refusal first, then the
+// preflight, then the confirmation, then dispatch — and differs in exactly
+// three places: the preflight it asks for, the screen it renders, and the fact
+// that there is no existing-target-volume decision, because a rollback creates
+// no volume.
+//
+// The dependency LIST is fetched for two reasons, not one: RollbackPending is
+// the refusal that must come before any Docker work, and the row's offer
+// carries the date of the migration being undone, which the preflight
+// deliberately does not.
+func depsRollbackSteps(c depsAPI, id string, opts depsActionOpts) (*depsActionReport, error) {
+	report := &depsActionReport{ID: id, Outcome: depsOutcomeRefused}
+
+	list, err := c.GetDependencies()
+	if err != nil {
+		return report, fmt.Errorf("list dependencies: %w", err)
+	}
+	// An interrupted migration whose journal is still open freezes the pin and
+	// the daemon refuses everything — including this. Refusing here spares the
+	// preflight's volume read (a utils container on a desktop).
+	if list.RollbackPending != "" {
+		return report, errors.New(list.RollbackPending)
+	}
+
+	pre, err := c.DependencyRollbackPreflight(id)
+	if err != nil {
+		return report, fmt.Errorf("rollback preflight %s: %w", id, err)
+	}
+	report.Preflight, report.From, report.To = pre, pre.From, pre.To
+	for _, line := range rollbackPreflightLines(pre, rollbackOfferFor(list, id)) {
+		sayProgress(line)
+	}
+	if !pre.OK {
+		return report, errors.New(t("deps.preflightFailed"))
+	}
+	if !opts.confirm(id, pre) {
+		report.Outcome = depsOutcomeCanceled
+		sayProgress(t("deps.cancelled"))
+		return report, nil
+	}
+	return startAndFollow(c, id, report, opts, rollbackAction())
+}
+
+// rollbackOfferFor is the offer on one dependency's row, or nil. A nil answer
+// is not an error here: the preflight is the authority on whether a rollback
+// may run, and it refuses a missing target in its own words.
+func rollbackOfferFor(list *api.DependenciesDto, id string) *api.DependencyRollbackDto {
+	if list == nil {
+		return nil
+	}
+	for _, it := range list.Items {
+		if it.ID == id {
+			return it.Rollback
+		}
+	}
+	return nil
+}
+
+// confirmRollback asks for the go-ahead. The default is YES for the same
+// reason confirmMigration's is: under the global --yes promptConfirm returns
+// its default without asking, and a "no" default would turn the scripted
+// spelling of "do not ask me" into a silent cancellation.
+func confirmRollback(id string, pre *migrate.PreflightResult) bool {
+	return promptConfirm(t("deps.rollback.confirm", "id", id, "to", pre.To), true)
 }
 
 // sayProgress prints one line of the command's running commentary. JSON mode
@@ -474,7 +769,45 @@ func confirmMigration(id string, pre *migrate.PreflightResult) bool {
 // printed whether or not the checks passed — a refusal the user cannot see the
 // reason for is worse than no check at all.
 func preflightLines(pre *migrate.PreflightResult) []string {
-	lines := []string{t("deps.preflight.title", "from", pre.From, "to", pre.To)}
+	return preflightLinesTitled(t("deps.preflight.title", "from", pre.From, "to", pre.To), pre)
+}
+
+// rollbackPreflightLines is the same block under the rollback's own title —
+// "Migration 18.6 → 17.5" would describe the one thing this launcher never
+// does to data — plus the date of the migration being undone.
+//
+// The three consequences the confirmation exists for (the data is as of the
+// migration, everything since then is on a volume that is kept and never read
+// again, and there is no roll-forward) are NOT built here: the daemon's
+// preflight already carries them as warnings, in the same English every other
+// migration sentence is written in, and the block above prints every warning.
+// Rendering them a second time from locale keys would state each fact twice —
+// the defect TestPreflightLines_ExistingVolumeIsRenderedOnceThroughTheLocaleKey
+// pins from the other direction.
+//
+// The DATE is the exception, and deliberately so: migrate.warnRollbackConsequences
+// has no result record to read it from and says as much, so it reaches the
+// operator through the offer. offer may be nil (the preflight is about to
+// refuse) and its MigratedAt may be 0 (the namespace's one result slot has
+// moved on) — both render as nothing, never as 1970.
+func rollbackPreflightLines(pre *migrate.PreflightResult, offer *api.DependencyRollbackDto) []string {
+	lines := []string{t("deps.rollback.title", "from", pre.From, "to", pre.To)}
+	if offer != nil {
+		if at := formatEpochMillis(offer.MigratedAt); at != "" {
+			lines = append(lines, "  "+t("deps.rollback.migratedAt", "time", at))
+		}
+	}
+	return append(lines, preflightLinesTitled("", pre)...)
+}
+
+// preflightLinesTitled is the body both renderings share. An empty title emits
+// no title line, so a caller that has already written its own header does not
+// get a blank one.
+func preflightLinesTitled(title string, pre *migrate.PreflightResult) []string {
+	var lines []string
+	if title != "" {
+		lines = append(lines, title)
+	}
 	// A preflight the daemon refused before it touched Docker measured
 	// nothing, and its zeros are not facts: printing them says the namespace
 	// holds no data and the host has no free space, above the line that gives
@@ -515,12 +848,19 @@ func spaceRequirementLines(pre *migrate.PreflightResult) []string {
 			"need", fsutil.FormatBytes(pre.RequiredTotalBytes),
 			"free", fsutil.FormatBytes(smallerFreeBytes(pre)))}
 	}
-	return []string{
-		"  " + t("deps.preflight.host",
-			"need", fsutil.FormatBytes(pre.RequiredHostBytes), "free", fsutil.FormatBytes(pre.FreeHostBytes)),
-		"  " + t("deps.preflight.volume",
-			"need", fsutil.FormatBytes(pre.RequiredVolumeBytes), "free", fsutil.FormatBytes(pre.FreeVolumeBytes)),
+	lines := make([]string, 0, 2)
+	// A COPY-upgrade plan writes no host file at all — it copies a volume — so
+	// its host requirement is legitimately zero, and the line would read as
+	// "this needs no space and the disk is empty" beside a volume line that
+	// carries the whole requirement. The discriminator is the REQUIREMENT and
+	// not the free space: a measured filesystem with genuinely nothing free is
+	// a problem the preflight has already reported in its own words.
+	if pre.RequiredHostBytes > 0 {
+		lines = append(lines, "  "+t("deps.preflight.host",
+			"need", fsutil.FormatBytes(pre.RequiredHostBytes), "free", fsutil.FormatBytes(pre.FreeHostBytes)))
 	}
+	return append(lines, "  "+t("deps.preflight.volume",
+		"need", fsutil.FormatBytes(pre.RequiredVolumeBytes), "free", fsutil.FormatBytes(pre.FreeVolumeBytes)))
 }
 
 // smallerFreeBytes is the free number the shared line quotes: the smaller of
@@ -537,13 +877,13 @@ func smallerFreeBytes(pre *migrate.PreflightResult) int64 {
 	return smallest
 }
 
-// startMigration posts the request and checks the daemon accepted it. A
-// refusal (400/409 with a code) is already an error from the client; a 202
-// that somehow reports failure is one too, because nothing would follow it.
-func startMigration(c depsUpgradeAPI, id string, replaceExisting bool) (*api.ActionResultDto, error) {
-	res, err := c.MigrateDependency(id, replaceExisting)
+// startAction posts the request and checks the daemon accepted it. A refusal
+// (400/409 with a code) is already an error from the client; a 202 that somehow
+// reports failure is one too, because nothing would follow it.
+func startAction(c depsAPI, id string, act depsAction) (*api.ActionResultDto, error) {
+	res, err := act.start(c, id)
 	if err != nil {
-		return nil, fmt.Errorf("start migration of %s: %w", id, err)
+		return nil, fmt.Errorf("start %s of %s: %w", actionNoun(act), id, err)
 	}
 	if !res.Success {
 		return nil, errors.New(res.Message)
@@ -551,13 +891,28 @@ func startMigration(c depsUpgradeAPI, id string, replaceExisting bool) (*api.Act
 	return res, nil
 }
 
-// migrateAndFollow subscribes to the event stream BEFORE asking for the
-// migration — the daemon broadcasts the start event as soon as it has answered
-// 202, and a subscription opened afterwards would miss it (the same rule
-// snapshotAndWait follows). The daemon's answer is checked before anything is
-// awaited, so a refusal exits immediately instead of waiting for events that
-// will never come.
-func migrateAndFollow(c depsUpgradeAPI, id string, report *depsUpgradeReport, opts depsUpgradeOpts) (*depsUpgradeReport, error) {
+// actionNoun is what an error calls the operation. It is derived from the same
+// Kind the poll discriminates on, so the two cannot disagree about which of the
+// two this run is.
+func actionNoun(act depsAction) string {
+	if act.kind == deps.ResultKindRollback {
+		return "rollback"
+	}
+	return "migration"
+}
+
+// runAndFollow subscribes to the event stream BEFORE asking for the work — the
+// daemon broadcasts the start event as soon as it has answered 202, and a
+// subscription opened afterwards would miss it (the same rule snapshotAndWait
+// follows). The daemon's answer is checked before anything is awaited, so a
+// refusal exits immediately instead of waiting for events that will never come.
+//
+// A rollback rides the MIGRATION's event channel with three steps of its own,
+// which is why this loop takes it unchanged: the terminal events, the step
+// counter and the per-step title are the same wire shape.
+func runAndFollow(c depsAPI, id string, report *depsActionReport,
+	opts depsActionOpts, act depsAction,
+) (*depsActionReport, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), opts.follow.timeout)
 	defer cancel()
 
@@ -567,13 +922,13 @@ func migrateAndFollow(c depsUpgradeAPI, id string, report *depsUpgradeReport, op
 	}
 
 	clickedAt := time.Now()
-	res, err := startMigration(c, id, opts.replaceExisting)
+	res, err := startAction(c, id, act)
 	if err != nil {
 		return report, err
 	}
 	report.Message = res.Message
 	sayProgress(res.Message)
-	// From here on the migration is running in the daemon: it outlives this
+	// From here on the work is running in the daemon: it outlives this
 	// command, so every exit below reports what became of it, never "refused".
 	report.Outcome = depsOutcomeUnknown
 
@@ -595,12 +950,12 @@ func migrateAndFollow(c depsUpgradeAPI, id string, report *depsUpgradeReport, op
 					report.Outcome = depsOutcomeFailed
 					return report, errors.New(t("deps.failed", "error", evt.After))
 				}
-				report.Outcome = depsOutcomeMigrated
+				report.Outcome = act.success
 				return report, nil
 			}
 		case <-poll.C:
-			if done, verdict := pollMigrationVerdict(c.GetDependencies, id, clickedAt); done {
-				report.Outcome = depsOutcomeMigrated
+			if done, verdict := pollActionVerdict(c.GetDependencies, id, clickedAt, act.kind); done {
+				report.Outcome = act.success
 				if verdict != nil {
 					report.Outcome = depsOutcomeFailed
 				}
@@ -612,7 +967,7 @@ func migrateAndFollow(c depsUpgradeAPI, id string, report *depsUpgradeReport, op
 	}
 }
 
-// pollMigrationVerdict is the safety net under the event stream. The daemon
+// pollActionVerdict is the safety net under the event stream. The daemon
 // DROPS an event rather than block when a subscriber's channel is full
 // (internal/daemon/sse.go), and a migration's own stop/start burst — every app
 // of the namespace going down and coming back — is the most likely thing in
@@ -621,19 +976,24 @@ func migrateAndFollow(c depsUpgradeAPI, id string, report *depsUpgradeReport, op
 // finished minutes earlier, with no output and no way to tell.
 //
 // done=true means stop following; verdict is the error to report, or nil for a
-// success. The two conditions are both required: the daemon must say nothing
-// is running any more AND the recorded result must be NEWER than this click,
-// because a verdict left behind by a previous migration of the same dependency
-// would otherwise be reported as this one's. Anything the poll cannot answer
-// (a failed request, a result that is not ours) simply keeps the loop going —
-// the events are still the primary source.
-func pollMigrationVerdict(fetch func() (*api.DependenciesDto, error), id string, clickedAt time.Time) (done bool, verdict error) {
+// success. THREE conditions are required: the daemon must say nothing is
+// running any more, the recorded result must be NEWER than this click (a
+// verdict left behind by a previous run against the same dependency would
+// otherwise be reported as this one's), and its Kind must be the one this run
+// is waiting for — a namespace has ONE result slot and a migration and a
+// rollback share it, so a migration's verdict would otherwise end a rollback's
+// follow and report the opposite direction as its answer. Anything the poll
+// cannot answer (a failed request, a result that is not ours) simply keeps the
+// loop going — the events are still the primary source.
+func pollActionVerdict(fetch func() (*api.DependenciesDto, error), id string,
+	clickedAt time.Time, kind string,
+) (done bool, verdict error) {
 	dto, err := fetch()
 	if err != nil || dto == nil || dto.Migration != nil {
 		return false, nil
 	}
 	r := dto.LastResult
-	if r == nil || r.ID != id || r.FinishedAt < clickedAt.UnixMilli() {
+	if r == nil || r.ID != id || r.Kind != kind || r.FinishedAt < clickedAt.UnixMilli() {
 		return false, nil
 	}
 	for _, line := range lastResultLines(r) {

@@ -18,11 +18,23 @@ type Env interface {
 	// NamespaceID names the namespace, for messages only.
 	NamespaceID() string
 
+	// DependencyState is the namespace's CURRENT pin for id: the image its
+	// data runs on and, load-bearing here, which GENERATION of the data volume
+	// that is. A migration is a move from that generation to the next one, so
+	// both the volume it reads and the volume it creates are derived from this
+	// — which is why it lives on the Env rather than being a plan argument:
+	// Preflight has no options struct, and measuring the source volume is the
+	// first thing it does.
+	//
+	// An unpinned dependency answers the zero value, whose Gen() is 1 — the
+	// generation every namespace that has never migrated runs.
+	DependencyState(id deps.ID) deps.DependencyState
+
 	// --- containers --------------------------------------------------------
 	// RunAppDef creates and starts a container from a generated app def under
-	// a different name (so it never collides with the namespace's own
-	// container), with published ports stripped, the launcher's temp label,
-	// and extraBinds appended ("<host dir>:<container path>"). The namespace
+	// opts.Name (so it never collides with the namespace's own container),
+	// with published ports stripped, the launcher's temp label, and
+	// opts.ExtraBinds appended ("<host dir>:<container path>"). The namespace
 	// network is created if missing.
 	//
 	// It runs the CONTAINER and nothing around it: the def's InitActions must
@@ -36,10 +48,12 @@ type Env interface {
 	// migrations with `role "citeck_emodel" already exists`, an error the
 	// parser deliberately does not tolerate. The dump already carries every
 	// role and database; the temp container only has to serve it.
-	RunAppDef(ctx context.Context, def appdef.ApplicationDef, name string, extraBinds []string) (containerID string, err error)
+	RunAppDef(ctx context.Context, def appdef.ApplicationDef, opts TempContainerOpts) (containerID string, err error)
 	// ContainerRunning reports whether the named container exists and runs.
 	ContainerRunning(ctx context.Context, name string) (bool, error)
-	// Exec runs cmd inside the named container and returns its two output
+	// Exec runs cmd inside a container of this namespace — one of the temp
+	// containers, or an app of the namespace by its app name — and returns its
+	// two output
 	// streams SEPARATELY, plus the exit code. err is reserved for a failure to
 	// run the command at all (no such container, the daemon refused, the
 	// context expired) — a command that ran and failed reports exitCode != 0
@@ -62,6 +76,33 @@ type Env interface {
 	CreateVolume(ctx context.Context, volume string) error
 	// RemoveVolume removes the volume; not-found is success.
 	RemoveVolume(ctx context.Context, volume string) error
+	// CopyVolume copies the CONTENTS of src into dst, preserving ownership,
+	// mode and mtimes. src is mounted READ-ONLY: it is the namespace's real
+	// data volume, and this is the only place in a copy-upgrade plan that
+	// names it at all.
+	//
+	// Ownership is not cosmetic. The data is owned by the image's uid
+	// (rabbitmq 999, zookeeper 1000, postgres 999), and a copy that lands
+	// root-owned is not a slower migration, it is a broker that will not
+	// start: a .erlang.cookie RabbitMQ cannot read fails its boot with
+	// "eacces" → "Kernel pid terminated" (measured), and PostgreSQL refuses a
+	// PGDATA that is not 0700 and its own.
+	//
+	// It is expected to take minutes to hours on a real volume, so an
+	// implementation must not bound it by the timeout it uses for a `cat`.
+	CopyVolume(ctx context.Context, src, dst string) error
+	// EnsureVolumeDirs creates directories inside a data volume, relative to
+	// its root, parents included, owned by root — which is what the real init
+	// container that normally creates them produces too (the ZooKeeper
+	// entrypoint chowns its data directories before it drops privileges).
+	//
+	// It exists because a temp container runs the CONTAINER and nothing around
+	// it: no init actions, no probes and no INIT CONTAINERS. ZooKeeper's
+	// generated def has an init container whose only job is
+	// `mkdir -p /zkdir/data /zkdir/datalog`, so a copy of a volume that has
+	// never held a running ZooKeeper would have the temp container start
+	// against directories that are not there.
+	EnsureVolumeDirs(ctx context.Context, volume string, dirs []string) error
 	VolumeSize(ctx context.Context, volume string) (int64, error)
 	// VolumeFreeBytes is the free space of the filesystem that holds the
 	// namespace's data volumes (on macOS/Windows desktops that is the Docker
@@ -116,6 +157,18 @@ type Env interface {
 
 	// --- images ------------------------------------------------------------
 	PullImage(ctx context.Context, image string, progress func(percent float64)) error
+	// ImageExists reports whether the image is already in the LOCAL image
+	// store. It answers a plain bool and no error on purpose: the underlying
+	// capability (docker.Client.ImageExists) cannot distinguish "not here" from
+	// "I could not ask", and neither can the only caller act on the difference.
+	// A false therefore means "not known to be here", which is the honest input
+	// to a WARNING and never to a refusal.
+	//
+	// It exists for the rollback preflight (ruling on OPEN QUESTION 6): the
+	// previous image really ran, so the pin names a real registry — but the
+	// host may have pruned it and the registry may be unreachable, and without
+	// this the failure would land after the namespace is already stopped.
+	ImageExists(ctx context.Context, image string) bool
 
 	// --- namespace ---------------------------------------------------------
 	IsRunning() bool
@@ -124,8 +177,20 @@ type Env interface {
 	// ReloadAndStart regenerates from the current pins and, when start is
 	// true, starts the namespace.
 	ReloadAndStart(ctx context.Context, start bool) error
-	// GenerateDefFor runs the generator with the dependency's pin forced to
-	// image and returns that dependency's def — the namespace's REAL config
-	// binds and Cmd for the version in question.
-	GenerateDefFor(id deps.ID, image string) (appdef.ApplicationDef, error)
+	// GenerateDefFor runs the generator with the dependency's pin forced to st
+	// and returns that dependency's def — the namespace's REAL config binds
+	// and Cmd for the version in question, mounting the volume of the
+	// generation st names.
+	//
+	// Both halves of st are load-bearing and an implementation must verify
+	// both: a temp container started on somebody else's data under a false
+	// name is not a surprise to debug later. The image guard has always been
+	// there; the volume one is what a copy-upgrade plan rests on, since every
+	// container it runs must land on the COPY and never on the source.
+	GenerateDefFor(id deps.ID, st deps.DependencyState) (appdef.ApplicationDef, error)
 }
+
+// TempContainerOpts is everything about a temp container that is not in the
+// generated def. See deps.TempContainerOpts for what each field is for and
+// why the type is declared over there rather than here.
+type TempContainerOpts = deps.TempContainerOpts

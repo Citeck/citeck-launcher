@@ -339,6 +339,23 @@ type ContainerCreateOpts struct {
 	// standing between an interrupted migration and two servers contending for
 	// one PGDATA.
 	NoRestart bool
+	// ExtraHosts are "<hostname>:<ip>" entries written into the container's
+	// own /etc/hosts (Docker's --add-host).
+	//
+	// It exists for one measured reason. RabbitMQ derives its node name from
+	// the container hostname and its data directory contains that node name,
+	// so a temp container started under an override name boots a fresh EMPTY
+	// node inside the data volume and reports healthy. Pinning the node
+	// identity takes RABBITMQ_NODENAME in the environment AND an /etc/hosts
+	// entry for the host part of that node name — the environment alone fails
+	// the boot with "epmd error for host rabbitmq: nxdomain".
+	//
+	// The reason it is /etc/hosts and not a Hostname override is the other
+	// half: moby registers a container's hostname as a DNS name on a
+	// user-defined network, so overriding it would make a temp container
+	// answer to the app's own name on the namespace network. An /etc/hosts
+	// entry is container-local and invisible to that DNS.
+	ExtraHosts []string
 }
 
 // CreateContainer creates a container from an ApplicationDef.
@@ -643,6 +660,7 @@ func buildHostConfig(
 		PortBindings:  portBindings,
 		NetworkMode:   container.NetworkMode(networkName),
 		RestartPolicy: restartPolicyFor(app, opts),
+		ExtraHosts:    opts.ExtraHosts,
 		LogConfig: container.LogConfig{
 			Type: "json-file",
 			Config: map[string]string{
@@ -1226,14 +1244,37 @@ type ContainerStat struct {
 	MemoryPercent float64
 }
 
-// RunUtilsContainer runs a command in a temporary launcher-utils container with the given bind mounts.
+// utilsRunTimeout is how long RunUtilsContainer waits for a utils command to
+// finish. It is right for everything that call has ever run — `cat`, `du`,
+// `df`, a `find` — all of which are seconds on any real volume.
+//
+// It is emphatically NOT right for a volume COPY, which is minutes to hours,
+// and a copy killed at five minutes looks exactly like a copy that failed.
+// That caller uses RunUtilsContainerWithTimeout with its own budget.
+const utilsRunTimeout = 5 * time.Minute
+
+// RunUtilsContainer runs a command in a temporary launcher-utils container
+// with the given bind mounts, bounded by utilsRunTimeout.
+func (c *Client) RunUtilsContainer(ctx context.Context, cmd, binds []string) (output string, exitCode int, err error) {
+	return c.RunUtilsContainerWithTimeout(ctx, cmd, binds, utilsRunTimeout)
+}
+
+// RunUtilsContainerWithTimeout runs a command in a temporary launcher-utils
+// container with the given bind mounts and an explicit wait budget.
 // It creates the container, starts it, waits for exit, captures output, and removes it.
 //
 // err is reserved for a failure to RUN the command — the create, the start,
 // the wait, or an inspect that would not say how the container exited (see
 // utilsExitCode). A command that ran and failed reports its own exit code with
 // a nil err, which is the distinction every caller is written against.
-func (c *Client) RunUtilsContainer(ctx context.Context, cmd, binds []string) (output string, exitCode int, err error) {
+//
+// The timeout is the caller's because the callers are not alike: the seconds
+// a `cat` takes and the hours a volume copy takes cannot share one number, and
+// a copy cut short at the `cat`'s budget is indistinguishable from a copy that
+// failed — on a namespace the migration has already stopped.
+func (c *Client) RunUtilsContainerWithTimeout(ctx context.Context, cmd, binds []string,
+	timeout time.Duration,
+) (output string, exitCode int, err error) {
 	utilsImage := config.UtilsImage()
 
 	containerName := c.ContainerName("launcher-utils-tmp")
@@ -1265,7 +1306,7 @@ func (c *Client) RunUtilsContainer(ctx context.Context, cmd, binds []string) (ou
 		return "", -1, fmt.Errorf("start utils container: %w", startErr)
 	}
 
-	if waitErr := c.WaitForContainerExit(ctx, containerID, 5*time.Minute); waitErr != nil {
+	if waitErr := c.WaitForContainerExit(ctx, containerID, timeout); waitErr != nil {
 		return "", -1, fmt.Errorf("wait for utils container: %w", waitErr)
 	}
 

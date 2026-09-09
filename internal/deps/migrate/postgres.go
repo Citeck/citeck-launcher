@@ -46,263 +46,73 @@ type PostgresMigrator struct{}
 // and the web dialog maps over both, so a nil slice — the ordinary happy path
 // — would marshal as `null` and crash the confirm screen into the error
 // boundary. See NewPreflightResult.
-func (PostgresMigrator) Preflight(ctx context.Context, env Env, from, to string) PreflightResult {
+func (m PostgresMigrator) Preflight(ctx context.Context, env Env, from, to string) PreflightResult {
 	res := NewPreflightResult(from, to)
 	res.WasRunning = env.IsRunning()
-	fromV, toV, problems := postgresVersionProblems(from, to)
+	fromV, toV, problems := versionProblems(deps.Postgres, from, to)
 	if len(problems) > 0 {
 		res.Problems = append(res.Problems, problems...)
 		return res
 	}
-	oldLayout := deps.PostgresLayoutFor(fromV.Major)
-	newLayout := deps.PostgresLayoutFor(toV.Major)
-	// The whole design rests on the new cluster being built NEXT TO the old
-	// data: that is what makes the rollback a deletion and the old version
-	// still bootable. Two majors that share one volume would have this build
-	// the new cluster on top of the source — and offer to delete it first, as
-	// an existing target volume. Refuse, before the existing-volume warning can
-	// name the user's own data.
-	//
-	// The two shapes of that refusal are NOT interchangeable, and the layouts
-	// themselves tell them apart. IDENTICAL layouts (16 → 17: one volume, one
-	// cluster at its root) mean the new data would be the very same directory
-	// as the old — a genuine in-place upgrade, which is not what this does.
-	// Layouts that differ but SHARE a volume (18 → 19, which PostgresLayoutFor
-	// separates by subdirectory) are a pair this release simply has no plan
-	// for: the generator holds the version back and reports it, so telling the
-	// operator about volumes sends them after a disk problem they do not have
-	// — what they need is a newer launcher.
-	if newLayout.Volume == oldLayout.Volume {
-		if newLayout == oldLayout {
-			res.Problems = append(res.Problems, InPlaceUpgradeProblem(from, to, oldLayout.Volume))
-		} else {
-			res.Problems = append(res.Problems, UnsupportedPairProblem(from, to))
-		}
+	if ok, problem := m.SupportsPair(fromV, toV); !ok {
+		res.Problems = append(res.Problems, pairRefusal(problem, from, to))
 		return res
 	}
+	d, _ := deps.Lookup(deps.Postgres) // registered: versionProblems just asked
+	srcVolume, dstVolume, _ := migrationVolumes(d, env.DependencyState(deps.Postgres))
+	oldLayout := deps.PostgresLayoutFor(fromV.Major)
+	newLayout := deps.PostgresLayoutFor(toV.Major)
 
-	res.checkDataVersion(ctx, env, oldLayout, fromV.Major, from)
-	res.checkSpace(ctx, env, oldLayout.Volume)
-	res.checkExistingTarget(ctx, env, newLayout)
+	res.checkDataVersion(ctx, env, oldLayout, srcVolume, fromV.Major, from)
+	res.checkSpace(ctx, env, srcVolume)
+	res.checkExistingTarget(ctx, env, dstVolume, newLayout.PGVersionRel)
 
 	res.OK = len(res.Problems) == 0
 	return res
 }
 
-// Supports reports whether THIS launcher's PostgreSQL plan can move the data
-// from one version to the other. It is the migrator's half of the question the
-// registry's Migratable() answers for the dependency as a whole: the registry
-// says "PostgreSQL is migratable", this says "…and 17 → 19 is a pair I know
-// how to do".
+// SupportsPair reports whether THIS launcher's PostgreSQL plan can move the
+// data from one version to the other. It is the migrator's half of the
+// question the registry's Migratable() answers for the dependency as a whole:
+// the registry says "PostgreSQL is migratable", this says "…and 17 → 19 is a
+// pair I know how to do".
 //
-// The rule is the plan's own precondition, stated once: the new cluster is
-// built NEXT TO the old data, so the two majors must land in DIFFERENT
-// VOLUMES — a subdirectory of the same volume is not enough, since the
-// rollback is "delete the volume we made" — and the move must go forwards.
-// Anything else is reported to the operator as "update the launcher" rather
-// than offered and then refused by the preflight with a message about volumes.
+// There is exactly ONE rule left: the move must go forwards.
 //
-// WHEN A THIRD LAYOUT IS ADDED (a PostgreSQL major that moves the data again),
-// exactly three places change together: deps.PostgresLayoutFor (the volume,
-// mount path, PGDATA and PG_VERSION path of the new layout), the pin-seeding
-// probe (deps_seed.go's postgresPinFromData, which walks the layouts looking
-// for PG_VERSION) — and nothing here, because this and the preflight's
-// same-volume refusal both derive from PostgresLayoutFor.
-func (PostgresMigrator) Supports(from, to deps.Version) bool {
-	if to.Major <= from.Major {
-		return false
-	}
-	return deps.PostgresLayoutFor(from.Major).Volume != deps.PostgresLayoutFor(to.Major).Volume
-}
-
-// postgresVersionProblems answers whether this move is one the migrator is
-// for. "Significant enough to need a migration" is asked of the REGISTRY's
-// descriptor, not restated here: the generator holds a namespace back on
-// exactly that rule, so a migrator with its own copy of it could offer to
-// migrate something the generator applies silently, or refuse something the
-// generator is holding.
-func postgresVersionProblems(from, to string) (fromV, toV deps.Version, problems []string) {
-	fromV, okFrom := deps.ParseImageVersion(from)
-	toV, okTo := deps.ParseImageVersion(to)
-	d, registered := deps.Lookup(deps.Postgres)
-	switch {
-	case !registered:
-		problems = append(problems, "PostgreSQL is not a registered dependency")
-	case !okFrom:
-		problems = append(problems, fmt.Sprintf("cannot read a version out of the current image %q", from))
-	case !okTo:
-		problems = append(problems, fmt.Sprintf("cannot read a version out of the target image %q", to))
-	case !d.IsBreaking(fromV, toV):
-		problems = append(problems, fmt.Sprintf(
-			"%s → %s is not a major upgrade; it applies on the next start without a migration", from, to))
-	case toV.Major < fromV.Major:
-		problems = append(problems, fmt.Sprintf(
-			"%s → %s is a downgrade; the launcher does not migrate data backwards", from, to))
-	}
-	return fromV, toV, problems
+// It used to have a second — the two majors had to land in DIFFERENT VOLUMES,
+// because the new cluster is built next to the old data and the rollback is
+// "delete the volume we made". The volume is no longer derived from the
+// version at all: it is a persistent generation counter in the pin, and
+// migrationVolumes always answers the NEXT generation, so every migration
+// lands in a fresh volume by construction. 18 → 19 and 16 → 17 are therefore
+// supported like any other forward pair, and the in-place refusal that used to
+// describe them has no state left to describe.
+//
+// The empty problem string is deliberate and is the contract stated in the
+// Migrator interface: a pair this refuses is one the shared version checks
+// have ALREADY worded better (a downgrade, a same-major move that needs no
+// migration at all), and returning a second sentence here would overwrite the
+// accurate one with a generic "update the launcher".
+func (PostgresMigrator) SupportsPair(from, to deps.Version) (ok bool, problem string) {
+	return to.Major > from.Major, ""
 }
 
 // checkDataVersion reads PG_VERSION out of the data volume. The pin says what
 // the namespace THINKS it runs; PG_VERSION is what is actually on disk, and a
 // dump taken by the wrong major would fail — or worse, succeed against data
 // the pin does not describe.
-func (res *PreflightResult) checkDataVersion(ctx context.Context, env Env, layout deps.PostgresLayout, major int, from string) {
-	raw, err := env.ReadVolumeFile(ctx, layout.Volume, layout.PGVersionRel)
+func (res *PreflightResult) checkDataVersion(ctx context.Context, env Env, layout deps.PostgresLayout, volume string, major int, from string) {
+	raw, err := env.ReadVolumeFile(ctx, volume, layout.PGVersionRel)
 	if err != nil {
-		res.Problems = append(res.Problems, fmt.Sprintf("cannot read %s/%s: %v", layout.Volume, layout.PGVersionRel, err))
+		res.Problems = append(res.Problems, fmt.Sprintf("cannot read %s/%s: %v", volume, layout.PGVersionRel, err))
 		return
 	}
 	onDisk, convErr := strconv.Atoi(strings.TrimSpace(raw))
 	if convErr != nil || onDisk != major {
 		res.Problems = append(res.Problems, fmt.Sprintf(
 			"PG_VERSION in volume %s is %q but the namespace is pinned to %s",
-			layout.Volume, strings.TrimSpace(raw), from))
+			volume, strings.TrimSpace(raw), from))
 	}
-}
-
-// checkSpace measures the data and the two filesystems a migration writes to:
-// the one holding the scratch directory the dump goes into, and the one
-// holding the data volumes the new cluster is built in.
-//
-// Whether those are TWO filesystems or one is the whole question. On a
-// macOS/Windows desktop they are genuinely two — the dump lands on the host
-// while the cluster is built inside the Docker VM — and each is checked
-// against its own half. On a server they are usually ONE (both are
-// directories under the namespace's volumes base), and there the two halves
-// COEXIST: the scratch directory is removed only in Finalize, after the
-// commit, and the new cluster is built next to the old data. Checking each
-// half against the same free space independently therefore passed a disk with
-// room for only one of them, and the migration died of ENOSPC in the middle of
-// the restore with the namespace already stopped. The rollback saves the data,
-// but that is precisely the failure this function exists to prevent before
-// anything is stopped — so on one filesystem it demands the SUM.
-//
-// The sum is deliberately (data + margin) twice rather than something derived
-// from an assumed compression ratio: a logical dump is normally far smaller
-// than the cluster it came from (175 MiB out of 387 MB, measured), but nothing
-// guarantees it, and a guessed ratio that is wrong once is an out-of-space
-// restore. Charging the dump a full data size is honest and checkable.
-func (res *PreflightResult) checkSpace(ctx context.Context, env Env, volume string) {
-	size, err := env.VolumeSize(ctx, volume)
-	if err != nil {
-		res.Problems = append(res.Problems, fmt.Sprintf("cannot measure volume %s: %v", volume, err))
-	}
-	res.DataSizeBytes = size
-	res.RequiredHostBytes = size + SpaceMargin
-	res.RequiredVolumeBytes = size + SpaceMargin
-	res.SharedFilesystem = res.dumpSharesTheVolumesFilesystem(ctx, env, volume)
-
-	host, vol := res.measureFree(ctx, env, volume)
-	if !res.SharedFilesystem {
-		if host.short(res.RequiredHostBytes) {
-			res.Problems = append(res.Problems, fmt.Sprintf(
-				"not enough free space on the host for the dump: need %s, free %s",
-				fsutil.FormatBytes(res.RequiredHostBytes), fsutil.FormatBytes(host.bytes)))
-		}
-		if vol.short(res.RequiredVolumeBytes) {
-			res.Problems = append(res.Problems, fmt.Sprintf(
-				"not enough free space on the volume filesystem for the new cluster: need %s, free %s",
-				fsutil.FormatBytes(res.RequiredVolumeBytes), fsutil.FormatBytes(vol.bytes)))
-		}
-		return
-	}
-	res.RequiredTotalBytes = res.RequiredHostBytes + res.RequiredVolumeBytes
-	if free := smallerFree(host, vol); free.short(res.RequiredTotalBytes) {
-		res.Problems = append(res.Problems, fmt.Sprintf(
-			"not enough free space: the dump (%s) and the new cluster (%s) are written to the same "+
-				"filesystem and exist side by side, so it needs %s free, and has %s",
-			fsutil.FormatBytes(res.RequiredHostBytes), fsutil.FormatBytes(res.RequiredVolumeBytes),
-			fsutil.FormatBytes(res.RequiredTotalBytes), fsutil.FormatBytes(free.bytes)))
-	}
-}
-
-// dumpSharesTheVolumesFilesystem asks the env whether the two writes land on
-// one filesystem, and answers a FAILURE to tell with "yes".
-//
-// The two mistakes are not symmetric. Over-requiring on filesystems that are
-// genuinely separate refuses a migration that would have fit — annoying, and
-// the message says exactly what it wanted — while under-requiring runs a
-// restore out of space on a namespace that is already stopped. So the doubt
-// takes the safe direction, and says so: a requirement the operator cannot
-// derive from their own disk needs its reason on the same screen.
-func (res *PreflightResult) dumpSharesTheVolumesFilesystem(ctx context.Context, env Env, volume string) bool {
-	shared, err := env.DumpSharesFilesystemWithVolumes(ctx, volume)
-	if err != nil {
-		res.Warnings = append(res.Warnings, fmt.Sprintf(
-			"cannot tell whether the dump and the data volumes are on the same filesystem (%v); "+
-				"requiring room for both at once", err))
-		return true
-	}
-	return shared
-}
-
-// freeSpace is one filesystem's measurement. ok is what separates "0 bytes
-// free" from "not measured": a measurement that failed is already a problem,
-// and checking a requirement against its zero would report a full disk on top
-// of it.
-type freeSpace struct {
-	bytes int64
-	ok    bool
-}
-
-// short reports whether the measured filesystem cannot hold need. An
-// unmeasured one is never short — it is unknown.
-func (f freeSpace) short(need int64) bool { return f.ok && f.bytes < need }
-
-// smallerFree is the honest reading of two measurements of ONE filesystem:
-// they are taken by two different mechanisms (a host statfs, and df inside a
-// container on a desktop), so if they ever disagree the smaller one is the one
-// that can run out.
-func smallerFree(a, b freeSpace) freeSpace {
-	if !a.ok {
-		return b
-	}
-	if b.ok && b.bytes < a.bytes {
-		return b
-	}
-	return a
-}
-
-// measureFree records both filesystems' free space on the result and returns
-// it. A measurement that fails is a problem in its own right and leaves that
-// half unknown rather than zero.
-func (res *PreflightResult) measureFree(ctx context.Context, env Env, volume string) (host, vol freeSpace) {
-	if free, err := env.HostFreeBytes(); err != nil {
-		res.Problems = append(res.Problems, "cannot measure free space on the host: "+err.Error())
-	} else {
-		res.FreeHostBytes, host = free, freeSpace{bytes: free, ok: true}
-	}
-	if free, err := env.VolumeFreeBytes(ctx, volume); err != nil {
-		res.Problems = append(res.Problems, "cannot measure free space on the volume filesystem: "+err.Error())
-	} else {
-		res.FreeVolumeBytes, vol = free, freeSpace{bytes: free, ok: true}
-	}
-	return host, vol
-}
-
-// checkExistingTarget reports an existing target volume as a WARNING, not a
-// problem: it is usually the leftover of an attempt that failed, and deleting
-// it is exactly what the user wants — once they have seen its size and
-// version and said so.
-func (res *PreflightResult) checkExistingTarget(ctx context.Context, env Env, layout deps.PostgresLayout) {
-	exists, err := env.VolumeExists(ctx, layout.Volume)
-	if err != nil {
-		res.Problems = append(res.Problems, fmt.Sprintf("cannot check volume %s: %v", layout.Volume, err))
-		return
-	}
-	if !exists {
-		return
-	}
-	ev := ExistingVolume{Name: layout.Volume, Version: "empty"}
-	ev.SizeBytes, _ = env.VolumeSize(ctx, layout.Volume)
-	if v, rerr := env.ReadVolumeFile(ctx, layout.Volume, layout.PGVersionRel); rerr == nil {
-		ev.Version = strings.TrimSpace(v)
-	}
-	// Only the STRUCTURED field: both consumers render ExistingTargetVolume
-	// themselves — the CLI through deps.preflight.existingVolume and the dialog
-	// through the replace-volume checkbox's label — so an English prose warning
-	// beside it is the same sentence twice, once untranslated.
-	res.ExistingTargetVolume = &ev
 }
 
 // pgRun is the state one plan run carries between its steps: the paths it
@@ -313,8 +123,10 @@ type pgRun struct {
 	env             Env
 	from, to        string
 	opts            PlanOptions
-	oldLayout       deps.PostgresLayout
-	newLayout       deps.PostgresLayout
+	fromGen         int
+	toGen           int
+	srcVolume       string
+	dstVolume       string
 	dumpDir         string
 	dumpHostPath    string
 	dumpInContainer string
@@ -336,13 +148,23 @@ func (m PostgresMigrator) Plan(ctx context.Context, env Env, from, to string, op
 		return nil, deps.MigrationJournal{}, fmt.Errorf(
 			"volume %s already exists; confirm replacing it to continue", pre.ExistingTargetVolume.Name)
 	}
-	fromV, _ := deps.ParseImageVersion(from) // both parsed in the preflight above
-	toV, _ := deps.ParseImageVersion(to)
+	d, ok := deps.Lookup(deps.Postgres)
+	if !ok {
+		return nil, deps.MigrationJournal{}, errors.New("PostgreSQL is not a registered dependency")
+	}
+	// The pin is read ONCE, here, and both volume names and the generation the
+	// commit will move to are derived from that one reading — the journal then
+	// carries them, so nothing later has to re-derive them from a world the
+	// migration is rewriting.
+	state := env.DependencyState(deps.Postgres)
+	srcVolume, dstVolume, toGen := migrationVolumes(d, state)
 	dumpDir := env.DumpDir(deps.Postgres)
 	r := &pgRun{
 		env: env, from: from, to: to, opts: opts,
-		oldLayout:       deps.PostgresLayoutFor(fromV.Major),
-		newLayout:       deps.PostgresLayoutFor(toV.Major),
+		fromGen:         state.Gen(),
+		toGen:           toGen,
+		srcVolume:       srcVolume,
+		dstVolume:       dstVolume,
 		dumpDir:         dumpDir,
 		dumpHostPath:    filepath.Join(dumpDir, dumpFile),
 		dumpInContainer: path.Join(dumpMount, dumpFile),
@@ -351,6 +173,7 @@ func (m PostgresMigrator) Plan(ctx context.Context, env Env, from, to string, op
 	}
 	j := deps.MigrationJournal{
 		ID: deps.Postgres, From: from, To: to, DumpDir: dumpDir,
+		ToVolumeGen: toGen, SourceVolume: srcVolume,
 		WasRunning: env.IsRunning(), StartedAt: time.Now(),
 	}
 	plan := &Plan{
@@ -367,10 +190,11 @@ func (m PostgresMigrator) Plan(ctx context.Context, env Env, from, to string, op
 			{ID: "stop-target", Run: r.stopTarget},
 		},
 		Rollback: func(ctx context.Context, j *deps.MigrationJournal) error { return RollbackPostgres(ctx, env, j) },
-		// Only OldVolume: the engine fills the identity (id, from, to) from the
-		// journal, which is the single source of truth for what moved where.
-		Result: func(*deps.MigrationJournal) deps.MigrationResult {
-			return deps.MigrationResult{OldVolume: r.oldLayout.Volume}
+		// Only OldVolume, and it is read from the JOURNAL rather than from the
+		// run: the engine fills the identity (id, from, to) from there too,
+		// which is the single source of truth for what moved where.
+		Result: func(j *deps.MigrationJournal) deps.MigrationResult {
+			return deps.MigrationResult{OldVolume: j.SourceVolume}
 		},
 		Finalize: r.finalize,
 	}
@@ -378,43 +202,45 @@ func (m PostgresMigrator) Plan(ctx context.Context, env Env, from, to string, op
 }
 
 func (r *pgRun) stopNamespace(ctx context.Context, _ *Journal, _ StepProgress) error {
-	if !r.env.IsRunning() {
-		return nil
-	}
-	if err := r.env.StopNamespace(ctx); err != nil {
-		return fmt.Errorf("stop namespace: %w", err)
-	}
-	return nil
+	return stopNamespaceStep(ctx, r.env)
 }
 
 func (r *pgRun) pullImage(ctx context.Context, _ *Journal, p StepProgress) error {
-	if err := r.env.PullImage(ctx, r.to, func(pct float64) { p(pct, "pulling "+r.to) }); err != nil {
-		return fmt.Errorf("pull %s: %w", r.to, err)
-	}
-	return nil
+	return pullImageStep(ctx, r.env, r.to, p)
 }
 
+// startSource runs the OLD image on the generation the pin names — the
+// namespace's own data volume, which this plan reads and never writes: it is
+// what pg_dumpall is pointed at, and it is the one place the two plans differ
+// in kind (the copy-upgrade plan never starts anything on the source at all).
 func (r *pgRun) startSource(ctx context.Context, _ *Journal, p StepProgress) error {
 	if err := r.env.EnsureDir(r.dumpDir); err != nil {
 		return fmt.Errorf("create %s: %w", r.dumpDir, err)
 	}
-	return r.startTemp(ctx, r.from, SrcContainer, p)
+	return r.startTemp(ctx, r.from, r.fromGen, SrcContainer, p)
 }
 
+// startTarget runs the NEW image on the generation the migration creates.
 func (r *pgRun) startTarget(ctx context.Context, _ *Journal, p StepProgress) error {
-	return r.startTemp(ctx, r.to, DstContainer, p)
+	return r.startTemp(ctx, r.to, r.toGen, DstContainer, p)
 }
 
 // startTemp runs one temp container from the namespace's REAL generated def
-// for that image — same volume, same PGDATA, same init files — under another
-// name. Publishing ports is the Env's business to strip: two temp containers
-// and the namespace's own postgres would otherwise fight over one host port.
-func (r *pgRun) startTemp(ctx context.Context, image, name string, p StepProgress) error {
-	def, err := r.env.GenerateDefFor(deps.Postgres, image)
+// for that image and that volume generation — same mount path, same PGDATA,
+// same init files — under another name. The generation is what decides which
+// volume the container lands on, so it is an argument and never a default:
+// the source container must see the old cluster and the target container must
+// see the volume the plan just created. Publishing ports is the Env's business
+// to strip: two temp containers and the namespace's own postgres would
+// otherwise fight over one host port.
+func (r *pgRun) startTemp(ctx context.Context, image string, gen int, name string, p StepProgress) error {
+	def, err := r.env.GenerateDefFor(deps.Postgres, deps.DependencyState{Image: image, VolumeGen: gen})
 	if err != nil {
 		return fmt.Errorf("generate the %s definition: %w", image, err)
 	}
-	if _, err := r.env.RunAppDef(ctx, def, name, []string{r.dumpBind}); err != nil {
+	if _, err := r.env.RunAppDef(ctx, def, deps.TempContainerOpts{
+		Name: name, ExtraBinds: []string{r.dumpBind},
+	}); err != nil {
 		return fmt.Errorf("start %s: %w", name, err)
 	}
 	return waitReady(ctx, r.env, name, readyTimeout, readyPoll, p)
@@ -457,37 +283,11 @@ func (r *pgRun) stopTarget(ctx context.Context, _ *Journal, _ StepProgress) erro
 	return nil
 }
 
-// createVolume makes the new data volume.
-//
-// Two rules meet here. (1) Write-ahead: the journal claims the volume BEFORE
-// it is created, so a crash between the two cannot leave a volume the rollback
-// does not know about. (2) The existence check is repeated even though the
-// preflight did it, because a volume can appear in between — and if it did,
-// and the user has not confirmed replacing it, the step FAILS instead of
-// deleting data nobody agreed to lose. The order of the two is deliberate: the
-// refusal happens BEFORE anything is journaled, because a journal that claims
-// somebody else's volume would have the rollback delete it.
+// createVolume makes the volume this plan writes into; the write-ahead
+// discipline and the refusal of a volume that appeared after the preflight are
+// shared with the other plan (createTargetVolume).
 func (r *pgRun) createVolume(ctx context.Context, j *Journal, _ StepProgress) error {
-	exists, err := r.env.VolumeExists(ctx, r.newLayout.Volume)
-	if err != nil {
-		return fmt.Errorf("check volume %s: %w", r.newLayout.Volume, err)
-	}
-	if exists && !r.opts.ReplaceExistingVolume {
-		return fmt.Errorf("volume %s already exists and replacing it was not confirmed", r.newLayout.Volume)
-	}
-	j.CreatedVolume = r.newLayout.Volume
-	if err := j.Persist(); err != nil {
-		return fmt.Errorf("journal the new volume: %w", err)
-	}
-	if exists {
-		if err := r.env.RemoveVolume(ctx, r.newLayout.Volume); err != nil {
-			return fmt.Errorf("remove the existing volume %s: %w", r.newLayout.Volume, err)
-		}
-	}
-	if err := r.env.CreateVolume(ctx, r.newLayout.Volume); err != nil {
-		return fmt.Errorf("create volume %s: %w", r.newLayout.Volume, err)
-	}
-	return nil
+	return createTargetVolume(ctx, r.env, j, r.dstVolume, r.opts.ReplaceExistingVolume)
 }
 
 // restore replays the dump. psql runs WITHOUT ON_ERROR_STOP (see

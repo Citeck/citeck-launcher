@@ -203,4 +203,55 @@ describe('DependencyUpgradeBanner', () => {
     fireEvent.click(screen.getByRole('button', { name: /details/i }))
     expect(onDetails).toHaveBeenCalled()
   })
+  // Three groups, not two. `migratable` is FALSE for a vendor-blocked pair as
+  // well as for one this launcher has no plan for, so it cannot be the
+  // discriminator: without `blocked` the banner promised "update the launcher"
+  // for a hop no launcher will ever take.
+  it('splits a vendor-blocked hop from the ones a newer launcher would fix', () => {
+    setUpgrades([
+      migratable,
+      { id: 'zookeeper', app: 'zookeeper', from: 'zookeeper:3.8.4', to: 'zookeeper:3.9.5', migratable: false },
+      {
+        id: 'rabbitmq', app: 'rabbitmq', from: 'rabbitmq:4.1.8-management', to: 'rabbitmq:4.3.5-management',
+        migratable: false, blocked: 'RabbitMQ does not support 4.1 → 4.3 in one step: upgrade to 4.2 first.',
+      },
+    ])
+    render(<DependencyUpgradeBanner onDetails={() => {}} />)
+    const text = screen.getByRole('status').textContent ?? ''
+    expect(text).toMatch(/postgres postgres:17\.5 → postgres:18/)
+    expect(text).toMatch(/zookeeper zookeeper:3\.8\.4 → zookeeper:3\.9\.5/)
+    expect(text).toMatch(/rabbitmq rabbitmq:4\.1\.8-management → rabbitmq:4\.3\.5-management/)
+    expect(text).not.toMatch(/deps\.banner\./)
+    // The blocked one is NOT in the "a newer launcher would fix this" clause.
+    const needLauncher = text.slice(text.indexOf('zookeeper zookeeper'))
+    expect(needLauncher).not.toMatch(/rabbitmq/)
+  })
+
+  // A bundle offering something OLDER than the data is not an upgrade: there
+  // is nothing to migrate and nothing to wait for, so advertising it would
+  // make the user open a dialog to learn there is nothing to do.
+  it('leaves a backwards hold out of the banner entirely', () => {
+    setUpgrades([{
+      id: 'postgres', app: 'postgres', from: 'postgres:18.6', to: 'postgres:17.5',
+      migratable: false, bundleOlder: true,
+    }])
+    const { container } = render(<DependencyUpgradeBanner onDetails={() => {}} />)
+    expect(container).toBeEmptyDOMElement()
+  })
+
+  // ...and it must not resurrect a dismissed banner either: the dismissal is
+  // keyed by what is on OFFER, and a backwards hold is not on offer.
+  it('does not re-raise a dismissed banner because a backwards hold appeared', () => {
+    setUpgrades([migratable])
+    const { rerender } = render(<DependencyUpgradeBanner onDetails={() => {}} />)
+    fireEvent.click(screen.getByRole('button', { name: /dismiss/i }))
+    expect(screen.queryByRole('status')).toBeNull()
+
+    setUpgrades([
+      migratable,
+      { id: 'postgres', app: 'postgres', from: 'postgres:18.6', to: 'postgres:17.5', migratable: false, bundleOlder: true },
+    ])
+    rerender(<DependencyUpgradeBanner onDetails={() => {}} />)
+    expect(screen.queryByRole('status')).toBeNull()
+  })
 })

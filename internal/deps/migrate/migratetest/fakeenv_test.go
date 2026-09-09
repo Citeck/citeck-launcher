@@ -33,11 +33,11 @@ func TestTheFakeRecordsWhatAPlanDidToTheWorld(t *testing.T) {
 	require.NoError(t, f.PullImage(ctx, "postgres:18", nil))
 	assert.Equal(t, []string{"postgres:18"}, f.Pulled())
 
-	def, err := f.GenerateDefFor(deps.Postgres, "postgres:18")
+	def, err := f.GenerateDefFor(deps.Postgres, deps.DependencyState{Image: "postgres:18"})
 	require.NoError(t, err)
 	assert.NotEmpty(t, def.Ports, "the default def keeps a published port for the env to strip")
 	def.Ports = nil
-	id, err := f.RunAppDef(ctx, def, "pg-dst", []string{"/host/d:/citeck/d"})
+	id, err := f.RunAppDef(ctx, def, deps.TempContainerOpts{Name: "pg-dst", ExtraBinds: []string{"/host/d:/citeck/d"}})
 	require.NoError(t, err)
 	assert.Equal(t, "id-pg-dst", id)
 	running, err := f.ContainerRunning(ctx, "pg-dst")
@@ -119,10 +119,10 @@ func TestTheFakeRoutesExecThroughExecFn(t *testing.T) {
 // hide a real Env that does not.
 func TestTheFakeStripsPublishedPortsItself(t *testing.T) {
 	f := New()
-	def, err := f.GenerateDefFor(deps.Postgres, "postgres:18")
+	def, err := f.GenerateDefFor(deps.Postgres, deps.DependencyState{Image: "postgres:18"})
 	require.NoError(t, err)
 	require.NotEmpty(t, def.Ports)
-	_, err = f.RunAppDef(context.Background(), def, "pg-dst", nil)
+	_, err = f.RunAppDef(context.Background(), def, deps.TempContainerOpts{Name: "pg-dst"})
 	require.NoError(t, err)
 	assert.Empty(t, f.Containers["pg-dst"].Ports, "the started container has no published port")
 	assert.Equal(t, 1, f.PortsStripped())
@@ -130,7 +130,7 @@ func TestTheFakeStripsPublishedPortsItself(t *testing.T) {
 
 	// A def that never had ports is not counted, so the counter really means
 	// "the env had to strip something".
-	_, err = f.RunAppDef(context.Background(), appdef.ApplicationDef{Image: "postgres:18"}, "pg-src", nil)
+	_, err = f.RunAppDef(context.Background(), appdef.ApplicationDef{Image: "postgres:18"}, deps.TempContainerOpts{Name: "pg-src"})
 	require.NoError(t, err)
 	assert.Equal(t, 1, f.PortsStripped())
 }
@@ -179,14 +179,14 @@ func TestTheFakeInjectsAnErrorPerCall(t *testing.T) {
 	f.FailOn["rmdir:/host/x"] = boom
 	f.FailOn["rmdirempty:/host/x"] = boom
 	f.FailOn["readfile:postgres2/PG_VERSION"] = boom
-	f.FailOn["gendef:postgres:18"] = boom
+	f.FailOn["gendef:"+DefKey("postgres:18", 1)] = boom
 	f.FailOn["stopns:"] = boom
 	f.FailOn["reload:"] = boom
 
 	require.ErrorIs(t, f.CreateVolume(ctx, "postgres3"), boom)
 	require.ErrorIs(t, f.RemoveVolume(ctx, "postgres3"), boom)
 	require.ErrorIs(t, f.StopRemove(ctx, "pg-src"), boom)
-	_, err := f.RunAppDef(ctx, appdef.ApplicationDef{}, "pg-dst", nil)
+	_, err := f.RunAppDef(ctx, appdef.ApplicationDef{}, deps.TempContainerOpts{Name: "pg-dst"})
 	require.ErrorIs(t, err, boom)
 	running, err := f.ContainerRunning(ctx, "pg-src")
 	require.ErrorIs(t, err, boom)
@@ -197,7 +197,7 @@ func TestTheFakeInjectsAnErrorPerCall(t *testing.T) {
 	require.ErrorIs(t, f.RemoveDirIfEmpty("/host/x"), boom)
 	_, err = f.ReadVolumeFile(ctx, "postgres2", "PG_VERSION")
 	require.ErrorIs(t, err, boom)
-	_, err = f.GenerateDefFor(deps.Postgres, "postgres:18")
+	_, err = f.GenerateDefFor(deps.Postgres, deps.DependencyState{Image: "postgres:18"})
 	require.ErrorIs(t, err, boom)
 	require.ErrorIs(t, f.StopNamespace(ctx), boom)
 	require.ErrorIs(t, f.ReloadAndStart(ctx, true), boom)

@@ -54,7 +54,7 @@ func generateMongoDB(ctx *NsGenContext) {
 	app.Kind = appdef.KindThirdParty
 	// No extra alias needed — Kotlin uses "mongo" as the hostname
 	app.AddPort(fmt.Sprintf("27017:%d", MongoPort))
-	app.AddVolume("mongo2:/data/db")
+	app.AddVolume(resolveDependencyVolume(ctx, deps.MongoDB) + ":/data/db")
 	app.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: "512m"}}
 	// StartupCondition: same exec probe as liveness, polled until ping
 	// succeeds. Without this mongo jumps straight to RUNNING the moment the
@@ -124,7 +124,16 @@ func generatePgAdmin(ctx *NsGenContext) {
 }
 
 func generatePostgres(ctx *NsGenContext) {
-	fallback := "postgres:18"
+	// Concrete down to the patch, like every other default this launcher has
+	// ever shipped. "postgres:18" was the one floating tag in its history: it
+	// arrived with the dependency-pin feature itself, and a floating default
+	// lets the launcher's own choice move without a release. That matters most
+	// where it is guaranteed to be re-resolved — the migration engine's
+	// pull-image step pulls unconditionally, so a floating tag would resolve
+	// afresh at the exact moment the data is being moved. 18.6 is the digest
+	// "postgres:18" already points at (probed 2026-09-09), so this is a rename
+	// today and a guard from the day 18.7 is pushed. See TestInfraImageDefaults.
+	fallback := "postgres:18.6"
 	if ctx.WorkspaceConfig != nil && ctx.WorkspaceConfig.Postgres.Image != "" {
 		fallback = ctx.WorkspaceConfig.Postgres.Image
 	}
@@ -153,7 +162,7 @@ func generatePostgres(ctx *NsGenContext) {
 		app.AddEnv("PGDATA", layout.PGData)
 	}
 	app.AddPort(fmt.Sprintf("14523:%d", PGPort))
-	app.AddVolume(layout.Volume + ":" + layout.MountPath)
+	app.AddVolume(resolveDependencyVolume(ctx, deps.Postgres) + ":" + layout.MountPath)
 	app.AddVolume("./postgres/init_db_and_user.sh:/init_db_and_user.sh")
 	app.AddVolume("./postgres/postgresql.conf:/etc/postgresql/postgresql.conf")
 	app.AddVolume("./postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf")
@@ -199,7 +208,13 @@ func generateZookeeper(ctx *NsGenContext) {
 	app.AddEnv("ALLOW_ANONYMOUS_LOGIN", "yes")
 	app.AddEnv("ZOO_DATA_DIR", "/citeck/zookeeper/data")
 	app.AddEnv("ZOO_DATA_LOG_DIR", "/citeck/zookeeper/datalog")
-	app.AddVolume("zookeeper2:/citeck/zookeeper")
+	// One name, two mounts: the init container mkdirs the data and datalog
+	// subdirectories the two ZOO_* env vars point at, so it must be handed the
+	// volume the server will read. GetHashInput carries an init container's
+	// IMAGE only, so a divergence here would recreate nothing and surface as a
+	// server that cannot write its snapshots.
+	zkVolume := resolveDependencyVolume(ctx, deps.Zookeeper)
+	app.AddVolume(zkVolume + ":/citeck/zookeeper")
 	app.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: "512m"}}
 	// StartupCondition: poll the admin server until /commands/ruok is up. The
 	// ZK process opens 2181 in a few seconds but the embedded Jetty admin
@@ -231,7 +246,7 @@ func generateZookeeper(ctx *NsGenContext) {
 	app.InitContainers = []appdef.InitContainerDef{{
 		Image:   UtilsImage,
 		Cmd:     []string{"/bin/sh", "-c", "mkdir -p /zkdir/data /zkdir/datalog"},
-		Volumes: []string{"zookeeper2:/zkdir"},
+		Volumes: []string{zkVolume + ":/zkdir"},
 	}}
 }
 
@@ -264,7 +279,7 @@ func generateRabbitMQ(ctx *NsGenContext) {
 	app.AddEnv("RABBITMQ_DEFAULT_PASS", ctx.Secrets.AdminPasswordOrDefault())
 	app.AddEnv("RABBITMQ_DEFAULT_VHOST", "/")
 	app.AddEnv("RABBITMQ_MANAGEMENT_ALLOW_WEB_ACCESS", "true")
-	app.AddVolume("rabbitmq2:/var/lib/rabbitmq")
+	app.AddVolume(resolveDependencyVolume(ctx, deps.RabbitMQ) + ":/var/lib/rabbitmq")
 	// 1g (was 512m; the legacy value was 256m) — two independent pressures set the
 	// floor:
 	//   (1) Startup: RabbitMQ 4.x + management plus the transient Erlang VMs the
@@ -286,6 +301,26 @@ func generateRabbitMQ(ctx *NsGenContext) {
 	// 10-defaultuser.conf, so RABBITMQ_DEFAULT_USER/PASS are preserved.
 	ctx.Files["rabbitmq/citeck-memory.conf"] = []byte(rabbitmqMemoryConf(rabbitmqMemLimit))
 	app.AddVolume("./rabbitmq/citeck-memory.conf:/etc/rabbitmq/conf.d/20-citeck-memory.conf:ro")
+	// The probe deliberately leaves InitialDelaySeconds unset, and the default
+	// waitForProbe applies (5 s) is load-bearing rather than cosmetic. This
+	// exec lands as ROOT — the image declares no USER, it drops privileges
+	// inside its own entrypoint — with HOME=/var/lib/rabbitmq, and an Erlang
+	// tool that finds no $HOME/.erlang.cookie CREATES one, mode 0400, owned by
+	// whoever ran it. The entrypoint's repair (`find /var/lib/rabbitmq
+	// ! -user rabbitmq -exec chown rabbitmq {} +`) runs ONCE, before the
+	// server, so a cookie that appears after it is never chowned and the
+	// broker — which runs as 999 — dies with
+	// `Error when reading /var/lib/rabbitmq/.erlang.cookie: eacces`.
+	// Measured on a fresh volume in this exact shape (4.1.2-management and
+	// 4.2.9-management alike): the broker writes its own cookie ~1.3 s after
+	// container start, an exec at <= 0.45 s kills it 7 times out of 7, and one
+	// at >= 0.78 s never did. The first probe fires ~5 s after the container
+	// started (T14 dispatches the probe worker the moment StartContainer
+	// returns), so the margin is ~10x — and it holds under starvation, because
+	// the exec's own Erlang VM is slowed by the same shortage: at --cpus 0.25
+	// and --cpus 0.1 an exec at t0+5.004 s left the cookie at 999:999 and the
+	// broker running, 8 runs out of 8. Do NOT set InitialDelaySeconds to 0
+	// here, and do not front this probe with an un-delayed one.
 	app.StartupConditions = []appdef.StartupCondition{
 		{Probe: &appdef.AppProbeDef{
 			Exec:             &appdef.ExecProbeDef{Command: []string{"rabbitmq-diagnostics", "check_running", "-q"}},

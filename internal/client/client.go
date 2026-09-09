@@ -383,6 +383,28 @@ func (c *DaemonClient) MigrateDependency(id string, replaceExisting bool) (*api.
 	return &dto, err
 }
 
+// DependencyRollbackPreflight runs the pre-checks for putting one dependency
+// back on the state its last completed migration recorded as previous. It
+// measures nothing — a rollback creates nothing — but it does read a file out
+// of a data volume, which on a desktop is a utils container, hence the
+// timeout-free client. It changes nothing, so it is safe to call before asking
+// the user to confirm.
+func (c *DaemonClient) DependencyRollbackPreflight(id string) (*migrate.PreflightResult, error) {
+	var res migrate.PreflightResult
+	err := c.getLong(api.DependencyRollbackPreflightPath(id), &res)
+	return &res, err
+}
+
+// RollbackDependency starts a dependency rollback. The daemon answers 202 once
+// the preflight has passed; progress arrives as the same deps_migration_*
+// events a migration reports — three steps, with Kind "rollback" — so a caller
+// that wants to follow it must subscribe FIRST.
+func (c *DaemonClient) RollbackDependency(id string) (*api.ActionResultDto, error) {
+	var dto api.ActionResultDto
+	err := c.postLong(api.DependencyRollbackPath(id), nil, &dto)
+	return &dto, err
+}
+
 // UpgradeNamespace changes the bundle version and triggers a reload.
 func (c *DaemonClient) UpgradeNamespace(bundleRef string) (*api.ActionResultDto, error) {
 	var dto api.ActionResultDto

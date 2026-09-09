@@ -17,6 +17,7 @@ import (
 	"maps"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -51,7 +52,20 @@ type FakeEnv struct {
 	VolSize    map[string]int64
 	Files      map[string]int64 // host path → size
 	Dirs       map[string]bool
-	Defs       map[string]appdef.ApplicationDef // image → def returned by GenerateDefFor
+	// Defs is keyed by DefKey(image, gen) — the pair GenerateDefFor is asked
+	// for. A def registered for one generation is NOT returned for another:
+	// the whole point of the key is that "which volume does this container
+	// mount" is answerable in a test.
+	Defs map[string]appdef.ApplicationDef
+	// States is the namespace's pin record per dependency, what
+	// Env.DependencyState answers. An id that is absent answers the zero
+	// value, whose Gen() is 1 — a namespace that has never migrated.
+	States map[deps.ID]deps.DependencyState
+	// LocalImages is the local image store ImageExists answers from. An image
+	// that is absent is "not known to be here" — the same reading the real Env
+	// gives it — which is what makes the rollback preflight's pull warning
+	// testable in both directions.
+	LocalImages map[string]bool
 
 	FreeHost   int64
 	FreeVolume int64
@@ -69,29 +83,51 @@ type FakeEnv struct {
 	// "run:pg-src", "running:pg-src", "createvol:postgres3",
 	// "pull:postgres:18", "stopns:", "reload:", "rmvol:postgres3", "rm:pg-src",
 	// "mkdir:/host/x", "rmdir:/host/x", "rmdirempty:/host/x",
-	// "gendef:postgres:18", "readfile:postgres2/PG_VERSION", "sharedfs:".
+	// "gendef:postgres:18@1", "readfile:postgres2/PG_VERSION", "sharedfs:",
+	// "copy:postgres2", "voldirs:rabbitmq3", "volexists:postgres2".
 	FailOn map[string]error
 
 	log           []string
 	pulled        []string
 	reloads       []bool
 	portsStripped int
+	runOpts       map[string]RunRecord
+	volDirs       map[string][]string
 }
+
+// RunRecord is what RunAppDef was asked for, beyond the def: the temp
+// container's extra environment and its /etc/hosts aliases. A test asserts on
+// it because those two are the RabbitMQ node-identity pin, and both halves are
+// mandatory — the env without the alias is a broker that will not boot.
+type RunRecord struct {
+	Env       map[string]string
+	HostAlias map[string]string
+	Binds     []string
+}
+
+// DefKey is the key GenerateDefFor answers on: an image AND the generation of
+// the volume the def must mount. It is exported because a test arranging Defs
+// has to spell the same key the fake looks up.
+func DefKey(image string, gen int) string { return image + "@" + strconv.Itoa(gen) }
 
 // New returns a FakeEnv with empty inventories and plenty of free space.
 func New() *FakeEnv {
 	return &FakeEnv{
-		NS:         "ns1",
-		Containers: map[string]appdef.ApplicationDef{},
-		Volumes:    map[string]map[string]string{},
-		VolSize:    map[string]int64{},
-		Files:      map[string]int64{},
-		Dirs:       map[string]bool{},
-		Defs:       map[string]appdef.ApplicationDef{},
-		FreeHost:   100 << 30,
-		FreeVolume: 100 << 30,
-		DumpRoot:   "/host/deps-migration",
-		FailOn:     map[string]error{},
+		NS:          "ns1",
+		Containers:  map[string]appdef.ApplicationDef{},
+		Volumes:     map[string]map[string]string{},
+		VolSize:     map[string]int64{},
+		Files:       map[string]int64{},
+		Dirs:        map[string]bool{},
+		Defs:        map[string]appdef.ApplicationDef{},
+		States:      map[deps.ID]deps.DependencyState{},
+		LocalImages: map[string]bool{},
+		runOpts:     map[string]RunRecord{},
+		volDirs:     map[string][]string{},
+		FreeHost:    100 << 30,
+		FreeVolume:  100 << 30,
+		DumpRoot:    "/host/deps-migration",
+		FailOn:      map[string]error{},
 	}
 }
 
@@ -180,9 +216,10 @@ func (f *FakeEnv) NamespaceID() string {
 // init_db_and_user.sh action per datasource, and running those against the
 // destination would pre-create every role and database and make the restore
 // fail — so a fake that ran them would be modeling a broken Env.
-func (f *FakeEnv) RunAppDef(_ context.Context, def appdef.ApplicationDef, name string, extra []string) (string, error) {
+func (f *FakeEnv) RunAppDef(_ context.Context, def appdef.ApplicationDef, opts deps.TempContainerOpts) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	name := opts.Name
 	if err := f.failUnderLock("run", name); err != nil {
 		return "", err
 	}
@@ -192,8 +229,23 @@ func (f *FakeEnv) RunAppDef(_ context.Context, def appdef.ApplicationDef, name s
 		f.log = append(f.log, "strip-ports:"+name)
 	}
 	f.Containers[name] = def
-	f.log = append(f.log, "run:"+name+":"+def.Image+":"+strings.Join(extra, ","))
+	f.runOpts[name] = RunRecord{
+		Env:       maps.Clone(opts.Env),
+		HostAlias: maps.Clone(opts.HostAlias),
+		Binds:     slices.Clone(opts.ExtraBinds),
+	}
+	f.log = append(f.log, "run:"+name+":"+def.Image+":"+strings.Join(opts.ExtraBinds, ","))
 	return "id-" + name, nil
+}
+
+// RunOpts returns what RunAppDef was asked for under a container name. It
+// survives StopRemove: a test asserting on the node identity a temp container
+// carried usually only gets to look once the plan has finished with it.
+func (f *FakeEnv) RunOpts(name string) (RunRecord, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	r, ok := f.runOpts[name]
+	return r, ok
 }
 
 // ContainerRunning reports whether RunAppDef put the name in Containers.
@@ -245,6 +297,13 @@ func (f *FakeEnv) StopRemove(_ context.Context, name string) error {
 func (f *FakeEnv) VolumeExists(_ context.Context, v string) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	// The injected failure is not a nicety: the real Env can fail to answer
+	// (a daemon that will not talk), and "cannot check" is a different verdict
+	// from "it is not there" — one is a Docker problem, the other is data the
+	// operator may have deleted themselves.
+	if err := f.failUnderLock("volexists", v); err != nil {
+		return false, err
+	}
 	_, ok := f.Volumes[v]
 	return ok, nil
 }
@@ -272,6 +331,54 @@ func (f *FakeEnv) RemoveVolume(_ context.Context, v string) error {
 	delete(f.VolSize, v)
 	f.log = append(f.log, "rmvol:"+v)
 	return nil
+}
+
+// CopyVolume deep-copies the source volume's file map into dst, creating dst
+// if it is not there, and records "copy:<src>-><dst>".
+//
+// It models the real Env's contract by construction rather than by comment:
+// the source map is only ever READ here, so a plan that leaned on the copy
+// being an alias would see its writes vanish instead of quietly corrupting the
+// namespace's own data in a test that then passed.
+func (f *FakeEnv) CopyVolume(_ context.Context, src, dst string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.failUnderLock("copy", src); err != nil {
+		return err
+	}
+	from, ok := f.Volumes[src]
+	if !ok {
+		return fmt.Errorf("fake: no such volume %s", src)
+	}
+	f.Volumes[dst] = maps.Clone(from)
+	f.VolSize[dst] = f.VolSize[src]
+	f.log = append(f.log, "copy:"+src+"->"+dst)
+	return nil
+}
+
+// EnsureVolumeDirs records the directories asked for, per volume. There is no
+// mode or ownership to model in memory, so what a test can assert is that the
+// plan asked for them, on the COPY, before it started anything on it.
+func (f *FakeEnv) EnsureVolumeDirs(_ context.Context, volume string, dirs []string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.failUnderLock("voldirs", volume); err != nil {
+		return err
+	}
+	if _, ok := f.Volumes[volume]; !ok {
+		return fmt.Errorf("fake: no such volume %s", volume)
+	}
+	f.volDirs[volume] = append(f.volDirs[volume], dirs...)
+	f.log = append(f.log, "voldirs:"+volume+":"+strings.Join(dirs, ","))
+	return nil
+}
+
+// VolumeDirs returns the directories EnsureVolumeDirs was asked to create in a
+// volume, in order.
+func (f *FakeEnv) VolumeDirs(volume string) []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.volDirs[volume]...)
 }
 
 // VolumeSize answers from VolSize (0 for an unknown volume).
@@ -413,6 +520,14 @@ func (f *FakeEnv) PullImage(_ context.Context, img string, progress func(float64
 	return nil
 }
 
+// ImageExists answers from LocalImages. An image nobody arranged is not there,
+// which is the same reading the real Env gives an image it cannot find.
+func (f *FakeEnv) ImageExists(_ context.Context, img string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.LocalImages[img]
+}
+
 // IsRunning reports the fake namespace status.
 func (f *FakeEnv) IsRunning() bool {
 	f.mu.Lock()
@@ -445,17 +560,41 @@ func (f *FakeEnv) ReloadAndStart(_ context.Context, start bool) error {
 	return nil
 }
 
-// GenerateDefFor answers from Defs, or a default postgres def carrying a
-// published port, so every plan that runs a generated def exercises the
-// stripping RunAppDef owes it.
-func (f *FakeEnv) GenerateDefFor(_ deps.ID, image string) (appdef.ApplicationDef, error) {
+// DependencyState answers States; an unpinned dependency is the zero value,
+// whose Gen() is 1.
+func (f *FakeEnv) DependencyState(id deps.ID) deps.DependencyState {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if err := f.failUnderLock("gendef", image); err != nil {
+	return f.States[id]
+}
+
+// GenerateDefFor answers from Defs, keyed by image AND generation, or builds a
+// default def that mounts the generation's volume — so a test that never
+// arranges Defs still gets a def whose volume line says which generation it
+// was generated for, which is what "the temp container mounts the copy" is
+// asserted on.
+func (f *FakeEnv) GenerateDefFor(id deps.ID, st deps.DependencyState) (appdef.ApplicationDef, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	key := DefKey(st.Image, st.Gen())
+	if err := f.failUnderLock("gendef", key); err != nil {
 		return appdef.ApplicationDef{}, err
 	}
-	if d, ok := f.Defs[image]; ok {
+	if d, ok := f.Defs[key]; ok {
 		return d, nil
 	}
-	return appdef.ApplicationDef{Name: "postgres", Image: image, Ports: []string{"14523:5432"}}, nil
+	name := string(id)
+	vol := "vol-" + name
+	if d, ok := deps.Lookup(id); ok {
+		name = d.AppName()
+		if v := deps.VolumeName(d, st.Gen()); v != "" {
+			vol = v
+		}
+	}
+	return appdef.ApplicationDef{
+		Name:    name,
+		Image:   st.Image,
+		Ports:   []string{"14523:5432"},
+		Volumes: []string{vol + ":/data"},
+	}, nil
 }

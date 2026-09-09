@@ -425,7 +425,7 @@ func TestGatedRoutesRefuseLifecycleWorkExceptTheLifecycleRoutes(t *testing.T) {
 // and a migration is rewriting them, so starting the namespace, stopping it, or
 // toggling an app beside either is exactly what the lock exists to prevent.
 func TestLifecycleRoutesAreStillRefusedByASnapshot(t *testing.T) {
-	for _, holder := range []longOpKind{longOpSnapshot, longOpMigration} {
+	for _, holder := range []longOpKind{longOpSnapshot, longOpMigration, longOpDepsRollback} {
 		t.Run(string(holder), func(t *testing.T) {
 			d, mux := newGateTestDaemon(t)
 			require.True(t, d.longOp.TryLock(holder))
@@ -441,6 +441,25 @@ func TestLifecycleRoutesAreStillRefusedByASnapshot(t *testing.T) {
 				assert.Contains(t, rec.Body.String(), holder.busyMessage())
 			}
 			assert.False(t, d.updatePending.Load(), "a refused Start must not queue a pass")
+		})
+	}
+}
+
+// A dependency ROLLBACK refuses every gated route, tolerant ones included, and
+// the refusal must name IT rather than a migration: a rollback opens no journal
+// and appears in none of the places a migration does, so an operator sent
+// looking for one finds nothing.
+func TestEveryGatedRouteRefusesADependencyRollback(t *testing.T) {
+	d, mux := newGateTestDaemon(t)
+	require.True(t, d.longOp.TryLock(longOpDepsRollback))
+	t.Cleanup(d.longOp.Unlock)
+
+	for _, rtc := range gatedRoutes() {
+		t.Run(rtc.handler, func(t *testing.T) {
+			rec := doGatedRequest(t, mux, rtc)
+			require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+			assert.Contains(t, rec.Body.String(), "a dependency rollback is running")
+			assert.NotContains(t, rec.Body.String(), "migration")
 		})
 	}
 }
@@ -548,6 +567,10 @@ func TestLongOpToleranceAllows(t *testing.T) {
 		"a snapshot is restoring the volumes under the namespace")
 	assert.False(t, tolerateLifecycleWork.allows(longOpMigration),
 		"a migration is rewriting the volumes and recreating the containers")
+	assert.False(t, tolerateNothing.allows(longOpDepsRollback))
+	assert.False(t, tolerateLifecycleWork.allows(longOpDepsRollback),
+		"a Start between the rollback's stop and its pin write is re-pinned forward by the RUNNING hook, "+
+			"leaving the new image on the old generation")
 	// A holder that let go between the failed TryLock and the read is refused
 	// like any non-member: the free-lock case belongs to the plain TryLock.
 	assert.False(t, tolerateLifecycleWork.allows(longOpNone))

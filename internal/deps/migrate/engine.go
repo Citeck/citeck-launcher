@@ -45,15 +45,20 @@ const RollbackTimeout = 10 * time.Minute
 type JournalStore interface {
 	MigrationJournal() *deps.MigrationJournal
 	SetMigrationJournal(j *deps.MigrationJournal) error
-	// CommitMigration moves the pin to image, clears the journal and records
-	// res. The engine REQUIRES those three to be one write, and to be atomic in
+	// CommitMigration moves the pin to st, clears the journal and records res.
+	// The engine REQUIRES those three to be one write, and to be atomic in
 	// memory as well as on disk: an implementation that moved the pin and then
 	// failed to persist would have the runtime believe the data is on the new
 	// volume while this engine's failAndRollback deletes it — leaving a brand
 	// new empty cluster standing beside the intact old data. A failed commit
 	// must therefore leave the pin, the journal and the last result exactly as
 	// they were, and say so by returning an error.
-	CommitMigration(id deps.ID, image string, res deps.MigrationResult) error
+	//
+	// st is a PAIR — the image and the volume generation — and the same rule
+	// covers both halves: a commit that moved the image but not the generation
+	// would have the generator mount the OLD volume with the NEW image, which
+	// for PostgreSQL is 18 emitting its layout onto a 17 data directory.
+	CommitMigration(id deps.ID, st deps.DependencyState, res deps.MigrationResult) error
 	// RecordMigrationFailure closes a migration that was fully rolled back:
 	// the verdict is recorded and the journal cleared.
 	//
@@ -186,7 +191,11 @@ func Run(ctx context.Context, store JournalStore, j deps.MigrationJournal, plan 
 	// plan's Result left blank.
 	res.ID, res.From, res.To = jj.ID, jj.From, jj.To
 	res.FinishedAt = time.Now()
-	if err := store.CommitMigration(jj.ID, jj.To, res); err != nil {
+	// Both halves of the pin come from the JOURNAL and from nowhere else: it
+	// was written before the first step, while the world it describes was
+	// still the one the operator confirmed.
+	pin := deps.DependencyState{Image: jj.To, VolumeGen: jj.ToVolumeGen}
+	if err := store.CommitMigration(jj.ID, pin, res); err != nil {
 		return failAndRollback(ctx, store, plan, jj, fmt.Errorf("commit: %w", err))
 	}
 	slog.Info("Dependency migration committed", "dependency", jj.ID, "from", jj.From, "to", jj.To)

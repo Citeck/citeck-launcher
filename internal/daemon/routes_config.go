@@ -222,17 +222,36 @@ func (d *Daemon) handleGetNamespace(w http.ResponseWriter, r *http.Request) {
 	// migration is a daemon-global, namespace-pinned field — reported here only
 	// for the namespace it belongs to, exactly like Updating.
 	for _, u := range act.dependencyUpgrades {
-		dto.DependencyUpgrades = append(dto.DependencyUpgrades, api.DependencyUpgradeDto{
+		// The same three questions dependencyItems asks, in the same order and
+		// through the same helper, because the banner and the dialog must not
+		// disagree about one upgrade: is the DEPENDENCY migratable (the
+		// generator's answer, carried on the upgrade), is THIS PAIR one this
+		// release has a plan for, and is the hop one the dependency's own
+		// VENDOR forbids. The banner headlines all three differently — an
+		// upgrade a click away, one that needs a newer launcher, and one no
+		// launcher will ever perform — so collapsing any two of them
+		// advertises a migration that cannot happen.
+		problem := d.pairProblem(u.ID, u.From, u.To)
+		upgrade := api.DependencyUpgradeDto{
 			ID: string(u.ID), App: u.App, From: u.From, To: u.To,
-			// Two questions, exactly as dependencyItems asks them: is the
-			// DEPENDENCY migratable (the generator's answer, carried on the
-			// upgrade) and is THIS PAIR one this release has a plan for. The
-			// banner headlines the two cases differently — "Dependency upgrade
-			// available" against "Newer launcher needed for" — so an 18 → 19
-			// held back for want of a layout was being advertised as a click
-			// away from migrating.
-			Migratable: u.Migratable && !unsupportedPair(u.ID, u.From, u.To),
-		})
+			// A backwards candidate is excluded here as well as flagged below:
+			// this launcher moves no data backwards, and the migrator states
+			// that refusal with an EMPTY reason (its documented "the preflight
+			// words this better" contract), so `problem == ""` alone would
+			// report a downgrade as an upgrade one click away.
+			Migratable: u.Migratable && problem == "" && !u.BundleOlder,
+			// Carried because a backwards hold is INDISTINGUISHABLE from "a
+			// newer launcher is needed" on the two fields above — Migratable
+			// false (no launcher moves data backwards) with no Blocked (a
+			// backwards move is never asked the vendor's upgrade question) — so
+			// the banner would headline it as an upgrade waiting on a launcher
+			// update. It is not an upgrade at all, and the banner leaves it out.
+			BundleOlder: u.BundleOlder,
+		}
+		if u.VendorBlocked {
+			upgrade.Blocked = problem
+		}
+		dto.DependencyUpgrades = append(dto.DependencyUpgrades, upgrade)
 	}
 	if act.nsConfig != nil {
 		dto.DependencyMigration = d.currentDepsMigration(act.nsConfig.ID)

@@ -3,6 +3,7 @@ package docker
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/moby/moby/api/types/container"
 	"github.com/stretchr/testify/assert"
@@ -52,4 +53,14 @@ func TestASuccessfulInspectReportsTheContainersOwnExitCode(t *testing.T) {
 		require.NoError(t, err, "a container that ran is never an error, whatever its code")
 		assert.Equal(t, want, code)
 	}
+}
+
+// The default utils timeout is what every short-lived probe runs under —
+// `cat` on a PG_VERSION, `du` on a volume, `df`. It is pinned so that raising
+// it for a slow caller is a deliberate act rather than a side effect: the one
+// caller that genuinely needs hours (the dependency migration's volume copy)
+// passes its own budget to RunUtilsContainerWithTimeout instead, and a copy
+// killed at five minutes is indistinguishable from a copy that failed.
+func TestUtilsRunTimeoutIsTheShortProbeBudget(t *testing.T) {
+	assert.Equal(t, 5*time.Minute, utilsRunTimeout)
 }

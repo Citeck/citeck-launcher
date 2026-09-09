@@ -224,6 +224,29 @@ const (
 	// DependencyRequiresLauncherUpdate: breaking, and this launcher has no
 	// migration for it — the pin holds the old image until one ships.
 	DependencyRequiresLauncherUpdate = "requires-launcher-update"
+	// DependencyUpgradeBlocked: breaking, this launcher HAS a migration for
+	// the dependency, and the PAIR itself is refused — by the dependency's own
+	// vendor (RabbitMQ 4.1 → 4.3 in one step), or by data too old to move
+	// (ZooKeeper below 3.5).
+	//
+	// It gets its own value rather than borrowing requires-launcher-update's
+	// because that one's whole meaning is "a newer launcher will fix this",
+	// which here is a lie: nothing the launcher ships would help, and the
+	// operator has an actual next step. StatusDetail says which and what to do.
+	DependencyUpgradeBlocked = "upgrade-blocked"
+	// DependencyBundleOlder: the bundle offers a version OLDER than the one
+	// this namespace's data runs on, across a data format the older version
+	// cannot read (a same-format backwards move — a reverted patch bump — is
+	// not held back at all and never reaches this status).
+	//
+	// It is NOT an upgrade that is held back: there is nothing to migrate and
+	// nothing to wait for, so it must borrow neither upgrade-available's words
+	// nor upgrade-blocked's nor requires-launcher-update's — no launcher will
+	// ever move data backwards, and `citeck deps upgrade` refuses it. The
+	// launcher simply keeps the data where it is and says so; StatusDetail
+	// carries the sentence, and names the rollback when this namespace is the
+	// one that migrated away from exactly that version.
+	DependencyBundleOlder = "bundle-older"
 )
 
 // DependencyDto is one infrastructure dependency of the active namespace.
@@ -239,9 +262,57 @@ type DependencyDto struct {
 	TargetImage   string `json:"targetImage"`
 	TargetVersion string `json:"targetVersion,omitempty"`
 	Status        string `json:"status"`
+	// StatusDetail explains a status a fixed label cannot: today, why a
+	// vendor-forbidden pair is blocked and which intermediate version to take.
+	// Empty for every other status, so a renderer may print it unconditionally.
+	//
+	// It is ENGLISH, like every other sentence built in internal/deps/migrate:
+	// the short status LABEL is a locale key, this is the explanation behind
+	// it. That is a pre-existing property of the migration messages and is
+	// named here so the omission reads as a decision.
+	StatusDetail string `json:"statusDetail,omitempty"`
 	// Migratable reports whether this LAUNCHER has a migration plan for the
 	// dependency at all — independent of whether one is pending.
 	Migratable bool `json:"migratable"`
+	// Rollback is the "go back to what this dependency ran on before the last
+	// migration" offer, absent when there is nothing to go back to.
+	Rollback *DependencyRollbackDto `json:"rollback,omitempty"`
+}
+
+// DependencyRollbackDto is the offer to put one dependency back on the image
+// AND the data-volume generation it ran on before its last completed
+// migration.
+//
+// Absent when there is nothing to go back to (no migration has completed, or
+// the last one was already rolled back — a rollback clears its own target,
+// because there is no roll-forward). Present with Available=false and a
+// Problem when the pin names a target the launcher cannot use: the retained
+// volume is gone, which is a state the launcher actively creates by telling
+// the operator they may reclaim it.
+//
+// It is deliberately not derivable from the migration RESULT: a namespace has
+// one result slot, so migrating a second dependency would erase the first
+// one's offer while its retained volume was still on disk. The offer lives on
+// the pin; only MigratedAt is read from the result.
+type DependencyRollbackDto struct {
+	ToImage   string `json:"toImage"`
+	ToVersion string `json:"toVersion,omitempty"`
+	// Volume is the RETAINED volume the rollback would run on — the one the
+	// migration copied from and never wrote to.
+	Volume string `json:"volume"`
+	// FrozenVolume is the volume the namespace runs on TODAY. A rollback keeps
+	// it and never reads it again, so everything written since the migration
+	// becomes unreachable: that is the whole content of the confirmation.
+	FrozenVolume string `json:"frozenVolume"`
+	// MigratedAt is when the migration being undone finished (epoch ms), or 0
+	// when the result slot no longer holds it — the pin carries the target and
+	// the result carries the date, so a replaced result costs the sentence its
+	// timestamp and nothing else.
+	MigratedAt int64 `json:"migratedAt,omitempty"`
+	Available  bool  `json:"available"`
+	// Problem says why an existing target cannot be used. Empty when
+	// Available.
+	Problem string `json:"problem,omitempty"`
 }
 
 // DependencyMigrationDto is the live progress of the running migration.
@@ -255,6 +326,11 @@ type DependencyMigrationDto struct {
 	StepCount int     `json:"stepCount"`
 	Percent   float64 `json:"percent,omitempty"`
 	Message   string  `json:"message,omitempty"`
+	// Kind discriminates a ROLLBACK from a migration: "" is a migration,
+	// "rollback" is one. The two share this channel on purpose — a rollback is
+	// three steps on the same progress events, so the CLI's renderer and the
+	// dialog's progress screen work unchanged and only the title differs.
+	Kind string `json:"kind,omitempty"`
 }
 
 // DependencyMigrationResultDto is the verdict of the last migration, kept
@@ -270,6 +346,10 @@ type DependencyMigrationResultDto struct {
 	// only) — the launcher never deletes it, so this is what the user needs
 	// to reclaim the space once they trust the new version.
 	OldVolume string `json:"oldVolume,omitempty"`
+	// Kind discriminates a rollback ("rollback") from a migration (""). They
+	// share the one result slot a namespace has, and "17.5 → 18.6 finished"
+	// and "18.6 → 17.5 finished" are otherwise indistinguishable.
+	Kind string `json:"kind,omitempty"`
 }
 
 // DependenciesDto is the dependency list plus whatever a migration has left
@@ -288,11 +368,34 @@ type DependenciesDto struct {
 
 // DependencyUpgradeDto is one held-back upgrade, as carried by NamespaceDto.
 type DependencyUpgradeDto struct {
-	ID         string `json:"id"`
-	App        string `json:"app"`
-	From       string `json:"from"`
-	To         string `json:"to"`
-	Migratable bool   `json:"migratable"`
+	ID   string `json:"id"`
+	App  string `json:"app"`
+	From string `json:"from"`
+	To   string `json:"to"`
+	// Migratable reports that this launcher can move THIS PAIR: it ships a
+	// plan for the dependency and the pair is one the plan accepts.
+	Migratable bool `json:"migratable"`
+	// Blocked is non-empty when the hop is refused by the DEPENDENCY'S OWN
+	// vendor — a refusal a newer launcher would not lift — and carries the
+	// sentence saying so, including the intermediate version to take first
+	// when the vendor documents one.
+	//
+	// It is the discriminator the upgrades banner splits on, and it is not
+	// derivable from Migratable: a blocked pair reports Migratable false (the
+	// launcher genuinely will not move it), so a banner that only asked that
+	// question would file a vendor refusal under "a newer launcher is needed"
+	// and send the operator to update one that would refuse it just the same.
+	Blocked string `json:"blocked,omitempty"`
+	// BundleOlder reports that the held-back candidate is OLDER than what the
+	// data runs on. It is not an upgrade at all, so the upgrades banner leaves
+	// it out entirely rather than filing it under one of its groups.
+	//
+	// Without it the banner had no way to tell: a backwards hold reports
+	// Migratable false (no launcher moves data backwards) and Blocked empty (a
+	// backwards move is never asked the vendor's UPGRADE question), which is
+	// exactly the shape of "a newer launcher is needed" — so the operator
+	// would have been sent to update a launcher that would never apply it.
+	BundleOlder bool `json:"bundleOlder,omitempty"`
 }
 
 // DependencyMigrateRequestDto is the body of POST …/dependencies/{id}/migrate.
@@ -594,6 +697,15 @@ const (
 	// dependency exists but THIS launcher ships no migration plan for it — the
 	// pin holds the old image and the answer is to update the launcher.
 	ErrCodeDependencyNotMigratable = "DEPENDENCY_NOT_MIGRATABLE"
+	// ErrCodeDependencyPairUnsupported is returned (HTTP 409) when this
+	// launcher HAS a migration for the dependency but the DEPENDENCY'S OWN
+	// vendor does not support the requested hop — RabbitMQ 4.1 → 4.3 in one
+	// step, ZooKeeper data older than 3.5.
+	//
+	// It is distinct from ErrCodeDependencyNotMigratable on purpose: that one
+	// means "update the launcher", and here updating the launcher changes
+	// nothing. The body carries what the operator can actually do instead.
+	ErrCodeDependencyPairUnsupported = "DEPENDENCY_PAIR_UNSUPPORTED"
 	// ErrCodeDependencyUpToDate is returned (HTTP 409) when nothing is being
 	// held back for that dependency, so there is nothing to migrate to.
 	ErrCodeDependencyUpToDate = "DEPENDENCY_UP_TO_DATE"
@@ -618,6 +730,21 @@ const (
 	// Start queue's STOPPING arm), so the migration would burn its whole stop
 	// timeout and fail after the user confirmed it.
 	ErrCodeDependencyNamespaceBusy = "DEPENDENCY_NAMESPACE_BUSY"
+	// ErrCodeDependencyBackwards is returned (HTTP 409) by both migration
+	// routes when the bundle's candidate is OLDER than the version the
+	// namespace's data runs on. It is a held-back candidate like any other, so
+	// it reaches the routes as a pending "upgrade" — but there is no upgrade
+	// to run, and the two codes that were reachable before it existed both lie:
+	// DEPENDENCY_NOT_MIGRATABLE says a newer launcher would help (none will
+	// ever move data backwards) and DEPENDENCY_PAIR_UNSUPPORTED reports a
+	// vendor's refusal to a question nobody asked. The body carries the
+	// bundle-older sentence, which names the rollback when there is one.
+	ErrCodeDependencyBackwards = "DEPENDENCY_BACKWARDS"
+	// ErrCodeDependencyNoRollbackTarget is returned (HTTP 409) by the two
+	// rollback routes when the dependency's pin records no previous state:
+	// nothing has migrated it, or it has already been rolled back (a rollback
+	// clears its own target — there is no roll-forward).
+	ErrCodeDependencyNoRollbackTarget = "DEPENDENCY_NO_ROLLBACK_TARGET"
 )
 
 // UpgradeRequestDto is the request body for the namespace upgrade endpoint.

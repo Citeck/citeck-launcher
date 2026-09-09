@@ -20,11 +20,28 @@ import (
 )
 
 const (
-	oldVol = deps.PostgresVolumeLegacy // postgres2
-	newVol = deps.PostgresVolumeV18    // postgres3
 	from17 = "postgres:17.5"
 	to18   = "postgres:18"
 )
+
+// oldVol/newVol are the volumes an UNMIGRATED namespace moves between:
+// generation 1 (what every namespace that exists today runs) and the
+// generation the first migration creates. They are derived from the registry's
+// one naming function rather than spelled out, because a test that hard-coded
+// "postgres2" would keep passing if the formula moved and the product started
+// mounting an empty volume beside real data.
+var (
+	oldVol = deps.VolumeName(postgresDescriptor(), 1) // postgres2
+	newVol = deps.VolumeName(postgresDescriptor(), 2) // postgres3
+)
+
+func postgresDescriptor() deps.Descriptor {
+	d, ok := deps.Lookup(deps.Postgres)
+	if !ok {
+		panic("postgres is not registered")
+	}
+	return d
+}
 
 // envWith17Data is a stopped namespace whose data volume holds a healthy
 // PostgreSQL 17 cluster, with both temp containers scripted to answer like a
@@ -100,48 +117,79 @@ func TestExistingTargetVolumeIsReportedOnlyAsAStructuredField(t *testing.T) {
 	assert.True(t, res.OK, "an existing target volume is a confirmation, not a problem")
 }
 
-// A pair whose two majors share one volume because this launcher has no layout
-// for the newer one is NOT the in-place case: telling the operator about
-// volumes sends them after a disk problem they do not have.
-func TestPreflightRefusesAnUnsupportedPairAsALauncherUpdate(t *testing.T) {
+// 18 → 19 used to be refused with "update the launcher", because both majors
+// mapped into ONE volume and the plan builds the new cluster next to the old
+// data. The volume is no longer a function of the version — it is the pin's
+// generation counter, and a migration always lands in the NEXT generation — so
+// the pair is now an ordinary forward move and the refusal has no state left
+// to describe.
+func TestEighteenToNineteenIsNowSupported(t *testing.T) {
 	env := envWith17Data()
-	env.Volumes[newVol] = map[string]string{"18/docker/PG_VERSION": "18\n"}
+	env.Volumes[oldVol] = map[string]string{"18/docker/PG_VERSION": "18\n"}
 	res := PostgresMigrator{}.Preflight(context.Background(), env, to18, "postgres:19")
-	assert.False(t, res.OK)
-	joined := strings.Join(res.Problems, "\n")
-	assert.Contains(t, joined, "update the launcher")
-	assert.NotContains(t, joined, "separate volume")
+	assert.True(t, res.OK, res.Problems)
+	assert.Empty(t, res.Problems)
 }
 
-// The other same-volume refusal — a genuine in-place pair (16 → 17, one
-// cluster at the root of one volume) — has to name an exit too. Its REASON
-// differs from the unsupported pair's (those two majors really do share a
-// volume), but the operator's position is identical: nothing on this stand
-// changes it, and a message that only explains the volume layout sends them
-// looking for a disk problem they do not have. It must also say what happens
-// meanwhile — the namespace goes on running the major it has.
-func TestTheInPlaceRefusalNamesAnExitAndWhatKeepsRunning(t *testing.T) {
+// 16 → 17 share one LAYOUT (one cluster at the root of the volume), which used
+// to make them an in-place upgrade this plan refused. With the counter they
+// are two different volumes like any other pair, so the plan runs — and this
+// pins the volumes it moves between, since "the new cluster is built NEXT TO
+// the old data" is the whole reason the rollback can be a deletion.
+func TestSameLayoutMajorsMigrateIntoTheNextGeneration(t *testing.T) {
 	env := envWith17Data()
 	env.Volumes[oldVol]["PG_VERSION"] = "16\n"
-	res := PostgresMigrator{}.Preflight(context.Background(), env, "postgres:16", "postgres:17")
-	assert.False(t, res.OK)
-	joined := strings.Join(res.Problems, "\n")
-	assert.Contains(t, joined, "separate volume", "the reason this plan cannot do it")
-	assert.Contains(t, joined, "update the launcher", "the only lever the operator has")
-	assert.Contains(t, joined, "postgres:16", "what the namespace keeps running meanwhile")
+	env.ExecFn = migratetest.PostgresExec(map[string]migratetest.PostgresInventory{"": migratetest.HealthyPostgres()})
+	plan, j, err := PostgresMigrator{}.Plan(context.Background(), env, "postgres:16", "postgres:17", PlanOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, oldVol, j.SourceVolume)
+	assert.Equal(t, 2, j.ToVolumeGen)
+
+	st := &fakeStore{}
+	require.NoError(t, Run(context.Background(), st, j, plan, nil))
+	assert.Contains(t, env.Log(), "createvol:"+newVol, "the copy goes into the next generation")
+	assert.Contains(t, env.Volumes, oldVol, "the old data is left where it is")
+	assert.Equal(t, deps.DependencyState{Image: "postgres:17", VolumeGen: 2}, st.pin)
 }
 
-// Supports is the migrator's own precondition — different volumes, forwards —
-// and it is what the daemon asks before it offers an upgrade at all.
-func TestPostgresMigratorSupports(t *testing.T) {
+// UnsupportedPairProblem has no producer for PostgreSQL any more, and that is
+// correct rather than dead code to tidy up: it is the message a future
+// layout-changing major needs, and SupportsPair's contract is what keeps it
+// reachable. So it is pinned directly.
+func TestUnsupportedPairProblemNamesTheOnlyLeverTheOperatorHas(t *testing.T) {
+	msg := UnsupportedPairProblem("postgres:18", "postgres:19")
+	assert.Contains(t, msg, "postgres:18")
+	assert.Contains(t, msg, "postgres:19")
+	assert.Contains(t, msg, "update the launcher")
+}
+
+// SupportsPair is the migrator's own precondition, and with the generation
+// counter there is exactly one rule left: forwards. It is what the daemon asks
+// before it offers an upgrade at all.
+//
+// The empty problem string is part of the contract: every pair this refuses is
+// one the shared version checks word better (a downgrade, a same-major move
+// that needs no migration), and a second sentence here would overwrite the
+// accurate one with "update the launcher".
+func TestPostgresSupportsEveryForwardMajor(t *testing.T) {
 	v := func(major int) deps.Version { return deps.Version{Major: major} }
 	m := PostgresMigrator{}
-	assert.True(t, m.Supports(v(17), v(18)), "the pair the launcher was built for")
-	assert.True(t, m.Supports(v(16), v(18)))
-	assert.False(t, m.Supports(v(18), v(19)), "no layout for 19 yet")
-	assert.False(t, m.Supports(v(16), v(17)), "one volume: in place, not a migration")
-	assert.False(t, m.Supports(v(18), v(17)), "backwards")
-	assert.False(t, m.Supports(v(18), v(18)))
+	for _, c := range []struct {
+		from, to int
+		want     bool
+		why      string
+	}{
+		{17, 18, true, "the pair the launcher was built for"},
+		{16, 18, true, "two majors at once"},
+		{18, 19, true, "a layout this release has no special knowledge of"},
+		{16, 17, true, "one layout, but never one volume"},
+		{18, 17, false, "backwards"},
+		{18, 18, false, "not a move at all"},
+	} {
+		ok, problem := m.SupportsPair(v(c.from), v(c.to))
+		assert.Equal(t, c.want, ok, "%d → %d: %s", c.from, c.to, c.why)
+		assert.Empty(t, problem, "the preflight words every refusal better")
+	}
 }
 
 func TestPreflightProblems(t *testing.T) {
@@ -154,7 +202,7 @@ func TestPreflightProblems(t *testing.T) {
 	t.Run("not breaking", func(t *testing.T) {
 		res := PostgresMigrator{}.Preflight(ctx, envWith17Data(), from17, "postgres:17.11")
 		assert.False(t, res.OK)
-		assert.Contains(t, strings.Join(res.Problems, "\n"), "not a major upgrade")
+		assert.Contains(t, strings.Join(res.Problems, "\n"), "does not need a migration")
 	})
 	t.Run("downgrade", func(t *testing.T) {
 		env := envWith17Data()
@@ -162,19 +210,6 @@ func TestPreflightProblems(t *testing.T) {
 		res := PostgresMigrator{}.Preflight(ctx, env, to18, from17)
 		assert.False(t, res.OK)
 		assert.Contains(t, strings.Join(res.Problems, "\n"), "downgrade")
-	})
-	// Two majors that share one data volume (anything below 18) would have the
-	// plan build the new cluster in the volume holding the old data — and then
-	// offer to DELETE it as a leftover. The migrator only ever moves data into
-	// a separate volume, so it refuses instead.
-	t.Run("target major shares the old volume", func(t *testing.T) {
-		env := envWith17Data()
-		env.Volumes[oldVol]["PG_VERSION"] = "16\n"
-		res := PostgresMigrator{}.Preflight(ctx, env, "postgres:16", "postgres:17")
-		assert.False(t, res.OK)
-		assert.Contains(t, strings.Join(res.Problems, "\n"), "separate volume")
-		assert.Nil(t, res.ExistingTargetVolume, "the source volume is not offered for deletion")
-		assert.Empty(t, res.Warnings)
 	})
 	t.Run("data major mismatch", func(t *testing.T) {
 		env := envWith17Data()
@@ -255,7 +290,7 @@ func TestPostgresPlanHappyPath(t *testing.T) {
 		"the temp container runs the namespace's real def with the scratch dir bound in")
 	assert.Equal(t, 2, env.PortsStripped(), "both temp containers got the generated def, ports and all")
 
-	assert.Equal(t, to18, st.pin)
+	assert.Equal(t, deps.DependencyState{Image: to18, VolumeGen: 2}, st.pin)
 	require.Len(t, st.commits, 1)
 	assert.Equal(t, oldVol, st.commits[0].OldVolume)
 	assert.Contains(t, env.Volumes, oldVol, "the old volume is never touched")
@@ -438,7 +473,7 @@ func TestExistingTargetVolumeRequiresConfirmation(t *testing.T) {
 
 	st, err := runPlan(t, env, PlanOptions{ReplaceExistingVolume: true})
 	require.NoError(t, err)
-	assert.Equal(t, to18, st.pin)
+	assert.Equal(t, deps.DependencyState{Image: to18, VolumeGen: 2}, st.pin)
 	joined := strings.Join(env.Log(), "\n")
 	assert.Less(t, strings.Index(joined, "rmvol:"+newVol), strings.Index(joined, "createvol:"+newVol))
 }
@@ -636,11 +671,12 @@ func TestTheTargetContainerMountsTheVolumeThePlanCreated(t *testing.T) {
 	for _, c := range []struct {
 		image string
 		major int
-	}{{from17, 17}, {to18, 18}} {
+		gen   int
+	}{{from17, 17, 1}, {to18, 18, 2}} {
 		layout := deps.PostgresLayoutFor(c.major)
-		env.Defs[c.image] = appdef.ApplicationDef{
+		env.Defs[migratetest.DefKey(c.image, c.gen)] = appdef.ApplicationDef{
 			Name: "postgres", Image: c.image,
-			Volumes: []string{layout.Volume + ":" + layout.MountPath},
+			Volumes: []string{deps.VolumeName(postgresDescriptor(), c.gen) + ":" + layout.MountPath},
 		}
 	}
 	// A temp container is gone by the time the run returns, so its mounts are

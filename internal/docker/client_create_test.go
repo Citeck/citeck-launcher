@@ -386,3 +386,50 @@ func TestCreateOptionsRejectAnUnparsableContainerPort(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not-a-port")
 }
+
+// TestExtraHostsReachTheContainerAndNotTheNetwork pins the mechanism that
+// gives a temp container the app's NODE identity without giving it the app's
+// DNS identity.
+//
+// RabbitMQ derives its node name from the container hostname and its data
+// directory contains that node name, so a temp container running under the
+// override name boots a fresh EMPTY node inside the data volume and reports
+// healthy. Pinning the node identity needs the node name in the environment
+// AND a container-local /etc/hosts entry for its host part — the environment
+// alone fails the boot with "epmd error for host rabbitmq: nxdomain"
+// (measured). ExtraHosts is that second half.
+//
+// It is deliberately NOT a Hostname override: moby registers a container's
+// hostname as a DNS name on a user-defined network, so overriding it would
+// make a temp container answer to "rabbitmq" on the namespace network. Both
+// halves of that are asserted here — the hostname and the network aliases
+// stay the TEMP name — because the whole point of choosing /etc/hosts was
+// that it is container-local and invisible to Docker's DNS.
+func TestExtraHostsReachTheContainerAndNotTheNetwork(t *testing.T) {
+	c := &Client{namespace: "prod"}
+	app := appdef.ApplicationDef{Name: "rabbitmq", Image: "rabbitmq:4.1.2-management"}
+
+	got, err := c.buildCreateOptions(context.Background(), app, "", ContainerCreateOpts{
+		Name:       "depsmig-src",
+		ExtraHosts: []string{"rabbitmq:127.0.0.1"},
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"rabbitmq:127.0.0.1"}, got.HostConfig.ExtraHosts)
+	assert.Equal(t, "depsmig-src", got.Config.Hostname,
+		"the DNS identity stays the temp one: /etc/hosts is container-local, a hostname is not")
+	assert.Equal(t, []string{"depsmig-src"},
+		got.NetworkingConfig.EndpointsConfig["citeck_network_prod"].Aliases)
+}
+
+// A container the launcher creates for the namespace itself must carry no
+// /etc/hosts entries of ours: the zero ContainerCreateOpts is what every app
+// container is built from, and an entry leaking in there would shadow the
+// namespace network's own DNS for that name.
+func TestAnOrdinaryContainerGetsNoExtraHosts(t *testing.T) {
+	c := &Client{namespace: "prod"}
+	got, err := c.buildCreateOptions(context.Background(),
+		appdef.ApplicationDef{Name: "rabbitmq", Image: "rabbitmq:4.1.2-management"}, "", ContainerCreateOpts{})
+	require.NoError(t, err)
+	assert.Empty(t, got.HostConfig.ExtraHosts)
+}

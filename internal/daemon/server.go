@@ -267,7 +267,7 @@ type Daemon struct {
 	// real PostgresMigrator drives containers, dumps and volumes — unreachable
 	// from unit tests). nil in production, where migratorFor answers from the
 	// registry. Same pattern as planInputsFn.
-	depsMigratorFn func(env migrate.Env) depsMigrator
+	depsMigratorFn func(id deps.ID) migrate.Migrator
 	// depsEnvFn is the same kind of seam for the migration Env itself, used by
 	// the crash-recovery tests (migratetest.FakeEnv). nil in production —
 	// depsEnvFor falls back to newDepsEnv.
@@ -738,16 +738,17 @@ func (d *Daemon) doReloadEx(forceGitPull, startNotRegenerate, refreshImages bool
 	// a volume restored by hand) gets its pin before this generation runs.
 	// Persisting here is right, unlike on the load path: the runtime exists
 	// and its status is live, so a persist writes the truth.
-	pins, seededPins := resolveDependencyPins(d.bgCtx, act.runtime.DependencyPins(),
+	pins, seededPins := resolveDependencyPins(d.bgCtx, act.runtime.DependencyStates(),
 		dockerDependencyProbe{dc: depsDockerOf(act.dockerClient), volumesBase: act.volumesBase},
 		namespaceDependencies(nsCfg))
-	for id, img := range seededPins {
-		slog.Info("Dependency pin seeded on reload", "ns", nsID, "dependency", id, "image", img)
-		act.runtime.SetDependencyPin(id, img)
+	for id, st := range seededPins {
+		slog.Info("Dependency pin seeded on reload", "ns", nsID, "dependency", id,
+			"image", st.Image, "volumeGen", st.Gen())
+		act.runtime.SetDependencyState(id, st)
 	}
 
 	var genOpts namespace.GenerateOpts
-	genOpts.DependencyPins = pins
+	genOpts.DependencyStates = pins
 	genOpts.SecretReader = d.nsSecretReader()
 	genOpts.DetachedApps = act.runtime.ManualStoppedApps()
 	// File edits are merged onto their templates inside Generate (both disk and
@@ -970,6 +971,8 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET "+api.Dependencies, d.handleListDependencies)
 	mux.HandleFunc("GET /api/v1/namespace/dependencies/{id}/preflight", d.handleDependencyPreflight)
 	mux.HandleFunc("POST /api/v1/namespace/dependencies/{id}/migrate", d.handleDependencyMigrate)
+	mux.HandleFunc("GET /api/v1/namespace/dependencies/{id}/rollback/preflight", d.handleDependencyRollbackPreflight)
+	mux.HandleFunc("POST /api/v1/namespace/dependencies/{id}/rollback", d.handleDependencyRollback)
 	mux.HandleFunc("GET /api/v1/diagnostics-file", d.handleDiagnosticsFile)
 
 	// Config

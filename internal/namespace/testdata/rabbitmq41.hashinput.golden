@@ -1,0 +1,14 @@
+name=rabbitmq
+image=rabbitmq:4.1.2-management
+cmd=
+shmSize=
+vch=8dht34499y4
+env:CITECK_EXPORT_DIR=/citeck/export
+env:RABBITMQ_DEFAULT_PASS=admin
+env:RABBITMQ_DEFAULT_USER=admin
+env:RABBITMQ_DEFAULT_VHOST=/
+env:RABBITMQ_MANAGEMENT_ALLOW_WEB_ACCESS=true
+vol=rabbitmq2:/var/lib/rabbitmq
+vol=./rabbitmq/citeck-memory.conf:/etc/rabbitmq/conf.d/20-citeck-memory.conf:ro
+vol=./export/rabbitmq:/citeck/export
+mem=1g

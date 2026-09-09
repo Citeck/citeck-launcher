@@ -83,7 +83,7 @@ func (r *Runtime) persistState() error {
 //
 //   - An inline mutator that cleared r.dirty on a failed write lost the
 //     mutation AND whatever unrelated change was pending with it. For a
-//     dependency pin that is how 17 data reaches 18: after SetDependencyPin
+//     dependency pin that is how 17 data reaches 18: after SetDependencyState
 //     the in-memory pin already equals the running container's image, so
 //     syncDependencyPinsUnderLock (pin writer #1) finds nothing to re-flag and
 //     the pin survives in memory only, until the process restarts.

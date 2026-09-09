@@ -50,7 +50,13 @@ export function DependencyUpgradeBanner({ onDetails }: Props) {
   const resultAt = useDepsStore((s) => s.result?.at ?? 0)
   const { t } = useTranslation()
 
-  const upgradeKey = upgradeSetKey(upgrades)
+  // A bundle offering something OLDER than the data is NOT an upgrade: there
+  // is nothing to migrate and nothing to wait for, so advertising it would
+  // make the user open a dialog to learn there is nothing to do. It is left
+  // out before the key is computed as well, or its appearance would resurrect
+  // a banner the user dismissed for a set that has not changed.
+  const offered = (upgrades ?? []).filter((u) => !u.bundleOlder)
+  const upgradeKey = upgradeSetKey(offered)
   useEffect(() => {
     // Best-effort: the daemon answers this from memory, and a failure here has
     // no user-facing action (the dialog reports its own). The store serves the
@@ -96,11 +102,22 @@ export function DependencyUpgradeBanner({ onDetails }: Props) {
     )
   }
 
-  if (!upgrades?.length || dismissedKey === upgradeKey) return null
+  if (!offered.length || dismissedKey === upgradeKey) return null
 
-  const migratable = upgrades.filter((u) => u.migratable)
-  const needLauncher = upgrades.filter((u) => !u.migratable)
+  // Three groups, because there are three different answers. `migratable` is
+  // FALSE for a vendor-blocked pair as well as for a dependency this launcher
+  // has no plan for, so it cannot tell them apart on its own — and promising
+  // "update the launcher" for a hop no launcher will ever take sends the
+  // operator somewhere that cannot help.
+  const migratable = offered.filter((u) => u.migratable && !u.blocked)
+  const blocked = offered.filter((u) => !!u.blocked)
+  const needLauncher = offered.filter((u) => !u.migratable && !u.blocked)
   const list = (xs: DependencyUpgradeDto[]) => xs.map((u) => `${u.id} ${u.from} → ${u.to}`).join(', ')
+  const groups = [
+    migratable.length > 0 && t('deps.banner.available', { list: list(migratable) }),
+    blocked.length > 0 && t('deps.banner.blocked', { list: list(blocked) }),
+    needLauncher.length > 0 && t('deps.banner.needLauncher', { list: list(needLauncher) }),
+  ].filter(Boolean)
 
   return (
     <div
@@ -108,11 +125,7 @@ export function DependencyUpgradeBanner({ onDetails }: Props) {
       className="flex shrink-0 items-center gap-2 border-b border-sky-500/40 bg-sky-500/10 px-3 py-1.5 text-xs text-sky-700 dark:text-sky-300"
     >
       <ArrowUpCircle size={14} className="shrink-0" />
-      <span className="min-w-0 flex-1 truncate">
-        {migratable.length > 0 && t('deps.banner.available', { list: list(migratable) })}
-        {migratable.length > 0 && needLauncher.length > 0 && ' · '}
-        {needLauncher.length > 0 && t('deps.banner.needLauncher', { list: list(needLauncher) })}
-      </span>
+      <span className="min-w-0 flex-1 truncate">{groups.join(' · ')}</span>
       {needLauncher.length > 0 && <LauncherUpdateHint />}
       <button type="button" className="shrink-0 rounded px-2 py-0.5 hover:bg-sky-500/20" onClick={onDetails}>
         {t('deps.banner.details')}

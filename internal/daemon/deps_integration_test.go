@@ -46,8 +46,11 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -67,8 +70,18 @@ const (
 	// itFromImage is the pin the seeded data runs on, itToImage the major it is
 	// migrated to. Both are ordinary registry tags: the plan's pull step is a
 	// real pull.
+	//
+	// itToImage must be the image the GENERATOR would emit for that major, not
+	// merely an image of it. GenerateDefFor refuses a def whose image is not
+	// the one it was asked for, and the pin gate only emits a requested version
+	// verbatim while the move is BREAKING — asking for "postgres:18" against a
+	// generator whose fallback is "postgres:18.6" is not breaking (same major),
+	// so the gate answers the bundle's candidate and every temp container is
+	// refused. It is a floating-vs-concrete tag question, and R3 made the
+	// generator concrete: keep this equal to generator_infra.go's postgres
+	// fallback.
 	itFromImage = "postgres:17.5"
-	itToImage   = "postgres:18"
+	itToImage   = "postgres:18.6"
 	// itBadImage pulls but cannot serve PostgreSQL — the sabotage that makes
 	// the target fail AFTER the dump and the new volume exist.
 	itBadImage = "alpine:3"
@@ -85,9 +98,19 @@ const (
 // itEnv is one test's world: the production Env (wrapped in an observer), the
 // runtime that stores the journal, the namespace's runtime directory and the
 // reload the finalize step performs.
+//
+// d and mux are the daemon the Env was built from and its route table. A plan
+// is driven directly (migrate.Run, as handleDependencyMigrate does), but the
+// ROLLBACK is not a plan: it is three steps in a route, behind the long-op
+// lock, the journal blocker and the namespace-status gate. Driving it through
+// the real mux is what makes those gates part of what the test proves rather
+// than something it works around.
 type itEnv struct {
 	env     *observedEnv
 	rt      *namespace.Runtime
+	dc      *docker.Client
+	d       *Daemon
+	mux     *http.ServeMux
 	base    string
 	reloads *callCounter
 }
@@ -188,8 +211,17 @@ func itNamespaceID(testName string) string {
 // `go test -tags integration ./internal/daemon/ -run TestIntegration_NamespaceIDsAreDistinct`.
 func TestIntegration_NamespaceIDsAreDistinct(t *testing.T) {
 	names := []string{
+		// Every real test in this build tag, so the property is checked for
+		// the set that actually runs and not only for the two it started with.
 		"TestIntegration_Postgres17To18",
 		"TestIntegration_RollbackOnBadTarget",
+		"TestIntegration_Rabbit41To42",
+		"TestIntegration_CopyPreservesOwnership",
+		"TestIntegration_Zookeeper38To39",
+		"TestIntegration_CopyRollbackOnBadTarget",
+		"TestIntegration_TempRabbitDoesNotAnswerOnTheNamespaceNetwork",
+		"TestIntegration_RollbackAfterPostgres17To18",
+		"TestIntegration_RollbackRefusedWhenTheRetainedVolumeIsGone",
 		// The collision the clamp alone allowed: identical for eight
 		// alphanumerics, and both plausible names for real tests.
 		"TestIntegration_RollbackOnAMissingVolume",
@@ -231,12 +263,26 @@ func itDumpBytes(dir string) int64 {
 	return total
 }
 
-// newITEnv builds the daemon's REAL migration Env for a throwaway namespace:
-// a real docker.Client in server mode, a real Runtime as the journal store,
-// and a Daemon whose only stub is the reload seam — the finalize step's
-// ReloadAndStart is the one thing a harness cannot provide, since a real
-// reload needs the whole store/bundle/workspace stack.
+// newITEnv is newITEnvFor for the PostgreSQL pair the first two tests use.
 func newITEnv(t *testing.T) *itEnv {
+	t.Helper()
+	return newITEnvFor(t, deps.Postgres, itFromImage)
+}
+
+// newITEnvFor builds the daemon's REAL migration Env for a throwaway namespace
+// whose dependency dep is pinned to fromImage: a real docker.Client in server
+// mode, a real Runtime as the journal store, and a Daemon whose only stub is
+// the reload seam — the finalize step's ReloadAndStart is the one thing a
+// harness cannot provide, since a real reload needs the whole
+// store/bundle/workspace stack.
+//
+// The pin is passed in rather than fixed because it decides two things at
+// once: which volume the plan reads (the generation counter hangs off the
+// state) and which image the generator is allowed to emit — GenerateDefFor
+// refuses a def whose image or volume is not the one it was asked for, and
+// that guard only holds while the pin says what this namespace's data really
+// runs on.
+func newITEnvFor(t *testing.T, dep deps.ID, fromImage string) *itEnv {
 	t.Helper()
 	nsID := itNamespaceID(t.Name())
 
@@ -303,7 +349,7 @@ func newITEnv(t *testing.T) *itEnv {
 	rt := namespace.NewRuntime(nsCfg, dc, base)
 	t.Cleanup(rt.Shutdown)
 	// The pin is what the namespace's data runs on; the migration moves it.
-	rt.SetDependencyPin(deps.Postgres, itFromImage)
+	rt.SetDependencyState(dep, deps.DependencyState{Image: fromImage})
 
 	act := activeNamespace{
 		runtime:         rt,
@@ -320,17 +366,36 @@ func newITEnv(t *testing.T) *itEnv {
 	// the snapshot above is also installed as active.
 	d.reloadFn = func() error { reloads.inc(); return nil }
 	d.reloadExFn = func(bool, bool, bool) error { reloads.inc(); return nil }
+	d.bgCtx, d.bgCancel = context.WithCancel(context.Background())
+	t.Cleanup(d.bgCancel)
 
 	// The postgres def binds ./postgres/{postgresql,pg_hba}.conf and the init
-	// script out of the namespace's runtime directory; a real namespace has
-	// them on disk from its last reload, so materialize them the same way
+	// script out of the namespace's runtime directory, and the rabbitmq def
+	// binds ./rabbitmq/citeck-memory.conf; a real namespace has them on disk
+	// from its last reload, so materialize them the same way
 	// generateAndWriteRuntimeFiles does.
 	genResp, err := namespace.Generate(nsCfg, act.bundleDef, act.workspaceConfig, act.systemSecrets,
-		namespace.GenerateOpts{DependencyPins: rt.DependencyPins()})
+		namespace.GenerateOpts{DependencyStates: rt.DependencyStates()})
 	require.NoError(t, err)
 	writeRuntimeFiles(base, genResp.Files, nil)
+	// What the last generation did with the pins. The dependency LIST route
+	// reads it (a dependency the last generation did not emit is left out
+	// entirely), so a test that asks the daemon what it would offer has to be
+	// given the same input the loader gives it.
+	act.dependencies = genResp.Dependencies
+	act.dependencyUpgrades = genResp.DependencyUpgrades
 
-	return &itEnv{env: &observedEnv{Env: d.newDepsEnv(act)}, rt: rt, base: base, reloads: reloads}
+	e := &itEnv{
+		env: &observedEnv{Env: d.newDepsEnv(act)},
+		rt:  rt, dc: dc, d: d, base: base, reloads: reloads,
+	}
+	// The routes must see the SAME Env the test drives the plan with —
+	// otherwise the observer records nothing a route did, and the two would
+	// measure two different worlds.
+	d.depsEnvFn = func(activeNamespace) migrate.Env { return e.env }
+	e.mux = http.NewServeMux()
+	d.registerRoutes(e.mux)
+	return e
 }
 
 func (e *itEnv) volumeDir(name string) string { return filepath.Join(e.base, "volumes", name) }
@@ -345,9 +410,9 @@ func (e *itEnv) seed(ctx context.Context, t *testing.T) {
 	started := time.Now()
 	require.NoError(t, e.env.PullImage(ctx, itFromImage, func(float64) {}))
 
-	def, err := e.env.GenerateDefFor(deps.Postgres, itFromImage)
+	def, err := e.env.GenerateDefFor(deps.Postgres, deps.DependencyState{Image: itFromImage})
 	require.NoError(t, err)
-	_, err = e.env.RunAppDef(ctx, def, itSeedContainer, nil)
+	_, err = e.env.RunAppDef(ctx, def, deps.TempContainerOpts{Name: itSeedContainer})
 	require.NoError(t, err)
 	e.waitReady(ctx, t, itSeedContainer)
 
@@ -376,18 +441,59 @@ func (e *itEnv) seed(ctx context.Context, t *testing.T) {
 // unrelated preflight problem several minutes later.
 func (e *itEnv) requireReadableCluster(ctx context.Context, t *testing.T) {
 	t.Helper()
-	_, err := e.env.ReadVolumeFile(ctx, deps.PostgresVolumeLegacy, "PG_VERSION")
+	_, err := e.env.ReadVolumeFile(ctx, itVolume(1), "PG_VERSION")
 	if errors.Is(err, fs.ErrPermission) {
-		t.Fatalf("cannot read %s/PG_VERSION as this user: %v\n"+
-			"Server mode expects the launcher to own what the container wrote (the root daemon a server install runs).\n"+
-			"Under ROOTLESS Docker, run the test in a user namespace that maps the subuid range:\n"+
-			"  unshare --user --map-auto --map-root-user make test-integration-deps\n"+
-			"With a ROOTFUL daemon a docker-group user hits the same EACCES (uid 999 is a real uid there and\n"+
-			"PGDATA is 0700) and a user namespace does not help — run it as root instead:\n"+
-			"  sudo make test-integration-deps",
-			deps.PostgresVolumeLegacy, err)
+		itFatalUIDGap(t, "read "+itVolume(1)+"/PG_VERSION", err)
 	}
 	require.NoError(t, err)
+}
+
+// requirePrivilegeOverContainerFiles is requireReadableCluster's shape for a
+// dependency whose data carries no version marker to read.
+//
+// It asks the capability the test actually needs rather than a proxy for it:
+// the utils container (root) makes a file owned by a container uid, and this
+// process must be able to remove it. That is what a rollback's RemoveVolume
+// does to a copy the image wrote, and what the harness's own cleanup does to
+// the namespace directory — and under rootless Docker without the mapping,
+// both fail with EACCES several minutes in, dressed as something else.
+//
+// It deliberately does NOT probe the data volume: the copy-upgrade tests
+// assert that the source volume is byte-identical afterwards, and a probe file
+// written into it — even one removed again — would be the test mutating the
+// very thing it is about to measure.
+func (e *itEnv) requirePrivilegeOverContainerFiles(ctx context.Context, t *testing.T) {
+	t.Helper()
+	dir := filepath.Join(e.base, "uid-probe")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, e.dc.EnsureUtilsImage(ctx))
+	out, code, err := e.dc.RunUtilsContainer(ctx,
+		[]string{"sh", "-c", "mkdir -p /probe/d && : > /probe/d/f && chown -R 999:999 /probe"},
+		[]string{dir + ":/probe"})
+	require.NoErrorf(t, err, "uid probe: %s", out)
+	require.Zerof(t, code, "uid probe: %s", out)
+	if err := os.RemoveAll(dir); err != nil {
+		if errors.Is(err, fs.ErrPermission) {
+			itFatalUIDGap(t, "remove a file a container created", err)
+		}
+		require.NoError(t, err)
+	}
+}
+
+// itFatalUIDGap fails with the fix rather than with the symptom. Both callers
+// hit the SAME condition — this process is not privileged over the uid the
+// image runs as — and a second wording of it would be a second thing to keep
+// true.
+func itFatalUIDGap(t *testing.T, what string, err error) {
+	t.Helper()
+	t.Fatalf("cannot %s as this user: %v\n"+
+		"Server mode expects the launcher to own what the container wrote (the root daemon a server install runs).\n"+
+		"Under ROOTLESS Docker, run the test in a user namespace that maps the subuid range:\n"+
+		"  unshare --user --map-auto --map-root-user make test-integration-deps\n"+
+		"With a ROOTFUL daemon a docker-group user hits the same EACCES (the image's uid is a real uid there)\n"+
+		"and a user namespace does not help — run it as root instead:\n"+
+		"  sudo make test-integration-deps",
+		what, err)
 }
 
 // waitReady waits for the REAL server, over TCP for the same reason the plan
@@ -521,26 +627,26 @@ func TestIntegration_Postgres17To18(t *testing.T) {
 		"the one error the restore tolerates is the one a real dump always produces")
 
 	// --- the pin, the journal and the verdict --------------------------------
-	assert.Equal(t, itToImage, e.rt.DependencyPins()[deps.Postgres])
+	assert.Equal(t, itToImage, e.rt.DependencyStates()[deps.Postgres].Image)
 	assert.Nil(t, e.rt.MigrationJournal(), "a committed migration clears the journal")
 	last := e.rt.LastDependencyMigration()
 	require.NotNil(t, last)
 	assert.True(t, last.OK(), "verdict: %s", last.Error)
-	assert.Equal(t, deps.PostgresVolumeLegacy, last.OldVolume)
+	assert.Equal(t, itVolume(1), last.OldVolume)
 	assert.Equal(t, 1, e.reloads.get(), "finalize reloads the namespace exactly once")
 
 	// --- the volumes ---------------------------------------------------------
-	assert.FileExists(t, filepath.Join(e.volumeDir(deps.PostgresVolumeLegacy), "PG_VERSION"),
+	assert.FileExists(t, filepath.Join(e.volumeDir(itVolume(1)), "PG_VERSION"),
 		"the old cluster is only ever READ")
-	pgv, err := os.ReadFile(filepath.Join(e.volumeDir(deps.PostgresVolumeV18), "18", "docker", "PG_VERSION"))
+	pgv, err := os.ReadFile(filepath.Join(e.volumeDir(itVolume(2)), "18", "docker", "PG_VERSION"))
 	require.NoError(t, err)
 	assert.Equal(t, "18", strings.TrimSpace(string(pgv)))
 	assert.NoDirExists(t, depsMigrationDir(e.base), "finalize removes the scratch dir AND its empty parent")
 
 	// --- what the migrated cluster actually holds ----------------------------
-	def18, err := e.env.GenerateDefFor(deps.Postgres, itToImage)
+	def18, err := e.env.GenerateDefFor(deps.Postgres, deps.DependencyState{Image: itToImage, VolumeGen: 2})
 	require.NoError(t, err)
-	_, err = e.env.RunAppDef(ctx, def18, itCheckContainer, nil)
+	_, err = e.env.RunAppDef(ctx, def18, deps.TempContainerOpts{Name: itCheckContainer})
 	require.NoError(t, err)
 	e.waitReady(ctx, t, itCheckContainer)
 	defer func() { assert.NoError(t, e.env.StopRemove(context.Background(), itCheckContainer)) }()
@@ -572,7 +678,7 @@ func TestIntegration_RollbackOnBadTarget(t *testing.T) {
 	e.seed(ctx, t)
 	e.requireReadableCluster(ctx, t)
 
-	before, err := os.ReadFile(filepath.Join(e.volumeDir(deps.PostgresVolumeLegacy), "PG_VERSION"))
+	before, err := os.ReadFile(filepath.Join(e.volumeDir(itVolume(1)), "PG_VERSION"))
 	require.NoError(t, err)
 
 	// The sabotage image has to be present: a pull failure would fail the run
@@ -598,10 +704,10 @@ func TestIntegration_RollbackOnBadTarget(t *testing.T) {
 		sabotaged = true
 		plan.Steps[i].Run = func(ctx context.Context, j *migrate.Journal, _ migrate.StepProgress) error {
 			dumpSize = itDumpBytes(e.env.DumpDir(deps.Postgres))
-			targetVolume, _ = e.env.VolumeExists(ctx, deps.PostgresVolumeV18)
+			targetVolume, _ = e.env.VolumeExists(ctx, itVolume(2))
 			journaledVolume = j.CreatedVolume
 
-			def, defErr := e.env.GenerateDefFor(deps.Postgres, itToImage)
+			def, defErr := e.env.GenerateDefFor(deps.Postgres, deps.DependencyState{Image: itToImage, VolumeGen: 2})
 			if defErr != nil {
 				return fmt.Errorf("generate the sabotaged target def: %w", defErr)
 			}
@@ -618,7 +724,7 @@ func TestIntegration_RollbackOnBadTarget(t *testing.T) {
 			// real path, and the reason this test takes ~30s longer than the
 			// happy one.
 			def.Cmd = []string{"sleep", "600"}
-			if _, runErr := e.env.RunAppDef(ctx, def, migrate.DstContainer, nil); runErr != nil {
+			if _, runErr := e.env.RunAppDef(ctx, def, deps.TempContainerOpts{Name: migrate.DstContainer}); runErr != nil {
 				return fmt.Errorf("start the sabotaged target: %w", runErr)
 			}
 			dstRunning, _ = e.env.ContainerRunning(ctx, migrate.DstContainer)
@@ -637,17 +743,17 @@ func TestIntegration_RollbackOnBadTarget(t *testing.T) {
 	// The failure was LATE: a real dump and a real target volume existed.
 	assert.Positive(t, dumpSize, "the dump must exist before the sabotage, or this proves nothing")
 	assert.True(t, targetVolume, "the target volume must exist before the sabotage")
-	assert.Equal(t, deps.PostgresVolumeV18, journaledVolume, "the volume is journaled before it is created")
+	assert.Equal(t, itVolume(2), journaledVolume, "the volume is journaled before it is created")
 	assert.True(t, dstRunning, "the sabotaged target container must be running when the step fails")
 
 	// --- nothing moved -------------------------------------------------------
-	assert.Equal(t, itFromImage, e.rt.DependencyPins()[deps.Postgres], "the pin never moves on failure")
-	after, err := os.ReadFile(filepath.Join(e.volumeDir(deps.PostgresVolumeLegacy), "PG_VERSION"))
+	assert.Equal(t, itFromImage, e.rt.DependencyStates()[deps.Postgres].Image, "the pin never moves on failure")
+	after, err := os.ReadFile(filepath.Join(e.volumeDir(itVolume(1)), "PG_VERSION"))
 	require.NoError(t, err)
 	assert.Equal(t, before, after, "the source cluster is still a PostgreSQL 17 data directory")
 
 	// --- nothing was left behind ---------------------------------------------
-	assert.NoDirExists(t, e.volumeDir(deps.PostgresVolumeV18))
+	assert.NoDirExists(t, e.volumeDir(itVolume(2)))
 	assert.NoDirExists(t, depsMigrationDir(e.base), "the scratch dir and its empty parent are gone")
 	for _, c := range []string{migrate.SrcContainer, migrate.DstContainer} {
 		running, cErr := e.env.ContainerRunning(ctx, c)
@@ -670,9 +776,9 @@ func TestIntegration_RollbackOnBadTarget(t *testing.T) {
 	// wrong check — the dump step runs a real server on this data directory,
 	// which legitimately writes WAL, statistics and checkpoints; what must
 	// survive is the cluster, not its inode count.)
-	def17, err := e.env.GenerateDefFor(deps.Postgres, itFromImage)
+	def17, err := e.env.GenerateDefFor(deps.Postgres, deps.DependencyState{Image: itFromImage})
 	require.NoError(t, err)
-	_, err = e.env.RunAppDef(ctx, def17, itCheckContainer, nil)
+	_, err = e.env.RunAppDef(ctx, def17, deps.TempContainerOpts{Name: itCheckContainer})
 	require.NoError(t, err)
 	e.waitReady(ctx, t, itCheckContainer)
 	defer func() { assert.NoError(t, e.env.StopRemove(context.Background(), itCheckContainer)) }()
@@ -682,4 +788,154 @@ func TestIntegration_RollbackOnBadTarget(t *testing.T) {
 			"SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY 1"))
 	assert.Equal(t, fmt.Sprint(itSeedRows), e.psql(ctx, t, itCheckContainer, "citeck_emodel",
 		"SELECT count(*) FROM ecos_record"))
+}
+
+// itVolume is the plain name of one generation of the postgres data volume,
+// asked of the registry rather than spelled out: the names are a function of
+// the generation counter, and a literal here would keep passing while the
+// launcher mounted something else entirely.
+func itVolume(gen int) string { return itVolumeOf(deps.Postgres, gen) }
+
+// itVolumeOf is the same for any dependency.
+func itVolumeOf(id deps.ID, gen int) string {
+	d, ok := deps.Lookup(id)
+	if !ok {
+		panic(string(id) + " is not registered")
+	}
+	return deps.VolumeName(d, gen)
+}
+
+// itManifestMount is where a manifest run mounts the volume it measures.
+const itManifestMount = "/vol"
+
+// itManifestScript prints one line per entry under the mounted volume:
+//
+//	<path relative to the volume root>|<type>|<size>|<uid>|<gid>|<mode>
+//
+// It runs in the utils container as ROOT, which is the only way to walk a tree
+// an image wrote as its own uid — and the only way to read the same numbers
+// twice, since what the test process can see of that tree depends on how it
+// was invoked.
+const itManifestScript = "cd " + itManifestMount + ` && find . -exec stat -c '%n|%F|%s|%u|%g|%a' {} +`
+
+// volumeManifest is a data volume's exact shape: every entry, its type, size,
+// owner and mode. Ruling on OPEN QUESTION 4 — content hashes add no signal
+// (nothing in a copy-upgrade plan opens the source for writing) and cost
+// minutes on a real volume, while a size/mode manifest already catches every
+// mutation shape the launcher can cause.
+//
+// It must be taken with NOTHING RUNNING on the volume, before and after: a
+// booting ZooKeeper rewrites its newest snapshot (zk-experiment.md) and a
+// RabbitMQ node writes a pid file, so a manifest taken beside a live container
+// measures the container, not the migration.
+func (e *itEnv) volumeManifest(ctx context.Context, t *testing.T, volume string) []string {
+	t.Helper()
+	require.NoError(t, e.dc.EnsureUtilsImage(ctx))
+	out, code, err := e.dc.RunUtilsContainer(ctx,
+		[]string{"sh", "-c", itManifestScript}, []string{e.volumeDir(volume) + ":" + itManifestMount + ":ro"})
+	require.NoErrorf(t, err, "manifest of %s: %s", volume, out)
+	require.Zerof(t, code, "manifest of %s: %s", volume, out)
+	var lines []string
+	for line := range strings.SplitSeq(out, "\n") {
+		line = strings.TrimRight(line, "\r")
+		// The mount's own root is "." on both sides of every comparison and
+		// says nothing; everything else that is not a manifest line is a
+		// diagnostic the utils container printed, and dropping it silently is
+		// how a manifest of nothing compares equal to another manifest of
+		// nothing — so the count is asserted by the callers.
+		if !strings.HasPrefix(line, "./") {
+			continue
+		}
+		lines = append(lines, line)
+	}
+	sort.Strings(lines)
+	return lines
+}
+
+// itVolumeUsageScript prints what one mounted volume costs, twice over: the
+// blocks it OCCUPIES and the bytes its regular files CONTAIN.
+//
+// The two are the same number for ordinary data and wildly different for the
+// files these dependencies write — ZooKeeper preallocates its transaction log
+// to 64 MiB and Mnesia writes its schema with holes — so what a copy costs on
+// the destination has to be measured rather than assumed from the source.
+const itVolumeUsageScript = "cd " + itManifestMount +
+	` && echo "kb $(du -sk . | cut -f1)" && echo "bytes $(find . -type f -exec stat -c %s {} + | awk '{s+=$1} END {print s+0}')"`
+
+// volumeUsage answers (allocated KiB, apparent bytes) for a data volume.
+func (e *itEnv) volumeUsage(ctx context.Context, t *testing.T, volume string) (allocatedKB, apparentBytes int64) {
+	t.Helper()
+	require.NoError(t, e.dc.EnsureUtilsImage(ctx))
+	out, code, err := e.dc.RunUtilsContainer(ctx,
+		[]string{"sh", "-c", itVolumeUsageScript}, []string{e.volumeDir(volume) + ":" + itManifestMount + ":ro"})
+	require.NoErrorf(t, err, "usage of %s: %s", volume, out)
+	require.Zerof(t, code, "usage of %s: %s", volume, out)
+	for line := range strings.SplitSeq(out, "\n") {
+		f := strings.Fields(line)
+		if len(f) != 2 {
+			continue
+		}
+		n, convErr := strconv.ParseInt(f[1], 10, 64)
+		if convErr != nil {
+			continue
+		}
+		switch f[0] {
+		case "kb":
+			allocatedKB = n
+		case "bytes":
+			apparentBytes = n
+		}
+	}
+	require.NotZerof(t, apparentBytes, "usage of %s measured nothing: %s", volume, out)
+	return allocatedKB, apparentBytes
+}
+
+// itOwnershipOf projects a manifest onto what a COPY has to reproduce: path,
+// type, owner and mode, plus the size of everything that is not a directory.
+//
+// A directory's st_size is an allocation detail of the filesystem — the number
+// of entries it has held, not the number it holds — so comparing it between a
+// grown source directory and a freshly written copy of it would report a
+// difference that is not one. Every entry BELOW it is still compared, so a
+// directory whose contents differ cannot hide here.
+func itOwnershipOf(manifest []string) []string {
+	out := make([]string, 0, len(manifest))
+	for _, line := range manifest {
+		f := strings.Split(line, "|")
+		if len(f) != 6 {
+			out = append(out, line) // unparsable: compare it verbatim
+			continue
+		}
+		if f[1] == "directory" {
+			f[2] = "-"
+		}
+		out = append(out, strings.Join(f, "|"))
+	}
+	return out
+}
+
+// itManifestPaths is a manifest reduced to the entries it holds.
+//
+// It is the right comparison for a copy a container has already RUN on: a
+// booting server legitimately adds files and rewrites its own (ZooKeeper
+// snapshots right after loading and preallocates a fresh transaction log), so
+// the question "is the real data in here?" is about the entries, not about
+// their bytes.
+func itManifestPaths(manifest []string) []string {
+	out := make([]string, 0, len(manifest))
+	for _, line := range manifest {
+		path, _, _ := strings.Cut(line, "|")
+		out = append(out, path)
+	}
+	return out
+}
+
+// itManifestEntry finds one entry of a manifest by its path.
+func itManifestEntry(manifest []string, relPath string) (string, bool) {
+	for _, line := range manifest {
+		if strings.HasPrefix(line, relPath+"|") {
+			return line, true
+		}
+	}
+	return "", false
 }

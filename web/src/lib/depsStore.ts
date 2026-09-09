@@ -17,6 +17,16 @@ export interface DepsMigrationView {
   done: string[]
   /** Last few distinct progress messages, oldest first. */
   messages: string[]
+  /**
+   * "" = a migration, "rollback" = a rollback (Go: deps.ResultKindRollback).
+   *
+   * A namespace has ONE progress channel and the two operations share it, so
+   * this is what decides which step list is rendered and which title. The SSE
+   * events carry no discriminator at all — only the namespace DTO does — so it
+   * is set by whoever KNOWS (the dialog, on the click that started it) and
+   * corrected by `hydrate` for a run this client did not start.
+   */
+  kind: string
 }
 
 export interface DepsResultView {
@@ -24,6 +34,9 @@ export interface DepsResultView {
   success: boolean
   message: string
   at: number
+  /** "" = a migration, "rollback" = a rollback — inherited from the run that
+   *  produced it, because the complete/error events do not carry it either. */
+  kind: string
 }
 
 /** Fields of a `deps_migration_progress` SSE event, in the daemon's mapping:
@@ -64,7 +77,7 @@ interface DepsState {
    * poll — which only starts once the alarm is already up.
    */
   rollbackPending: string
-  onStart: (id: string, stepCount: number) => void
+  onStart: (id: string, stepCount: number, kind?: string) => void
   onProgress: (e: DepsProgressEvent) => void
   onComplete: (id: string, message: string) => void
   onError: (id: string, message: string) => void
@@ -105,18 +118,23 @@ export const useDepsStore = create<DepsState>((set, get) => ({
   data: null,
   rollbackPending: '',
 
-  onStart: (id, stepCount) => {
+  onStart: (id, stepCount, kind = '') => {
     const cur = get().migration
     if (cur && cur.id === id) {
       // The daemon broadcasts `deps_migration_start` from the goroutine it
       // launches BEFORE writing the 202, so the dialog's optimistic start (on
       // the POST's answer) can land after real progress has been recorded.
       // Take the better step count and keep everything already seen.
-      set({ migration: { ...cur, stepCount: Math.max(cur.stepCount, stepCount) }, result: null })
+      // The daemon's own `deps_migration_start` carries no kind, so an
+      // already-known one is never downgraded to "" by it.
+      set({
+        migration: { ...cur, stepCount: Math.max(cur.stepCount, stepCount), kind: cur.kind || kind },
+        result: null,
+      })
       return
     }
     set({
-      migration: { id, step: '', stepIndex: 0, stepCount, percent: 0, message: '', done: [], messages: [] },
+      migration: { id, step: '', stepIndex: 0, stepCount, percent: 0, message: '', done: [], messages: [], kind },
       result: null,
     })
   },
@@ -136,12 +154,22 @@ export const useDepsStore = create<DepsState>((set, get) => ({
         message: e.after,
         done,
         messages: pushMessage(cur?.messages ?? [], e.after),
+        kind: cur?.kind ?? '',
       },
     })
   },
 
-  onComplete: (id, message) => set({ migration: null, result: { id, success: true, message, at: Date.now() } }),
-  onError: (id, message) => set({ migration: null, result: { id, success: false, message, at: Date.now() } }),
+  // The verdict inherits the kind of the run it ends: the complete/error
+  // events carry no discriminator, and "postgres 18.6 → 17.5 succeeded" reads
+  // as a migration onto an older version unless the verdict says otherwise.
+  onComplete: (id, message) => set({
+    migration: null,
+    result: { id, success: true, message, at: Date.now(), kind: get().migration?.kind ?? '' },
+  }),
+  onError: (id, message) => set({
+    migration: null,
+    result: { id, success: false, message, at: Date.now(), kind: get().migration?.kind ?? '' },
+  }),
 
   hydrate: (dto) => {
     if (!dto) {
@@ -155,8 +183,13 @@ export const useDepsStore = create<DepsState>((set, get) => ({
     const same = !!cur && cur.id === dto.id
     // The DTO is a snapshot from when the fetch was answered; SSE is live. If
     // both describe the same step, the events are the newer truth — adopting
-    // the DTO would drag percent/message backwards on every refetch.
-    if (same && cur!.step === dto.step) return
+    // the DTO would drag percent/message backwards on every refetch. The KIND
+    // is the exception: it is constant for a whole run and the events never
+    // carry it, so a run this client did not start learns it here.
+    if (same && cur!.step === dto.step) {
+      if (cur!.kind !== (dto.kind ?? '')) set({ migration: { ...cur!, kind: dto.kind ?? '' } })
+      return
+    }
     set({
       migration: {
         id: dto.id,
@@ -167,6 +200,7 @@ export const useDepsStore = create<DepsState>((set, get) => ({
         message: dto.message ?? '',
         done: same ? cur!.done : [],
         messages: same ? cur!.messages : [],
+        kind: dto.kind ?? '',
       },
     })
   },

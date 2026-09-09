@@ -55,9 +55,11 @@ type GenerateOpts struct {
 	// the tail of Generate to produce the effective Applications; the patch-free
 	// set is returned as BaselineApplications. Symmetric to EditedFileEdits.
 	EditedAppPatches map[string]json.RawMessage
-	// DependencyPins: image each infra dependency's data last ran on
-	// (Runtime.DependencyPins). Nil for a namespace with no data yet.
-	DependencyPins map[deps.ID]string
+	// DependencyStates: per infra dependency, the image its data last ran on
+	// and which generation of its data volume that is
+	// (Runtime.DependencyStates). Nil for a namespace with no data yet, which
+	// generates generation 1 — the volume every namespace has always used.
+	DependencyStates map[deps.ID]deps.DependencyState
 }
 
 // Generate creates container definitions from a namespace config, bundle, and workspace config.
@@ -79,7 +81,7 @@ func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secre
 		ctx.EditedFileEdits = opts[0].EditedFileEdits
 		ctx.DiskContent = opts[0].DiskContent
 		ctx.EditedAppPatches = opts[0].EditedAppPatches
-		ctx.DependencyPins = opts[0].DependencyPins
+		ctx.DependencyStates = opts[0].DependencyStates
 	}
 
 	// Load embedded appfiles

@@ -21,6 +21,32 @@ type DependencyUpgrade struct {
 	From       string // pinned image (what runs)
 	To         string // candidate image (what the bundle wants)
 	Migratable bool   // this launcher can perform the migration
+	// VendorBlocked reports that the DEPENDENCY'S OWN VENDOR does not support
+	// this hop at all (RabbitMQ 4.1 -> 4.3, ZooKeeper data older than 3.5).
+	// It is a different refusal from !Migratable: updating the launcher would
+	// not help, so the two must never be worded the same way, and a client
+	// that splits on Migratable alone would advertise a hop nobody can take.
+	VendorBlocked bool
+	// VendorVia names the intermediate version a two-hop path goes through
+	// ("4.2" for RabbitMQ 4.1 -> 4.3), spelled major.minor. Empty when the
+	// vendor documents no path at all — the difference between "do this first"
+	// and "this is not possible". Meaningless unless VendorBlocked.
+	VendorVia string
+	// BundleOlder reports that the held-back candidate is an OLDER version
+	// than the pin. It is not an upgrade that is held back — there is nothing
+	// to migrate and nothing to wait for — so a client that renders every
+	// entry here as "upgrade available" is simply wrong about this one: the
+	// launcher keeps the data where it is, and the only way to the older
+	// version is a rollback onto the volume a migration retained.
+	//
+	// It is a FACT and not a sentence: internal/namespace may not import
+	// internal/deps/migrate, where every operator-facing migration sentence is
+	// built. The daemon renders it (api.DependencyBundleOlder).
+	//
+	// A same-format backwards move — a bundle reverting a PATCH bump — is not
+	// held at all and therefore never appears here (user ruling, 2026-09-09:
+	// only format breaks are held back). See deps.BundleOlder.
+	BundleOlder bool
 }
 
 // DependencyGen records, per registered dependency, the image the generator
@@ -42,20 +68,81 @@ func resolveDependencyImage(ctx *NsGenContext, id deps.ID, candidate string) str
 	}
 	// deps.Breaking already answers false for pinned == candidate and true for
 	// an unparsable tag on either side, so only the "no pin at all" case needs
-	// its own arm here.
-	pinned, hasPin := ctx.DependencyPins[id]
-	if !hasPin || pinned == "" || !deps.Breaking(d, pinned, candidate) {
+	// its own arm here — and a dependency absent from the map reads as the zero
+	// DependencyState, whose image is exactly that empty string.
+	pinned := ctx.DependencyStates[id].Image
+	if pinned == "" || !deps.Breaking(d, pinned, candidate) {
 		ctx.DependencyImages[id] = DependencyGen{Effective: candidate, Candidate: candidate}
 		return candidate
 	}
 	effective := rehomePin(d, pinned, candidate)
+	// A backwards hold is not an upgrade, so it is not asked the vendor's
+	// upgrade question: no vendor here permits a downgrade, and answering
+	// "there is no upgrade path from 4.2.9 to 4.1.8" would put a refusal about
+	// upgrading in front of an operator who is not upgrading.
+	older := deps.BundleOlder(d, effective, candidate)
+	var blocked bool
+	var via string
+	if !older {
+		blocked, via = vendorVerdict(d, effective, candidate)
+	}
 	slog.Info("Dependency image held back by pin",
-		"dependency", id, "pinned", pinned, "candidate", candidate, "effective", effective)
+		"dependency", id, "pinned", pinned, "candidate", candidate, "effective", effective,
+		"bundleOlder", older)
 	ctx.DependencyImages[id] = DependencyGen{Effective: effective, Candidate: candidate}
 	ctx.DependencyUpgrades = append(ctx.DependencyUpgrades, DependencyUpgrade{
 		ID: id, App: d.AppName(), From: effective, To: candidate, Migratable: d.Migratable(),
+		VendorBlocked: blocked, VendorVia: via, BundleOlder: older,
 	})
 	return effective
+}
+
+// vendorVerdict asks the dependency's own vendor whether the held-back hop is
+// supported at all, and — when it is not — which intermediate version the
+// operator has to go through first. It is a question about the DEPENDENCY, so
+// the table lives in internal/deps; the generator only records the answer,
+// because the sentence an operator reads is built where every other migration
+// refusal is worded.
+//
+// With an unreadable tag on either side there are no versions to ask about, so
+// the verdict is empty rather than guessed. The pin is held back anyway
+// (deps.Breaking answers true for an unparsable tag) and the preflight's
+// message about the tag is the one the operator needs — the same carve-out the
+// downgrade case gets, and for the same reason: a wrong intermediate sends the
+// operator after a version that would not help.
+func vendorVerdict(d deps.Descriptor, pinned, candidate string) (blocked bool, via string) {
+	from, okFrom := d.ParseVersion(pinned)
+	to, okTo := d.ParseVersion(candidate)
+	if !okFrom || !okTo {
+		return false, ""
+	}
+	sup := d.UpgradeSupport(from, to)
+	if sup.Allowed {
+		return false, ""
+	}
+	return true, sup.Via
+}
+
+// resolveDependencyVolume is the ONE place a generator learns which volume a
+// dependency's data lives in. It is the pin's generation, or generation 1 for
+// a namespace that has never migrated — which is every namespace that exists
+// today, so every emitted volume name is unchanged.
+//
+// The volume is deliberately NOT derived from the version: a name that moved
+// with the image would make every version bump a silent data move, and the
+// counter advances only when a migration has actually copied the data across.
+//
+// "" for a dependency with no volume of its own (Keycloak) and for an id that
+// is not registered — neither has a caller today, and a caller that appeared
+// would be mounting a volume named after nothing.
+func resolveDependencyVolume(ctx *NsGenContext, id deps.ID) string {
+	d, ok := deps.Lookup(id)
+	if !ok {
+		return ""
+	}
+	// A missing entry reads as the zero DependencyState, whose Gen() is 1 —
+	// which is exactly the answer for a namespace that has never migrated.
+	return deps.VolumeName(d, ctx.DependencyStates[id].Gen())
 }
 
 // rehomePin keeps a HELD-BACK dependency on the registry the bundle is pulling

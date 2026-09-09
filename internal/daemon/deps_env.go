@@ -5,9 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
+	slashpath "path"
 	"path/filepath"
 	goruntime "runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -42,8 +45,10 @@ type depsDocker interface {
 	InspectContainer(ctx context.Context, id string) (container.InspectResponse, error)
 	ExecInContainerSplit(ctx context.Context, containerID string, cmd []string) (stdout, stderr string, exitCode int, err error)
 	PullImageWithProgress(ctx context.Context, img string, auth *docker.RegistryAuth, progressFn docker.PullProgressFn) error
+	ImageExists(ctx context.Context, img string) bool
 	EnsureUtilsImage(ctx context.Context) error
 	RunUtilsContainer(ctx context.Context, cmd, binds []string) (output string, exitCode int, err error)
+	RunUtilsContainerWithTimeout(ctx context.Context, cmd, binds []string, timeout time.Duration) (output string, exitCode int, err error)
 	GetVolumeByOriginalName(ctx context.Context, originalName string) (*volume.Volume, error)
 	CreateVolume(ctx context.Context, originalName string) (string, error)
 	RemoveVolume(ctx context.Context, name string) error
@@ -134,9 +139,13 @@ func (e *depsEnv) NamespaceID() string {
 // runtime bookkeeping — see migrate.Env for why running the postgres def's
 // init actions would break every real migration.
 //
-// The def is a value, and the three fields that are rewritten are replaced
-// rather than mutated in place, so the caller's slices are never touched.
-func (e *depsEnv) RunAppDef(ctx context.Context, def appdef.ApplicationDef, name string, extraBinds []string) (string, error) {
+// The def is a value, and every field that is rewritten is REPLACED rather
+// than mutated in place, so the caller's slices are never touched. That
+// matters most for Environments: the caller's def is usually a struct copy
+// sharing one backing array with the runtime's own, so appending to it in
+// place would write the temp container's node identity into the namespace's
+// real app def.
+func (e *depsEnv) RunAppDef(ctx context.Context, def appdef.ApplicationDef, opts deps.TempContainerOpts) (string, error) {
 	if e.dc == nil {
 		return "", errors.New("no docker client")
 	}
@@ -151,8 +160,20 @@ func (e *depsEnv) RunAppDef(ctx context.Context, def appdef.ApplicationDef, name
 	// to "postgres" on the namespace network.
 	def.Ports = nil
 	def.NetworkAliases = nil
-	def.Volumes = append(append([]string(nil), def.Volumes...), extraBinds...)
+	def.Volumes = append(append([]string(nil), def.Volumes...), opts.ExtraBinds...)
+	def.Environments = withExtraEnv(def.Environments, opts.Env)
 
+	name := opts.Name
+	// An EMPTY name is refused rather than defaulted. docker.CreateContainerWith
+	// treats "" as "no override" and builds the namespace's OWN container —
+	// same name, same LabelAppName, adopted by the reconciler — which for a
+	// migration means the app's container started on a temp volume, or on the
+	// data the plan promised only to read. Its own guard cannot catch this: it
+	// refuses an override EQUAL to the app's name, and "" is not an override at
+	// all.
+	if name == "" {
+		return "", errors.New("a temp container needs a name of its own")
+	}
 	// A leftover from an interrupted run would make the create fail on a name
 	// conflict. Removing it is safe: the name is the launcher's own temp name.
 	_ = e.dc.StopAndRemoveContainer(ctx, e.dc.ContainerName(name), 0)
@@ -160,6 +181,14 @@ func (e *depsEnv) RunAppDef(ctx context.Context, def appdef.ApplicationDef, name
 	id, err := e.dc.CreateContainerWith(ctx, def, e.act.volumesBase, docker.ContainerCreateOpts{
 		Name:        name,
 		ExtraLabels: map[string]string{docker.LabelTemp: docker.LabelTempValue},
+		// The /etc/hosts entries that make a pinned node name resolvable. They
+		// are container-local, so the temp container still answers to nothing
+		// but its own name on the namespace network — the invariant a
+		// Hostname override would have broken. Both halves are load-bearing
+		// for RabbitMQ: without the alias the broker refuses to boot at all
+		// ("epmd error for host rabbitmq: nxdomain"), and without the env it
+		// boots a fresh empty node inside the copy and reports healthy.
+		ExtraHosts: extraHostEntries(opts.HostAlias),
 		// A temp container belongs to THIS operation and must never outlive it
 		// on Docker's initiative. Without this it inherits the def's
 		// unless-stopped policy, and a launcher killed mid-migration (or a host
@@ -179,6 +208,35 @@ func (e *depsEnv) RunAppDef(ctx context.Context, def appdef.ApplicationDef, name
 		return "", fmt.Errorf("start %s: %w", name, err)
 	}
 	return id, nil
+}
+
+// withExtraEnv returns base with extra applied on a COPY. Keys are applied in
+// sorted order so two generations of the same temp container are byte-equal,
+// and an entry already present is UPDATED in place rather than appended twice
+// — an image reads the last occurrence, which would make the def's own value
+// and the override disagree about what the container is running.
+func withExtraEnv(base appdef.OrderedMap, extra map[string]string) appdef.OrderedMap {
+	if len(extra) == 0 {
+		return base
+	}
+	out := append(appdef.OrderedMap(nil), base...)
+	for _, k := range slices.Sorted(maps.Keys(extra)) {
+		out.Set(k, extra[k])
+	}
+	return out
+}
+
+// extraHostEntries renders a hostname→IP map as Docker's "--add-host" strings,
+// sorted so the created container is reproducible.
+func extraHostEntries(alias map[string]string) []string {
+	if len(alias) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(alias))
+	for _, h := range slices.Sorted(maps.Keys(alias)) {
+		out = append(out, h+":"+alias[h])
+	}
+	return out
 }
 
 // ContainerRunning reports whether the named temp container exists and runs.
@@ -276,34 +334,338 @@ func (e *depsEnv) RemoveVolume(ctx context.Context, vol string) error {
 	return nil
 }
 
-// VolumeSize measures the volume's data. An absent volume measures 0 rather
-// than failing: the preflight asks about the TARGET volume too, which normally
-// does not exist yet.
+// Mount points and the wait budget of a volume copy.
+const (
+	// depsCopySrc / depsCopyDst are where the two volumes are mounted inside
+	// the utils container. They are constants because two commands have to
+	// agree on them — the copy and the verification that follows it.
+	depsCopySrc = "/src"
+	depsCopyDst = "/dst"
+	// depsCopyTimeout is how long one copy may take. The default utils budget
+	// is five minutes, which is right for a `cat` and absurd for a data
+	// volume: a copy killed at five minutes looks exactly like a copy that
+	// failed, on a namespace the migration has already stopped. The migration's
+	// own context bounds it further.
+	depsCopyTimeout = 4 * time.Hour
+)
+
+// copyBinds is the ONE place a volume copy says what is mounted where, and —
+// the part that matters — which side is READ-ONLY.
+//
+// The source is the namespace's real data volume, and a copy-upgrade plan's
+// whole safety argument is that nothing ever writes to it: the rollback is
+// "delete the volume we made", which is only an undo while the source is
+// untouched. Making that structural rather than a rule each caller remembers
+// is why both the copy and its verification go through here; dstWritable is
+// false for the verification, which reads both sides.
+func (e *depsEnv) copyBinds(ctx context.Context, src, dst string, dstWritable bool) ([]string, error) {
+	srcRef, err := e.volumeMountSource(ctx, src)
+	if err != nil {
+		return nil, err
+	}
+	dstRef, err := e.volumeMountSource(ctx, dst)
+	if err != nil {
+		return nil, err
+	}
+	dstBind := dstRef + ":" + depsCopyDst
+	if !dstWritable {
+		dstBind += ":ro"
+	}
+	return []string{srcRef + ":" + depsCopySrc + ":ro", dstBind}, nil
+}
+
+// volumeMountSource turns a plain data-volume name into what Docker has to be
+// given to mount it: the scoped NAMED volume on a desktop, the bind directory
+// on a server. A volume that is not there is an error rather than an
+// auto-created empty directory — an empty source would produce a faithful copy
+// of nothing, which for RabbitMQ boots as a brand-new node and reports healthy.
+func (e *depsEnv) volumeMountSource(ctx context.Context, vol string) (string, error) {
+	if !config.IsDesktopMode() {
+		dir := e.volumeDir(vol)
+		if _, err := os.Stat(dir); err != nil {
+			return "", fmt.Errorf("volume %s: %w", vol, err)
+		}
+		return dir, nil
+	}
+	if e.dc == nil {
+		return "", errors.New("no docker client")
+	}
+	v, err := e.dc.GetVolumeByOriginalName(ctx, vol)
+	if err != nil {
+		return "", fmt.Errorf("look up volume %s: %w", vol, err)
+	}
+	if v == nil {
+		return "", fmt.Errorf("volume %s not found", vol)
+	}
+	return v.Name, nil
+}
+
+// CopyVolume copies the CONTENTS of src into dst through the utils container,
+// preserving ownership, mode and mtimes, and then VERIFIES the result.
+//
+// -S is what keeps a sparse file sparse. ZooKeeper preallocates its txnlog to
+// 64 MiB and writes it as a hole; without -S tar reads the hole back as zeros
+// and the copy lands 64 MiB per txnlog on the destination (measured: 16 KiB of
+// blocks became 65556 KiB). With it the copy is 16 KiB again, and on data with
+// no holes the two are byte-identical, so it costs nothing where it does
+// nothing. The utils image ships GNU tar 1.35, which has it.
+//
+// `tar -cf - | tar -xpf -` is the mechanism because ownership is not cosmetic
+// here: the data is owned by the image's uid (rabbitmq 999, zookeeper 1000,
+// postgres 999), and a copy that lands root-owned is not a slower migration,
+// it is a broker that will not start — a .erlang.cookie RabbitMQ cannot read
+// fails its boot with "eacces" → "Kernel pid terminated" (measured). The utils
+// container runs as root, which is what lets tar restore an owner the daemon
+// may not even be allowed to name. `cp -a` was not chosen: it needs the same
+// privileges and reports a partial copy less clearly than a tar that exits.
+//
+// The verification is a second utils run comparing the file count and the
+// total size of the two mounts. It is what turns a partial copy — a pipe that
+// broke, a device that filled up mid-stream — into a failed step instead of a
+// container started on half a data directory.
+func (e *depsEnv) CopyVolume(ctx context.Context, src, dst string) error {
+	if e.dc == nil {
+		return errors.New("no docker client")
+	}
+	if err := e.dc.EnsureUtilsImage(ctx); err != nil {
+		return fmt.Errorf("ensure utils image: %w", err)
+	}
+	binds, err := e.copyBinds(ctx, src, dst, true)
+	if err != nil {
+		return err
+	}
+	out, code, err := e.dc.RunUtilsContainerWithTimeout(ctx,
+		[]string{"sh", "-c", "tar -C " + depsCopySrc + " -Scf - . | tar -C " + depsCopyDst + " -Sxpf -"},
+		binds, depsCopyTimeout)
+	if err != nil {
+		return fmt.Errorf("copy volume %s to %s: %w", src, dst, err)
+	}
+	if code != 0 {
+		return fmt.Errorf("copy volume %s to %s: exit %d: %s", src, dst, code, strings.TrimSpace(out))
+	}
+	return e.verifyVolumeCopy(ctx, src, dst)
+}
+
+// verifyVolumeCopy compares the two mounts after a copy: the number of files
+// and the number of BYTES IN THEM. Both are read from ONE utils container, in
+// labeled lines, so a stray diagnostic on the container's stderr cannot be
+// parsed as part of the answer.
+//
+// Apparent size, and emphatically NOT block allocation. This compared `du -sk`
+// once and failed EVERY real RabbitMQ copy-upgrade at the copy step
+// ("36 files / 252 KiB against 36 files / 256 KiB") on a copy whose content was
+// byte-identical: mnesia preallocates past EOF, so schema.DAT was 22093 bytes
+// in 56*512 blocks on the source and the same 22093 bytes in 48*512 on the
+// copy. A faithful copy is entitled to allocate differently — filesystems round
+// to blocks, honor holes and drop preallocation as they see fit — so
+// allocation is not a statement about the data at all.
+//
+// What the check exists for is a copy that lost DATA: a pipe that broke, a
+// device that filled mid-stream. Both leave fewer files or fewer bytes, which
+// is exactly what these two numbers see.
+func (e *depsEnv) verifyVolumeCopy(ctx context.Context, src, dst string) error {
+	binds, err := e.copyBinds(ctx, src, dst, false)
+	if err != nil {
+		return err
+	}
+	out, code, err := e.dc.RunUtilsContainerWithTimeout(ctx,
+		[]string{"sh", "-c", volumeMeasureScript}, binds, depsCopyTimeout)
+	if err != nil {
+		return fmt.Errorf("verify the copy of %s: %w", src, err)
+	}
+	if code != 0 {
+		return fmt.Errorf("verify the copy of %s: exit %d: %s", src, code, strings.TrimSpace(out))
+	}
+	m, err := parseVolumeMeasure(out)
+	if err != nil {
+		return fmt.Errorf("verify the copy of %s: %w", src, err)
+	}
+	if m["srcfiles"] != m["dstfiles"] || m["srcbytes"] != m["dstbytes"] {
+		return fmt.Errorf(
+			"the copy of %s into %s does not match the source: %d files / %d bytes against %d files / %d bytes",
+			src, dst, m["dstfiles"], m["dstbytes"], m["srcfiles"], m["srcbytes"])
+	}
+	return nil
+}
+
+// volumeMeasureScript prints four LABELED numbers, one per line. Labels rather
+// than bare numbers because RunUtilsContainer returns the container's whole
+// log: an unexpected line on stderr would otherwise be read as one of the
+// measurements.
+//
+// `du --apparent-size` would be the obvious spelling of the byte totals and is
+// not available: the utils image's du is BUSYBOX and rejects the option
+// (verified by running it in the image). `stat -c %s` is present there, and
+// `find -exec ... {} +` batches it into one exec per directory rather than one
+// per file.
+var volumeMeasureScript = `echo "srcfiles $(` + volumeCountFiles(depsCopySrc) + `)"; ` +
+	`echo "srcbytes $(` + volumeSumBytes(depsCopySrc) + `)"; ` +
+	`echo "dstfiles $(` + volumeCountFiles(depsCopyDst) + `)"; ` +
+	`echo "dstbytes $(` + volumeSumBytes(depsCopyDst) + `)"`
+
+// volumeCountFiles / volumeSumBytes are the two shell fragments the measurement
+// is built from, in one place, so the copy verification and the size probe
+// cannot drift into measuring different things.
+func volumeCountFiles(mount string) string { return "find " + mount + " -type f | wc -l" }
+
+// volumeSumBytes sums the APPARENT size of every regular file. `+0` in the END
+// block makes an empty tree print 0 rather than an empty line, so "no files" is
+// still a number the parser accepts.
+func volumeSumBytes(mount string) string {
+	return "find " + mount + ` -type f -exec stat -c %s {} + | awk '{s+=$1} END {print s+0}'`
+}
+
+// parseVolumeMeasure reads the four labeled numbers volumeMeasureScript prints.
+func parseVolumeMeasure(out string) (map[string]int64, error) {
+	return parseLabeledNumbers(out, "srcfiles", "srcbytes", "dstfiles", "dstbytes")
+}
+
+// parseLabeledNumbers reads "<label> <number>" lines out of a utils container's
+// log, ignoring everything else in it — a container's whole output comes back,
+// so a warning on stderr must not be readable as a measurement.
+//
+// EVERY requested label must be present. A measurement that did not happen must
+// not be served as a zero: zero is a real answer here (an empty volume, a
+// matching pair of counts) and would sail through the very check it exists to
+// fail.
+func parseLabeledNumbers(out string, want ...string) (map[string]int64, error) {
+	got := map[string]int64{}
+	for line := range strings.SplitSeq(out, "\n") {
+		f := strings.Fields(line)
+		if len(f) != 2 {
+			continue
+		}
+		n, err := strconv.ParseInt(f[1], 10, 64)
+		if err != nil {
+			continue
+		}
+		got[f[0]] = n
+	}
+	for _, k := range want {
+		if _, ok := got[k]; !ok {
+			return nil, fmt.Errorf("no %s in the measurement output: %q", k, strings.TrimSpace(out))
+		}
+	}
+	return got, nil
+}
+
+// EnsureVolumeDirs creates directories inside a data volume, through the utils
+// container so they end up owned by ROOT — which is what the real init
+// container that normally creates them produces too (ZooKeeper's entrypoint
+// chowns its data directories before it drops privileges).
+//
+// It exists because a temp container runs the CONTAINER and nothing around it:
+// no init actions, no probes, and no INIT CONTAINERS. ZooKeeper's generated
+// def has an init container whose only job is `mkdir -p /zkdir/data
+// /zkdir/datalog`, so a copy of a volume that has never held a running
+// ZooKeeper would start the temp container against directories that are not
+// there.
+func (e *depsEnv) EnsureVolumeDirs(ctx context.Context, vol string, dirs []string) error {
+	if len(dirs) == 0 {
+		return nil
+	}
+	if e.dc == nil {
+		return errors.New("no docker client")
+	}
+	args := make([]string, 0, len(dirs)+2)
+	args = append(args, "mkdir", "-p")
+	for _, dir := range dirs {
+		clean, err := volumeRelPath(dir)
+		if err != nil {
+			return fmt.Errorf("ensure %s in %s: %w", dir, vol, err)
+		}
+		args = append(args, depsCopyDst+"/"+clean)
+	}
+	if err := e.dc.EnsureUtilsImage(ctx); err != nil {
+		return fmt.Errorf("ensure utils image: %w", err)
+	}
+	ref, err := e.volumeMountSource(ctx, vol)
+	if err != nil {
+		return err
+	}
+	out, code, err := e.dc.RunUtilsContainer(ctx, args, []string{ref + ":" + depsCopyDst})
+	if err != nil {
+		return fmt.Errorf("create directories in %s: %w", vol, err)
+	}
+	if code != 0 {
+		return fmt.Errorf("create directories in %s: exit %d: %s", vol, code, strings.TrimSpace(out))
+	}
+	return nil
+}
+
+// volumeRelPath validates a path a caller wants created INSIDE a volume. The
+// callers are the launcher's own CopySpecs, so this is not a trust boundary —
+// it is a guard against a typo escaping the mount ("../../etc") and having the
+// utils container, which runs as root, create it somewhere else entirely.
+func volumeRelPath(rel string) (string, error) {
+	slashed := strings.ReplaceAll(rel, `\`, "/")
+	// The ".." check runs on the RAW path, before Clean. Clean("/../../etc")
+	// is "/etc": it would silently turn an escape into a plausible-looking
+	// path instead of refusing it, which for a root container is the worst of
+	// both answers.
+	for part := range strings.SplitSeq(slashed, "/") {
+		if part == ".." {
+			return "", fmt.Errorf("%q leaves the volume", rel)
+		}
+	}
+	clean := strings.TrimPrefix(slashpath.Clean("/"+slashed), "/")
+	if clean == "" || clean == "." {
+		return "", errors.New("empty path")
+	}
+	return clean, nil
+}
+
+// DependencyState is the namespace's current pin for id — the image its data
+// runs on and which GENERATION of the data volume that is. An unpinned
+// dependency (and a namespace with no runtime) answers the zero value, whose
+// Gen() is 1: the volume every namespace that has never migrated runs.
+func (e *depsEnv) DependencyState(id deps.ID) deps.DependencyState {
+	if e.act.runtime == nil {
+		return deps.DependencyState{}
+	}
+	return e.act.runtime.DependencyStates()[id]
+}
+
+// VolumeSize is what one generation of a dependency's data COSTS: the LARGER of
+// its apparent size and the space it actually occupies. An absent volume
+// measures 0 rather than failing — the preflight asks about the TARGET volume
+// too, which normally does not exist yet.
+//
+// The larger of two readings, and not either one, because neither is an upper
+// bound and both directions were MEASURED on real volumes:
+//
+//   - allocation UNDER-reads sparse data. ZooKeeper preallocates its txnlog to
+//     64 MiB: log.1 is 67108880 apparent bytes in 16 KiB of blocks, and a plain
+//     tar copy of it lands as 65556 KiB on the destination. Requiring the 16 KiB
+//     is an ENOSPC in the middle of a migration, on an already-stopped
+//     namespace, 4096x under.
+//   - apparent size UNDER-reads dense data, because filesystems round to blocks
+//     and honor preallocation past EOF: a 22093-byte mnesia schema.DAT occupies
+//     28672 bytes.
+//
+// The copy does preserve holes (tar -S, see CopyVolume), which usually makes
+// the destination cost the source's allocation rather than its apparent size.
+// That is an efficiency and NOT a reason to require less: whether the holes
+// survive is a property of the DESTINATION filesystem, which this launcher
+// cannot see. Over-requiring refuses a migration that would have fit and says
+// exactly what it wanted; under-requiring is the ENOSPC. That is the same
+// direction DumpSharesFilesystemWithVolumes already chose.
+//
+// It is also what makes the two MODES agree. Server mode summed apparent size
+// while desktop ran `du -sk` and got allocation, so the same ZooKeeper volume
+// was worth 64 MiB to one preflight and 16 KiB to the other.
 func (e *depsEnv) VolumeSize(ctx context.Context, vol string) (int64, error) {
 	if config.IsDesktopMode() {
-		if e.dc == nil {
-			return 0, errors.New("no docker client")
-		}
-		v, err := e.dc.GetVolumeByOriginalName(ctx, vol)
-		if err != nil {
-			return 0, fmt.Errorf("look up volume %s: %w", vol, err)
-		}
-		if v == nil {
-			return 0, nil
-		}
-		size, err := e.dc.VolumeSize(ctx, v.Name)
-		if err != nil {
-			return 0, fmt.Errorf("measure volume %s: %w", vol, err)
-		}
-		return size, nil
+		return e.desktopVolumeSize(ctx, vol)
 	}
-	var total int64
+	var apparent, allocated int64
 	err := filepath.WalkDir(e.volumeDir(vol), func(_ string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
 		}
 		if info, ierr := d.Info(); ierr == nil {
-			total += info.Size()
+			apparent += info.Size()
+			allocated += fileAllocatedBytes(info)
 		}
 		return nil
 	})
@@ -313,8 +675,58 @@ func (e *depsEnv) VolumeSize(ctx context.Context, vol string) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("measure volume %s: %w", vol, err)
 	}
-	return total, nil
+	return max(apparent, allocated), nil
 }
+
+// desktopVolumeSize measures a scoped named volume from INSIDE the engine: on a
+// macOS/Windows desktop the host cannot see into it at all, and even on Linux
+// the volume root is not readable by the desktop user.
+//
+// Both numbers come from ONE container run, and the volume is mounted READ-ONLY
+// — measuring must never be able to change what it measures.
+func (e *depsEnv) desktopVolumeSize(ctx context.Context, vol string) (int64, error) {
+	if e.dc == nil {
+		return 0, errors.New("no docker client")
+	}
+	v, err := e.dc.GetVolumeByOriginalName(ctx, vol)
+	if err != nil {
+		return 0, fmt.Errorf("look up volume %s: %w", vol, err)
+	}
+	if v == nil {
+		return 0, nil
+	}
+	if imgErr := e.dc.EnsureUtilsImage(ctx); imgErr != nil {
+		return 0, fmt.Errorf("ensure utils image: %w", imgErr)
+	}
+	out, code, err := e.dc.RunUtilsContainer(ctx,
+		[]string{"sh", "-c", volumeSizeScript}, []string{v.Name + ":" + volumeSizeMount + ":ro"})
+	if err != nil {
+		return 0, fmt.Errorf("measure volume %s: %w", vol, err)
+	}
+	if code != 0 {
+		return 0, fmt.Errorf("measure volume %s: exit %d: %s", vol, code, strings.TrimSpace(out))
+	}
+	m, err := parseLabeledNumbers(out, "bytes", "kb")
+	if err != nil {
+		return 0, fmt.Errorf("measure volume %s: %w", vol, err)
+	}
+	return max(m["bytes"], m["kb"]*1024), nil
+}
+
+// volumeSizeMount is where the measured volume is mounted inside the utils
+// container.
+const volumeSizeMount = "/vol"
+
+// volumeSizeScript prints a volume's two sizes, LABELED for the same reason the
+// copy verification labels its own: RunUtilsContainer returns the container's
+// whole log, so a stray line on stderr must not be readable as a measurement.
+//
+// `du -sk` is the right tool HERE and the wrong one in the copy verification,
+// and the difference is the whole point: this is a question about DISK, where
+// blocks are the answer, while that one is a question about DATA, where they
+// are not.
+var volumeSizeScript = `echo "bytes $(` + volumeSumBytes(volumeSizeMount) + `)"; ` +
+	`echo "kb $(du -sk ` + volumeSizeMount + ` | cut -f1)"`
 
 // VolumeFreeBytes is the free space of the filesystem that holds the data
 // volumes. On a server that is a host directory; on a macOS/Windows desktop the
@@ -539,6 +951,24 @@ func (e *depsEnv) PullImage(ctx context.Context, image string, progress func(flo
 	return nil
 }
 
+// ImageExists reports whether the image is already in the LOCAL image store.
+//
+// It answers a plain bool and swallows nothing it could have reported: the
+// underlying docker.Client.ImageExists is itself an inspect-or-false, so "not
+// here" and "I could not ask" are already one answer by the time it returns —
+// and a daemon with no Docker client at all is the same answer again. A false
+// therefore means "not known to be here", which is the honest input to a
+// WARNING and never to a refusal. That is the whole contract: the rollback
+// preflight uses it to tell the operator up front that the image it is about
+// to need may have to be pulled, instead of letting that land after the
+// namespace has already been stopped.
+func (e *depsEnv) ImageExists(ctx context.Context, image string) bool {
+	if e.dc == nil {
+		return false
+	}
+	return e.dc.ImageExists(ctx, image)
+}
+
 // --- namespace -------------------------------------------------------------
 
 // IsRunning reports whether the namespace is anything but STOPPED — STARTING
@@ -625,18 +1055,18 @@ func (e *depsEnv) ReloadAndStart(_ context.Context, start bool) error {
 }
 
 // GenerateDefFor runs the namespace's REAL generation with one dependency's
-// pin forced to image, and returns that dependency's def — the same Cmd, the
-// same config binds and the same layout the namespace's own container would
-// get for that version.
+// pin forced to st, and returns that dependency's def — the same Cmd, the same
+// config binds and the same layout the namespace's own container would get for
+// that version, mounting the volume of the generation st names.
 //
-// The returned def is GUARANTEED to carry the requested image — see the check
-// at the tail. It writes NOTHING: no runtime files, no runtime state. The config files the
+// The returned def is GUARANTEED to carry the requested image AND the
+// requested volume — see the checks at the tail. It writes NOTHING: no runtime files, no runtime state. The config files the
 // returned def binds are already on disk from the last real reload, and they
 // do not depend on the dependency's version (postgres' postgresql.conf,
 // pg_hba.conf and init_db_and_user.sh are the same files for every major —
 // only the image, PGDATA and the volume move). The runtime's pins, generated
 // defs and config are the reload path's to move, not this function's.
-func (e *depsEnv) GenerateDefFor(id deps.ID, image string) (appdef.ApplicationDef, error) {
+func (e *depsEnv) GenerateDefFor(id deps.ID, st deps.DependencyState) (appdef.ApplicationDef, error) {
 	d, ok := deps.Lookup(id)
 	if !ok {
 		return appdef.ApplicationDef{}, fmt.Errorf("unknown dependency %q", id)
@@ -645,17 +1075,17 @@ func (e *depsEnv) GenerateDefFor(id deps.ID, image string) (appdef.ApplicationDe
 	if rt == nil || e.act.nsConfig == nil || e.act.bundleDef == nil {
 		return appdef.ApplicationDef{}, errors.New("no namespace loaded")
 	}
-	// DependencyPins returns a copy, so overriding one entry cannot reach the
+	// DependencyStates returns a copy, so overriding one entry cannot reach the
 	// runtime's own map.
-	pins := rt.DependencyPins()
-	pins[id] = image
+	pins := rt.DependencyStates()
+	pins[id] = st
 
 	genOpts := namespace.GenerateOpts{
 		DetachedApps:     rt.ManualStoppedApps(),
 		EditedFileEdits:  rt.FileEditsSnapshot(),
 		EditedAppPatches: rt.AppPatchesSnapshot(),
 		ExtraLicenses:    collectExtraLicensesFrom(e.d.licenses),
-		DependencyPins:   pins,
+		DependencyStates: pins,
 	}
 	if e.d.secretService != nil {
 		genOpts.SecretReader = e.d.nsSecretReader()
@@ -678,11 +1108,34 @@ func (e *depsEnv) GenerateDefFor(id deps.ID, image string) (appdef.ApplicationDe
 		// temp container running a different image from the one it named. That
 		// is a container started on somebody's data under a false name, so it
 		// is an error, not a surprise to debug later.
-		if a.Image != image {
+		if a.Image != st.Image {
 			return appdef.ApplicationDef{}, fmt.Errorf(
-				"the generator resolved %s to %q, not to the requested %q", d.AppName(), a.Image, image)
+				"the generator resolved %s to %q, not to the requested %q", d.AppName(), a.Image, st.Image)
+		}
+		// The same guard for the other half of the pin, and it is the one a
+		// copy-upgrade plan rests on: every container it starts must land on
+		// the COPY. A def that mounts the SOURCE volume instead would run the
+		// old image, the new image and the whole pre/post upgrade sequence
+		// against the namespace's real data — the one thing the plan promises
+		// never to touch — and nothing downstream would notice.
+		if want := deps.VolumeName(d, st.Gen()); want != "" && !mountsVolume(a, want) {
+			return appdef.ApplicationDef{}, fmt.Errorf(
+				"the generator gave %s the volumes %v, not the requested %q", d.AppName(), a.Volumes, want)
 		}
 		return a, nil
 	}
 	return appdef.ApplicationDef{}, fmt.Errorf("the generator produced no %s app", d.AppName())
+}
+
+// mountsVolume reports whether the def mounts the named data volume. A def's
+// volume entry is "<source>:<container path>[:opts]", and only the SOURCE is
+// compared: a bind of a host file that happens to end in the same word is not
+// this dependency's data.
+func mountsVolume(def appdef.ApplicationDef, name string) bool {
+	for _, v := range def.Volumes {
+		if src, _, ok := strings.Cut(v, ":"); ok && src == name {
+			return true
+		}
+	}
+	return false
 }

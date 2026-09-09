@@ -32,7 +32,7 @@ func TestDependencyPinRoundTripsThroughPersistState(t *testing.T) {
 	fp := &fakePersister{}
 	r.SetStatePersister(fp)
 
-	r.SetDependencyPin(deps.Postgres, "postgres:17.5")
+	r.SetDependencyState(deps.Postgres, deps.DependencyState{Image: "postgres:17.5"})
 	require.Equal(t, 1, fp.callCount())
 	st := decodeState(t, fp.lastJSON())
 	assert.Equal(t, "postgres:17.5", st.Dependencies[deps.Postgres].Image)
@@ -82,14 +82,14 @@ func TestRestoreDependencyStateIsReadBack(t *testing.T) {
 // re-pinning replaces a value rather than adding one, and a second dependency
 // leaves the first alone. Both mistakes would mix two dependencies' versions in
 // one state record, which the generator gate then reads back.
-func TestSetDependencyPinOverwritesAndCoexists(t *testing.T) {
+func TestSetDependencyStateOverwritesAndCoexists(t *testing.T) {
 	r := NewRuntime(&Config{ID: "nsX"}, nil, t.TempDir())
 	fp := &fakePersister{}
 	r.SetStatePersister(fp)
 
-	r.SetDependencyPin(deps.Postgres, "postgres:17.5")
-	r.SetDependencyPin(deps.RabbitMQ, "rabbitmq:4.1.2-management")
-	r.SetDependencyPin(deps.Postgres, "postgres:18")
+	r.SetDependencyState(deps.Postgres, deps.DependencyState{Image: "postgres:17.5"})
+	r.SetDependencyState(deps.RabbitMQ, deps.DependencyState{Image: "rabbitmq:4.1.2-management"})
+	r.SetDependencyState(deps.Postgres, deps.DependencyState{Image: "postgres:18"})
 
 	assert.Equal(t, map[deps.ID]string{
 		deps.Postgres: "postgres:18",
@@ -127,11 +127,15 @@ func TestCommitMigrationIsOneWrite(t *testing.T) {
 
 	res := deps.MigrationResult{ID: deps.Postgres, From: "postgres:17.5", To: "postgres:18",
 		FinishedAt: time.Now(), OldVolume: "postgres2"}
-	require.NoError(t, r.CommitMigration(deps.Postgres, "postgres:18", res))
+	require.NoError(t, r.CommitMigration(deps.Postgres, deps.DependencyState{Image: "postgres:18", VolumeGen: 2}, res))
 
 	require.Equal(t, 1, fp.callCount(), "commit must be exactly one persist")
 	st := decodeState(t, fp.lastJSON())
-	assert.Equal(t, "postgres:18", st.Dependencies[deps.Postgres].Image)
+	assert.Equal(t, deps.DependencyState{Image: "postgres:18", VolumeGen: 2,
+		PrevImage: "postgres:17.5", PrevVolumeGen: 1}, st.Dependencies[deps.Postgres],
+		"the image and the generation move together, in the same write — the generation is "+
+			"what names the volume the migrated data is actually in — and the state they "+
+			"moved FROM is recorded in that same write, because it is what a rollback restores")
 	assert.Nil(t, st.DependencyMigration)
 	require.NotNil(t, st.LastDependencyMigration)
 	assert.Equal(t, "postgres2", st.LastDependencyMigration.OldVolume)
@@ -170,12 +174,13 @@ func TestCommitMigrationDoesNotMoveMemoryWhenThePersistFails(t *testing.T) {
 	r.RestoreDependencyState(map[deps.ID]deps.DependencyState{deps.Postgres: {Image: "postgres:17.5"}}, journal, last)
 	r.SetStatePersister(failingPersister{})
 
-	err := r.CommitMigration(deps.Postgres, "postgres:18", deps.MigrationResult{
-		ID: deps.Postgres, From: "postgres:17.5", To: "postgres:18", OldVolume: "postgres2"})
+	err := r.CommitMigration(deps.Postgres, deps.DependencyState{Image: "postgres:18", VolumeGen: 2},
+		deps.MigrationResult{ID: deps.Postgres, From: "postgres:17.5", To: "postgres:18", OldVolume: "postgres2"})
 	require.ErrorIs(t, err, errPersistFailed)
 
-	assert.Equal(t, map[deps.ID]string{deps.Postgres: "postgres:17.5"}, r.DependencyPins(),
-		"the pin must not move on a commit that was never written")
+	assert.Equal(t, map[deps.ID]deps.DependencyState{deps.Postgres: {Image: "postgres:17.5"}},
+		r.DependencyStates(), "no part of the pin may move on a commit that was never written — "+
+			"including the rollback target, which would otherwise offer a volume nothing migrated to")
 	j := r.MigrationJournal()
 	require.NotNil(t, j, "the journal must survive so the rollback still has its record")
 	assert.Equal(t, "restore", j.Step)
@@ -193,7 +198,7 @@ func TestCommitMigrationRestoresAnAbsentPinWhenThePersistFails(t *testing.T) {
 	r.RestoreDependencyState(nil, &deps.MigrationJournal{ID: deps.Postgres, Step: "restore"}, nil)
 	r.SetStatePersister(failingPersister{})
 
-	require.ErrorIs(t, r.CommitMigration(deps.Postgres, "postgres:18",
+	require.ErrorIs(t, r.CommitMigration(deps.Postgres, deps.DependencyState{Image: "postgres:18", VolumeGen: 2},
 		deps.MigrationResult{ID: deps.Postgres}), errPersistFailed)
 
 	assert.Empty(t, r.DependencyPins())
@@ -262,7 +267,7 @@ func TestMigrationWritesReportAFailedPersist(t *testing.T) {
 	})
 	t.Run("CommitMigration", func(t *testing.T) {
 		r := newRuntime()
-		err := r.CommitMigration(deps.Postgres, "postgres:18",
+		err := r.CommitMigration(deps.Postgres, deps.DependencyState{Image: "postgres:18", VolumeGen: 2},
 			deps.MigrationResult{ID: deps.Postgres, From: "postgres:17.5", To: "postgres:18"})
 		require.ErrorIs(t, err, errPersistFailed)
 		assert.True(t, r.dirty.Load(), "the write is still owed")
@@ -279,6 +284,82 @@ func TestMigrationWritesReportAFailedPersist(t *testing.T) {
 		require.ErrorIs(t, err, errPersistFailed)
 		assert.True(t, r.dirty.Load(), "the write is still owed")
 	})
+}
+
+// TestDependencyStatesIsTheWholeRecord: the image-only DependencyPins view is
+// what the edit gate and the CLI's item list read, but the generator needs the
+// generation too, and the two views must describe the same map.
+func TestDependencyStatesIsTheWholeRecord(t *testing.T) {
+	r := NewRuntime(&Config{ID: "nsX"}, nil, t.TempDir())
+	r.RestoreDependencyState(map[deps.ID]deps.DependencyState{
+		deps.Postgres: {Image: "postgres:18", VolumeGen: 2},
+		deps.RabbitMQ: {Image: "rabbitmq:4.1.2-management"},
+	}, nil, nil)
+
+	assert.Equal(t, map[deps.ID]deps.DependencyState{
+		deps.Postgres: {Image: "postgres:18", VolumeGen: 2},
+		deps.RabbitMQ: {Image: "rabbitmq:4.1.2-management"},
+	}, r.DependencyStates())
+	assert.Equal(t, map[deps.ID]string{
+		deps.Postgres: "postgres:18",
+		deps.RabbitMQ: "rabbitmq:4.1.2-management",
+	}, r.DependencyPins())
+
+	// The accessor hands out a copy: the daemon reads these on every namespace
+	// fetch, and writing through the result would move runtime state under no
+	// lock at all.
+	states := r.DependencyStates()
+	states[deps.Postgres] = deps.DependencyState{Image: "hacked", VolumeGen: 9}
+	assert.Equal(t, deps.DependencyState{Image: "postgres:18", VolumeGen: 2},
+		r.DependencyStates()[deps.Postgres])
+}
+
+// Every state file that exists today was written before the counter did, so
+// none of them carries volumeGen. Reading one must answer generation 1 — the
+// volume those namespaces are actually running on. A fixture rather than a
+// comment, because the rule lives in a JSON tag and a zero value.
+func TestAStateFileWrittenBeforeTheCounterLoadsAsGenerationOne(t *testing.T) {
+	st := decodeState(t, `{"status":"STOPPED","dependencies":{"postgres":{"image":"postgres:17.5"}}}`)
+	require.Contains(t, st.Dependencies, deps.Postgres)
+	assert.Equal(t, 0, st.Dependencies[deps.Postgres].VolumeGen, "nothing was written, so nothing is read")
+	assert.Equal(t, 1, st.Dependencies[deps.Postgres].Gen(), "and an absent counter IS generation 1")
+
+	// And it survives the round trip through the runtime, which is what the
+	// generator reads.
+	r := NewRuntime(&Config{ID: "nsX"}, nil, t.TempDir())
+	r.RestoreDependencyState(st.Dependencies, nil, nil)
+	assert.Equal(t, 1, r.DependencyStates()[deps.Postgres].Gen())
+}
+
+// TestRunningRepinKeepsTheVolumeGeneration is the regression this whole record
+// exists to prevent. The RUNNING hook re-pins a dependency to the image its
+// container actually runs — which after a migration is the NEW image, on the
+// NEW volume. Writing a fresh DependencyState with only the image set would
+// reset the counter to 1 there, and the next start would mount the
+// PRE-migration volume: the old data served by the new version, with the
+// migrated copy orphaned beside it and nothing in the log to say so.
+func TestRunningRepinKeepsTheVolumeGeneration(t *testing.T) {
+	r := NewRuntime(&Config{ID: "nsX"}, nil, t.TempDir())
+	r.RestoreDependencyState(map[deps.ID]deps.DependencyState{
+		deps.Postgres: {Image: "postgres:18", VolumeGen: 2,
+			PrevImage: "postgres:17.5", PrevVolumeGen: 1}}, nil, nil)
+	// 18.1 over 18: a non-breaking patch bump, which is exactly the case the
+	// hook exists for — it is the ordinary way a pin moves after a migration.
+	r.InjectAppsForTest(&AppRuntime{Name: "postgres", Status: AppStatusRunning,
+		Def: appdef.ApplicationDef{Name: "postgres", Image: "postgres:18.1"}})
+
+	r.mu.Lock()
+	r.syncDependencyPinsUnderLock()
+	r.mu.Unlock()
+
+	assert.Equal(t, deps.DependencyState{Image: "postgres:18.1", VolumeGen: 2,
+		PrevImage: "postgres:17.5", PrevVolumeGen: 1},
+		r.DependencyStates()[deps.Postgres],
+		"the image follows the container; the generation is the migration's and only a migration "+
+			"moves it — and so is the rollback target, which the retained volume on disk still backs. "+
+			"A patch bump of the NEW version says nothing about the OLD one, and dropping the target "+
+			"here would retire the rollback offer on the first ordinary re-pin after a migration")
+	assert.True(t, r.dirty.Load(), "a pin change marks the state dirty for the loop-tail persist")
 }
 
 func TestRunningDependencyUpdatesPin(t *testing.T) {
@@ -391,7 +472,7 @@ func TestLoopTailRePinsARunningDependency(t *testing.T) {
 }
 
 // A pin the store refused exists in memory and nowhere else — and after
-// SetDependencyPin the in-memory pin already equals the running container's
+// SetDependencyState the in-memory pin already equals the running container's
 // image, so syncDependencyPinsUnderLock (pin writer #1) finds nothing to
 // re-flag. Unless the failed write stays OWED, it is dropped until the image
 // itself changes, and the restart in between hands 17 data to 18.
@@ -399,7 +480,7 @@ func TestAPinWriteThatFailedIsStillOwed(t *testing.T) {
 	r := NewRuntime(&Config{ID: "nsX"}, nil, t.TempDir())
 	r.SetStatePersister(failingPersister{})
 
-	r.SetDependencyPin(deps.Postgres, "postgres:17.5")
+	r.SetDependencyState(deps.Postgres, deps.DependencyState{Image: "postgres:17.5"})
 
 	assert.Equal(t, "postgres:17.5", r.DependencyPins()[deps.Postgres],
 		"the pin is held in memory whatever the store did")
@@ -454,7 +535,7 @@ func (p *armedFailPersister) lastJSON() string {
 // The call-site half of the contract above: the real runtimeLoop's dirty-flag
 // tail is what makes "still owed" mean something, so this drives it. The app is
 // deliberately NOT a dependency — the pin under test can then only come from
-// SetDependencyPin, never from syncDependencyPinsUnderLock.
+// SetDependencyState, never from syncDependencyPinsUnderLock.
 func TestTheLoopTailRetriesAPinWriteThatDidNotReachDisk(t *testing.T) {
 	md := newMockDocker()
 	r := NewRuntime(testConfig(), md, t.TempDir())
@@ -478,7 +559,7 @@ func TestTheLoopTailRetriesAPinWriteThatDidNotReachDisk(t *testing.T) {
 	require.Equal(t, before, idle, "the loop must be idle before the pin write")
 
 	p.arm(1)
-	r.SetDependencyPin(deps.Postgres, "postgres:17.5")
+	r.SetDependencyState(deps.Postgres, deps.DependencyState{Image: "postgres:17.5"})
 	_, armed, failed := p.stats()
 	require.Equal(t, 0, armed, "the pin write must have been attempted")
 	require.Equal(t, 1, failed)
@@ -488,4 +569,71 @@ func TestTheLoopTailRetriesAPinWriteThatDidNotReachDisk(t *testing.T) {
 		return json.Unmarshal([]byte(p.lastJSON()), &st) == nil &&
 			st.Dependencies[deps.Postgres].Image == "postgres:17.5"
 	}), "the loop tail never retried the pin write the store refused")
+}
+
+// A rollback is the mirror of CommitMigration and needs the same atomicity: the
+// pin goes back to the state the migration moved away from, the verdict is
+// recorded, and the OFFER IS WITHDRAWN — all in one write. Clearing the target
+// is not tidiness: there is no roll-forward action, so an offer left standing
+// would point at a volume the namespace has stopped writing to, and taking it
+// would silently discard everything written since the rollback.
+func TestRollbackIsOneWriteAndClearsTheTarget(t *testing.T) {
+	r := NewRuntime(&Config{ID: "nsX"}, nil, t.TempDir())
+	fp := &fakePersister{}
+	r.SetStatePersister(fp)
+	r.RestoreDependencyState(map[deps.ID]deps.DependencyState{deps.Postgres: {
+		Image: "postgres:18.6", VolumeGen: 2, PrevImage: "postgres:17.5", PrevVolumeGen: 1}},
+		&deps.MigrationJournal{ID: deps.Postgres, Step: "switch-generation"}, nil)
+
+	prev, ok := r.DependencyStates()[deps.Postgres].Previous()
+	require.True(t, ok)
+	// The offer is withdrawn by the METHOD, not by the caller: prev is handed
+	// over carrying a stale target of its own (what a caller that rebuilt the
+	// state by hand, or a deeper chain, would pass), and it must not come back
+	// out. Nothing above the persist may decide whether an offer survives — an
+	// offer the launcher cannot keep is worse than none.
+	prev.PrevImage, prev.PrevVolumeGen = "postgres:16", 1
+	res := deps.MigrationResult{ID: deps.Postgres, From: "postgres:18.6", To: "postgres:17.5",
+		Kind: deps.ResultKindRollback, FinishedAt: time.Now()}
+	require.NoError(t, r.RollbackDependencyState(deps.Postgres, prev, res))
+
+	assert.Equal(t, deps.DependencyState{Image: "postgres:17.5", VolumeGen: 1},
+		r.DependencyStates()[deps.Postgres], "in memory as well as on disk")
+
+	require.Equal(t, 1, fp.callCount(), "a rollback must be exactly one persist")
+	st := decodeState(t, fp.lastJSON())
+	assert.Equal(t, deps.DependencyState{Image: "postgres:17.5", VolumeGen: 1},
+		st.Dependencies[deps.Postgres],
+		"the pin goes back whole, and carries no further offer")
+	assert.Nil(t, st.DependencyMigration)
+	require.NotNil(t, st.LastDependencyMigration)
+	assert.Equal(t, deps.ResultKindRollback, st.LastDependencyMigration.Kind,
+		"the two share one result slot, so the verdict has to say which it was")
+}
+
+// The same argument as TestCommitMigrationDoesNotMoveMemoryWhenThePersistFails,
+// from the other direction: a rollback whose write never landed is a FAILED
+// rollback, and a runtime that already believed the pin had gone back would
+// generate the old version onto the old volume while the state file — and the
+// next daemon — still say the new one. Nothing may move until the write does.
+func TestRollbackDoesNotMoveMemoryWhenThePersistFails(t *testing.T) {
+	r := NewRuntime(&Config{ID: "nsX"}, nil, t.TempDir())
+	pin := deps.DependencyState{Image: "postgres:18.6", VolumeGen: 2,
+		PrevImage: "postgres:17.5", PrevVolumeGen: 1}
+	journal := &deps.MigrationJournal{ID: deps.Postgres, Step: "switch-generation"}
+	last := &deps.MigrationResult{ID: deps.Postgres, Error: "an older attempt"}
+	r.RestoreDependencyState(map[deps.ID]deps.DependencyState{deps.Postgres: pin}, journal, last)
+	r.SetStatePersister(failingPersister{})
+
+	prev, _ := pin.Previous()
+	err := r.RollbackDependencyState(deps.Postgres, prev,
+		deps.MigrationResult{ID: deps.Postgres, Kind: deps.ResultKindRollback})
+	require.ErrorIs(t, err, errPersistFailed)
+
+	assert.Equal(t, map[deps.ID]deps.DependencyState{deps.Postgres: pin}, r.DependencyStates(),
+		"the pin, the generation and the offer all stay where they were")
+	require.NotNil(t, r.MigrationJournal())
+	lm := r.LastDependencyMigration()
+	require.NotNil(t, lm)
+	assert.Equal(t, "an older attempt", lm.Error, "the verdict must not be published either")
 }

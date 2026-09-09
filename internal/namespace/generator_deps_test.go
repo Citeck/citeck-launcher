@@ -89,23 +89,51 @@ func TestAnUnsplittablePinIsNotRehomed(t *testing.T) {
 	assert.Equal(t, digestPin, appByName(t, resp, appdef.AppPostgres).Image)
 }
 
+// generateWithPins is the image-only entry point: most tests in this file are
+// about the IMAGE gate, and pins carrying no generation are what every
+// existing namespace has. Tests about the volume generation call
+// generateWithStates directly.
 func generateWithPins(t *testing.T, bun *bundle.Def, pins map[deps.ID]string) *GenResp {
 	t.Helper()
-	return generateCfgWithPins(t, depsTestConfig(), bun, pins)
+	return generateCfgWithStates(t, depsTestConfig(), bun, statesOf(pins))
 }
 
-// generateCfgWithPins runs one generation against the caller's bundle, which is
-// completed with the gateway depsTestWorkspace declares (see there). The gateway
-// carries no dataSources, so it contributes no init action, no dependency and no
-// env to any infra def — the byte-stability golden is unaffected by its presence.
+func generateWithStates(t *testing.T, bun *bundle.Def, states map[deps.ID]deps.DependencyState) *GenResp {
+	t.Helper()
+	return generateCfgWithStates(t, depsTestConfig(), bun, states)
+}
+
 func generateCfgWithPins(t *testing.T, cfg *Config, bun *bundle.Def, pins map[deps.ID]string) *GenResp {
+	t.Helper()
+	return generateCfgWithStates(t, cfg, bun, statesOf(pins))
+}
+
+// statesOf turns image-only pins into dependency states with no recorded
+// generation — i.e. generation 1, the volume every namespace has always used.
+func statesOf(pins map[deps.ID]string) map[deps.ID]deps.DependencyState {
+	if pins == nil {
+		return nil
+	}
+	out := make(map[deps.ID]deps.DependencyState, len(pins))
+	for id, img := range pins {
+		out[id] = deps.DependencyState{Image: img}
+	}
+	return out
+}
+
+// generateCfgWithStates runs one generation against the caller's bundle, which
+// is completed with the gateway depsTestWorkspace declares (see there). The
+// gateway carries no dataSources, so it contributes no init action, no
+// dependency and no env to any infra def — the byte-stability goldens are
+// unaffected by its presence.
+func generateCfgWithStates(t *testing.T, cfg *Config, bun *bundle.Def, states map[deps.ID]deps.DependencyState) *GenResp {
 	t.Helper()
 	apps := map[string]bundle.AppDef{appdef.AppGateway: {Image: "citeck/gateway:1.0.0"}}
 	if bun != nil {
 		maps.Copy(apps, bun.Applications)
 	}
 	resp, err := Generate(cfg, &bundle.Def{Applications: apps}, depsTestWorkspace(),
-		SystemSecrets{JWT: "j", OIDC: "o"}, GenerateOpts{DependencyPins: pins})
+		SystemSecrets{JWT: "j", OIDC: "o"}, GenerateOpts{DependencyStates: states})
 	require.NoError(t, err)
 	return resp
 }
@@ -167,22 +195,31 @@ func TestPinLetsANonBreakingCandidateThrough(t *testing.T) {
 func TestNoPinAppliesCandidateAndDefaultIs18(t *testing.T) {
 	resp := generateWithPins(t, nil, nil)
 	pg := appByName(t, resp, appdef.AppPostgres)
-	assert.Equal(t, "postgres:18", pg.Image)
-	assert.Contains(t, pg.Volumes, "postgres3:/var/lib/postgresql")
+	assert.Equal(t, "postgres:18.6", pg.Image)
+	// postgres2, not postgres3: the volume follows the pin's GENERATION, and a
+	// namespace with no pin has never migrated. The 18 MOUNT PATH is what the
+	// image dictates, and that does follow the version.
+	assert.Contains(t, pg.Volumes, "postgres2:/var/lib/postgresql")
 	_, hasPGData := pg.Environments.Get("PGDATA")
 	assert.False(t, hasPGData, "18 layout must leave PGDATA to the image default")
 	assert.Empty(t, resp.DependencyUpgrades)
-	assert.Equal(t, DependencyGen{Effective: "postgres:18", Candidate: "postgres:18"}, resp.Dependencies[deps.Postgres])
+	assert.Equal(t, DependencyGen{Effective: "postgres:18.6", Candidate: "postgres:18.6"}, resp.Dependencies[deps.Postgres])
 }
 
-func TestNonMigratableDependencyIsHeldAndReported(t *testing.T) {
+// RabbitMQ's minor bumps are held back AND this launcher ships a plan for
+// them, which is the pair the dashboard banner splits on: Migratable is what
+// tells "upgrade available: run the migration" apart from "upgrade available,
+// requires a newer launcher". Keycloak covers the non-migratable side
+// (TestKeycloakMajorBumpIsHeldByThePin).
+func TestRabbitMQMinorBumpIsHeldAndMigratable(t *testing.T) {
 	bun := &bundle.Def{Applications: map[string]bundle.AppDef{appdef.AppRabbitmq: {Image: "rabbitmq:4.2.9-management"}}}
 	resp := generateWithPins(t, bun, map[deps.ID]string{deps.RabbitMQ: "rabbitmq:4.1.2-management"})
 	assert.Equal(t, "rabbitmq:4.1.2-management", appByName(t, resp, appdef.AppRabbitmq).Image)
 	require.Len(t, resp.DependencyUpgrades, 1, "nothing else may be held back")
 	up := upgradeFor(t, resp, deps.RabbitMQ)
 	require.NotNil(t, up)
-	assert.False(t, up.Migratable, "this launcher ships no RabbitMQ migration")
+	assert.True(t, up.Migratable, "this launcher ships a RabbitMQ migration")
+	assert.False(t, up.VendorBlocked, "and the vendor permits 4.1 -> 4.2")
 }
 
 func TestUnknownCandidateTagIsHeld(t *testing.T) {
@@ -284,7 +321,7 @@ func TestPinSurvivesAWorkspaceConfigWithNoWebapps(t *testing.T) {
 		appdef.AppGateway:  {Image: "citeck/gateway:1.0.0"},
 	}}
 	resp, err := Generate(depsTestConfig(), bun, &bundle.WorkspaceConfig{}, SystemSecrets{JWT: "j", OIDC: "o"},
-		GenerateOpts{DependencyPins: map[deps.ID]string{deps.Postgres: "postgres:17.5"}})
+		GenerateOpts{DependencyStates: map[deps.ID]deps.DependencyState{deps.Postgres: {Image: "postgres:17.5"}}})
 	require.NoError(t, err)
 
 	pg := appByName(t, resp, appdef.AppPostgres)
@@ -301,4 +338,148 @@ func TestPinSurvivesAWorkspaceConfigWithNoWebapps(t *testing.T) {
 	require.NotNil(t, up, "the hold must still be reported")
 	assert.Equal(t, "postgres:18", up.To)
 	assert.Equal(t, DependencyGen{Effective: "postgres:17.5", Candidate: "postgres:18"}, resp.Dependencies[deps.Postgres])
+}
+
+// TestInfraImageDefaults pins the exact fallback image of every generator that
+// goes through the dependency gate: what a namespace runs when neither the
+// bundle nor the workspace config names an image is the launcher's OWN choice,
+// and it is a release decision, not an implementation detail.
+//
+// Every one of them is CONCRETE, down to the patch. A floating tag would let
+// the launcher's default move without a release — and the one moment it is
+// guaranteed to be re-resolved is inside a migration's pull-image step, i.e.
+// exactly while the data is being moved (the runtime never re-pulls a
+// KindThirdParty image that already exists locally).
+//
+// Evidence for postgres:18.6 (Docker Hub v2, probed 2026-09-09):
+// library/postgres:18 and library/postgres:18.6 are the SAME digest
+// (sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280,
+// pushed 2026-08-26), so naming the patch is a rename today and a guard from
+// the day 18.7 is pushed. postgres:18 was the first and only floating default
+// in the launcher's history — Kotlin v1.3.9 shipped postgres:17.5,
+// rabbitmq:4.1.2-management, zookeeper:3.9.4 and mongo:4.0.2, all concrete.
+func TestInfraImageDefaults(t *testing.T) {
+	cfg := depsTestConfig()
+	cfg.Authentication = AuthenticationProps{Type: AuthKeycloak, Users: []string{"admin"}}
+	resp := generateCfgWithStates(t, cfg, nil, nil)
+	for _, tc := range []struct{ app, want string }{
+		{appdef.AppPostgres, "postgres:18.6"},
+		{appdef.AppRabbitmq, "rabbitmq:4.1.2-management"},
+		{appdef.AppZookeeper, "zookeeper:3.9.5"},
+		{appdef.AppMongodb, "mongo:4.0.2"},
+		{appdef.AppKeycloak, "keycloak/keycloak:26.4.5"},
+	} {
+		t.Run(tc.app, func(t *testing.T) {
+			assert.Equal(t, tc.want, appByName(t, resp, tc.app).Image)
+		})
+	}
+}
+
+// TestPostgres18DefaultDefIsByteStable is the tripwire for the fallback above.
+// image= and imageDigest= are both in GetHashInput, so moving the default
+// recreates the postgres container of every namespace whose EFFECTIVE image is
+// the fallback — a fresh install, and a namespace this feature migrated to 18.
+// Unlike its 17 sibling this golden proves nothing historical; it exists so
+// that the next person to bump the default has to write the recreate down.
+func TestPostgres18DefaultDefIsByteStable(t *testing.T) {
+	assertGoldenHashInput(t, appByName(t, generateWithStates(t, nil, nil), appdef.AppPostgres),
+		"postgres18.hashinput.golden")
+}
+
+// The fallback bump must not reach a namespace the pin holds back: a 17 pin
+// against the new 18.6 candidate still emits 17, which is what leaves
+// postgres17.hashinput.golden untouched by this change.
+func TestTheDefaultBumpCannotReachAPinnedNamespace(t *testing.T) {
+	resp := generateWithPins(t, nil, map[deps.ID]string{deps.Postgres: deps.PostgresLegacyImage})
+	assert.Equal(t, "postgres:17", appByName(t, resp, appdef.AppPostgres).Image)
+	up := upgradeFor(t, resp, deps.Postgres)
+	require.NotNil(t, up)
+	assert.Equal(t, "postgres:18.6", up.To, "the candidate it was held back FROM is the new default")
+}
+
+// A bundle that goes BACKWARDS across a data format is held back — that half
+// has always worked, as a side effect of the format rule — but calling it an
+// "upgrade available" is wrong: there is nothing to migrate and nothing to
+// wait for. The generator records the direction as a FACT beside the vendor
+// facts; the sentence is built where every other migration sentence is.
+func TestABreakingBackwardsCandidateIsReportedAsBundleOlder(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		id        deps.ID
+		app       string
+		pin       string
+		candidate string
+	}{
+		{"postgres major", deps.Postgres, appdef.AppPostgres, "postgres:18.6", "postgres:17.5"},
+		{"rabbitmq minor", deps.RabbitMQ, appdef.AppRabbitmq, "rabbitmq:4.2.9-management", "rabbitmq:4.1.8-management"},
+		{"zookeeper minor", deps.Zookeeper, appdef.AppZookeeper, "zookeeper:3.9.5", "zookeeper:3.8.6"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bun := &bundle.Def{Applications: map[string]bundle.AppDef{tc.app: {Image: tc.candidate}}}
+			resp := generateWithPins(t, bun, map[deps.ID]string{tc.id: tc.pin})
+			assert.Equal(t, tc.pin, appByName(t, resp, tc.app).Image, "the data stays where it is")
+			up := upgradeFor(t, resp, tc.id)
+			require.NotNil(t, up)
+			assert.True(t, up.BundleOlder, "the candidate is OLDER than the pin, and saying so is the whole point")
+			assert.False(t, up.VendorBlocked,
+				"no vendor here permits a downgrade, so 'there is no upgrade path from X to Y' answers a question nobody asked")
+			assert.Empty(t, up.VendorVia)
+		})
+	}
+}
+
+// The forward direction is untouched: a held-back FORWARD candidate is still an
+// upgrade, and it still carries the vendor's verdict on the hop. Without this
+// the test above would pass on a generator that simply stopped asking the
+// vendor anything.
+func TestAForwardHoldKeepsTheVendorVerdictAndIsNotBundleOlder(t *testing.T) {
+	bun := &bundle.Def{Applications: map[string]bundle.AppDef{
+		appdef.AppRabbitmq: {Image: "rabbitmq:4.3.5-management"}}}
+	resp := generateWithPins(t, bun, map[deps.ID]string{deps.RabbitMQ: "rabbitmq:4.1.2-management"})
+	up := upgradeFor(t, resp, deps.RabbitMQ)
+	require.NotNil(t, up)
+	assert.False(t, up.BundleOlder)
+	assert.True(t, up.VendorBlocked, "4.1 -> 4.3 is a hop the vendor does not support")
+	assert.Equal(t, "4.2", up.VendorVia)
+}
+
+// An unreadable tag is held back by the format rule, but nothing orders it, so
+// the generator must not claim the bundle went backwards. The preflight's
+// message about the tag is the one the operator needs.
+func TestAnUnparsableCandidateIsNotReportedAsBundleOlder(t *testing.T) {
+	bun := &bundle.Def{Applications: map[string]bundle.AppDef{
+		appdef.AppPostgres: {Image: "postgres:latest"}}}
+	resp := generateWithPins(t, bun, map[deps.ID]string{deps.Postgres: "postgres:18.6"})
+	up := upgradeFor(t, resp, deps.Postgres)
+	require.NotNil(t, up)
+	assert.False(t, up.BundleOlder)
+}
+
+// The user's ruling, stated from the generator side: a PATCH revert is not a
+// data move, so it applies silently and is not reported at all. ("патчи не
+// надо откатывать. В патчах как правило все ок с совместимостью. Только
+// «переломы» откатываем.") Holding it would additionally be a dead end — the
+// only door back would be `citeck deps upgrade`, which never moves data
+// backwards.
+func TestAPatchRevertAppliesSilently(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		id        deps.ID
+		app       string
+		pin       string
+		candidate string
+	}{
+		{"postgres", deps.Postgres, appdef.AppPostgres, "postgres:17.11", "postgres:17.2"},
+		{"rabbitmq", deps.RabbitMQ, appdef.AppRabbitmq, "rabbitmq:4.2.9-management", "rabbitmq:4.2.3-management"},
+		{"zookeeper", deps.Zookeeper, appdef.AppZookeeper, "zookeeper:3.9.5", "zookeeper:3.9.2"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bun := &bundle.Def{Applications: map[string]bundle.AppDef{tc.app: {Image: tc.candidate}}}
+			resp := generateWithPins(t, bun, map[deps.ID]string{tc.id: tc.pin})
+			assert.Equal(t, tc.candidate, appByName(t, resp, tc.app).Image)
+			assert.Nil(t, upgradeFor(t, resp, tc.id), "nothing is held back, so there is nothing to report")
+			assert.Equal(t, DependencyGen{Effective: tc.candidate, Candidate: tc.candidate},
+				resp.Dependencies[tc.id])
+		})
+	}
 }

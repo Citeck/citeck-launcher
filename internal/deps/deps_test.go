@@ -66,9 +66,16 @@ func TestBreakingRules(t *testing.T) {
 	}
 }
 
-func TestOnlyPostgresIsMigratable(t *testing.T) {
+// TestWhichDependenciesAreMigratable names the three dependencies this
+// launcher ships a plan for. It is deliberately a LIST and not a property: a
+// descriptor claiming Migratable() with nothing wired behind it is advertised
+// to the user as an upgrade the launcher can perform, and the daemon's wiring
+// test (TestEveryMigratableDependencyHasAMigratorAndARollback) is what checks
+// the other half.
+func TestWhichDependenciesAreMigratable(t *testing.T) {
+	migratable := map[ID]bool{Postgres: true, RabbitMQ: true, Zookeeper: true}
 	for _, d := range All() {
-		assert.Equal(t, d.ID() == Postgres, d.Migratable(), string(d.ID()))
+		assert.Equal(t, migratable[d.ID()], d.Migratable(), string(d.ID()))
 		assert.NotEmpty(t, d.LegacyImage(), string(d.ID()))
 		_, ok := ParseImageVersion(d.LegacyImage())
 		assert.True(t, ok, "legacy image of %s must parse", d.ID())
@@ -84,7 +91,7 @@ func TestOnlyPostgresIsMigratable(t *testing.T) {
 // table would only assert that the table equals itself.
 func TestPostgresLayout(t *testing.T) {
 	legacy := PostgresLayoutFor(17)
-	assert.Equal(t, PostgresLayout{Volume: "postgres2", MountPath: "/var/lib/postgresql/data",
+	assert.Equal(t, PostgresLayout{MountPath: "/var/lib/postgresql/data",
 		PGData: "/var/lib/postgresql/data", PGVersionRel: "PG_VERSION"}, legacy)
 	assert.Equal(t, legacy, PostgresLayoutFor(9))
 	// A major below every rule is data the launcher could not identify;
@@ -94,29 +101,23 @@ func TestPostgresLayout(t *testing.T) {
 	assert.Equal(t, legacy, PostgresLayoutFor(-1))
 
 	v18 := PostgresLayoutFor(18)
-	assert.Equal(t, PostgresLayout{Volume: "postgres3", MountPath: "/var/lib/postgresql",
+	assert.Equal(t, PostgresLayout{MountPath: "/var/lib/postgresql",
 		PGData: "", PGVersionRel: "18/docker/PG_VERSION"}, v18)
 	assert.Equal(t, "19/docker/PG_VERSION", PostgresLayoutFor(19).PGVersionRel)
 }
 
-// KnownPostgresLayouts is what the daemon's pin-seeding probe walks when there
-// is no pin and no container to ask: every layout it can spell a PG_VERSION
-// path for, newest first, so the newest cluster on disk wins. The order is the
-// verdict — a probe that tried the legacy layout first would find nothing on
-// an 18 namespace and seed it as legacy.
-func TestKnownPostgresLayoutsAreTheProbeOrder(t *testing.T) {
-	assert.Equal(t, []PostgresLayout{PostgresLayoutFor(18), PostgresLayoutFor(17)}, KnownPostgresLayouts())
+// KnownPostgresDataPaths is what the daemon's pin-seeding probe looks for
+// inside a volume when there is no pin and no container to ask: every
+// PG_VERSION path it can spell, newest first, so the newest cluster in a
+// volume wins. The order is the verdict — a probe that tried the legacy path
+// first would read 17 out of a volume that also holds an 18 cluster.
+func TestKnownPostgresDataPathsAreTheProbeOrder(t *testing.T) {
+	assert.Equal(t, []string{"18/docker/PG_VERSION", "PG_VERSION"}, KnownPostgresDataPaths())
 
-	// Every entry must be usable as a probe on its own: a volume to look in
-	// and a path to look at.
-	for _, l := range KnownPostgresLayouts() {
-		assert.NotEmpty(t, l.Volume)
-		assert.NotEmpty(t, l.PGVersionRel)
-	}
-	// The layout a given major RUNS on is always one the probe knows how to
-	// find, or a namespace could be seeded from data no probe can read.
+	// The path a given major announces itself at is always one the probe
+	// knows, or a namespace could be seeded from data no probe can read.
 	for _, major := range []int{9, 17, 18} {
-		assert.Contains(t, KnownPostgresLayouts(), PostgresLayoutFor(major), "major %d", major)
+		assert.Contains(t, KnownPostgresDataPaths(), PostgresLayoutFor(major).PGVersionRel, "major %d", major)
 	}
 }
 

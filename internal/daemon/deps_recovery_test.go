@@ -106,17 +106,23 @@ func TestRecoveryKeepsTheJournalAndStaysStoppedWhenTheRollbackFails(t *testing.T
 	assert.Contains(t, f.rt.LastDependencyMigration().Error, "volume is in use")
 }
 
-// A journal naming a dependency THIS launcher cannot roll back (a downgrade,
-// or a newer launcher's dependency) must keep the journal and say which one —
-// silently clearing it would strand the leftovers with no record at all.
+// A journal naming a dependency THIS launcher cannot roll back must keep the
+// journal and say which one — silently clearing it would strand the leftovers
+// with no record at all.
+//
+// The id is one no release has ever shipped, on purpose: a journal is written
+// by whichever launcher STARTED the migration, so the launcher that finds it
+// may be an older build than the one that opened it. Naming a dependency this
+// release does migrate would make the test pass for the wrong reason the day
+// somebody wires a rollback for it.
 func TestRecoveryOfAnUnknownDependencyKeepsTheJournal(t *testing.T) {
 	f := newRecoveryFixture(t)
-	f.openJournal(&deps.MigrationJournal{ID: deps.RabbitMQ, From: "rabbitmq:4.1.2", To: "rabbitmq:4.2.9"})
+	f.openJournal(&deps.MigrationJournal{ID: deps.ID("redis"), From: "redis:7", To: "redis:8"})
 
 	assert.False(t, f.d.recoverInterruptedMigration(context.Background(), f.act))
 	require.NotNil(t, f.rt.MigrationJournal())
 	require.NotNil(t, f.rt.LastDependencyMigration())
-	assert.Contains(t, f.rt.LastDependencyMigration().Error, "rabbitmq",
+	assert.Contains(t, f.rt.LastDependencyMigration().Error, "redis",
 		"the verdict must name the dependency nobody can undo")
 }
 

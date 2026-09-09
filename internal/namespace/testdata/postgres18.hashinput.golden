@@ -1,0 +1,15 @@
+name=postgres
+image=postgres:18.6
+cmd=-c config_file=/etc/postgresql/postgresql.conf
+shmSize=128m
+vch=UB4hb9eeCjs
+env:CITECK_EXPORT_DIR=/citeck/export
+env:POSTGRES_PASSWORD=postgres
+env:POSTGRES_USER=postgres
+vol=postgres2:/var/lib/postgresql
+vol=./postgres/init_db_and_user.sh:/init_db_and_user.sh
+vol=./postgres/postgresql.conf:/etc/postgresql/postgresql.conf
+vol=./postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf
+vol=./export/postgres:/citeck/export
+initAction=sh -c /init_db_and_user.sh citeck_keycloak
+mem=1g

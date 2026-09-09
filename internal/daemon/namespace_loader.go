@@ -404,21 +404,19 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 	// before pins existed, or one whose volumes a snapshot import just filled)
 	// and handed to Generate, so a bundle's newer image is held back when
 	// applying it would be breaking.
-	persistedPins := make(map[deps.ID]string)
+	persistedPins := make(map[deps.ID]deps.DependencyState)
 	if persistedState != nil {
-		for id, st := range persistedState.Dependencies {
-			persistedPins[id] = st.Image
-		}
+		maps.Copy(persistedPins, persistedState.Dependencies)
 	}
 	pins, seededPins := resolveDependencyPins(in.context(),
 		persistedPins, dockerDependencyProbe{dc: depsDockerOf(dc), volumesBase: volumesBase},
 		namespaceDependencies(nsCfg))
-	for id, img := range seededPins {
-		slog.Info("Dependency pin seeded", "ns", nsID, "dependency", id, "image", img)
+	for id, st := range seededPins {
+		slog.Info("Dependency pin seeded", "ns", nsID, "dependency", id, "image", st.Image, "volumeGen", st.Gen())
 	}
 
 	var genOpts namespace.GenerateOpts
-	genOpts.DependencyPins = pins
+	genOpts.DependencyStates = pins
 	genOpts.SecretReader = &secretReaderAdapter{svc: in.SecretService}
 	// User-added licenses: locked SecretService yields nil and the generator
 	// falls back to workspace-only licenses — never aborts startup.
@@ -589,11 +587,7 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 		journal = persistedState.DependencyMigration
 		lastMigration = persistedState.LastDependencyMigration
 	}
-	restoredPins := make(map[deps.ID]deps.DependencyState, len(pins))
-	for id, img := range pins {
-		restoredPins[id] = deps.DependencyState{Image: img}
-	}
-	runtime.RestoreDependencyState(restoredPins, journal, lastMigration)
+	runtime.RestoreDependencyState(pins, journal, lastMigration)
 
 	// Wire DependsOnDetachedApps so RestartApp can trigger regen for dependency apps
 	runtime.SetDependsOnDetachedApps(genResp.DependsOnDetachedApps)

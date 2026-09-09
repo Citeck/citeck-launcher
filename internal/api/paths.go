@@ -138,6 +138,23 @@ func DependencyMigratePath(id string) string {
 	return fmt.Sprintf("%s/%s/migrate", Dependencies, id)
 }
 
+// DependencyRollbackPreflightPath returns the read-only pre-checks for putting
+// one dependency back on the state its last completed migration recorded as
+// previous. It measures nothing — nothing is created by a rollback — and
+// changes nothing; what it answers is whether the retained volume is still
+// there and still holds what the pin claims, plus the three consequences the
+// operator has to confirm.
+func DependencyRollbackPreflightPath(id string) string {
+	return fmt.Sprintf("%s/%s/rollback/preflight", Dependencies, id)
+}
+
+// DependencyRollbackPath returns the endpoint that STARTS one dependency's
+// rollback (202 + the same deps_migration_* events a migration reports, with
+// Kind "rollback" and a three-step list).
+func DependencyRollbackPath(id string) string {
+	return fmt.Sprintf("%s/%s/rollback", Dependencies, id)
+}
+
 // AppLogs returns the API path for streaming an app's container logs.
 func AppLogs(name string) string {
 	return fmt.Sprintf("%s/%s/logs", Apps, name)

@@ -6,21 +6,17 @@ import (
 	"github.com/citeck/citeck-launcher/internal/appdef"
 )
 
-// PostgresVolumeLegacy is the volume every namespace up to PostgreSQL 17 uses;
-// PostgresVolumeV18 is where 18+ data lives. Two names because the layouts
-// differ (see PostgresLayoutFor) and because a migration must build the new
-// cluster NEXT TO the old data, never on top of it.
-const (
-	PostgresVolumeLegacy = "postgres2"
-	PostgresVolumeV18    = "postgres3"
-	// PostgresLegacyImage is what launchers before the pin ran (Kotlin 1.x and
-	// Go 2.x both defaulted to 17.x; only the major matters for the layout).
-	PostgresLegacyImage = "postgres:17"
-)
+// PostgresLegacyImage is what launchers before the pin ran (Kotlin 1.x and
+// Go 2.x both defaulted to 17.x; only the major matters for the layout).
+const PostgresLegacyImage = "postgres:17"
 
-// PostgresLayout is how a PostgreSQL major's data is mounted.
+// PostgresLayout is how a PostgreSQL major's data is mounted INSIDE its
+// volume. Which volume that is, is not a version question at all: it is the
+// pin's generation (see VolumeName), which advances only when a migration
+// completes. What the IMAGE dictates — and all this type carries — is the
+// mount path, whether PGDATA has to be set, and where inside the volume a
+// cluster announces its major.
 type PostgresLayout struct {
-	Volume    string // plain volume name in the app def
 	MountPath string // container path the volume is mounted at
 	PGData    string // explicit PGDATA env; "" = image default
 	// PGVersionRel is the path of PG_VERSION relative to the volume root — how
@@ -45,9 +41,10 @@ type postgresLayoutRule struct {
 }
 
 // postgresLayouts is everything the launcher knows about where PostgreSQL data
-// lives, NEWEST FIRST. It is the ONE place a new layout is declared: both
-// PostgresLayoutFor (what the generator mounts) and KnownPostgresLayouts (what
-// the pin-seeding probe walks) are derived from it.
+// lives INSIDE a volume, NEWEST FIRST. It is the ONE place a new layout is
+// declared: both PostgresLayoutFor (what the generator mounts) and
+// KnownPostgresDataPaths (what the pin-seeding probe looks for) are derived
+// from it.
 //
 // Up to 17 the launcher mounted the data directory itself with an explicit
 // PGDATA; from 18 the official image recommends mounting the PARENT
@@ -58,15 +55,13 @@ type postgresLayoutRule struct {
 // WHEN 19 SHIPS: if it keeps the 18 layout, prepend 19 to that rule's
 // probeMajors — without it, a namespace with pin-less 19 data on disk answers
 // no probe and is seeded as legacy. If it moves the data again, add a rule
-// above it; PostgresLayoutFor, the probe and PostgresMigrator.Supports all
-// follow from the table.
+// above it; PostgresLayoutFor and the probe both follow from the table.
 var postgresLayouts = []postgresLayoutRule{
 	{
 		sinceMajor:  18,
 		probeMajors: []int{18},
 		layout: func(major int) PostgresLayout {
 			return PostgresLayout{
-				Volume:       PostgresVolumeV18,
 				MountPath:    "/var/lib/postgresql",
 				PGVersionRel: strconv.Itoa(major) + "/docker/PG_VERSION",
 			}
@@ -80,7 +75,6 @@ var postgresLayouts = []postgresLayoutRule{
 		probeMajors: []int{17},
 		layout: func(int) PostgresLayout {
 			return PostgresLayout{
-				Volume:       PostgresVolumeLegacy,
 				MountPath:    "/var/lib/postgresql/data",
 				PGData:       "/var/lib/postgresql/data",
 				PGVersionRel: "PG_VERSION",
@@ -103,20 +97,24 @@ func PostgresLayoutFor(major int) PostgresLayout {
 	return oldest.layout(oldest.sinceMajor)
 }
 
-// KnownPostgresLayouts returns every layout a pin-seeding probe should try,
-// NEWEST FIRST — one entry per (layout, major) pair the launcher can spell a
-// PG_VERSION path for, so the newest cluster on disk is the one that answers.
+// KnownPostgresDataPaths returns every PG_VERSION path, relative to a volume
+// root, that a pin-seeding probe should try — NEWEST FIRST, so the newest
+// cluster in a volume is the one that answers.
+//
+// It answers "where inside a volume does a cluster announce itself", which is
+// the whole of the layout question a probe can ask: WHICH volume to look in is
+// the generation walk's question and has no version in it.
 //
 // It exists so that the probe seeding a pin from the data itself (the daemon's
 // postgresPinFromData, which has no pin and no container to ask) does not have
 // to name majors of its own: reading the order from here makes teaching it
 // about a new layout — or about a new major inside an existing one — an edit
 // to postgresLayouts and nowhere else.
-func KnownPostgresLayouts() []PostgresLayout {
-	out := make([]PostgresLayout, 0, len(postgresLayouts))
+func KnownPostgresDataPaths() []string {
+	out := make([]string, 0, len(postgresLayouts))
 	for _, r := range postgresLayouts {
 		for _, major := range r.probeMajors {
-			out = append(out, r.layout(major))
+			out = append(out, r.layout(major).PGVersionRel)
 		}
 	}
 	return out
@@ -124,11 +122,15 @@ func KnownPostgresLayouts() []PostgresLayout {
 
 type postgresDescriptor struct{}
 
-func (postgresDescriptor) ID() ID          { return Postgres }
-func (postgresDescriptor) AppName() string { return appdef.AppPostgres }
+func (postgresDescriptor) ID() ID             { return Postgres }
+func (postgresDescriptor) AppName() string    { return appdef.AppPostgres }
+func (postgresDescriptor) VolumeBase() string { return "postgres" }
 func (postgresDescriptor) ParseVersion(image string) (Version, bool) {
 	return ParseImageVersion(image)
 }
 func (postgresDescriptor) IsBreaking(from, to Version) bool { return majorBreaking(from, to) }
-func (postgresDescriptor) Migratable() bool                 { return true }
-func (postgresDescriptor) LegacyImage() string              { return PostgresLegacyImage }
+func (postgresDescriptor) UpgradeSupport(from, to Version) VendorSupport {
+	return forwardOnlySupport(from, to)
+}
+func (postgresDescriptor) Migratable() bool    { return true }
+func (postgresDescriptor) LegacyImage() string { return PostgresLegacyImage }

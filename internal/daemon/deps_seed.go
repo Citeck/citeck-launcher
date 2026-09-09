@@ -90,6 +90,13 @@ func (p dockerDependencyProbe) ContainerImage(ctx context.Context, app string) (
 
 func (p dockerDependencyProbe) VolumeExists(ctx context.Context, volume string) (bool, error) {
 	if !config.IsDesktopMode() {
+		// The name is always a deps.VolumeName result — a registry VolumeBase
+		// plus a decimal generation — so it can hold neither a separator nor a
+		// dot, and the directory is the launcher-owned volumesBase. gosec sees
+		// only that a request-scoped call reaches this stat (the dependency
+		// list asks about the retained volume of every rollback offer on every
+		// request) and cannot follow the value back to the fixed registry.
+		//nolint:gosec // G703: registry-derived volume name under the launcher's own volumes directory
 		_, err := os.Stat(p.volumeDir(volume))
 		if errors.Is(err, os.ErrNotExist) {
 			return false, nil
@@ -217,13 +224,13 @@ func namespaceDependencies(cfg *namespace.Config) map[deps.ID]bool {
 // RestoreDependencyState (persisting there would write r.status, which is
 // still STOPPED before the caller acts on ShouldStart), the reload path
 // persists each one.
-func resolveDependencyPins(ctx context.Context, persisted map[deps.ID]string,
+func resolveDependencyPins(ctx context.Context, persisted map[deps.ID]deps.DependencyState,
 	probe dependencyProbe, present map[deps.ID]bool,
-) (pins, seeded map[deps.ID]string) {
+) (pins, seeded map[deps.ID]deps.DependencyState) {
 	ctx, cancel := context.WithTimeout(ctx, dependencySeedTimeout)
 	defer cancel()
 
-	pins = make(map[deps.ID]string, len(persisted)+len(deps.All()))
+	pins = make(map[deps.ID]deps.DependencyState, len(persisted)+len(deps.All()))
 	maps.Copy(pins, persisted)
 	seeded = seedDependencyPins(ctx, pins, probe, nil, present)
 	maps.Copy(pins, seeded)
@@ -244,10 +251,27 @@ const (
 	seedUnknown
 )
 
+// dataEvidence is what one dependency's DATA says about itself: which image it
+// has been running (empty when the data cannot name one) and which GENERATION
+// of the data volume holds it. Generation 0 means the walk found no volume at
+// all, which VolumeName and DependencyState.Gen both read as generation 1.
+type dataEvidence struct {
+	image   string
+	gen     int
+	verdict seedVerdict
+}
+
 // seedDependencyPins answers "what does this namespace's data run on?" for
 // every registered dependency that has no pin yet, and returns the pins to
-// add. Order of evidence: the container (survives launcher upgrades), then the
-// data itself (PostgreSQL's PG_VERSION), then the descriptor's legacy image.
+// add. Order of evidence for the IMAGE: the container (survives launcher
+// upgrades and names the real registry), then the data itself (PostgreSQL's
+// PG_VERSION), then the descriptor's legacy image.
+//
+// The GENERATION always comes from the data, whatever answered for the image.
+// A container names an image and says nothing about which generation of the
+// volume it has mounted, so a namespace that has been migrated and then lost
+// its state file would otherwise be re-pinned at generation 1 — and the next
+// reload would mount the PRE-migration volume under the post-migration image.
 //
 // The rule for failures is per EVIDENCE, not per probe, because the two
 // mistakes are not symmetric. A pin that is wrongly LEGACY holds a namespace
@@ -271,32 +295,31 @@ const (
 //     also fails the volume lookup, which is seedUnknown, so the legacy
 //     fallback still covers it there.
 //
-// preferVolumes marks volumes a snapshot import just restored; when both
-// postgres layouts hold a cluster the imported one is the truth.
+// preferVolumes marks volumes a snapshot import just restored; when more than
+// one generation holds data the imported one is the truth.
 //
 // present (nil ⇒ all) limits the walk to the dependencies the namespace
 // generates: one that is not part of it has no container to gate, so probing
 // for its data buys nothing and costs a Docker call per namespace load.
-func seedDependencyPins(ctx context.Context, existing map[deps.ID]string, probe dependencyProbe,
+func seedDependencyPins(ctx context.Context, existing map[deps.ID]deps.DependencyState, probe dependencyProbe,
 	preferVolumes map[string]bool, present map[deps.ID]bool,
-) map[deps.ID]string {
-	out := make(map[deps.ID]string)
+) map[deps.ID]deps.DependencyState {
+	out := make(map[deps.ID]deps.DependencyState)
 	// Read at most once, and only if something needs it: the postgres data
 	// answers for Keycloak too, whose state lives in that same database rather
 	// than in a volume of its own.
-	var pgPin string
-	var pgVerdict seedVerdict
+	var pgEvidence dataEvidence
 	pgRead := false
-	postgresEvidence := func() (string, seedVerdict) {
+	postgresEvidence := func() dataEvidence {
 		if !pgRead {
-			pgPin, pgVerdict = postgresPinFromData(ctx, probe, preferVolumes)
+			pgEvidence = postgresPinFromData(ctx, probe, preferVolumes)
 			pgRead = true
 		}
-		return pgPin, pgVerdict
+		return pgEvidence
 	}
 
 	for _, d := range deps.All() {
-		if img := existing[d.ID()]; img != "" {
+		if existing[d.ID()].Image != "" {
 			continue
 		}
 		if present != nil && !present[d.ID()] {
@@ -308,28 +331,37 @@ func seedDependencyPins(ctx context.Context, existing map[deps.ID]string, probe 
 			containerFailed = true
 			slog.Warn("Dependency seed: container inspect failed", "dependency", d.ID(), "err", err)
 		}
+
+		var ev dataEvidence
+		switch d.ID() {
+		case deps.Postgres, deps.Keycloak:
+			ev = postgresEvidence()
+		default:
+			ev = volumePinFromData(ctx, probe, d, preferVolumes)
+		}
+		if d.ID() == deps.Keycloak {
+			// Keycloak's own version is not recoverable from postgres data;
+			// what the data proves is that this namespace HAS been running,
+			// so it ran on the legacy image. Its generation comes from the
+			// same place its volume does — nowhere: it has none, so the
+			// postgres generation must not be copied onto its pin.
+			ev.image = d.LegacyImage()
+			ev.gen = 0
+		}
+
 		if ok && img != "" {
-			out[d.ID()] = img
+			// The container names the image; the DATA still names the
+			// generation. A probe that could not answer carries none (the
+			// evidence functions return seedUnknown with no generation), and
+			// an absent generation reads as 1 — the one every namespace that
+			// has never migrated runs.
+			out[d.ID()] = deps.DependencyState{Image: img, VolumeGen: ev.gen}
 			continue
 		}
 
-		var pin string
-		var verdict seedVerdict
-		if d.ID() == deps.Postgres || d.ID() == deps.Keycloak {
-			pin, verdict = postgresEvidence()
-		} else {
-			pin, verdict = volumePinFromData(ctx, probe, d)
-		}
-		if d.ID() == deps.Keycloak && verdict == seedFound {
-			// Keycloak's own version is not recoverable from postgres data;
-			// what the data proves is that this namespace HAS been running,
-			// so it ran on the legacy image.
-			pin = d.LegacyImage()
-		}
-
-		switch verdict {
+		switch ev.verdict {
 		case seedFound:
-			out[d.ID()] = pin
+			out[d.ID()] = deps.DependencyState{Image: ev.image, VolumeGen: ev.gen}
 		case seedUnknown:
 			// The legacy image is a Docker Hub reference the launcher invented
 			// because it could not see a container, so on a private-registry
@@ -339,7 +371,7 @@ func seedDependencyPins(ctx context.Context, existing map[deps.ID]string, probe 
 			slog.Warn("Dependency seed: data probe failed; assuming the legacy image",
 				"dependency", d.ID(), "image", d.LegacyImage(),
 				"recovery", "`citeck edit "+d.AppName()+"` with a same-major image of the right registry is not a breaking change and replaces this guess")
-			out[d.ID()] = d.LegacyImage()
+			out[d.ID()] = deps.DependencyState{Image: d.LegacyImage(), VolumeGen: ev.gen}
 		case seedNoData:
 			// No pin either way — see the rule above. The warning is worth
 			// keeping when the container probe failed, because that is the
@@ -353,122 +385,168 @@ func seedDependencyPins(ctx context.Context, existing map[deps.ID]string, probe 
 	return out
 }
 
+// generationOrder is the order the seeding probe asks about a dependency's
+// data volumes: DESCENDING from deps.MaxProbedVolumeGen, with any generation a
+// snapshot import just restored moved to the front.
+//
+// Descending, and NOT ascending-until-the-first-gap, because a gap is a state
+// the launcher actively creates: `citeck deps` tells the operator they may
+// delete the old volume once they trust the new version. An ascending walk
+// would answer "generation 1" for a namespace whose generation-1 volume is
+// gone, and the generator would then create a brand-new EMPTY rabbitmq2 beside
+// the live rabbitmq3 — the empty-cluster-beside-real-data failure this whole
+// design exists to prevent.
+//
+// The imported generations come first because a snapshot import is newer
+// evidence than a volume that merely still exists: re-seeding after an import
+// is exactly the case where the highest generation is not the truth.
+func generationOrder(d deps.Descriptor, preferVolumes map[string]bool) []int {
+	preferred := make([]int, 0, len(preferVolumes))
+	rest := make([]int, 0, deps.MaxProbedVolumeGen)
+	for gen := deps.MaxProbedVolumeGen; gen >= 1; gen-- {
+		if preferVolumes[deps.VolumeName(d, gen)] {
+			preferred = append(preferred, gen)
+			continue
+		}
+		rest = append(rest, gen)
+	}
+	return append(preferred, rest...)
+}
+
 // volumePinFromData answers the data question for the dependencies whose data
-// is a volume with no readable version marker: the volume's existence is the
-// whole evidence, so it can only ever mean "the legacy image" or "nothing".
-func volumePinFromData(ctx context.Context, probe dependencyProbe, d deps.Descriptor) (string, seedVerdict) {
-	volume := legacyVolumeFor(d.ID())
-	if volume == "" {
+// is a volume with no readable version marker: the volume's EXISTENCE is the
+// whole evidence, so it can only ever mean "the legacy image, at the
+// generation the volume was found in" or "nothing".
+func volumePinFromData(ctx context.Context, probe dependencyProbe, d deps.Descriptor,
+	preferVolumes map[string]bool,
+) dataEvidence {
+	if d.VolumeBase() == "" {
 		// A dependency with no volume of its own. Never probe with an empty
 		// name: in server mode that stats <volumesBase>/volumes/, which always
 		// exists, and every namespace would be pinned to the legacy image.
-		return "", seedNoData
+		return dataEvidence{verdict: seedNoData}
 	}
-	exists, err := probe.VolumeExists(ctx, volume)
-	if err != nil {
-		slog.Warn("Dependency seed: volume check failed", "dependency", d.ID(), "volume", volume, "err", err)
-		return "", seedUnknown
-	}
-	if !exists {
-		return "", seedNoData
-	}
-	slog.Warn("Dependency seed: no container and no version file; assuming the legacy image",
-		"dependency", d.ID(), "image", d.LegacyImage(),
-		"recovery", "`citeck edit "+d.AppName()+"` with a same-major image of the right registry is not a breaking change and replaces this guess")
-	return d.LegacyImage(), seedFound
-}
-
-// legacyVolumeFor is the data volume each non-postgres dependency has always
-// used (generator_infra.go / generator_keycloak.go). Keycloak keeps its state
-// in postgres, so it has no volume of its own and answers to the postgres
-// evidence instead.
-func legacyVolumeFor(id deps.ID) string {
-	switch id {
-	case deps.RabbitMQ:
-		return "rabbitmq2"
-	case deps.Zookeeper:
-		return "zookeeper2"
-	case deps.MongoDB:
-		return "mongo2"
-	default:
-		return ""
-	}
-}
-
-// postgresPinFromData reads PG_VERSION out of whichever postgres volume holds
-// a cluster. A volume that exists but has no PG_VERSION holds no cluster (an
-// empty bind dir left by a removed container) and is skipped; seedNoData means
-// neither layout holds one, seedUnknown that a probe failed and the caller
-// must assume rather than conclude.
-func postgresPinFromData(ctx context.Context, probe dependencyProbe, preferVolumes map[string]bool) (string, seedVerdict) {
-	// The probe ORDER — newest layout first — is the registry's to state, not
-	// this function's: teaching the launcher about a new layout, or about a new
-	// major inside one, is then an edit to internal/deps and nowhere else.
-	layouts := deps.KnownPostgresLayouts()
-	if preferVolumes[deps.PostgresVolumeLegacy] && !preferVolumes[deps.PostgresVolumeV18] {
-		layouts[0], layouts[1] = layouts[1], layouts[0]
-	}
-	verdict := seedNoData
-	for _, l := range layouts {
-		exists, err := probe.VolumeExists(ctx, l.Volume)
+	failed := false
+	for _, gen := range generationOrder(d, preferVolumes) {
+		volume := deps.VolumeName(d, gen)
+		exists, err := probe.VolumeExists(ctx, volume)
 		if err != nil {
-			slog.Warn("Dependency seed: postgres volume check failed", "volume", l.Volume, "err", err)
-			verdict = seedUnknown
+			slog.Warn("Dependency seed: volume check failed", "dependency", d.ID(), "volume", volume, "err", err)
+			failed = true
 			continue
 		}
 		if !exists {
 			continue
 		}
-		raw, err := probe.ReadVolumeFile(ctx, l.Volume, l.PGVersionRel)
-		if errors.Is(err, errVolumeFileNotFound) {
-			// The volume is there but empty — no cluster in this layout.
-			continue
-		}
-		if err != nil {
-			slog.Warn("Dependency seed: PG_VERSION unreadable; assuming the legacy image",
-				"volume", l.Volume, "err", err, "image", deps.PostgresLegacyImage)
-			return deps.PostgresLegacyImage, seedFound
-		}
-		major, err := strconv.Atoi(strings.TrimSpace(raw))
-		if err != nil {
-			slog.Warn("Dependency seed: PG_VERSION not a number; assuming the legacy image",
-				"volume", l.Volume, "raw", raw, "image", deps.PostgresLegacyImage)
-			return deps.PostgresLegacyImage, seedFound
-		}
-		return "postgres:" + strconv.Itoa(major), seedFound
+		slog.Warn("Dependency seed: no container and no version file; assuming the legacy image",
+			"dependency", d.ID(), "image", d.LegacyImage(), "volume", volume,
+			"recovery", "`citeck edit "+d.AppName()+"` with a same-major image of the right registry is not a breaking change and replaces this guess")
+		return dataEvidence{image: d.LegacyImage(), gen: gen, verdict: seedFound}
 	}
-	return "", verdict
+	if failed {
+		// No generation, deliberately: a probe that could not answer has
+		// settled nothing, and an absent generation reads as 1 — the one every
+		// pre-counter namespace has. Carrying the generation the interrupted
+		// walk happened to reach would invent a volume out of a failure.
+		return dataEvidence{verdict: seedUnknown}
+	}
+	return dataEvidence{verdict: seedNoData}
 }
 
-// reseedAfterSnapshotImport re-derives the pins of every dependency whose
-// data a snapshot just replaced. Without it a namespace already on 18 that
-// imports a 17 snapshot keeps a pin of 18 over 17 data.
+// postgresPinFromData reads PG_VERSION out of whichever generation of the
+// postgres volume holds a cluster. A volume that exists but has no PG_VERSION
+// holds no cluster (an empty bind dir left by a removed container) and the
+// search continues into the next generation; seedNoData means none of them
+// holds one, seedUnknown that a probe failed and the caller must assume rather
+// than conclude.
+//
+// The two questions compose here and only here: the GENERATION is the highest
+// volume that holds a cluster — not merely the highest that exists, since a
+// half-built volume left behind by a rollback that could not finish has no
+// PG_VERSION — and the MAJOR read out of that volume is the pin's image.
+func postgresPinFromData(ctx context.Context, probe dependencyProbe, preferVolumes map[string]bool) dataEvidence {
+	d, ok := deps.Lookup(deps.Postgres)
+	if !ok {
+		return dataEvidence{verdict: seedNoData}
+	}
+	failed := false
+	for _, gen := range generationOrder(d, preferVolumes) {
+		volume := deps.VolumeName(d, gen)
+		exists, err := probe.VolumeExists(ctx, volume)
+		if err != nil {
+			slog.Warn("Dependency seed: postgres volume check failed", "volume", volume, "err", err)
+			failed = true
+			continue
+		}
+		if !exists {
+			continue
+		}
+		// The probe ORDER inside a volume — newest layout first — is the
+		// registry's to state, not this function's: teaching the launcher
+		// about a new layout, or about a new major inside one, is then an edit
+		// to internal/deps and nowhere else.
+		for _, rel := range deps.KnownPostgresDataPaths() {
+			raw, err := probe.ReadVolumeFile(ctx, volume, rel)
+			if errors.Is(err, errVolumeFileNotFound) {
+				// No cluster at this path in this volume.
+				continue
+			}
+			if err != nil {
+				slog.Warn("Dependency seed: PG_VERSION unreadable; assuming the legacy image",
+					"volume", volume, "err", err, "image", deps.PostgresLegacyImage)
+				return dataEvidence{image: deps.PostgresLegacyImage, gen: gen, verdict: seedFound}
+			}
+			major, err := strconv.Atoi(strings.TrimSpace(raw))
+			if err != nil {
+				slog.Warn("Dependency seed: PG_VERSION not a number; assuming the legacy image",
+					"volume", volume, "raw", raw, "image", deps.PostgresLegacyImage)
+				return dataEvidence{image: deps.PostgresLegacyImage, gen: gen, verdict: seedFound}
+			}
+			return dataEvidence{image: "postgres:" + strconv.Itoa(major), gen: gen, verdict: seedFound}
+		}
+	}
+	if failed {
+		// No generation — see volumePinFromData for why a failure invents none.
+		return dataEvidence{verdict: seedUnknown}
+	}
+	return dataEvidence{verdict: seedNoData}
+}
+
+// reseedAfterSnapshotImport re-derives the pins — image AND volume generation —
+// of every dependency whose data a snapshot just replaced. Without it a
+// namespace already on 18 that imports a 17 snapshot keeps a pin of 18 over 17
+// data, and a namespace at generation 2 that imports a generation-1 snapshot
+// keeps mounting a volume the import did not fill.
+//
+// Which dependency a restored volume belongs to is asked of the registry
+// (deps.ParseVolumeName) rather than of a table here: the volume names are a
+// function of the generation now, so a hard-coded list would have gone stale
+// the first time anybody migrated anything.
 func reseedAfterSnapshotImport(ctx context.Context, rt *namespace.Runtime, probe dependencyProbe,
 	importedVolumes []string, present map[deps.ID]bool,
 ) {
 	imported := make(map[string]bool, len(importedVolumes))
+	touched := make(map[deps.ID]bool, len(importedVolumes))
 	for _, v := range importedVolumes {
 		imported[v] = true
+		if id, _, ok := deps.ParseVolumeName(v); ok {
+			touched[id] = true
+		}
 	}
-	existing := rt.DependencyPins()
-	for _, d := range deps.All() {
-		touched := false
-		switch d.ID() {
-		case deps.Postgres, deps.Keycloak:
-			// Keycloak's state lives in the postgres data, so a restored
-			// postgres volume moves its pin too.
-			touched = imported[deps.PostgresVolumeLegacy] || imported[deps.PostgresVolumeV18]
-		default:
-			touched = imported[legacyVolumeFor(d.ID())]
-		}
-		if touched {
-			delete(existing, d.ID())
-		}
+	// Keycloak's state lives in the postgres data, so a restored postgres
+	// volume moves its pin too.
+	if touched[deps.Postgres] {
+		touched[deps.Keycloak] = true
+	}
+	existing := rt.DependencyStates()
+	for id := range touched {
+		delete(existing, id)
 	}
 	seedCtx, cancel := context.WithTimeout(ctx, dependencySeedTimeout)
 	defer cancel()
-	for id, img := range seedDependencyPins(seedCtx, existing, probe, imported, present) {
-		slog.Info("Dependency pin re-seeded after snapshot import", "dependency", id, "image", img)
-		rt.SetDependencyPin(id, img)
+	for id, st := range seedDependencyPins(seedCtx, existing, probe, imported, present) {
+		slog.Info("Dependency pin re-seeded after snapshot import",
+			"dependency", id, "image", st.Image, "volumeGen", st.Gen())
+		rt.SetDependencyState(id, st)
 	}
 }

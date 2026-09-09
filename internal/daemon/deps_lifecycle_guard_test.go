@@ -15,6 +15,18 @@ import (
 	"github.com/citeck/citeck-launcher/internal/namespace"
 )
 
+// postgresVolume is the plain name of one generation of the postgres data
+// volume, asked of the registry rather than spelled out: the names are a
+// function of the generation counter now, and a literal here would keep
+// passing while the launcher emitted something else entirely.
+func postgresVolume(gen int) string {
+	d, ok := deps.Lookup(deps.Postgres)
+	if !ok {
+		panic("postgres is not registered")
+	}
+	return deps.VolumeName(d, gen)
+}
+
 // openJournal is the record an interrupted migration leaves behind when its
 // ROLLBACK failed: the engine keeps it precisely because the leftovers it
 // describes — depsmig-src with the namespace's own postgres2 mounted
@@ -22,7 +34,7 @@ import (
 func openJournal() *deps.MigrationJournal {
 	return &deps.MigrationJournal{
 		ID: deps.Postgres, From: "postgres:17", To: "postgres:18",
-		Step: "restore", CreatedVolume: deps.PostgresVolumeV18, WasRunning: true,
+		Step: "restore", CreatedVolume: postgresVolume(2), WasRunning: true,
 	}
 }
 
@@ -137,6 +149,20 @@ func TestRollbackBlockerIgnoresARunningMigration(t *testing.T) {
 // started on the deferred (STOPPED) namespace owns its data volumes, and this
 // start would land right on top of them.
 func TestDeferredSecretsStartIsRefusedByAMigration(t *testing.T) {
+	testDeferredSecretsStartIsRefusedBy(t, longOpMigration)
+}
+
+// A ROLLBACK refuses it for a sharper reason than a migration does: it rewrites
+// nothing, but between its stop and its pin write a start would bring the OLD
+// container up, and syncDependencyPinsUnderLock would re-pin that image forward
+// while the generation stayed behind. This path does not go through the route,
+// so it has to ask the holder itself.
+func TestDeferredSecretsStartIsRefusedByADependencyRollback(t *testing.T) {
+	testDeferredSecretsStartIsRefusedBy(t, longOpDepsRollback)
+}
+
+func testDeferredSecretsStartIsRefusedBy(t *testing.T, holder longOpKind) {
+	t.Helper()
 	rt := namespace.NewRuntime(&namespace.Config{ID: "ns1"}, planStubDocker{}, t.TempDir())
 	t.Cleanup(rt.Shutdown)
 	started := make(chan struct{}, 1)
@@ -148,11 +174,11 @@ func TestDeferredSecretsStartIsRefusedByAMigration(t *testing.T) {
 	}}
 	d.runtimeStartFn = func(*namespace.Runtime, []appdef.ApplicationDef) { started <- struct{}{} }
 
-	require.True(t, d.longOp.TryLock(longOpMigration))
+	require.True(t, d.longOp.TryLock(holder))
 	d.startNamespaceDeferredForSecrets("secrets unlocked")
 	select {
 	case <-started:
-		t.Fatal("the namespace was started over a running dependency migration")
+		t.Fatalf("the namespace was started over a running %s", holder)
 	case <-time.After(100 * time.Millisecond):
 	}
 	// The deferral survives the refusal, so the namespace is not silently

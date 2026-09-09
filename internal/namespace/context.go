@@ -120,10 +120,12 @@ type NsGenContext struct {
 	// the tail of Generate to produce the effective Applications. See
 	// GenerateOpts.EditedAppPatches.
 	EditedAppPatches map[string]json.RawMessage
-	// DependencyPins is what each infra dependency's data currently runs on;
+	// DependencyStates is what each infra dependency's data currently runs on
+	// — the image, and which GENERATION of the data volume it lives in.
 	// DependencyUpgrades / DependencyImages are filled by
-	// resolveDependencyImage. See internal/deps and generator_deps.go.
-	DependencyPins     map[deps.ID]string
+	// resolveDependencyImage, the volume by resolveDependencyVolume. See
+	// internal/deps and generator_deps.go.
+	DependencyStates   map[deps.ID]deps.DependencyState
 	DependencyUpgrades []DependencyUpgrade
 	DependencyImages   map[deps.ID]DependencyGen
 	portsCounter       atomic.Int32

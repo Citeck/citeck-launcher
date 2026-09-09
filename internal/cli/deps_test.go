@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -14,7 +16,9 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/citeck/citeck-launcher/internal/api"
+	"github.com/citeck/citeck-launcher/internal/deps"
 	"github.com/citeck/citeck-launcher/internal/deps/migrate"
+	"github.com/citeck/citeck-launcher/internal/i18n"
 	"github.com/citeck/citeck-launcher/internal/output"
 )
 
@@ -63,6 +67,32 @@ func TestFormatDependencyStatus(t *testing.T) {
 		formatDependencyStatus(api.DependencyDto{ID: "postgres", Status: "something-new"}))
 }
 
+// upgrade-blocked and bundle-older are the two statuses whose EXPLANATION is a
+// full English sentence the daemon builds (StatusDetail). Neither may borrow
+// the words of an upgrade: "requires a newer launcher" is a lie for both — no
+// launcher lifts a vendor refusal and none moves data backwards.
+func TestFormatDependencyStatus_TheTwoHeldBackStatusesBorrowNoUpgradeWords(t *testing.T) {
+	depsTestSetup(t)
+	blocked := formatDependencyStatus(api.DependencyDto{
+		ID: "rabbitmq", Status: api.DependencyUpgradeBlocked, TargetVersion: "4.3.5",
+		StatusDetail: "rabbitmq does not support 4.1.8 → 4.3.5 in one step: upgrade to 4.2 first.",
+	})
+	older := formatDependencyStatus(api.DependencyDto{
+		ID: "postgres", Status: api.DependencyBundleOlder,
+		CurrentVersion: "18.6", TargetVersion: "17.5",
+		StatusDetail: "the bundle offers postgres:17.5, which is older than the postgres:18.6 …",
+	})
+	for name, got := range map[string]string{"upgrade-blocked": blocked, "bundle-older": older} {
+		assert.NotContains(t, got, tHelper("deps.status.requiresLauncherUpdate"), name)
+		assert.NotContains(t, got, tHelper("deps.status.upgradeAvailable", "id", "postgres"), name)
+		assert.NotContains(t, got, "citeck deps upgrade", name)
+		assert.NotContains(t, got, "deps.status.", "%s rendered a bare key", name)
+	}
+	// bundle-older names the version the data STAYS on — the whole point is
+	// that nothing is going to happen.
+	assert.Contains(t, older, "18.6")
+}
+
 func TestFormatDependencyStatus_InterpolatesTheRightField(t *testing.T) {
 	depsTestSetup(t)
 	// pending-minor names the VERSION it will apply; upgrade-available names
@@ -95,6 +125,34 @@ func TestDependencyHintLine(t *testing.T) {
 	assert.Contains(t, line, "postgres")
 	assert.Contains(t, line, "rabbitmq")
 	assert.Contains(t, line, "citeck deps")
+}
+
+// A bundle offering something OLDER than the data is not an upgrade: there is
+// nothing to migrate and nothing to wait for. Folded into "Upgrades available"
+// it would send an operator to `citeck deps upgrade`, which refuses it. It
+// still has to be VISIBLE in `citeck status` (ruling 8) — an operator who
+// never opens `citeck deps` must learn the bundle is offering an older version.
+func TestDependencyHintLine_ABackwardsHoldIsNotAnUpgrade(t *testing.T) {
+	depsTestSetup(t)
+	older := &api.NamespaceDto{DependencyUpgrades: []api.DependencyUpgradeDto{
+		{ID: "postgres", From: "postgres:18.6", To: "postgres:17.5", BundleOlder: true},
+	}}
+	line := dependencyHintLine(older, nil)
+	assert.NotContains(t, line, tHelper("deps.statusHint", "list", "postgres postgres:18.6 → postgres:17.5"))
+	assert.Contains(t, line, tHelper("deps.bundleOlderHint", "list", "postgres postgres:18.6 → postgres:17.5"))
+	assert.Contains(t, line, "citeck deps", "the pointer is what makes it actionable")
+
+	// Both at once: two clauses on ONE line (`citeck status` prints it after a
+	// "Deps:" label), and the upgrade must not swallow the backwards hold.
+	both := &api.NamespaceDto{DependencyUpgrades: []api.DependencyUpgradeDto{
+		{ID: "rabbitmq", From: "rabbitmq:4.1.2-management", To: "rabbitmq:4.2.9-management", Migratable: true},
+		{ID: "postgres", From: "postgres:18.6", To: "postgres:17.5", BundleOlder: true},
+	}}
+	line = dependencyHintLine(both, nil)
+	assert.NotContains(t, line, "\n", "citeck status prints this after a label — it is ONE line")
+	assert.Contains(t, line, tHelper("deps.statusHint", "list", "rabbitmq rabbitmq:4.1.2-management → rabbitmq:4.2.9-management"))
+	assert.Contains(t, line, tHelper("deps.bundleOlderHint", "list", "postgres postgres:18.6 → postgres:17.5"))
+	assert.Equal(t, 1, strings.Count(line, "citeck deps"), "the pointer is added once:\n%s", line)
 }
 
 func TestDependencyHintLine_PendingRollbackOutranksAnUpgrade(t *testing.T) {
@@ -208,46 +266,46 @@ func TestPollMigrationVerdict(t *testing.T) {
 	}
 
 	t.Run("a finished migration ends the wait", func(t *testing.T) {
-		done, verdict := pollMigrationVerdict(fetchOf(&api.DependenciesDto{
+		done, verdict := pollActionVerdict(fetchOf(&api.DependenciesDto{
 			LastResult: result("postgres", true, clickedAt.Add(time.Minute)),
-		}, nil), "postgres", clickedAt)
+		}, nil), "postgres", clickedAt, deps.ResultKindMigration)
 		assert.True(t, done)
 		require.NoError(t, verdict)
 	})
 	t.Run("a failed migration ends it with the reason", func(t *testing.T) {
-		done, verdict := pollMigrationVerdict(fetchOf(&api.DependenciesDto{
+		done, verdict := pollActionVerdict(fetchOf(&api.DependenciesDto{
 			LastResult: result("postgres", false, clickedAt.Add(time.Minute)),
-		}, nil), "postgres", clickedAt)
+		}, nil), "postgres", clickedAt, deps.ResultKindMigration)
 		assert.True(t, done)
 		require.ErrorContains(t, verdict, "boom")
 	})
 	t.Run("a running migration keeps following", func(t *testing.T) {
-		done, _ := pollMigrationVerdict(fetchOf(&api.DependenciesDto{
+		done, _ := pollActionVerdict(fetchOf(&api.DependenciesDto{
 			Migration:  &api.DependencyMigrationDto{ID: "postgres", Step: "dump"},
 			LastResult: result("postgres", true, clickedAt.Add(time.Minute)),
-		}, nil), "postgres", clickedAt)
+		}, nil), "postgres", clickedAt, deps.ResultKindMigration)
 		assert.False(t, done, "the daemon still reports it running")
 	})
 	// The result of a PREVIOUS migration of the same dependency must never be
 	// reported as this run's verdict.
 	t.Run("a verdict older than the click is not ours", func(t *testing.T) {
-		done, _ := pollMigrationVerdict(fetchOf(&api.DependenciesDto{
+		done, _ := pollActionVerdict(fetchOf(&api.DependenciesDto{
 			LastResult: result("postgres", true, clickedAt.Add(-time.Hour)),
-		}, nil), "postgres", clickedAt)
+		}, nil), "postgres", clickedAt, deps.ResultKindMigration)
 		assert.False(t, done)
 	})
 	t.Run("another dependency's verdict is not ours", func(t *testing.T) {
-		done, _ := pollMigrationVerdict(fetchOf(&api.DependenciesDto{
+		done, _ := pollActionVerdict(fetchOf(&api.DependenciesDto{
 			LastResult: result("rabbitmq", true, clickedAt.Add(time.Minute)),
-		}, nil), "postgres", clickedAt)
+		}, nil), "postgres", clickedAt, deps.ResultKindMigration)
 		assert.False(t, done)
 	})
 	t.Run("a failed poll keeps following", func(t *testing.T) {
-		done, _ := pollMigrationVerdict(fetchOf(nil, errors.New("socket closed")), "postgres", clickedAt)
+		done, _ := pollActionVerdict(fetchOf(nil, errors.New("socket closed")), "postgres", clickedAt, deps.ResultKindMigration)
 		assert.False(t, done)
 	})
 	t.Run("no verdict at all keeps following", func(t *testing.T) {
-		done, _ := pollMigrationVerdict(fetchOf(&api.DependenciesDto{}, nil), "postgres", clickedAt)
+		done, _ := pollActionVerdict(fetchOf(&api.DependenciesDto{}, nil), "postgres", clickedAt, deps.ResultKindMigration)
 		assert.False(t, done)
 	})
 }
@@ -293,13 +351,95 @@ func TestStepTitle_FallsBackToTheRawStepID(t *testing.T) {
 	assert.Empty(t, stepTitle(""))
 }
 
-// Every step id the postgres plan emits must have a locale key — a missing one
-// degrades the progress output to a raw id for the whole migration.
-func TestEveryPostgresStepHasATitle(t *testing.T) {
+// Every step id any of the three plans emits must have a locale key, in ALL
+// EIGHT files — a missing one degrades the progress output to a raw id for the
+// whole operation, and a key present only in en degrades it for everyone else.
+//
+// The three lists are read from the migrate package rather than copied: a step
+// renamed there without its key is exactly the defect this pins, and a private
+// copy of the list here could not see it.
+func TestEveryStepIdHasALocaleKey(t *testing.T) {
 	depsTestSetup(t)
-	for _, id := range migrate.PostgresStepIDs() {
+	ids := migrate.PostgresStepIDs()
+	ids = append(ids, migrate.CopyStepIDs()...)
+	ids = append(ids, migrate.RollbackStepIDs()...)
+	// The daemon publishes this one before either plan exists, so it belongs
+	// to no list and would otherwise be the one step id nothing checks.
+	ids = append(ids, api.DependencyMigrationStepPreparing)
+
+	for _, id := range ids {
 		assert.NotEqual(t, id, stepTitle(id), "step %q has no deps.step.%s locale key", id, id)
 	}
+	for _, loc := range SupportedLocales {
+		data, err := i18n.LocaleFS.ReadFile("locales/" + loc.Code + ".json")
+		require.NoError(t, err, loc.Code)
+		var keys map[string]string
+		require.NoError(t, json.Unmarshal(data, &keys), loc.Code)
+		for _, id := range ids {
+			title, ok := keys["deps.step."+id]
+			assert.True(t, ok, "%s.json has no deps.step.%s", loc.Code, id)
+			assert.NotEmpty(t, title, "%s.json leaves deps.step.%s empty", loc.Code, id)
+		}
+	}
+}
+
+// Every `deps.*` key the commands name in their source must exist in ALL EIGHT
+// files. A missing one renders as the bare lookup key — "deps.rollback.confirm"
+// as the confirmation prompt — and nothing else catches it: TestLocaleCompleteness
+// only compares the eight files with each other, so a key no file has is
+// perfectly consistent, and a t() call is not a compile-time reference to
+// anything. (This test was written after exactly that happened.)
+//
+// It reads the SOURCE rather than a hand-kept list because a hand-kept list is
+// the same drift, one indirection further away. Keys built at runtime from a
+// prefix ("deps.step." + id) end in a dot and are covered by
+// TestEveryStepIdHasALocaleKey instead.
+func TestEveryLocaleKeyTheDepsCommandsNameExists(t *testing.T) {
+	depsTestSetup(t)
+	src, err := os.ReadFile("deps.go")
+	require.NoError(t, err)
+	keys := map[string]bool{}
+	for _, m := range regexp.MustCompile(`"((?:help\.)?deps\.[A-Za-z0-9.\-]+)"`).FindAllStringSubmatch(string(src), -1) {
+		if !strings.HasSuffix(m[1], ".") {
+			keys[m[1]] = true
+		}
+	}
+	require.NotEmpty(t, keys, "the regexp stopped matching — this test would pass on anything")
+
+	for _, loc := range SupportedLocales {
+		data, readErr := i18n.LocaleFS.ReadFile("locales/" + loc.Code + ".json")
+		require.NoError(t, readErr, loc.Code)
+		var have map[string]string
+		require.NoError(t, json.Unmarshal(data, &have), loc.Code)
+		for key := range keys {
+			value, ok := have[key]
+			assert.True(t, ok, "%s.json has no %s", loc.Code, key)
+			assert.NotEmpty(t, value, "%s.json leaves %s empty", loc.Code, key)
+		}
+	}
+}
+
+// A copy-upgrade plan writes NO host file at all — it copies a volume — so its
+// preflight requires zero bytes on the host. Rendering that half anyway says
+// the migration needs no space and the disk is empty, beside a volume line
+// that carries the real requirement.
+func TestSpaceRequirementLines_SkipTheHostHalfWhenNothingIsWrittenThere(t *testing.T) {
+	depsTestSetup(t)
+	pre := migrate.NewPreflightResult("rabbitmq:4.1.8-management", "rabbitmq:4.2.9-management")
+	pre.OK = true
+	pre.SpaceChecked = true
+	pre.DataSizeBytes = 2 << 30
+	pre.RequiredVolumeBytes, pre.FreeVolumeBytes = 3<<30, 30<<30
+	// The copy plan measures no host filesystem, so both host numbers are zero.
+	pre.RequiredHostBytes, pre.FreeHostBytes = 0, 0
+
+	lines := strings.Join(preflightLines(&pre), "\n")
+	assert.Contains(t, lines, tHelper("deps.preflight.volume", "need", "3.0 GiB", "free", "30.0 GiB"))
+	assert.NotContains(t, lines, tHelper("deps.preflight.host", "need", "0 B", "free", "0 B"))
+	assert.NotContains(t, lines, "0 B")
+	// The data size is still a measurement, and it is what the requirement is
+	// derived from.
+	assert.Contains(t, lines, tHelper("deps.preflight.data", "size", "2.0 GiB"))
 }
 
 func TestPreflightLines(t *testing.T) {
@@ -308,7 +448,8 @@ func TestPreflightLines(t *testing.T) {
 		OK: true, From: "postgres:17.5", To: "postgres:18",
 		DataSizeBytes: 3 << 30, RequiredHostBytes: 3<<30 + 512<<20, FreeHostBytes: 50 << 30,
 		RequiredVolumeBytes: 4 << 30, FreeVolumeBytes: 40 << 30, WasRunning: true,
-		Warnings: []string{"a warning"},
+		SpaceChecked: true,
+		Warnings:     []string{"a warning"},
 	}), "\n")
 	assert.Contains(t, lines, "postgres:17.5")
 	assert.Contains(t, lines, "postgres:18")
@@ -358,6 +499,7 @@ func TestPreflightLines_UnmeasuredSizesAreNotPrinted(t *testing.T) {
 	measured.RequiredHostBytes = 2<<30 + migrate.SpaceMargin
 	measured.RequiredVolumeBytes = measured.RequiredHostBytes
 	measured.FreeHostBytes, measured.FreeVolumeBytes = 100<<30, 100<<30
+	measured.SpaceChecked = true
 	joined = strings.Join(preflightLines(&measured), "\n")
 	assert.Contains(t, joined, "2.0 GiB")
 	assert.Contains(t, joined, "100.0 GiB")
@@ -389,6 +531,100 @@ func TestDepsListLines_TableAndNotices(t *testing.T) {
 
 	// Nothing else to say ⇒ no stray notice lines.
 	assert.NotContains(t, out, tHelper("deps.preflightFailed"))
+}
+
+// The sentence behind a held-back status is a full English paragraph the
+// daemon built (StatusDetail): it is rendered VERBATIM, once, below the table
+// — never in the status cell, which pads every other row to its width — and it
+// names its row, or a namespace with two of them would print two anonymous
+// paragraphs.
+func TestDepsListLines_StatusDetailIsRenderedVerbatimBelowTheTable(t *testing.T) {
+	depsTestSetup(t)
+	blocked := "rabbitmq does not support 4.1.8 → 4.3.5 in one step: upgrade to 4.2 first."
+	older := "the bundle offers postgres:17.5, which is older than the postgres:18.6 this namespace's data runs on."
+	out := strings.Join(depsListLines(&api.DependenciesDto{Items: []api.DependencyDto{
+		{ID: "rabbitmq", CurrentVersion: "4.1.8", TargetVersion: "4.3.5",
+			Status: api.DependencyUpgradeBlocked, StatusDetail: blocked},
+		{ID: "postgres", CurrentVersion: "18.6", TargetVersion: "17.5",
+			Status: api.DependencyBundleOlder, StatusDetail: older},
+		{ID: "zookeeper", CurrentVersion: "3.9.2", TargetVersion: "3.9.2", Status: api.DependencyUpToDate},
+	}}), "\n")
+
+	assert.Contains(t, out, tHelper("deps.statusDetail", "id", "rabbitmq", "detail", blocked))
+	assert.Contains(t, out, tHelper("deps.statusDetail", "id", "postgres", "detail", older))
+	// Neither may reach the table cell: the column is padded to its widest
+	// value, so one 300-character sentence there ruins every other row.
+	rows := strings.Split(out, "\n")
+	assert.NotContains(t, rows[1], blocked, "the sentence is not a table cell")
+	// A row with nothing to explain adds no line.
+	assert.NotContains(t, out, "zookeeper:")
+	assert.NotContains(t, out, "citeck deps upgrade", "neither status offers an upgrade")
+}
+
+// The rollback is invisible unless the list says it exists: nothing else in
+// the CLI mentions it, and a namespace that migrated last week has no other
+// way to learn it can go back.
+func TestDepsListLines_AnAvailableRollbackIsOffered(t *testing.T) {
+	depsTestSetup(t)
+	out := strings.Join(depsListLines(&api.DependenciesDto{Items: []api.DependencyDto{
+		{ID: "postgres", CurrentVersion: "18.6", TargetVersion: "18.6", Status: api.DependencyUpToDate,
+			Rollback: &api.DependencyRollbackDto{
+				ToImage: "postgres:17.5", ToVersion: "17.5",
+				Volume: "citeck_postgres2_default", FrozenVolume: "citeck_postgres3_default", Available: true,
+			}},
+	}}), "\n")
+	assert.Contains(t, out, tHelper("deps.rollbackAvailable", "list", "postgres → 17.5"))
+
+	// An offer the launcher cannot USE is not advertised. The volume is gone
+	// because `deps.oldVolume` told the operator to delete it, so nagging
+	// about it on every list would be the launcher arguing with itself; the
+	// reason is still there for anyone who runs `citeck deps rollback`.
+	unavailable := strings.Join(depsListLines(&api.DependenciesDto{Items: []api.DependencyDto{
+		{ID: "postgres", Status: api.DependencyUpToDate, Rollback: &api.DependencyRollbackDto{
+			ToImage: "postgres:17.5", ToVersion: "17.5", Volume: "citeck_postgres2_default",
+			Available: false, Problem: "volume citeck_postgres2_default is gone",
+		}},
+	}}), "\n")
+	assert.NotContains(t, unavailable, tHelper("deps.rollbackAvailable", "list", "postgres → 17.5"))
+	assert.NotContains(t, unavailable, "is gone")
+}
+
+// A rollback and a migration share the ONE result slot a namespace has, so
+// "18.6 → 17.5 succeeded" would otherwise be reported as a migration — which
+// is the one thing the launcher will never do to data.
+func TestDepsListLines_ARollbackResultIsNotReportedAsAMigration(t *testing.T) {
+	depsTestSetup(t)
+	finished := time.Date(2026, 9, 9, 12, 41, 0, 0, time.Local).UnixMilli()
+	out := strings.Join(depsListLines(&api.DependenciesDto{
+		Items: []api.DependencyDto{{ID: "postgres", CurrentVersion: "17.5", TargetVersion: "18.6"}},
+		LastResult: &api.DependencyMigrationResultDto{
+			ID: "postgres", From: "postgres:18.6", To: "postgres:17.5", Success: true,
+			FinishedAt: finished, OldVolume: "citeck_postgres3_default", Kind: "rollback",
+		},
+	}), "\n")
+	assert.Contains(t, out, tHelper("deps.rollback.done", "id", "postgres",
+		"from", "postgres:18.6", "to", "postgres:17.5", "time", formatEpochMillis(finished)))
+	assert.NotContains(t, out, tHelper("deps.lastSucceeded", "id", "postgres",
+		"from", "postgres:18.6", "to", "postgres:17.5", "time", formatEpochMillis(finished)))
+	// The volume it names is the one the namespace LEFT — kept and never read
+	// again — which is not what deps.oldVolume says about a migration ("delete
+	// it once you trust the new version": there is no new version here).
+	assert.Contains(t, out, tHelper("deps.rollback.frozenVolume", "volume", "citeck_postgres3_default"))
+	assert.NotContains(t, out, tHelper("deps.oldVolume", "volume", "citeck_postgres3_default"))
+}
+
+// The same discriminator on the LIVE channel: a running rollback reported as a
+// migration sends the operator looking for one they did not start.
+func TestDepsListLines_ARunningRollbackSaysRollback(t *testing.T) {
+	depsTestSetup(t)
+	out := strings.Join(depsListLines(&api.DependenciesDto{
+		Items:     []api.DependencyDto{{ID: "postgres", CurrentVersion: "18.6"}},
+		Migration: &api.DependencyMigrationDto{ID: "postgres", Step: "switch-generation", StepIndex: 2, StepCount: 3, Kind: "rollback"},
+	}), "\n")
+	assert.Contains(t, out, tHelper("deps.rollbackRunning", "id", "postgres",
+		"step", tHelper("deps.step.switch-generation"), "index", "2", "total", "3"))
+	assert.NotContains(t, out, tHelper("deps.migrationRunning", "id", "postgres",
+		"step", tHelper("deps.step.switch-generation"), "index", "2", "total", "3"))
 }
 
 func TestDepsListLines_Empty(t *testing.T) {
@@ -552,6 +788,7 @@ func TestPreflightLines_SharedFilesystemIsOneLineWithTheSum(t *testing.T) {
 	shared.FreeHostBytes, shared.FreeVolumeBytes = 20<<30, 20<<30
 	shared.SharedFilesystem = true
 	shared.RequiredTotalBytes = 7 << 30
+	shared.SpaceChecked = true
 
 	lines := strings.Join(preflightLines(&shared), "\n")
 	assert.Contains(t, lines, tHelper("deps.preflight.shared", "need", "7.0 GiB", "free", "20.0 GiB"))
@@ -572,6 +809,7 @@ func TestPreflightLines_SharedFreeSkipsAFailedMeasurement(t *testing.T) {
 	pre.RequiredHostBytes = 1 << 30
 	pre.RequiredTotalBytes = 2 << 30
 	pre.SharedFilesystem = true
+	pre.SpaceChecked = true
 	pre.FreeHostBytes, pre.FreeVolumeBytes = 0, 40<<30
 
 	assert.Contains(t, strings.Join(preflightLines(&pre), "\n"),
@@ -594,6 +832,7 @@ func TestPreflightLines_SeparateFilesystemsKeepTheTwoLines(t *testing.T) {
 	pre := migrate.NewPreflightResult("postgres:17.5", "postgres:18")
 	pre.RequiredHostBytes, pre.FreeHostBytes = 3<<30, 50<<30
 	pre.RequiredVolumeBytes, pre.FreeVolumeBytes = 4<<30, 40<<30
+	pre.SpaceChecked = true
 
 	lines := strings.Join(preflightLines(&pre), "\n")
 	assert.Contains(t, lines, tHelper("deps.preflight.host", "need", "3.0 GiB", "free", "50.0 GiB"))
@@ -616,9 +855,18 @@ type fakeDepsDaemon struct {
 	migrateErr   error
 	migrateCalls int
 	gotReplace   bool
-	events       chan api.EventDto
-	streamErr    error
-	streamCalls  int
+	// The rollback half is counted separately from the migration half on
+	// purpose: "a rollback is not a migration" is an assertion, and one shared
+	// counter could not make it.
+	rollbackPre      *migrate.PreflightResult
+	rollbackPreErr   error
+	rollbackPreCalls int
+	rollbackRes      *api.ActionResultDto
+	rollbackErr      error
+	rollbackCalls    int
+	events           chan api.EventDto
+	streamErr        error
+	streamCalls      int
 }
 
 func (f *fakeDepsDaemon) GetDependencies() (*api.DependenciesDto, error) {
@@ -643,6 +891,19 @@ func (f *fakeDepsDaemon) MigrateDependency(_ string, replaceExisting bool) (*api
 	return f.migrateRes, f.migrateErr
 }
 
+func (f *fakeDepsDaemon) DependencyRollbackPreflight(string) (*migrate.PreflightResult, error) {
+	f.rollbackPreCalls++
+	return f.rollbackPre, f.rollbackPreErr
+}
+
+func (f *fakeDepsDaemon) RollbackDependency(string) (*api.ActionResultDto, error) {
+	f.rollbackCalls++
+	if f.rollbackRes == nil && f.rollbackErr == nil {
+		return &api.ActionResultDto{Success: true, Message: "Rollback of postgres to postgres:17.5 started"}, nil
+	}
+	return f.rollbackRes, f.rollbackErr
+}
+
 func (f *fakeDepsDaemon) StreamEvents(context.Context) (<-chan api.EventDto, error) {
 	f.streamCalls++
 	if f.streamErr != nil {
@@ -663,13 +924,14 @@ func okPreflight() *migrate.PreflightResult {
 	pre.RequiredHostBytes = 1<<30 + migrate.SpaceMargin
 	pre.RequiredVolumeBytes = pre.RequiredHostBytes
 	pre.FreeHostBytes, pre.FreeVolumeBytes = 50<<30, 50<<30
+	pre.SpaceChecked = true
 	return &pre
 }
 
-// testUpgradeOpts drives the follow loop in milliseconds instead of the
+// testActionOpts drives the follow loop in milliseconds instead of the
 // production 15s/6h, and answers the confirmation without a terminal.
-func testUpgradeOpts(detach, replaceExisting, confirm bool) depsUpgradeOpts {
-	return depsUpgradeOpts{
+func testActionOpts(detach, replaceExisting, confirm bool) depsActionOpts {
+	return depsActionOpts{
 		detach:          detach,
 		replaceExisting: replaceExisting,
 		confirm:         func(string, *migrate.PreflightResult) bool { return confirm },
@@ -694,7 +956,7 @@ func TestDepsUpgrade_PendingRollbackIsRefusedBeforeThePreflight(t *testing.T) {
 	// for, not that it would have failed.
 	f := &fakeDepsDaemon{list: &api.DependenciesDto{RollbackPending: "a rollback is pending"}, pre: okPreflight()}
 
-	rep, err := depsUpgradeSteps(f, "postgres", testUpgradeOpts(false, false, true))
+	rep, err := depsUpgradeSteps(f, "postgres", testActionOpts(false, false, true))
 	require.ErrorContains(t, err, "a rollback is pending")
 	assert.Equal(t, depsOutcomeRefused, rep.Outcome)
 	assert.Zero(t, f.preCalls, "the preflight walks the data volume — it must not run")
@@ -707,7 +969,7 @@ func TestDepsUpgrade_FailedPreflightStartsNothing(t *testing.T) {
 	bad.Problems = append(bad.Problems, "not enough free space")
 	f := &fakeDepsDaemon{list: &api.DependenciesDto{}, pre: &bad}
 
-	rep, err := depsUpgradeSteps(f, "postgres", testUpgradeOpts(false, false, true))
+	rep, err := depsUpgradeSteps(f, "postgres", testActionOpts(false, false, true))
 	require.Error(t, err)
 	assert.Equal(t, depsOutcomeRefused, rep.Outcome)
 	assert.Zero(t, f.migrateCalls)
@@ -725,7 +987,7 @@ func TestDepsUpgrade_ExistingTargetVolumeNeedsTheFlag(t *testing.T) {
 	pre.ExistingTargetVolume = &migrate.ExistingVolume{Name: "citeck_pg18", SizeBytes: 1 << 30, Version: "18"}
 	f := &fakeDepsDaemon{list: &api.DependenciesDto{}, pre: pre}
 
-	rep, err := depsUpgradeSteps(f, "postgres", testUpgradeOpts(false, false, true))
+	rep, err := depsUpgradeSteps(f, "postgres", testActionOpts(false, false, true))
 	require.ErrorContains(t, err, "citeck_pg18")
 	assert.Equal(t, depsOutcomeRefused, rep.Outcome)
 	assert.Zero(t, f.migrateCalls)
@@ -733,7 +995,7 @@ func TestDepsUpgrade_ExistingTargetVolumeNeedsTheFlag(t *testing.T) {
 	// With the flag the migration runs AND the confirmation is carried to the
 	// daemon, which re-checks it in the step.
 	f2 := &fakeDepsDaemon{list: &api.DependenciesDto{}, pre: pre}
-	rep2, err2 := depsUpgradeSteps(f2, "postgres", testUpgradeOpts(true, true, true))
+	rep2, err2 := depsUpgradeSteps(f2, "postgres", testActionOpts(true, true, true))
 	require.NoError(t, err2)
 	assert.Equal(t, depsOutcomeStarted, rep2.Outcome)
 	assert.Equal(t, 1, f2.migrateCalls)
@@ -744,7 +1006,7 @@ func TestDepsUpgrade_DeclinedConfirmationStartsNothing(t *testing.T) {
 	depsTestSetup(t)
 	f := &fakeDepsDaemon{list: &api.DependenciesDto{}, pre: okPreflight()}
 
-	rep, err := depsUpgradeSteps(f, "postgres", testUpgradeOpts(false, false, false))
+	rep, err := depsUpgradeSteps(f, "postgres", testActionOpts(false, false, false))
 	require.NoError(t, err, "declining is not a failure")
 	assert.Equal(t, depsOutcomeCanceled, rep.Outcome)
 	assert.Zero(t, f.migrateCalls)
@@ -757,7 +1019,7 @@ func TestDepsUpgrade_DetachReportsStarted(t *testing.T) {
 	depsTestSetup(t)
 	f := &fakeDepsDaemon{list: &api.DependenciesDto{}, pre: okPreflight()}
 
-	rep, err := depsUpgradeSteps(f, "postgres", testUpgradeOpts(true, false, true))
+	rep, err := depsUpgradeSteps(f, "postgres", testActionOpts(true, false, true))
 	require.NoError(t, err)
 	assert.Equal(t, depsOutcomeStarted, rep.Outcome)
 	assert.Equal(t, "postgres:17.5", rep.From)
@@ -774,7 +1036,7 @@ func TestDepsUpgrade_ADaemonRefusalIsNotFollowed(t *testing.T) {
 		list: &api.DependenciesDto{}, pre: okPreflight(),
 		migrateRes: &api.ActionResultDto{Success: false, Message: "another long operation is running"},
 	}
-	rep, err := depsUpgradeSteps(f, "postgres", testUpgradeOpts(false, false, true))
+	rep, err := depsUpgradeSteps(f, "postgres", testActionOpts(false, false, true))
 	require.ErrorContains(t, err, "another long operation is running")
 	assert.Equal(t, depsOutcomeRefused, rep.Outcome)
 }
@@ -790,7 +1052,7 @@ func TestDepsUpgrade_FollowsToTheTerminalEvent(t *testing.T) {
 		api.EventDto{Type: api.EventDepsMigrationComplete, AppName: "postgres", After: "postgres migrated to postgres:18"},
 	)
 
-	rep, err := depsUpgradeSteps(f, "postgres", testUpgradeOpts(false, false, true))
+	rep, err := depsUpgradeSteps(f, "postgres", testActionOpts(false, false, true))
 	require.NoError(t, err)
 	assert.Equal(t, depsOutcomeMigrated, rep.Outcome)
 	assert.Equal(t, 1, f.streamCalls)
@@ -803,7 +1065,7 @@ func TestDepsUpgrade_TheErrorEventIsTheVerdict(t *testing.T) {
 		api.EventDto{Type: api.EventDepsMigrationError, AppName: "postgres", After: "restore failed"},
 	)
 
-	rep, err := depsUpgradeSteps(f, "postgres", testUpgradeOpts(false, false, true))
+	rep, err := depsUpgradeSteps(f, "postgres", testActionOpts(false, false, true))
 	require.ErrorContains(t, err, "restore failed")
 	assert.Equal(t, depsOutcomeFailed, rep.Outcome)
 }
@@ -826,7 +1088,7 @@ func TestDepsUpgrade_PollCatchesADroppedTerminalEvent(t *testing.T) {
 		}}
 	}
 
-	rep, err := depsUpgradeSteps(f, "postgres", testUpgradeOpts(false, false, true))
+	rep, err := depsUpgradeSteps(f, "postgres", testActionOpts(false, false, true))
 	require.NoError(t, err)
 	assert.Equal(t, depsOutcomeMigrated, rep.Outcome)
 	assert.Greater(t, f.listCalls, 1, "the verdict came from the poll, not from an event")
@@ -840,7 +1102,7 @@ func TestDepsUpgrade_ALostStreamIsUnknownNotFailed(t *testing.T) {
 	f.events = make(chan api.EventDto)
 	close(f.events)
 
-	rep, err := depsUpgradeSteps(f, "postgres", testUpgradeOpts(false, false, true))
+	rep, err := depsUpgradeSteps(f, "postgres", testActionOpts(false, false, true))
 	require.ErrorContains(t, err, "citeck deps")
 	assert.Equal(t, depsOutcomeUnknown, rep.Outcome)
 }
@@ -850,7 +1112,7 @@ func TestDepsUpgrade_ATimedOutFollowIsUnknown(t *testing.T) {
 	depsTestSetup(t)
 	f := &fakeDepsDaemon{list: &api.DependenciesDto{}, pre: okPreflight()}
 	f.events = make(chan api.EventDto)
-	opts := testUpgradeOpts(false, false, true)
+	opts := testActionOpts(false, false, true)
 	opts.follow = depsFollow{poll: time.Hour, timeout: 20 * time.Millisecond}
 
 	rep, err := depsUpgradeSteps(f, "postgres", opts)
@@ -875,10 +1137,10 @@ func TestDepsUpgrade_JSONPrintsOnlyTheVerdict(t *testing.T) {
 	)
 
 	var err error
-	out := captureStdout(t, func() { err = depsUpgrade(f, "postgres", testUpgradeOpts(false, false, true)) })
+	out := captureStdout(t, func() { err = depsUpgrade(f, "postgres", testActionOpts(false, false, true)) })
 	require.NoError(t, err)
 
-	var rep depsUpgradeReport
+	var rep depsActionReport
 	require.NoError(t, json.Unmarshal([]byte(out), &rep), "the whole of stdout must be one JSON object:\n%s", out)
 	assert.Equal(t, depsOutcomeMigrated, rep.Outcome)
 	assert.Equal(t, "postgres", rep.ID)
@@ -906,10 +1168,10 @@ func TestDepsUpgrade_JSONCarriesTheFailure(t *testing.T) {
 	)
 
 	var err error
-	out := captureStdout(t, func() { err = depsUpgrade(f, "postgres", testUpgradeOpts(false, false, true)) })
+	out := captureStdout(t, func() { err = depsUpgrade(f, "postgres", testActionOpts(false, false, true)) })
 	require.Error(t, err, "a failed migration must still exit non-zero")
 
-	var rep depsUpgradeReport
+	var rep depsActionReport
 	require.NoError(t, json.Unmarshal([]byte(out), &rep), out)
 	assert.Equal(t, depsOutcomeFailed, rep.Outcome)
 	assert.Contains(t, rep.Error, "restore failed")
@@ -930,7 +1192,7 @@ func TestDepsUpgrade_TextPrintsTheProgressAndNoJSON(t *testing.T) {
 	)
 
 	var err error
-	out := captureStdout(t, func() { err = depsUpgrade(f, "postgres", testUpgradeOpts(false, false, true)) })
+	out := captureStdout(t, func() { err = depsUpgrade(f, "postgres", testActionOpts(false, false, true)) })
 	require.NoError(t, err)
 	assert.Contains(t, out, tHelper("deps.preflight.title", "from", "postgres:17.5", "to", "postgres:18"))
 	assert.Contains(t, out, "migration of postgres started")
@@ -959,8 +1221,8 @@ func TestDepsUpgrade_JSONSuppressesThePollVerdictLines(t *testing.T) {
 		}}
 	}
 
-	out := captureStdout(t, func() { _ = depsUpgrade(f, "postgres", testUpgradeOpts(false, false, true)) })
-	var rep depsUpgradeReport
+	out := captureStdout(t, func() { _ = depsUpgrade(f, "postgres", testActionOpts(false, false, true)) })
+	var rep depsActionReport
 	require.NoError(t, json.Unmarshal([]byte(out), &rep), "the whole of stdout must be one JSON object:\n%s", out)
 	assert.Equal(t, depsOutcomeMigrated, rep.Outcome)
 	assert.NotContains(t, out, "citeck_postgres_default")

@@ -15,26 +15,21 @@ import (
 	"github.com/citeck/citeck-launcher/internal/namespace"
 )
 
-// depsMigrator is the seam between the routes and one dependency's migrator.
-// Only PostgreSQL has a plan in v1; every other descriptor reports
-// Migratable() == false and is refused before this is ever reached.
-type depsMigrator interface {
-	Preflight(ctx context.Context, env migrate.Env, from, to string) migrate.PreflightResult
-	Plan(ctx context.Context, env migrate.Env, from, to string, opts migrate.PlanOptions) (*migrate.Plan, deps.MigrationJournal, error)
-}
-
 // migratorFor answers the migrator for a dependency. found=false means the
-// descriptor claims Migratable() but this function has no plan wired for it —
-// a wiring bug, not a user error, so the caller reports it as an internal
-// failure rather than as "update the launcher".
-func (d *Daemon) migratorFor(id deps.ID, env migrate.Env) (depsMigrator, bool) {
+// descriptor claims Migratable() but nothing is wired for it — a wiring bug,
+// not a user error, so the caller reports it as an internal failure rather
+// than as "update the launcher".
+//
+// The lookup itself lives in internal/deps/migrate and is PURE: the dependency
+// LIST asks about every dependency on every request and has no Env to give,
+// and a second table here is exactly how "the descriptor claims Migratable()
+// and nothing is wired" becomes reachable again. This keeps only the test
+// seam.
+func (d *Daemon) migratorFor(id deps.ID) (migrate.Migrator, bool) {
 	if d.depsMigratorFn != nil {
-		return d.depsMigratorFn(env), true
+		return d.depsMigratorFn(id), true
 	}
-	if id == deps.Postgres {
-		return migrate.PostgresMigrator{}, true
-	}
-	return nil, false
+	return migrate.MigratorFor(id)
 }
 
 // depsEnvFor builds the migration Env for a namespace snapshot, through the
@@ -84,10 +79,10 @@ func (d *Daemon) currentDepsMigration(nsID string) *api.DependencyMigrationDto {
 // keycloak with authentication off) is left out entirely — including one that
 // still carries a pin from when it did run, since the pin describes a volume
 // nobody is mounting and the list would show a row with no target.
-func dependencyItems(act activeNamespace) []api.DependencyDto {
-	pins := map[deps.ID]string{}
+func (d *Daemon) dependencyItems(ctx context.Context, act activeNamespace) []api.DependencyDto {
+	states := map[deps.ID]deps.DependencyState{}
 	if act.runtime != nil {
-		pins = act.runtime.DependencyPins()
+		states = act.runtime.DependencyStates()
 	}
 	held := map[deps.ID]namespace.DependencyUpgrade{}
 	for _, u := range act.dependencyUpgrades {
@@ -105,7 +100,7 @@ func dependencyItems(act activeNamespace) []api.DependencyDto {
 			// i.e. a row about a container that no longer exists.
 			continue
 		}
-		pin := pins[desc.ID()]
+		pin := states[desc.ID()].Image
 		current := pin
 		if current == "" {
 			current = gen.Effective
@@ -114,19 +109,14 @@ func dependencyItems(act activeNamespace) []api.DependencyDto {
 			ID: string(desc.ID()), App: desc.AppName(), CurrentImage: current,
 			TargetImage: gen.Candidate, Migratable: desc.Migratable(), Status: api.DependencyUpToDate,
 		}
+		item.Rollback = d.rollbackOffer(ctx, act, desc, states[desc.ID()])
 		switch {
 		case held[desc.ID()].To != "":
 			// The offered target is the held-back one, and the VERSION must be
 			// read off it rather than off the candidate: they agree today only
 			// because both come from one generation.
 			item.TargetImage = held[desc.ID()].To
-			// Two questions, both of which must be yes: does the launcher ship
-			// a migration for this DEPENDENCY, and does it know this PAIR?
-			if desc.Migratable() && !unsupportedPair(desc.ID(), held[desc.ID()].From, item.TargetImage) {
-				item.Status = api.DependencyUpgradeAvailable
-			} else {
-				item.Status = api.DependencyRequiresLauncherUpdate
-			}
+			item.Status, item.StatusDetail = d.heldUpgradeStatus(desc, held[desc.ID()], item.TargetImage, item.Rollback)
 		case pin != "" && gen.Effective != "" && pin != gen.Effective:
 			// Non-breaking: the generator already emits the new image and the
 			// pin follows it once the container runs.
@@ -143,38 +133,180 @@ func dependencyItems(act activeNamespace) []api.DependencyDto {
 	return items
 }
 
-// unsupportedPair reports a version pair the launcher UNDERSTANDS, could
-// plausibly migrate one day, and cannot migrate TODAY: the two majors would
-// share a data volume, so this plan — which builds the new cluster next to the
-// old data, and whose rollback is therefore a deletion — has nowhere to put it.
-// 18 → 19 is the case that exists (PostgresLayoutFor maps every major from 18
-// up to postgres3), and without this the row said "upgrade available: citeck
-// deps upgrade postgres" and the preflight then refused it with a message about
-// volumes, sending the operator after a disk problem they do not have.
+// heldUpgradeStatus is the ONE place a held-back upgrade is turned into the
+// status and the sentence every surface shows. Three questions, in this order,
+// because each later one would give the wrong advice if an earlier one applies:
 //
-// The answer this drives is "update the launcher", so everything a NEWER
-// LAUNCHER WOULD NOT FIX has to be carved out and left to the preflight, which
-// has the accurate message for each:
+//  0. is the candidate OLDER than what the data runs on? Then it is not an
+//     upgrade at all, and none of the three questions below has a truthful
+//     answer for it: no launcher moves data backwards (so "update the
+//     launcher" is a lie), the vendor was never asked (a backwards move skips
+//     vendorVerdict, because "there is no upgrade path from 4.2.9 to 4.1.8"
+//     answers a question nobody asked), and the migrator's own refusal for a
+//     downgrade is deliberately EMPTY — which, before this arm existed, made
+//     the very first case below claim it as an ordinary "upgrade available".
+//     It comes first for that reason: every later arm would answer it wrongly;
+//  1. does this LAUNCHER ship a migration for the dependency at all? If not,
+//     nothing about the pair matters — "update the launcher" is the whole
+//     answer, and it is the truthful one;
+//  2. does the DEPENDENCY'S OWN VENDOR forbid this hop? Then updating the
+//     launcher would not help, so the status must not borrow the words that
+//     say it would. The FACT comes from the generator (which asked the
+//     registry) and the SENTENCE comes from the migrator, so the two cannot
+//     drift into two different accounts of one refusal;
+//  3. can THIS RELEASE carry the pair out? A refusal here really is a
+//     launcher-age problem.
 //
-//   - an UNPARSABLE tag — refused with a message about the tag;
-//   - a DOWNGRADE — refused with "the launcher does not migrate data
-//     backwards", which is a policy, not a missing feature. Supports() answers
-//     false for it (it demands a forward move), so without this carve-out both
-//     routes told the operator to go and update a launcher that will never
-//     grow the ability, and the real message became unreachable.
-func unsupportedPair(id deps.ID, from, to string) bool {
-	if id != deps.Postgres {
-		return false
+// A pair the migrator refuses with an EMPTY reason is deliberately reported as
+// an ordinary upgrade: that is the migrator contract's "the preflight words
+// this better" (a downgrade, an unparsable tag), and the refusal then happens
+// where the accurate sentence lives instead of being overwritten here.
+func (d *Daemon) heldUpgradeStatus(desc deps.Descriptor, held namespace.DependencyUpgrade,
+	target string, rollback *api.DependencyRollbackDto,
+) (status, detail string) {
+	if held.BundleOlder {
+		return api.DependencyBundleOlder, bundleOlderDetail(desc, held.From, target, rollback)
 	}
-	fromV, okFrom := deps.ParseImageVersion(from)
-	toV, okTo := deps.ParseImageVersion(to)
+	if !desc.Migratable() {
+		return api.DependencyRequiresLauncherUpdate, ""
+	}
+	problem := d.pairProblem(desc.ID(), held.From, target)
+	switch {
+	case problem == "":
+		return api.DependencyUpgradeAvailable, ""
+	case held.VendorBlocked:
+		return api.DependencyUpgradeBlocked, problem
+	default:
+		// StatusDetail stays empty: "requires-launcher-update" is a complete
+		// answer on its own, and the label is what the table renders.
+		return api.DependencyRequiresLauncherUpdate, ""
+	}
+}
+
+// bundleOlderDetail is the sentence behind the bundle-older status, and the
+// choice between its two forms is the whole of R2.5's "routing, not merging":
+// the launcher offers exactly one deliberate way back, and it exists only when
+// this namespace is the one that migrated away from the version being offered.
+//
+// The test for "the same version" is the registry's own FORMAT rule rather
+// than a hand-written major/series comparison: a retained volume the offered
+// image can read is precisely a non-breaking pair, which is the same question
+// deps.Breaking answers everywhere else. The offer must also be USABLE —
+// pointing at `citeck deps rollback` when the retained volume is gone would
+// send the operator after a volume the launcher itself told them they could
+// delete.
+func bundleOlderDetail(desc deps.Descriptor, from, target string, rollback *api.DependencyRollbackDto) string {
+	if rollback != nil && rollback.Available && !deps.Breaking(desc, rollback.ToImage, target) {
+		return migrate.BundleOlderRollbackNotice(string(desc.ID()), from, target)
+	}
+	return migrate.BundleOlderNotice(from, target)
+}
+
+// rollbackOffer is the per-dependency "go back to what this ran on before the
+// last migration" offer, or nil when there is nothing to go back to.
+//
+// It asks exactly TWO of the six questions the rollback preflight asks: is
+// there a recorded previous state, and is its volume still there. The other
+// four — does the volume still hold what the pin claims, is a journal open, is
+// another long operation running, is the namespace settled — are the
+// preflight's, which the user reaches by clicking. That split is not tidiness:
+// this runs for every dependency on every list request, and on a desktop each
+// volume read is a utils container.
+func (d *Daemon) rollbackOffer(ctx context.Context, act activeNamespace,
+	desc deps.Descriptor, st deps.DependencyState,
+) *api.DependencyRollbackDto {
+	prev, has := st.Previous()
+	if !has {
+		return nil
+	}
+	retained := deps.VolumeName(desc, prev.Gen())
+	offer := &api.DependencyRollbackDto{
+		ToImage:      prev.Image,
+		Volume:       retained,
+		FrozenVolume: deps.VolumeName(desc, st.Gen()),
+		MigratedAt:   migrationFinishedAt(act.runtime, desc.ID()),
+	}
+	if v, ok := desc.ParseVersion(prev.Image); ok {
+		offer.ToVersion = v.String()
+	}
+	if retained == "" {
+		// Unreachable for the dependencies that can migrate today (Keycloak is
+		// the one with no volume of its own, and nothing migrates it), but a
+		// silent Available=true here would offer a switch to a generation that
+		// does not physically exist.
+		offer.Problem = fmt.Sprintf("%s has no data volume of its own, so there is no generation to switch back to", desc.ID())
+		return offer
+	}
+	exists, err := d.depsEnvFor(act).VolumeExists(ctx, retained)
+	switch {
+	case err != nil:
+		offer.Problem = migrate.VolumeCheckFailedProblem(retained, err)
+	case !exists:
+		// Same sentence migrate.RollbackPreflight gives once the user clicks
+		// through — from the same function, so the two cannot drift.
+		offer.Problem = migrate.RetainedVolumeGoneProblem(desc.ID(), retained, prev.Image)
+	default:
+		offer.Available = true
+	}
+	return offer
+}
+
+// migrationFinishedAt is when the MIGRATION this dependency would roll back
+// finished, or 0 when the namespace's one result slot no longer holds it.
+//
+// Three conditions, and each excludes a result that would date the offer
+// wrongly: another dependency's migration (the slot is per namespace), a
+// FAILED migration (it moved no pin, so it is not the one that created this
+// target), and a ROLLBACK verdict — which for a live offer can only be a
+// rollback that FAILED, and dating "the data as it was when the migration
+// finished" by that failure would be simply false.
+func migrationFinishedAt(rt *namespace.Runtime, id deps.ID) int64 {
+	if rt == nil {
+		return 0
+	}
+	res := rt.LastDependencyMigration()
+	if res == nil || res.ID != id || res.Kind != deps.ResultKindMigration || !res.OK() {
+		return 0
+	}
+	return res.FinishedAt.UnixMilli()
+}
+
+// pairProblem asks the dependency's migrator about ONE version pair and
+// answers the operator-facing refusal, "" when the pair is fine. It is the
+// single place the list route, the preflight route and the migrate route agree
+// on what a pair is worth, and it carries the REASON rather than a boolean so
+// the three cannot word it differently.
+//
+// Two carve-outs, both of which answer "" and leave the refusal to the
+// preflight, which has the accurate message for each:
+//
+//   - an UNPARSABLE tag on either side. There are no versions to ask a
+//     migrator about, and the preflight's message names the tag;
+//   - any refusal the migrator states with an EMPTY reason. That is its
+//     contract (see migrate.Migrator): a downgrade is a POLICY, not a missing
+//     feature, and routing it here would tell the operator to go and update a
+//     launcher that will never grow the ability.
+func (d *Daemon) pairProblem(id deps.ID, from, to string) string {
+	desc, found := deps.Lookup(id)
+	if !found {
+		return ""
+	}
+	fromV, okFrom := desc.ParseVersion(from)
+	toV, okTo := desc.ParseVersion(to)
 	if !okFrom || !okTo {
-		return false
+		return ""
 	}
-	if toV.Major < fromV.Major {
-		return false
+	m, wired := d.migratorFor(id)
+	if !wired {
+		// The descriptor claims no migrator, or claims one that is not wired.
+		// Both are answered by the caller's Migratable() arm; saying anything
+		// about the pair here would add a second, weaker account of it.
+		return ""
 	}
-	return !migrate.PostgresMigrator{}.Supports(fromV, toV)
+	if ok, problem := m.SupportsPair(fromV, toV); !ok {
+		return problem
+	}
+	return ""
 }
 
 // resultDto renders the last migration verdict for the wire.
@@ -184,7 +316,7 @@ func resultDto(r *deps.MigrationResult) *api.DependencyMigrationResultDto {
 	}
 	return &api.DependencyMigrationResultDto{
 		ID: string(r.ID), From: r.From, To: r.To, FinishedAt: r.FinishedAt.UnixMilli(),
-		Success: r.OK(), Error: r.Error, OldVolume: r.OldVolume,
+		Success: r.OK(), Error: r.Error, OldVolume: r.OldVolume, Kind: r.Kind,
 	}
 }
 
@@ -248,7 +380,7 @@ func (d *Daemon) rollbackBlocker(act activeNamespace) string {
 	return d.journalBlocker(act)
 }
 
-func (d *Daemon) handleListDependencies(w http.ResponseWriter, _ *http.Request) {
+func (d *Daemon) handleListDependencies(w http.ResponseWriter, r *http.Request) {
 	act := d.active()
 	if act.runtime == nil {
 		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeNotConfigured, "no namespace configured")
@@ -259,7 +391,7 @@ func (d *Daemon) handleListDependencies(w http.ResponseWriter, _ *http.Request) 
 		nsID = act.nsConfig.ID
 	}
 	dto := api.DependenciesDto{
-		Items:      dependencyItems(act),
+		Items:      d.dependencyItems(r.Context(), act),
 		Migration:  d.currentDepsMigration(nsID),
 		LastResult: resultDto(act.runtime.LastDependencyMigration()),
 	}
@@ -275,7 +407,7 @@ func (d *Daemon) handleListDependencies(w http.ResponseWriter, _ *http.Request) 
 
 // resolveMigration validates the {id} path segment and answers the pending
 // (from → to) pair. Every refusal has already been written when ok is false.
-func (d *Daemon) resolveMigration(w http.ResponseWriter, act activeNamespace, id string) (from, to string, ok bool) {
+func (d *Daemon) resolveMigration(ctx context.Context, w http.ResponseWriter, act activeNamespace, id string) (from, to string, ok bool) {
 	desc, found := deps.Lookup(deps.ID(id))
 	if !found {
 		writeErrorCode(w, http.StatusNotFound, api.ErrCodeDependencyUnknown, fmt.Sprintf("unknown dependency %q", id))
@@ -300,18 +432,38 @@ func (d *Daemon) resolveMigration(w http.ResponseWriter, act activeNamespace, id
 			fmt.Sprintf("%s has no pending upgrade", id))
 		return "", "", false
 	}
+	// A BACKWARDS candidate is still a held-back "upgrade" and would otherwise
+	// walk straight past the two arms below into the preflight, which refuses
+	// it with the right sentence in the wrong place. Refused here, before
+	// either of them: DEPENDENCY_NOT_MIGRATABLE would promise that a newer
+	// launcher helps (none will ever move data backwards) and
+	// DEPENDENCY_PAIR_UNSUPPORTED would report a vendor refusal to a question
+	// nobody asked — a backwards move never reaches vendorVerdict at all.
+	if upgrade.BundleOlder {
+		writeErrorCode(w, http.StatusConflict, api.ErrCodeDependencyBackwards,
+			bundleOlderDetail(desc, upgrade.From, upgrade.To,
+				d.rollbackOffer(ctx, act, desc, act.runtime.DependencyStates()[desc.ID()])))
+		return "", "", false
+	}
 	if !desc.Migratable() {
 		writeErrorCode(w, http.StatusConflict, api.ErrCodeDependencyNotMigratable,
 			fmt.Sprintf("this launcher cannot migrate %s — update the launcher", id))
 		return "", "", false
 	}
-	// The dependency is migratable but this PAIR is not one this release has a
-	// plan for (see unsupportedPair). Same code, same answer — update the
-	// launcher — but the message names the versions, because "postgres cannot
-	// be migrated" would contradict the 17 → 18 the same launcher performs.
-	if unsupportedPair(desc.ID(), upgrade.From, upgrade.To) {
-		writeErrorCode(w, http.StatusConflict, api.ErrCodeDependencyNotMigratable,
-			migrate.UnsupportedPairProblem(upgrade.From, upgrade.To))
+	// The dependency is migratable but this PAIR is refused. WHICH refusal it
+	// is decides the code, and the two must never be collapsed: a hop the
+	// DEPENDENCY'S vendor forbids is not fixed by a newer launcher, so it gets
+	// its own code and the vendor's own sentence (which names the intermediate
+	// version to take first, when there is one). A pair this RELEASE cannot
+	// carry out keeps the old code and the old answer — update the launcher —
+	// with a message that names the versions, because "postgres cannot be
+	// migrated" would contradict the 17 → 18 the same launcher performs.
+	if problem := d.pairProblem(desc.ID(), upgrade.From, upgrade.To); problem != "" {
+		code := api.ErrCodeDependencyNotMigratable
+		if upgrade.VendorBlocked {
+			code = api.ErrCodeDependencyPairUnsupported
+		}
+		writeErrorCode(w, http.StatusConflict, code, problem)
 		return "", "", false
 	}
 	return upgrade.From, upgrade.To, true
@@ -325,7 +477,14 @@ func (d *Daemon) resolveMigration(w http.ResponseWriter, act activeNamespace, id
 // Not touching Docker matters for the running-migration arm too — probing
 // volumes and containers in the middle of a migration measures a world that is
 // being rewritten.
-func (d *Daemon) preMigrationProblems(act activeNamespace) []string {
+// action is the gerund the namespace-status line ends with ("migrating",
+// "rolling it back"). It is a parameter and not a constant because this list is
+// what the confirm screen SHOWS: telling an operator who clicked Roll back to
+// "start or stop it before migrating" sends them looking for a migration, the
+// same defect the long-op holder's own busyMessage exists to prevent. The other
+// two arms need no such split — the journal really is a migration's, and the
+// holder names itself.
+func (d *Daemon) preMigrationProblems(act activeNamespace, action string) []string {
 	var problems []string
 	blocked := d.journalBlocker(act)
 	if blocked != "" {
@@ -347,7 +506,7 @@ func (d *Daemon) preMigrationProblems(act activeNamespace) []string {
 	if act.runtime != nil {
 		if st := act.runtime.Status(); !migratableNsStatus(st) {
 			problems = append(problems, fmt.Sprintf(
-				"the namespace is %s — start or stop it before migrating", st))
+				"the namespace is %s — start or stop it before %s", st, action))
 		}
 	}
 	return problems
@@ -356,11 +515,11 @@ func (d *Daemon) preMigrationProblems(act activeNamespace) []string {
 func (d *Daemon) handleDependencyPreflight(w http.ResponseWriter, r *http.Request) {
 	act := d.active()
 	id := r.PathValue("id")
-	from, to, ok := d.resolveMigration(w, act, id)
+	from, to, ok := d.resolveMigration(r.Context(), w, act, id)
 	if !ok {
 		return
 	}
-	if problems := d.preMigrationProblems(act); len(problems) > 0 {
+	if problems := d.preMigrationProblems(act, "migrating"); len(problems) > 0 {
 		writeJSON(w, migrate.RefusedPreflight(from, to, problems...))
 		return
 	}
@@ -369,7 +528,7 @@ func (d *Daemon) handleDependencyPreflight(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	env := d.depsEnvFor(act)
-	m, found := d.migratorFor(deps.ID(id), env)
+	m, found := d.migratorFor(deps.ID(id))
 	if !found {
 		writeInternalError(w, fmt.Errorf("no migrator wired for dependency %q", id))
 		return
@@ -407,7 +566,7 @@ func (d *Daemon) handleDependencyMigrate(w http.ResponseWriter, r *http.Request)
 	}
 	act := d.active()
 	id := deps.ID(r.PathValue("id"))
-	from, to, ok := d.resolveMigration(w, act, string(id))
+	from, to, ok := d.resolveMigration(r.Context(), w, act, string(id))
 	if !ok {
 		return
 	}
@@ -437,17 +596,14 @@ func (d *Daemon) handleDependencyMigrate(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	env := d.depsEnvFor(act)
-	m, found := d.migratorFor(id, env)
+	m, found := d.migratorFor(id)
 	if !found {
 		d.longOp.Unlock()
 		writeInternalError(w, fmt.Errorf("no migrator wired for dependency %q", id))
 		return
 	}
 	evt := func(typ, phase string, cur, total int, pct float64, msg string) api.EventDto {
-		return api.EventDto{
-			Type: typ, Timestamp: time.Now().UnixMilli(), NamespaceID: nsID,
-			AppName: string(id), Phase: phase, Current: cur, Total: total, Percent: pct, After: msg,
-		}
+		return depsEvent(typ, nsID, id, phase, cur, total, pct, msg)
 	}
 	// Building the plan runs the whole preflight — including a `du` of the data
 	// volume, which on a real cluster is minutes — and it happens AFTER the

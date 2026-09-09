@@ -26,7 +26,7 @@ type fakeStore struct {
 	commits  []deps.MigrationResult
 	failures []deps.MigrationResult
 	rbFails  []deps.MigrationResult
-	pin      string
+	pin      deps.DependencyState
 	setErr   error // injected SetMigrationJournal failure
 	setErrAt int   // fail the Nth (1-based) SetMigrationJournal call
 	setCalls int
@@ -68,10 +68,10 @@ func (s *fakeStore) SetMigrationJournal(j *deps.MigrationJournal) error {
 	return nil
 }
 
-func (s *fakeStore) CommitMigration(_ deps.ID, image string, res deps.MigrationResult) error {
+func (s *fakeStore) CommitMigration(_ deps.ID, st deps.DependencyState, res deps.MigrationResult) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.pin = image
+	s.pin = st
 	s.journal = nil
 	s.commits = append(s.commits, res)
 	return nil
@@ -145,9 +145,35 @@ func TestRunJournalsEveryStepThenCommitsOnce(t *testing.T) {
 	require.Len(t, st.commits, 1)
 	assert.Equal(t, "postgres2", st.commits[0].OldVolume)
 	assert.False(t, st.commits[0].FinishedAt.IsZero(), "the engine stamps the result")
-	assert.Equal(t, "postgres:18", st.pin)
+	assert.Equal(t, deps.DependencyState{Image: "postgres:18"}, st.pin)
 	assert.Nil(t, st.journal)
 	assert.Empty(t, st.failures)
+}
+
+// The commit is ONE write of the pair (image, generation), and both halves come
+// from the JOURNAL — recorded when it was opened, before the migration started
+// rewriting the world it would otherwise have to re-derive them from. A commit
+// that moved the image but not the generation would leave the namespace
+// mounting the OLD volume with the NEW image, which for PostgreSQL is 18 over a
+// 17 data directory: an empty cluster's layout emitted onto real data.
+func TestCommitTakesTheImageAndTheGenerationFromTheJournal(t *testing.T) {
+	st := &fakeStore{}
+	j := baseJournal()
+	j.ToVolumeGen = 3
+	j.SourceVolume = "postgres3"
+	plan := &Plan{
+		Steps:    []Step{step("a", func(*deps.MigrationJournal) error { return nil })},
+		Rollback: func(context.Context, *deps.MigrationJournal) error { return nil },
+		Result: func(j *deps.MigrationJournal) deps.MigrationResult {
+			return deps.MigrationResult{OldVolume: j.SourceVolume}
+		},
+	}
+	require.NoError(t, Run(context.Background(), st, j, plan, nil))
+	assert.Equal(t, deps.DependencyState{Image: "postgres:18", VolumeGen: 3}, st.pin,
+		"image and generation move together, from the journal")
+	require.Len(t, st.commits, 1)
+	assert.Equal(t, "postgres3", st.commits[0].OldVolume,
+		"the journal names the volume the data came from, so the verdict can too")
 }
 
 // Progress is the engine's own bookkeeping: which step, 1-based, of how many,
@@ -221,7 +247,7 @@ func TestCommitCarriesTheJournalsIdentity(t *testing.T) {
 	assert.Equal(t, deps.Postgres, st.commits[0].ID)
 	assert.Equal(t, "postgres:17.5", st.commits[0].From)
 	assert.Equal(t, "postgres:18", st.commits[0].To)
-	assert.Equal(t, "postgres:18", st.pin)
+	assert.Equal(t, deps.DependencyState{Image: "postgres:18"}, st.pin)
 }
 
 // A step that creates something records it and asks for a persist BEFORE
@@ -392,7 +418,7 @@ func TestFinalizeFailureIsAFinalizeErrorAfterCommit(t *testing.T) {
 	var fe *FinalizeError
 	require.ErrorAs(t, err, &fe)
 	require.ErrorContains(t, err, "start failed")
-	assert.Equal(t, "postgres:18", st.pin)
+	assert.Equal(t, deps.DependencyState{Image: "postgres:18"}, st.pin)
 	require.Len(t, st.commits, 1)
 	assert.Empty(t, st.failures, "a finalize failure is not a migration failure")
 }

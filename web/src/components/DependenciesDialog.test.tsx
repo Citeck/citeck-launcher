@@ -1,9 +1,12 @@
-import { render, screen, waitFor, fireEvent, act } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent, act, within } from '@testing-library/react'
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest'
 import { DependenciesDialog } from './DependenciesDialog'
 import { useDepsStore } from '../lib/depsStore'
 import { useUpdateStore } from '../lib/updateStore'
-import { getDependencies, getDependencyPreflight, postDependencyMigrate } from '../lib/api'
+import {
+  getDependencies, getDependencyPreflight, postDependencyMigrate,
+  getDependencyRollbackPreflight, postDependencyRollback,
+} from '../lib/api'
 import { showError } from '../lib/errorModal'
 import type { DependenciesDto } from '../lib/types'
 
@@ -11,6 +14,8 @@ vi.mock('../lib/api', () => ({
   getDependencies: vi.fn(),
   getDependencyPreflight: vi.fn(),
   postDependencyMigrate: vi.fn(),
+  getDependencyRollbackPreflight: vi.fn(),
+  postDependencyRollback: vi.fn(),
   getUpdateStatus: vi.fn(),
   checkUpdate: vi.fn(),
 }))
@@ -34,7 +39,34 @@ const okPreflight = {
   ok: true, problems: [], warnings: [], from: 'postgres:17.5', to: 'postgres:18',
   dataSizeBytes: 10, requiredHostBytes: 20, requiredVolumeBytes: 20,
   freeHostBytes: 100, freeVolumeBytes: 100, wasRunning: true,
-  sharedFilesystem: false, requiredTotalBytes: 0,
+  sharedFilesystem: false, requiredTotalBytes: 0, spaceChecked: true,
+}
+
+// What migrate.RollbackPreflight answers: it measures NOTHING (nothing is
+// created by a rollback), and its warnings END with the three consequence
+// sentences the dialog restates in the user's own language.
+const rollbackConsequences = [
+  'the namespace will run postgres:17.5 again, on the data in volume postgres2 as it was when the migration to postgres:18.6 finished',
+  'everything written since then is in volume postgres3: the launcher keeps it and will not read it again, so that data becomes unreachable',
+  'there is no roll-forward: to go back to postgres:18.6 you would migrate again, from the postgres:17.5 data, into a new volume',
+]
+
+const okRollbackPreflight = {
+  ok: true, problems: [], warnings: [...rollbackConsequences],
+  from: 'postgres:18.6', to: 'postgres:17.5',
+  dataSizeBytes: 0, requiredHostBytes: 0, requiredVolumeBytes: 0,
+  freeHostBytes: 0, freeVolumeBytes: 0, wasRunning: true,
+  sharedFilesystem: false, requiredTotalBytes: 0, spaceChecked: false,
+}
+
+/** A namespace that HAS migrated postgres, so it carries a rollback offer. */
+const migratedPostgres = {
+  id: 'postgres', app: 'postgres', currentImage: 'postgres:18.6', currentVersion: '18.6',
+  targetImage: 'postgres:18.6', targetVersion: '18.6', status: 'up-to-date', migratable: true,
+  rollback: {
+    toImage: 'postgres:17.5', toVersion: '17.5', volume: 'postgres2', frozenVolume: 'postgres3',
+    migratedAt: Date.UTC(2026, 8, 9, 9, 41), available: true,
+  },
 }
 
 function mockDeps(dto: Partial<DependenciesDto> = {}) {
@@ -53,10 +85,14 @@ beforeEach(() => {
   vi.mocked(getDependencies).mockReset()
   vi.mocked(getDependencyPreflight).mockReset()
   vi.mocked(postDependencyMigrate).mockReset()
+  vi.mocked(getDependencyRollbackPreflight).mockReset()
+  vi.mocked(postDependencyRollback).mockReset()
   vi.mocked(showError).mockReset()
   mockDeps()
   vi.mocked(getDependencyPreflight).mockResolvedValue(okPreflight)
   vi.mocked(postDependencyMigrate).mockResolvedValue({ success: true, message: 'started' })
+  vi.mocked(getDependencyRollbackPreflight).mockResolvedValue(okRollbackPreflight)
+  vi.mocked(postDependencyRollback).mockResolvedValue({ success: true, message: 'started' })
   useDepsStore.setState({ migration: null, result: null, dismissedKey: null, data: null, rollbackPending: '' })
   useUpdateStore.setState({ status: null })
 })
@@ -239,7 +275,7 @@ describe('DependenciesDialog', () => {
       from: 'postgres:17.5', to: 'postgres:18',
       dataSizeBytes: 0, requiredHostBytes: 0, requiredVolumeBytes: 0,
       freeHostBytes: 0, freeVolumeBytes: 0, wasRunning: false,
-      sharedFilesystem: false, requiredTotalBytes: 0,
+      sharedFilesystem: false, requiredTotalBytes: 0, spaceChecked: false,
     })
     render(<DependenciesDialog open onClose={() => {}} />)
     fireEvent.click(await screen.findByRole('button', { name: /^upgrade$/i }))
@@ -440,5 +476,307 @@ describe('DependenciesDialog', () => {
     render(<DependenciesDialog open onClose={() => {}} />)
     fireEvent.click(await screen.findByRole('button', { name: /^upgrade$/i }))
     expect(await screen.findByText(/dump \+ new cluster/i)).toHaveTextContent('90 B')
+  })
+  // The copy-upgrade plan (RabbitMQ, ZooKeeper) is ELEVEN steps and shares
+  // only four ids with PostgreSQL's ten. One hardcoded list rendered a dump
+  // and a restore for a migration that does neither, and hid the copy that is
+  // the whole operation.
+  it('renders the copy plan for rabbitmq and the dump plan for postgres', async () => {
+    render(<DependenciesDialog open onClose={() => {}} />)
+    await screen.findByTestId('dep-postgres')
+
+    act(() => {
+      useDepsStore.getState().onStart('rabbitmq', 11)
+      useDepsStore.getState().onProgress({ appName: 'rabbitmq', phase: 'copy-volume', current: 4, total: 11, percent: 0, after: '' })
+    })
+    expect(screen.getAllByTestId(/^deps-step-/).map((li) => li.getAttribute('data-testid'))).toEqual([
+      'deps-step-stop-namespace', 'deps-step-pull-image', 'deps-step-create-volume',
+      'deps-step-copy-volume', 'deps-step-start-old', 'deps-step-pre-upgrade',
+      'deps-step-stop-old', 'deps-step-start-new', 'deps-step-post-upgrade',
+      'deps-step-verify', 'deps-step-stop-new',
+    ])
+    // Every one of them is a real locale key, never the bare lookup key.
+    for (const li of screen.getAllByTestId(/^deps-step-/)) {
+      expect(li.textContent).not.toMatch(/^deps\.step\./)
+    }
+
+    act(() => {
+      useDepsStore.getState().onStart('postgres', 10)
+      useDepsStore.getState().onProgress({ appName: 'postgres', phase: 'dump', current: 4, total: 10, percent: 0, after: '' })
+    })
+    expect(screen.getAllByTestId(/^deps-step-/).map((li) => li.getAttribute('data-testid'))).toEqual([
+      'deps-step-stop-namespace', 'deps-step-pull-image', 'deps-step-start-source',
+      'deps-step-dump', 'deps-step-stop-source', 'deps-step-create-volume',
+      'deps-step-start-target', 'deps-step-restore', 'deps-step-verify', 'deps-step-stop-target',
+    ])
+  })
+
+  // Neither of these is "update the launcher": a vendor-forbidden hop is not
+  // lifted by a newer launcher, and a bundle that offers something OLDER is
+  // not an upgrade being held back at all. Both carry the daemon's own
+  // sentence, which is the only part that says what to do.
+  it('renders a blocked hop and a backwards bundle with their detail and no launcher hint', async () => {
+    mockDeps({
+      items: [
+        {
+          id: 'rabbitmq', app: 'rabbitmq', currentImage: 'rabbitmq:4.1.8-management', currentVersion: '4.1.8',
+          targetImage: 'rabbitmq:4.3.5-management', targetVersion: '4.3.5',
+          status: 'upgrade-blocked', migratable: true,
+          statusDetail: 'RabbitMQ does not support 4.1 → 4.3 in one step: upgrade to 4.2 first.',
+        },
+        {
+          id: 'postgres', app: 'postgres', currentImage: 'postgres:18.6', currentVersion: '18.6',
+          targetImage: 'postgres:17.5', targetVersion: '17.5',
+          status: 'bundle-older', migratable: true,
+          statusDetail: 'the bundle offers postgres:17.5, which is older than the postgres:18.6 this namespace’s data runs on.',
+        },
+      ],
+    })
+    render(<DependenciesDialog open onClose={() => {}} />)
+    const blocked = await screen.findByTestId('dep-rabbitmq')
+    expect(blocked).toHaveTextContent('upgrade to 4.2 first')
+    expect(blocked.textContent).not.toMatch(/deps\.status\./)
+    expect(blocked.textContent).not.toMatch(/citeck update/i)
+
+    const older = screen.getByTestId('dep-postgres')
+    expect(older).toHaveTextContent('older than the postgres:18.6')
+    expect(older.textContent).not.toMatch(/deps\.status\./)
+    expect(older.textContent).not.toMatch(/citeck update/i)
+    // Neither is an upgrade: no Upgrade button anywhere on the list.
+    expect(screen.queryByRole('button', { name: /^upgrade$/i })).toBeNull()
+  })
+
+  // A copy upgrade writes NOTHING to the host, so requiredHostBytes is 0 on a
+  // preflight that measured everything it needed to. Reading that zero as
+  // "unmeasured" hid the one requirement that exists; printing the host line
+  // anyway claims a second requirement of 0 B.
+  it('renders the volume requirement of a plan that writes nothing to the host', async () => {
+    vi.mocked(getDependencyPreflight).mockResolvedValue({
+      ...okPreflight, from: 'rabbitmq:4.1.8-management', to: 'rabbitmq:4.2.9-management',
+      dataSizeBytes: 10, requiredHostBytes: 0, requiredVolumeBytes: 30,
+      freeHostBytes: 0, freeVolumeBytes: 100, spaceChecked: true,
+    })
+    render(<DependenciesDialog open onClose={() => {}} />)
+    fireEvent.click(await screen.findByRole('button', { name: /^upgrade$/i }))
+    expect(await screen.findByText(/Data size:/)).toBeInTheDocument()
+    expect(screen.getByText(/Volumes:/)).toHaveTextContent('30 B')
+    expect(screen.queryByText(/Host \(dump\):/)).toBeNull()
+  })
+
+  // The rollback is a per-row action, and the row that cannot take it says why
+  // instead of offering a button whose only answer is a refusal. The launcher
+  // itself tells the operator they may reclaim the retained volume, so "it is
+  // gone" is a state it actively creates.
+  it('offers a rollback per row and shows the problem instead when it is unavailable', async () => {
+    mockDeps({ items: [migratedPostgres] })
+    render(<DependenciesDialog open onClose={() => {}} />)
+    const row = await screen.findByTestId('dep-postgres')
+    expect(screen.getByRole('button', { name: /roll back to 17\.5/i })).toBeEnabled()
+    expect(row.textContent).not.toMatch(/deps\.rollback\./)
+
+    mockDeps({
+      items: [{
+        ...migratedPostgres,
+        rollback: {
+          ...migratedPostgres.rollback, available: false,
+          problem: 'volume postgres2 is gone, so there is no postgres data from postgres:17.5 to go back to',
+        },
+      }],
+    })
+    act(() => { useDepsStore.setState({ result: { id: 'postgres', success: true, message: '', at: Date.now(), kind: '' } }) })
+    await waitFor(() => expect(screen.queryByRole('button', { name: /roll back to/i })).toBeNull())
+    expect(screen.getByTestId('dep-postgres')).toHaveTextContent('volume postgres2 is gone')
+  })
+
+  // What the confirm screen adds to the daemon's own warnings: BOTH volumes as
+  // fields the user can read at a glance, and the date — which the preflight
+  // deliberately cannot supply, having no migration result to read it from.
+  // Asserted inside the field list, not on the whole body: the warnings name
+  // the same volumes, so a body-level match would pass with the fields gone.
+  it('names both volumes and the migration date as fields of its own', async () => {
+    mockDeps({ items: [migratedPostgres] })
+    render(<DependenciesDialog open onClose={() => {}} />)
+    fireEvent.click(await screen.findByRole('button', { name: /roll back to 17\.5/i }))
+    const fields = await screen.findByTestId('deps-rollback-fields')
+    expect(fields).toHaveTextContent('17.5')
+    expect(fields).toHaveTextContent('postgres2')
+    expect(fields).toHaveTextContent('postgres3')
+    expect(fields).toHaveTextContent('09.09.26')
+    expect(fields.textContent).not.toMatch(/deps\.rollback\./)
+    // Nothing about disk space: a rollback creates nothing and measures nothing.
+    expect(screen.queryByText(/Data size:/)).toBeNull()
+    expect(screen.queryByText(/Volumes:/)).toBeNull()
+    expect(getDependencyRollbackPreflight).toHaveBeenCalledWith('postgres')
+  })
+
+  // A result slot that no longer holds the migration being undone answers 0.
+  // A labelled blank is only noise, and the warnings still say "as it was when
+  // the migration finished", which is true without a date.
+  it('omits the date field when the result slot no longer holds the migration', async () => {
+    mockDeps({
+      items: [{ ...migratedPostgres, rollback: { ...migratedPostgres.rollback, migratedAt: 0 } }],
+    })
+    render(<DependenciesDialog open onClose={() => {}} />)
+    fireEvent.click(await screen.findByRole('button', { name: /roll back to 17\.5/i }))
+    const fields = await screen.findByTestId('deps-rollback-fields')
+    expect(fields).toHaveTextContent('postgres2')
+    expect(within(fields).queryByText(/Migrated on/i)).toBeNull()
+  })
+
+  // The daemon is the single source for what a rollback DOES, and it says it
+  // through the preflight's warnings — the same channel that already carries
+  // the existing-volume warning, the Khepri notice and this one. Every warning
+  // is rendered, verbatim: dropping any of them by position would make the
+  // dialog correct only for as long as the Go builder emitted exactly the
+  // warnings it emits today.
+  it('renders every rollback preflight warning verbatim', async () => {
+    mockDeps({ items: [migratedPostgres] })
+    vi.mocked(getDependencyRollbackPreflight).mockResolvedValue({
+      ...okRollbackPreflight,
+      warnings: ['image postgres:17.5 is not present locally; the rollback will pull it', ...rollbackConsequences],
+    })
+    render(<DependenciesDialog open onClose={() => {}} />)
+    fireEvent.click(await screen.findByRole('button', { name: /roll back to 17\.5/i }))
+    const body = await screen.findByTestId('deps-rollback-confirm')
+    for (const w of ['image postgres:17.5 is not present locally', ...rollbackConsequences]) {
+      expect(body).toHaveTextContent(w)
+    }
+  })
+
+  // A refused rollback preflight blocks the button and says why.
+  it('blocks the rollback on a refused preflight', async () => {
+    mockDeps({ items: [migratedPostgres] })
+    vi.mocked(getDependencyRollbackPreflight).mockResolvedValue({
+      ...okRollbackPreflight, ok: false, warnings: [],
+      problems: ['volume postgres2 holds PostgreSQL "18", not the cluster postgres:17.5 names'],
+    })
+    render(<DependenciesDialog open onClose={() => {}} />)
+    fireEvent.click(await screen.findByRole('button', { name: /roll back to 17\.5/i }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('not the cluster postgres:17.5 names')
+    expect(screen.getByRole('button', { name: /^roll back$/i })).toBeDisabled()
+    expect(postDependencyRollback).not.toHaveBeenCalled()
+  })
+
+  // Three steps on the migration's own progress channel (no second rendering
+  // path), but they are the ROLLBACK's three — the ten of a dump plan would be
+  // a list of things that will never happen.
+  it('starts a rollback and follows it on its own three steps', async () => {
+    mockDeps({ items: [migratedPostgres] })
+    render(<DependenciesDialog open onClose={() => {}} />)
+    fireEvent.click(await screen.findByRole('button', { name: /roll back to 17\.5/i }))
+    await screen.findByTestId('deps-rollback-confirm')
+    fireEvent.click(screen.getByRole('button', { name: /^roll back$/i }))
+    await waitFor(() => expect(postDependencyRollback).toHaveBeenCalledWith('postgres'))
+
+    act(() => useDepsStore.getState().onProgress({
+      appName: 'postgres', phase: 'switch-generation', current: 2, total: 3, percent: 0, after: '',
+    }))
+    const progress = await screen.findByTestId('deps-progress')
+    expect(screen.getAllByTestId(/^deps-step-/).map((li) => li.getAttribute('data-testid'))).toEqual([
+      'deps-step-stop-namespace', 'deps-step-switch-generation', 'deps-step-start-namespace',
+    ])
+    expect(progress.textContent).not.toMatch(/deps\.(step|progress)\./)
+    // The title says it is a rollback, not a migration.
+    expect(progress).toHaveTextContent(/roll/i)
+  })
+
+  // One result slot, two operations: "postgres 18.6 → 17.5 succeeded" reads as
+  // a migration to an older version unless the verdict says which it was.
+  it('reports a rolled-back verdict as a rollback, not as a migration', async () => {
+    mockDeps({ items: [migratedPostgres] })
+    render(<DependenciesDialog open onClose={() => {}} />)
+    await screen.findByTestId('dep-postgres')
+    act(() => useDepsStore.getState().onStart('postgres', 3, 'rollback'))
+    await screen.findByTestId('deps-progress')
+    act(() => useDepsStore.getState().onComplete('postgres', 'postgres rolled back to postgres:17.5'))
+    const result = await screen.findByTestId('deps-result')
+    expect(result.textContent).not.toMatch(/migrated/i)
+    expect(result.textContent).not.toMatch(/deps\.result\./)
+    expect(result).toHaveTextContent(/rolled/i)
+
+    act(() => useDepsStore.getState().onStart('postgres', 3, 'rollback'))
+    await screen.findByTestId('deps-progress')
+    act(() => useDepsStore.getState().onError('postgres', 'stop namespace: boom'))
+    const failed = await screen.findByTestId('deps-result')
+    expect(failed).toHaveTextContent('stop namespace: boom')
+    // The migration's "everything was rolled back" line would be nonsense here.
+    expect(failed.textContent).not.toMatch(/runs on the previous version/i)
+  })
+
+  // ZooKeeper 3.8 and 3.9 share one on-disk format: the copy is insurance, not
+  // a conversion, and saying so is the honest version of a screen that
+  // otherwise implies a data migration.
+  it('explains the ZooKeeper copy on its own confirm screen', async () => {
+    mockDeps({
+      items: [{
+        id: 'zookeeper', app: 'zookeeper', currentImage: 'zookeeper:3.8.4', currentVersion: '3.8.4',
+        targetImage: 'zookeeper:3.9.5', targetVersion: '3.9.5', status: 'upgrade-available', migratable: true,
+      }],
+    })
+    render(<DependenciesDialog open onClose={() => {}} />)
+    fireEvent.click(await screen.findByRole('button', { name: /^upgrade$/i }))
+    const intro = await screen.findByTestId('deps-confirm')
+    expect(intro).toHaveTextContent(/data volume is copied/i)
+    expect(intro).toHaveTextContent(/container swap/i)
+    expect(intro.textContent).not.toMatch(/deps\.(confirm|zk)\./)
+  })
+  // `oldVolume` is one field with two opposite meanings: after a MIGRATION it
+  // is the old data the user may reclaim, after a ROLLBACK it is the newer
+  // data that just became unreachable. Telling a user to go and delete the
+  // latter from the Volumes page is the worst sentence this dialog could say.
+  it('names the frozen volume as kept-and-never-read, not as space to reclaim', async () => {
+    mockDeps({
+      items: [migratedPostgres],
+      lastResult: {
+        id: 'postgres', from: 'postgres:18.6', to: 'postgres:17.5', finishedAt: 1,
+        success: true, oldVolume: 'postgres3', kind: 'rollback',
+      },
+    })
+    render(<DependenciesDialog open onClose={() => {}} />)
+    await screen.findByTestId('dep-postgres')
+    act(() => useDepsStore.getState().onStart('postgres', 3, 'rollback'))
+    await screen.findByTestId('deps-progress')
+    act(() => useDepsStore.getState().onComplete('postgres', 'postgres rolled back to postgres:17.5'))
+    const result = await screen.findByTestId('deps-result')
+    expect(result).toHaveTextContent('postgres3')
+    expect(result).toHaveTextContent(/never reads it again/i)
+    expect(result.textContent).not.toMatch(/Volumes page/i)
+    // A rollback this client did not click reads its target off the one result
+    // slot rather than naming nothing.
+    expect(result).toHaveTextContent('postgres:17.5')
+  })
+
+  // The daemon refuses a rollback with a 409 while a journal is open or any
+  // long operation is held, so a live button could only ever raise an error
+  // modal — the same rule the Upgrade button already follows.
+  it('disables the rollback action while the daemon would refuse it', async () => {
+    mockDeps({ items: [migratedPostgres] })
+    render(<DependenciesDialog open onClose={() => {}} />)
+    await screen.findByTestId('dep-postgres')
+    expect(screen.getByRole('button', { name: /roll back to 17\.5/i })).toBeEnabled()
+    act(() => useDepsStore.setState({ rollbackPending: 'a previous migration of postgres left a rollback pending' }))
+    expect(screen.getByRole('button', { name: /roll back to 17\.5/i })).toBeDisabled()
+  })
+  // A namespace has ONE result slot and it may hold a rollback of a DIFFERENT
+  // dependency (migrating or rolling back a second one replaces it). Reading
+  // the target off it unconditionally would report this dependency as having
+  // gone back to the other one's version.
+  it("never names another dependency's rollback target on this one's verdict", async () => {
+    mockDeps({
+      items: [migratedPostgres],
+      lastResult: {
+        id: 'rabbitmq', from: 'rabbitmq:4.2.9-management', to: 'rabbitmq:4.1.8-management',
+        finishedAt: 1, success: true, kind: 'rollback',
+      },
+    })
+    render(<DependenciesDialog open onClose={() => {}} />)
+    await screen.findByTestId('dep-postgres')
+    act(() => useDepsStore.getState().onStart('postgres', 3, 'rollback'))
+    await screen.findByTestId('deps-progress')
+    act(() => useDepsStore.getState().onComplete('postgres', 'postgres rolled back'))
+    const result = await screen.findByTestId('deps-result')
+    expect(result.textContent).not.toMatch(/rabbitmq/)
+    // With no target it can trust, it says so without naming a version.
+    expect(result).toHaveTextContent(/previous version/i)
   })
 })

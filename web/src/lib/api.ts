@@ -422,6 +422,28 @@ export async function postDependencyMigrate(id: string, replaceExistingVolume: b
   return request('POST', `/namespace/dependencies/${enc(id)}/migrate`, { body, timeout: DEPS_LONG_TIMEOUT_MS })
 }
 
+/**
+ * Read-only verdict for putting one dependency BACK on the state its last
+ * completed migration recorded as previous.
+ *
+ * It measures no disk space at all — a rollback creates nothing — so its
+ * result comes back with `spaceChecked: false` and every size at zero. It does
+ * read a file out of a data volume, which on a desktop is a utils container,
+ * so it gets the same deadline-free treatment as the migration preflight.
+ */
+export async function getDependencyRollbackPreflight(id: string): Promise<PreflightResult> {
+  return request('GET', `/namespace/dependencies/${enc(id)}/rollback/preflight`, { timeout: DEPS_LONG_TIMEOUT_MS })
+}
+
+/**
+ * Starts one dependency's rollback. Answers 202 once the preflight has passed;
+ * the work itself runs on the daemon and reports over the SAME `deps_migration_*`
+ * events a migration does, with three steps instead of ten or eleven.
+ */
+export async function postDependencyRollback(id: string): Promise<ActionResultDto> {
+  return request('POST', `/namespace/dependencies/${enc(id)}/rollback`, { timeout: DEPS_LONG_TIMEOUT_MS })
+}
+
 export async function getAppConfig(name: string): Promise<AppConfigDto> {
   return request('GET', `/apps/${enc(name)}/config`)
 }

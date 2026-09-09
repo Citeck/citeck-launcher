@@ -1,0 +1,1017 @@
+//go:build integration
+
+package daemon
+
+// Real-Docker tests for the COPY-upgrade plan — the shape RabbitMQ and
+// ZooKeeper use, where there is no logical dump that reproduces a node and the
+// migration therefore copies the data volume and upgrades the COPY.
+//
+// They run the same production pieces the PostgreSQL tests do (the daemon's own
+// depsEnv over a real *docker.Client, a real namespace.Runtime as the journal
+// store, the migrator's plan through migrate.Run), and they prove the four
+// things no fake can:
+//
+//   - a REAL RabbitMQ 4.1 → 4.2 upgrade carries the messages. The vendor's
+//     logical export carries the topology and no messages at all, which is
+//     exactly why this plan copies bytes — and nothing measured before this
+//     test had ever published one;
+//   - the copy preserves OWNERSHIP. The data is owned by the image's uid, and a
+//     root-owned copy is not a slower migration, it is a broker that will not
+//     start (.erlang.cookie is mode 0400);
+//   - the SOURCE volume is byte-identical afterwards. That is the whole safety
+//     story of the plan, and it is asserted as a manifest taken with nothing
+//     running, before and after (ruling on OPEN QUESTION 4);
+//   - a temp container with a pinned node identity does NOT answer to the app's
+//     name on the namespace network. Both halves at once: /etc/hosts inside,
+//     nothing outside.
+//
+// ROOTLESS DOCKER: same requirement as the PostgreSQL tests, and stated in the
+// same words — see the header of deps_integration_test.go and
+// requirePrivilegeOverContainerFiles, which fails early and with the fix.
+
+import (
+	"context"
+	"fmt"
+	"slices"
+	"sort"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/citeck/citeck-launcher/internal/appdef"
+	"github.com/citeck/citeck-launcher/internal/bundle"
+	"github.com/citeck/citeck-launcher/internal/config"
+	"github.com/citeck/citeck-launcher/internal/deps"
+	"github.com/citeck/citeck-launcher/internal/deps/migrate"
+	"github.com/citeck/citeck-launcher/internal/namespace"
+)
+
+const (
+	// itRabbitFrom / itRabbitTo are the pair ruling 2 is about: 4.2 is where
+	// `enable_feature_flag all` starts the irreversible Mnesia → Khepri
+	// migration, which on 4.1 the same command leaves alone.
+	itRabbitFrom = "rabbitmq:4.1.2-management"
+	itRabbitTo   = "rabbitmq:4.2.9-management"
+	// itZkFrom / itZkTo are the pair zk-experiment.md measured. 3.9.5 is also
+	// the generator's own fallback, so this is a genuine forward move onto the
+	// version a namespace would otherwise be held back from.
+	itZkFrom = "zookeeper:3.8.6"
+	itZkTo   = "zookeeper:3.9.5"
+
+	// itDNSProbeContainer is a container of this namespace that is NOT the
+	// migration's — what "does the temp container answer on the namespace
+	// network?" has to be asked from.
+	itDNSProbeContainer = "depsit-dnsprobe"
+
+	// itRabbitClassicMsgs / itRabbitQuorumMsgs / itRabbitVhostMsgs are how many
+	// messages each seeded queue holds. Different numbers on purpose: a
+	// migration that moved a count from one queue to another would compare
+	// equal if they were the same.
+	itRabbitClassicMsgs = 5
+	itRabbitQuorumMsgs  = 3
+	itRabbitVhostMsgs   = 1
+)
+
+// itRabbitNodeName is the node the namespace's own RabbitMQ container runs as,
+// derived from the SAME constant the generator and the migrator derive it from
+// — a literal "rabbit@rabbitmq" here would keep passing while the app was
+// renamed and the plan pinned something else.
+var itRabbitNodeName = "rabbit@" + appdef.AppRabbitmq
+
+// itRabbitTempOpts is the node-identity pin every RabbitMQ container this file
+// starts under an override name needs. BOTH halves are mandatory: the
+// environment names the node (and with it the data directory inside the
+// volume), the /etc/hosts entry resolves its host part, and without the latter
+// Erlang refuses to boot at all ("epmd error for host rabbitmq: nxdomain").
+//
+// The SEED needs it as much as the plan's temp containers do: without it the
+// seed would write its data under rabbit@depsit-seed, and a migration of that
+// volume would faithfully copy a node the namespace's own container never
+// reads.
+func itRabbitTempOpts(name string) deps.TempContainerOpts {
+	return deps.TempContainerOpts{
+		Name:      name,
+		Env:       map[string]string{"RABBITMQ_NODENAME": itRabbitNodeName},
+		HostAlias: map[string]string{appdef.AppRabbitmq: "127.0.0.1"},
+	}
+}
+
+// TestIntegration_TargetImagesAreWhatTheGeneratorOffers is the guard on every
+// image constant in this build tag, and it needs no Docker: run it alone with
+// `go test -tags integration ./internal/daemon/ -run TestIntegration_TargetImagesAreWhatTheGeneratorOffers`.
+//
+// GenerateDefFor refuses a def whose image is not the one it was asked for, and
+// the pin gate emits a requested version verbatim only while the move is
+// BREAKING. So a migration TARGET inside the bundle's own series — postgres
+// 18.6, zookeeper 3.9.5 — must be exactly the image the generator offers: ask
+// for "postgres:18" against a generator whose fallback is "postgres:18.6" and
+// the gate answers 18.6 (same major, not breaking), which the guard rejects and
+// every temp container with it. That is a real failure and it took a
+// five-minute Docker run to see; here it is a millisecond, and the message
+// names the string to change.
+//
+// RabbitMQ is deliberately NOT in the target list: 4.1 → 4.2 IS breaking, so
+// the pin is emitted verbatim and the target owes the bundle nothing. Its
+// SOURCE is checked instead, for the same reason from the other side.
+func TestIntegration_TargetImagesAreWhatTheGeneratorOffers(t *testing.T) {
+	genResp, err := namespace.Generate(
+		&namespace.Config{ID: "imgcheck"},
+		&bundle.Def{Applications: map[string]bundle.AppDef{}},
+		&bundle.WorkspaceConfig{},
+		namespace.SystemSecrets{},
+		namespace.GenerateOpts{},
+	)
+	require.NoError(t, err)
+	for _, c := range []struct {
+		id       deps.ID
+		image    string
+		constant string
+	}{
+		{deps.Postgres, itToImage, "itToImage"},
+		{deps.Zookeeper, itZkTo, "itZkTo"},
+		{deps.RabbitMQ, itRabbitFrom, "itRabbitFrom"},
+	} {
+		assert.Equalf(t, genResp.Dependencies[c.id].Candidate, c.image,
+			"%s must be the image the generator offers for %s, or GenerateDefFor refuses every "+
+				"container these tests start", c.constant, c.id)
+	}
+}
+
+// waitContainer polls until ready answers true, failing with the container's
+// name and the wait budget rather than hanging until the test's own deadline.
+// The container is re-checked on every pass: an image that EXITS is a failure
+// to report now, not in three minutes.
+func (e *itEnv) waitContainer(ctx context.Context, t *testing.T, container, what string,
+	ready func(context.Context) bool,
+) {
+	t.Helper()
+	started := time.Now()
+	deadline := started.Add(itReadyWait)
+	for {
+		running, err := e.env.ContainerRunning(ctx, container)
+		require.NoError(t, err)
+		if !running {
+			t.Fatalf("container %s exited before %s became ready\n%s", container, what, e.containerLog(ctx, container))
+		}
+		if ready(ctx) {
+			t.Logf("%s in %s ready in %s", what, container, time.Since(started).Round(time.Millisecond))
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%s in container %s did not become ready within %s\n%s",
+				what, container, itReadyWait, e.containerLog(ctx, container))
+		}
+		time.Sleep(itReadyPoll)
+	}
+}
+
+// itLogTail is how much of a container's log a failure shows. A RabbitMQ boot
+// failure ends in an Erlang crash report of well over a hundred lines, and the
+// line that says WHY is the first of them.
+const itLogTail = 400
+
+// containerLog is what a wait that timed out has to show to be diagnosable at
+// all: the test's own cleanup purges the namespace, so a container that failed
+// to boot is gone by the time anyone could look at it by hand.
+func (e *itEnv) containerLog(ctx context.Context, container string) string {
+	out, err := e.dc.ContainerLogs(ctx, e.dc.ContainerName(container), itLogTail)
+	if err != nil {
+		return fmt.Sprintf("(logs of %s unavailable: %v)", container, err)
+	}
+	return fmt.Sprintf("--- last %d log lines of %s ---\n%s", itLogTail, container, out)
+}
+
+// containerLogHas reports whether the container's log tail contains needle.
+// Reading a log is the only way to watch a container that must not be TOUCHED
+// while it boots — see waitRabbit.
+func (e *itEnv) containerLogHas(ctx context.Context, container, needle string) bool {
+	out, err := e.dc.ContainerLogs(ctx, e.dc.ContainerName(container), itLogTail)
+	return err == nil && strings.Contains(out, needle)
+}
+
+// execOK runs a command and reports whether it ran and exited 0 — the shape a
+// readiness probe needs, where "it failed" and "it could not run yet" are the
+// same answer.
+func (e *itEnv) execOK(ctx context.Context, container string, cmd ...string) bool {
+	_, _, code, err := e.env.Exec(ctx, container, cmd)
+	return err == nil && code == 0
+}
+
+// mustExec runs a command and fails the test on anything but a clean exit,
+// returning its trimmed stdout.
+func (e *itEnv) mustExec(ctx context.Context, t *testing.T, container string, cmd ...string) string {
+	t.Helper()
+	stdout, stderr, code, err := e.env.Exec(ctx, container, cmd)
+	require.NoErrorf(t, err, "%v", cmd)
+	require.Zerof(t, code, "%v: exit %d\nstdout: %s\nstderr: %s", cmd, code, stdout, stderr)
+	return strings.TrimSpace(stdout)
+}
+
+// --- RabbitMQ ---------------------------------------------------------------
+
+// waitRabbit waits for the readiness the plan itself waits for — the node is
+// running AND its listeners accept, since `ping` and an open 5672 are both true
+// long before either — but it watches the LOG until the boot is complete before
+// it runs the first command inside the container.
+//
+// That order is not caution, it is a measured hazard of a FRESH data directory.
+// The image runs its Erlang tools with HOME=/var/lib/rabbitmq, and an Erlang VM
+// that finds no .erlang.cookie there CREATES one, mode 0400, owned by whoever
+// ran it — and `docker exec` runs as ROOT. A readiness probe fired into the
+// second or two before the entrypoint has finished its own chown therefore
+// leaves the node's cookie unreadable to the uid the server drops to, and the
+// boot dies with `Error when reading /var/lib/rabbitmq/.erlang.cookie: eacces`
+// → "Kernel pid terminated" (measured on this box, reproducibly, with a
+// one-second exec loop against an empty bind directory).
+//
+// The MIGRATION is covered from the other side: its readiness wait
+// (migrate.waitForRabbit) will not run an Erlang tool until the cookie exists.
+// A copy USUALLY carries one already — it is a copy of a volume a broker has
+// run on — but "usually" is not the guarantee it reads as: the preflight
+// admits a source volume that merely EXISTS, and the pin seeding never looks
+// inside a RabbitMQ volume, so an empty one reaches the plan and the copy of
+// it has no cookie either. A test that seeds a fresh volume meets the window
+// head-on, so the seed must watch rather than poke.
+func (e *itEnv) waitRabbit(ctx context.Context, t *testing.T, container string) {
+	t.Helper()
+	e.waitContainer(ctx, t, container, "the RabbitMQ boot", func(ctx context.Context) bool {
+		return e.containerLogHas(ctx, container, "Server startup complete")
+	})
+	e.waitContainer(ctx, t, container, "RabbitMQ", func(ctx context.Context) bool {
+		return e.execOK(ctx, container, "rabbitmq-diagnostics", "-q", "check_running") &&
+			e.execOK(ctx, container, "rabbitmq-diagnostics", "-q", "check_port_connectivity")
+	})
+}
+
+// rabbitRows runs a rabbitmqctl listing exactly as the production inventory
+// does and returns its raw TAB-separated lines.
+//
+// It is a SECOND reader of the same broker, on purpose. The plan's own verify
+// compares the copy against the copy, so a copy that came up empty would
+// compare equal to itself and pass; what makes this test worth its minutes is
+// that the numbers below are compared against what the SEED put there.
+func (e *itEnv) rabbitRows(ctx context.Context, t *testing.T, container string, args ...string) []string {
+	t.Helper()
+	out := e.mustExec(ctx, t, container, append([]string{"rabbitmqctl", "-q", "--no-table-headers"}, args...)...)
+	var rows []string
+	for line := range strings.SplitSeq(out, "\n") {
+		if strings.TrimSpace(line) != "" {
+			rows = append(rows, strings.TrimRight(line, "\r"))
+		}
+	}
+	sort.Strings(rows)
+	return rows
+}
+
+// rabbitQueues lists one virtual host's queues with the two fields a migration
+// can lose: what kind of queue it is, and how many messages are in it.
+func (e *itEnv) rabbitQueues(ctx context.Context, t *testing.T, container, vhost string) []string {
+	t.Helper()
+	return e.rabbitRows(ctx, t, container, "list_queues", "--vhost", vhost, "name", "durable", "type", "messages")
+}
+
+// rabbitadmin runs the management CLI the image ships, which is how a message
+// gets published without a client library.
+func (e *itEnv) rabbitadmin(ctx context.Context, t *testing.T, container, pass string, args ...string) string {
+	t.Helper()
+	return e.mustExec(ctx, t, container, append([]string{"rabbitmqadmin", "-u", "admin", "-p", pass}, args...)...)
+}
+
+// seedRabbit brings up the FROM image on the namespace's own rabbitmq2 bind
+// directory and fills it with what a real stand has: a second virtual host, the
+// citeck service account, a topic exchange, a durable classic queue and a
+// QUORUM queue, a binding, a policy — and persistent messages in all three
+// queues. The container is removed afterwards: the migration must start from
+// data alone.
+//
+// The messages are the point. RabbitMQ's own logical export carries none, so
+// "the topology came across" is not what a user means by "my data survived".
+func (e *itEnv) seedRabbit(ctx context.Context, t *testing.T) {
+	t.Helper()
+	started := time.Now()
+	require.NoError(t, e.env.PullImage(ctx, itRabbitFrom, func(float64) {}))
+
+	def, err := e.env.GenerateDefFor(deps.RabbitMQ, deps.DependencyState{Image: itRabbitFrom})
+	require.NoError(t, err)
+	pass, ok := def.Environments.Get("RABBITMQ_DEFAULT_PASS")
+	require.True(t, ok, "the generated def must carry the admin password the management API needs")
+
+	_, err = e.env.RunAppDef(ctx, def, itRabbitTempOpts(itSeedContainer))
+	require.NoError(t, err)
+	e.waitRabbit(ctx, t, itSeedContainer)
+
+	ctl := func(args ...string) {
+		e.mustExec(ctx, t, itSeedContainer, append([]string{"rabbitmqctl", "-q"}, args...)...)
+	}
+	ctl("add_vhost", itRabbitVhost)
+	ctl("add_user", "citeck", "citeckpass")
+	ctl("set_user_tags", "citeck", "monitoring")
+	ctl("set_permissions", "-p", "/", "citeck", ".*", ".*", ".*")
+	// admin needs them too, or the management API refuses every call scoped to
+	// the second virtual host ("Access refused: /api/queues/citeck/...").
+	ctl("set_permissions", "-p", itRabbitVhost, "admin", ".*", ".*", ".*")
+	ctl("set_policy", "-p", "/", "ecos-ha", "^ecos\\.", `{"max-length":10000}`, "--apply-to", "queues")
+
+	// The virtual host is a GLOBAL option of rabbitmqadmin and goes before the
+	// subcommand: its option parser is not documented to accept an interspersed
+	// one, and a `-V` the parser swallowed as part of `declare queue` would
+	// silently declare the queue in the DEFAULT virtual host — the seed would
+	// then be missing exactly the thing the second vhost is there to prove.
+	adm := func(args ...string) { e.rabbitadmin(ctx, t, itSeedContainer, pass, args...) }
+	admIn := func(vhost string, args ...string) { adm(append([]string{"-V", vhost}, args...)...) }
+	adm("declare", "exchange", "name=ecos-topic", "type=topic", "durable=true")
+	adm("declare", "queue", "name="+itRabbitClassicQueue, "durable=true")
+	adm("declare", "queue", "name="+itRabbitQuorumQueue, "durable=true", `arguments={"x-queue-type":"quorum"}`)
+	adm("declare", "binding", "source=ecos-topic", "destination="+itRabbitClassicQueue,
+		"destination_type=queue", "routing_key=ecos.records.#")
+	admIn(itRabbitVhost, "declare", "queue", "name="+itRabbitVhostQueue, "durable=true")
+
+	// delivery_mode 2 on purpose: a transient message would be perfectly
+	// entitled to vanish across the copy, and the test would then be asserting
+	// nothing about the migration.
+	publish := func(vhost, queue string, n int) {
+		for i := 1; i <= n; i++ {
+			admIn(vhost, "publish", "routing_key="+queue,
+				fmt.Sprintf("payload=%s-%d", queue, i), `properties={"delivery_mode":2}`)
+		}
+	}
+	publish("/", itRabbitClassicQueue, itRabbitClassicMsgs)
+	publish("/", itRabbitQuorumQueue, itRabbitQuorumMsgs)
+	publish(itRabbitVhost, itRabbitVhostQueue, itRabbitVhostMsgs)
+
+	// A quorum queue's counter lags its own writes by a moment (measured: 0 for
+	// about a second after the last publish), so the seed is not finished until
+	// the broker AGREES with what was published. Stopping before that would
+	// bake a race into every later assertion.
+	e.waitContainer(ctx, t, itSeedContainer, "the published message counts", func(ctx context.Context) bool {
+		return sameStrings(e.rabbitQueues(ctx, t, itSeedContainer, "/"), itRabbitDefaultVhostQueues())
+	})
+
+	require.NoError(t, e.env.StopRemove(ctx, itSeedContainer))
+	t.Logf("seed: %s node %s ready in %s", itRabbitFrom, itRabbitNodeName, time.Since(started).Round(time.Millisecond))
+}
+
+const (
+	itRabbitVhost        = "citeck"
+	itRabbitClassicQueue = "ecos.classic"
+	itRabbitQuorumQueue  = "ecos.quorum"
+	itRabbitVhostQueue   = "ecos.vhostq"
+)
+
+// itRabbitDefaultVhostQueues is what `list_queues` must print for the default
+// virtual host, before and after the migration. Sorted, because rabbitmqctl's
+// row order is not stable across versions.
+func itRabbitDefaultVhostQueues() []string {
+	rows := []string{
+		fmt.Sprintf("%s\ttrue\tclassic\t%d", itRabbitClassicQueue, itRabbitClassicMsgs),
+		fmt.Sprintf("%s\ttrue\tquorum\t%d", itRabbitQuorumQueue, itRabbitQuorumMsgs),
+	}
+	sort.Strings(rows)
+	return rows
+}
+
+func sameStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// TestIntegration_Rabbit41To42 is the whole point of the copy-upgrade plan: a
+// real 4.1 → 4.2 upgrade, on a copy, with the messages intact and the original
+// volume untouched.
+func TestIntegration_Rabbit41To42(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), itTestBudget)
+	defer cancel()
+	e := newITEnvFor(t, deps.RabbitMQ, itRabbitFrom)
+	e.requirePrivilegeOverContainerFiles(ctx, t)
+	e.seedRabbit(ctx, t)
+
+	src, dst := itVolumeOf(deps.RabbitMQ, 1), itVolumeOf(deps.RabbitMQ, 2)
+	before := e.volumeManifest(ctx, t, src)
+	require.NotEmpty(t, before, "a seeded RabbitMQ volume is not empty; an empty manifest means the walk failed")
+
+	pre := migrate.RabbitMigrator{}.Preflight(ctx, e.env, itRabbitFrom, itRabbitTo)
+	require.True(t, pre.OK, "preflight problems: %v", pre.Problems)
+	t.Logf("preflight: data %d B, free volume %d B, warnings %v", pre.DataSizeBytes, pre.FreeVolumeBytes, pre.Warnings)
+	// Ruling 2: the Khepri transition is announced as a WARNING and not as a
+	// checkbox, because it happens on the copy — and the sentence has to say
+	// which volume is left alone, or "irreversible" reads as "you cannot go
+	// back".
+	assert.Condition(t, func() bool {
+		for _, w := range pre.Warnings {
+			if strings.Contains(w, "Khepri") && strings.Contains(w, src) {
+				return true
+			}
+		}
+		return false
+	}, "the Khepri notice must name the source volume; warnings: %v", pre.Warnings)
+
+	plan, journal, err := migrate.RabbitMigrator{}.Plan(ctx, e.env, itRabbitFrom, itRabbitTo, migrate.PlanOptions{})
+	require.NoError(t, err)
+
+	timer := newStepTimer()
+	started := time.Now()
+	runErr := migrate.Run(ctx, e.rt, journal, plan, timer.progress)
+	total := time.Since(started)
+	steps := timer.report(t)
+	require.NoError(t, runErr)
+	t.Logf("migration %s → %s took %s", itRabbitFrom, itRabbitTo, total.Round(time.Millisecond))
+	// The plan's own exported list, never a copy: a step renamed there must
+	// fail HERE rather than quietly stop being asserted.
+	assert.Equal(t, migrate.CopyStepIDs(), steps)
+
+	// --- the pin, the journal and the verdict --------------------------------
+	st := e.rt.DependencyStates()[deps.RabbitMQ]
+	assert.Equal(t, itRabbitTo, st.Image)
+	assert.Equal(t, 2, st.Gen(), "a completed migration advances the volume generation by exactly one")
+	prev, has := st.Previous()
+	require.True(t, has, "the commit records where the namespace came from")
+	assert.Equal(t, itRabbitFrom, prev.Image)
+	assert.Equal(t, 1, prev.Gen())
+	assert.Nil(t, e.rt.MigrationJournal(), "a committed migration clears the journal")
+	last := e.rt.LastDependencyMigration()
+	require.NotNil(t, last)
+	assert.True(t, last.OK(), "verdict: %s", last.Error)
+	assert.Equal(t, src, last.OldVolume)
+	assert.Equal(t, 1, e.reloads.get(), "finalize reloads the namespace exactly once")
+
+	// --- the source volume is byte-identical ---------------------------------
+	// The invariant the whole design rests on, and the reason a copy upgrade is
+	// worth its disk: nothing in the plan opens the source for writing, so
+	// every entry's size, owner and mode must be exactly what it was.
+	assert.Equal(t, before, e.volumeManifest(ctx, t, src), "the source volume was written to")
+
+	// --- the copy carries the node's identity --------------------------------
+	// A temp container that boots a fresh node inside the copy reports healthy
+	// and passes a verify that compares two empty nodes, so the DIRECTORY is
+	// checked directly: the node's own name, and no node named after a temp
+	// container.
+	after := e.volumeManifest(ctx, t, dst)
+	_, hasNode := itManifestEntry(after, "./mnesia/"+itRabbitNodeName)
+	assert.True(t, hasNode, "the copy holds no %s directory: %v", itRabbitNodeName, after)
+	for _, line := range after {
+		assert.NotContains(t, line, migrate.SrcContainer, "a temp container's node was written into the copy")
+		assert.NotContains(t, line, migrate.DstContainer, "a temp container's node was written into the copy")
+	}
+
+	// --- what the migrated node actually holds -------------------------------
+	def, err := e.env.GenerateDefFor(deps.RabbitMQ, deps.DependencyState{Image: itRabbitTo, VolumeGen: 2})
+	require.NoError(t, err)
+	_, err = e.env.RunAppDef(ctx, def, itRabbitTempOpts(itCheckContainer))
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, e.env.StopRemove(context.Background(), itCheckContainer)) }()
+	e.waitRabbit(ctx, t, itCheckContainer)
+
+	assert.Contains(t, e.mustExec(ctx, t, itCheckContainer, "rabbitmq-diagnostics", "-q", "check_running"),
+		itRabbitNodeName, "the migrated node must answer as the namespace's own node")
+	// Ruling 2's deliberate consequence, and the reason a 4.2 target is
+	// breaking at all: on the NEW image `all` includes khepri_db, so the
+	// Mnesia → Khepri migration happens here — on the copy.
+	assert.Contains(t, e.rabbitRows(ctx, t, itCheckContainer, "list_feature_flags", "name", "state"),
+		"khepri_db\tenabled", "4.2's post-upgrade step must enable the Khepri metadata store")
+
+	assert.Equal(t, []string{"admin\t[administrator]", "citeck\t[monitoring]"},
+		e.rabbitRows(ctx, t, itCheckContainer, "list_users"))
+	assert.Equal(t, []string{"/", itRabbitVhost}, e.rabbitRows(ctx, t, itCheckContainer, "list_vhosts", "name"))
+	assert.Equal(t, itRabbitDefaultVhostQueues(), e.rabbitQueues(ctx, t, itCheckContainer, "/"),
+		"the durable classic queue, the quorum queue and their MESSAGES")
+	assert.Equal(t, []string{fmt.Sprintf("%s\ttrue\tclassic\t%d", itRabbitVhostQueue, itRabbitVhostMsgs)},
+		e.rabbitQueues(ctx, t, itCheckContainer, itRabbitVhost), "a second virtual host's data comes across too")
+	assert.Contains(t, e.rabbitRows(ctx, t, itCheckContainer, "list_exchanges", "--vhost", "/", "name", "type", "durable"),
+		"ecos-topic\ttopic\ttrue")
+	assert.Contains(t, e.rabbitRows(ctx, t, itCheckContainer, "list_bindings", "--vhost", "/",
+		"source_name", "destination_name", "destination_kind", "routing_key"),
+		"ecos-topic\t"+itRabbitClassicQueue+"\tqueue\tecos.records.#")
+	policies := e.rabbitRows(ctx, t, itCheckContainer, "list_policies", "--vhost", "/")
+	require.Len(t, policies, 1)
+	assert.Contains(t, policies[0], "ecos-ha")
+	assert.Contains(t, policies[0], `{"max-length":10000}`)
+}
+
+// TestIntegration_CopyPreservesOwnership is the one property no fake can check:
+// the copy is owned by the image's uid, entry for entry.
+//
+// It is not a detail. A copy that lands root-owned is not a slower migration,
+// it is a broker that will not start — .erlang.cookie is mode 0400, and a
+// RabbitMQ that cannot read it fails its boot with "eacces" → "Kernel pid
+// terminated" (measured).
+func TestIntegration_CopyPreservesOwnership(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), itTestBudget)
+	defer cancel()
+	e := newITEnvFor(t, deps.RabbitMQ, itRabbitFrom)
+	e.requirePrivilegeOverContainerFiles(ctx, t)
+
+	src, dst := itVolumeOf(deps.RabbitMQ, 1), itVolumeOf(deps.RabbitMQ, 2)
+	// A booted node is all this needs — the cookie, the node directory and the
+	// feature-flag file are written before anything is declared — so it does
+	// not pay for the full topology the migration test seeds.
+	require.NoError(t, e.env.PullImage(ctx, itRabbitFrom, func(float64) {}))
+	def, err := e.env.GenerateDefFor(deps.RabbitMQ, deps.DependencyState{Image: itRabbitFrom})
+	require.NoError(t, err)
+	_, err = e.env.RunAppDef(ctx, def, itRabbitTempOpts(itSeedContainer))
+	require.NoError(t, err)
+	e.waitRabbit(ctx, t, itSeedContainer)
+	require.NoError(t, e.env.StopRemove(ctx, itSeedContainer))
+
+	require.NoError(t, e.env.CreateVolume(ctx, dst))
+	defer func() { assert.NoError(t, e.env.RemoveVolume(context.Background(), dst)) }()
+	require.NoError(t, e.env.CopyVolume(ctx, src, dst))
+
+	srcManifest := e.volumeManifest(ctx, t, src)
+	require.NotEmpty(t, srcManifest)
+	assert.Equal(t, itOwnershipOf(srcManifest), itOwnershipOf(e.volumeManifest(ctx, t, dst)),
+		"every entry of the copy must carry the source's owner, mode and size")
+
+	// …and the assertion above is only worth anything if the source is NOT
+	// root-owned to begin with: on a copy made by a root `cp` every entry would
+	// be uid 0 on both sides and the comparison would pass while the broker
+	// died on its cookie.
+	cookie, ok := itManifestEntry(srcManifest, "./.erlang.cookie")
+	require.Truef(t, ok, "no .erlang.cookie in %v", srcManifest)
+	assert.NotContains(t, cookie, "|0|0|", "the cookie must be owned by the image's uid, not by root: %s", cookie)
+	assert.True(t, strings.HasSuffix(cookie, "|400"), "the cookie's mode is what makes ownership load-bearing: %s", cookie)
+}
+
+// --- ZooKeeper --------------------------------------------------------------
+
+// itZkDataset is the shape zk-experiment.md used, trimmed to what each entry
+// proves: a Citeck-shaped patch-result marker (the data whose silent loss costs
+// the most — a missing marker re-runs a local patch on every webapp), a
+// non-ASCII value, and a deep path.
+var itZkDataset = []struct{ path, value string }{
+	{"/zkx", "root"},
+	{"/zkx/n00", "value-00"},
+	{"/zkx/n01", "value-01"},
+	{"/zkx/unicode", "Привет☃мир-Ω-æøå"},
+	{"/citeck", "c"},
+	{"/citeck/deep", "d"},
+	{"/citeck/deep/a", "a"},
+	{"/citeck/deep/a/b", "b"},
+	{"/citeck/deep/a/b/c", "deep-leaf-значение"},
+	{"/ecos", "e"},
+	{"/ecos/patches", "p"},
+	{"/ecos/patches/emodel", "m"},
+	{"/ecos/patches/emodel/results", "r"},
+	{"/ecos/patches/emodel/results/patch-2024-01-fix-refs", `{"status":"APPLIED","zxid":1}`},
+}
+
+// itZkEphemeral is created by a session that is still OPEN when the seed
+// container is stopped. Its fate across the migration is deliberately not
+// pinned: an ephemeral belongs to a client session, the copy is booted with no
+// clients, and whether the session outlives the temp containers is a matter of
+// timing. What IS pinned is that whichever way it goes, it does not fail the
+// migration — see the assertion at the end of the ZooKeeper test.
+const itZkEphemeral = "/zkx/ephemeral"
+
+// zkCli runs one zkCli command against the loopback client port and returns its
+// STDOUT — where `ls` and `get` put their results (measured).
+func (e *itEnv) zkCli(ctx context.Context, t *testing.T, container string, args ...string) string {
+	t.Helper()
+	return e.mustExec(ctx, t, container, append([]string{"zkCli.sh", "-server", "127.0.0.1:2181"}, args...)...)
+}
+
+// zkCreate writes one znode and requires the server to say it created it.
+//
+// The confirmation is looked for on BOTH streams because zkCli prints
+// `Created /path` on **stderr** while `ls` and `get` print their results on
+// stdout — measured on 3.8.6, and not a distinction anything documents. A
+// create is otherwise indistinguishable from a no-op: zkCli exits 0 either
+// way, so a seed that only checked the exit code would migrate an empty tree
+// and every assertion after it would be vacuously true.
+func (e *itEnv) zkCreate(ctx context.Context, t *testing.T, container, path, value string) {
+	t.Helper()
+	cmd := []string{"zkCli.sh", "-server", "127.0.0.1:2181", "create", path, value}
+	stdout, stderr, code, err := e.env.Exec(ctx, container, cmd)
+	require.NoErrorf(t, err, "creating %s", path)
+	require.Zerof(t, code, "creating %s: exit %d\n%s\n%s", path, code, stdout, stderr)
+	require.Containsf(t, stdout+"\n"+stderr, "Created "+path, "creating %s said nothing about it", path)
+}
+
+// zkPaths is an INDEPENDENT reader of the tree, for the same reason
+// rabbitRows is: the plan's verify compares the copy against the copy.
+//
+// zkCli writes its own log lines to stdout mixed in with the results, and some
+// of them contain a path ("Client environment:java.class.path=/apache-…"), so
+// a result is recognized by its PREFIX and never by containment.
+func (e *itEnv) zkPaths(ctx context.Context, t *testing.T, container string) []string {
+	t.Helper()
+	out := e.zkCli(ctx, t, container, "ls", "-R", "/")
+	seen := map[string]bool{}
+	var paths []string
+	for line := range strings.SplitSeq(out, "\n") {
+		line = strings.TrimRight(line, " \t\r")
+		if !strings.HasPrefix(line, "/") || seen[line] {
+			continue
+		}
+		seen[line] = true
+		paths = append(paths, line)
+	}
+	sort.Strings(paths)
+	return paths
+}
+
+// waitZk waits for the AdminServer, not the client port: the ZK process opens
+// 2181 within seconds while the embedded Jetty lags 10-30 s behind on a cold
+// start, and everything the plan reads goes through /commands/.
+func (e *itEnv) waitZk(ctx context.Context, t *testing.T, container string) {
+	t.Helper()
+	e.waitContainer(ctx, t, container, "ZooKeeper", func(ctx context.Context) bool {
+		return e.execOK(ctx, container, "curl", "-fsS", "http://127.0.0.1:8080/commands/ruok")
+	})
+}
+
+// seedZookeeper brings up the FROM image on the namespace's own zookeeper2 bind
+// directory and writes the dataset above plus an ephemeral node whose session
+// stays open.
+//
+// It creates the two data directories itself because a temp container runs the
+// CONTAINER and nothing around it — ZooKeeper's generated def has an INIT
+// CONTAINER whose only job is that mkdir, and without it the server dies with
+// "chown: cannot access '/citeck/zookeeper/data'" (measured).
+func (e *itEnv) seedZookeeper(ctx context.Context, t *testing.T) []string {
+	t.Helper()
+	started := time.Now()
+	vol := itVolumeOf(deps.Zookeeper, 1)
+	require.NoError(t, e.env.CreateVolume(ctx, vol))
+	require.NoError(t, e.env.EnsureVolumeDirs(ctx, vol, []string{"data", "datalog"}))
+	require.NoError(t, e.env.PullImage(ctx, itZkFrom, func(float64) {}))
+
+	def, err := e.env.GenerateDefFor(deps.Zookeeper, deps.DependencyState{Image: itZkFrom})
+	require.NoError(t, err)
+	_, err = e.env.RunAppDef(ctx, def, deps.TempContainerOpts{Name: itSeedContainer})
+	require.NoError(t, err)
+	e.waitZk(ctx, t, itSeedContainer)
+
+	for _, node := range itZkDataset {
+		e.zkCreate(ctx, t, itSeedContainer, node.path, node.value)
+	}
+	// An ephemeral needs a session that is still open, and zkCli closes its
+	// session cleanly on exit — which DELETES the node. So the session is left
+	// running in the background, holding the pipe open, and dies with the
+	// container.
+	e.mustExec(ctx, t, itSeedContainer, "sh", "-c",
+		fmt.Sprintf(`(echo "create -e %s live"; sleep 3600) | zkCli.sh -server 127.0.0.1:2181 > /tmp/eph.log 2>&1 & `+
+			`sleep 10; grep -q "Created %s" /tmp/eph.log`, itZkEphemeral, itZkEphemeral))
+	paths := e.zkPaths(ctx, t, itSeedContainer)
+	require.Contains(t, paths, itZkEphemeral, "the ephemeral node must exist while its session is open")
+
+	require.NoError(t, e.env.StopRemove(ctx, itSeedContainer))
+	t.Logf("seed: %s with %d znodes ready in %s", itZkFrom, len(paths), time.Since(started).Round(time.Millisecond))
+	return paths
+}
+
+// TestIntegration_Zookeeper38To39 migrates a real ZooKeeper tree onto the
+// version the generator would otherwise hold a namespace back from.
+func TestIntegration_Zookeeper38To39(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), itTestBudget)
+	defer cancel()
+	e := newITEnvFor(t, deps.Zookeeper, itZkFrom)
+	e.requirePrivilegeOverContainerFiles(ctx, t)
+	seeded := e.seedZookeeper(ctx, t)
+
+	src, dst := itVolumeOf(deps.Zookeeper, 1), itVolumeOf(deps.Zookeeper, 2)
+	before := e.volumeManifest(ctx, t, src)
+	require.NotEmpty(t, before)
+
+	pre := migrate.ZookeeperMigrator{}.Preflight(ctx, e.env, itZkFrom, itZkTo)
+	require.True(t, pre.OK, "preflight problems: %v", pre.Problems)
+	t.Logf("preflight: data %d B, required on the volume filesystem %d B, free %d B",
+		pre.DataSizeBytes, pre.RequiredVolumeBytes, pre.FreeVolumeBytes)
+	// …and it passed on data that has NO snapshot of its own, which is the
+	// state E.1 is about rather than an accident of this seed. A clean SIGTERM
+	// writes no snapshot — ZooKeeper snapshots right after LOADING, so the
+	// durable state after a graceful stop is the transaction log — and the one
+	// snapshot on disk here is the EMPTY tree the seed container wrote when it
+	// first started, before a single znode existed. A preflight phrased as
+	// "confirm there is a snapshot" would refuse every ordinary stopped
+	// namespace while its data was perfectly intact.
+	snapshots, txnlogs := 0, 0
+	for _, entry := range itManifestPaths(before) {
+		switch {
+		case strings.HasPrefix(entry, "./data/version-2/snapshot."):
+			snapshots++
+		case strings.HasPrefix(entry, "./datalog/version-2/log."):
+			txnlogs++
+		}
+	}
+	assert.Positive(t, txnlogs, "the seeded znodes live in a transaction log: %v", before)
+	assert.Equal(t, 1, snapshots,
+		"a graceful stop wrote a second snapshot after all; this test no longer covers the txnlog-only case: %v", before)
+
+	plan, journal, err := migrate.ZookeeperMigrator{}.Plan(ctx, e.env, itZkFrom, itZkTo, migrate.PlanOptions{})
+	require.NoError(t, err)
+	timer := newStepTimer()
+	started := time.Now()
+	runErr := migrate.Run(ctx, e.rt, journal, plan, timer.progress)
+	total := time.Since(started)
+	steps := timer.report(t)
+	require.NoError(t, runErr)
+	t.Logf("migration %s → %s took %s", itZkFrom, itZkTo, total.Round(time.Millisecond))
+	assert.Equal(t, migrate.CopyStepIDs(), steps)
+
+	st := e.rt.DependencyStates()[deps.Zookeeper]
+	assert.Equal(t, itZkTo, st.Image)
+	assert.Equal(t, 2, st.Gen())
+	assert.Nil(t, e.rt.MigrationJournal())
+	last := e.rt.LastDependencyMigration()
+	require.NotNil(t, last)
+	assert.True(t, last.OK(), "verdict: %s", last.Error)
+	assert.Equal(t, src, last.OldVolume)
+
+	// The invariant, again: nothing in the plan opens the source for writing.
+	assert.Equal(t, before, e.volumeManifest(ctx, t, src), "the source volume was written to")
+
+	// What the copy ACTUALLY cost on the destination, against what the
+	// preflight demanded for it.
+	//
+	// ZooKeeper preallocates its transaction log to 64 MiB, so its data volume
+	// is the case where "how big is this?" has two very different answers: the
+	// blocks it occupies and the bytes it contains. The preflight measures the
+	// SOURCE and requires that much (plus a margin) free; if a copy writes a
+	// sparse file's holes out as zeros, the destination costs more than the
+	// source ever did — and the failure would be an ENOSPC in the middle of a
+	// migration on an already-stopped namespace, which is the exact thing the
+	// space check exists to prevent. So it is measured rather than reasoned
+	// about, and the numbers go in the log whichever way they come out.
+	srcKB, srcBytes := e.volumeUsage(ctx, t, src)
+	dstKB, dstBytes := e.volumeUsage(ctx, t, dst)
+	t.Logf("volume cost: source %d KiB allocated / %d B apparent, copy %d KiB allocated / %d B apparent",
+		srcKB, srcBytes, dstKB, dstBytes)
+	assert.LessOrEqual(t, dstKB*1024, pre.RequiredVolumeBytes,
+		"the copy occupies more than the preflight required for it, so the space check can under-require")
+
+	// The copy plan's EnsureDirs hook, end to end. A temp container runs no
+	// init container, so without it the new volume's server dies before it
+	// starts — and the copy of a volume that HAS run already has them, which is
+	// why only the hook can prove it for the general case.
+	afterManifest := e.volumeManifest(ctx, t, dst)
+	for _, dir := range []string{"./data", "./datalog"} {
+		entry, ok := itManifestEntry(afterManifest, dir)
+		assert.Truef(t, ok, "the copy has no %s directory: %v", dir, afterManifest)
+		assert.Contains(t, entry, "|directory|")
+	}
+
+	// --- what the migrated server actually holds -----------------------------
+	def, err := e.env.GenerateDefFor(deps.Zookeeper, deps.DependencyState{Image: itZkTo, VolumeGen: 2})
+	require.NoError(t, err)
+	_, err = e.env.RunAppDef(ctx, def, deps.TempContainerOpts{Name: itCheckContainer})
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, e.env.StopRemove(context.Background(), itCheckContainer)) }()
+	e.waitZk(ctx, t, itCheckContainer)
+
+	assert.Contains(t, e.mustExec(ctx, t, itCheckContainer,
+		"curl", "-fsS", "http://127.0.0.1:8080/commands/srvr"), "3.9.5", "the check container serves the new minor")
+
+	got := e.zkPaths(ctx, t, itCheckContainer)
+	for _, node := range itZkDataset {
+		assert.Containsf(t, got, node.path, "persistent znode %s did not survive the migration", node.path)
+		assert.Equalf(t, node.value, e.zkGet(ctx, t, itCheckContainer, node.path),
+			"the value of %s changed", node.path)
+	}
+	// The tree is the seeded one, give or take the ephemeral: a znode that
+	// appeared out of nowhere would mean the copy is not this namespace's data.
+	assert.Subset(t, seeded, got, "the migrated tree holds a znode the seed never created: %v", got)
+	if !slices.Contains(got, itZkEphemeral) {
+		// Its session expired somewhere between the two temp containers, which
+		// is exactly the case E.2's split exists for: it is a NOTE, and a
+		// migration that failed over it would fail on every real stand.
+		t.Logf("the ephemeral %s expired during the migration and did not fail the verify", itZkEphemeral)
+		assert.Len(t, got, len(seeded)-1, "nothing but the ephemeral may be missing")
+	}
+}
+
+// zkGet reads one znode's value.
+//
+// zkCli prints its own log lines to STDOUT, mixed in with the result, and the
+// LAST line of a `get` is a log line ("Exiting JVM with code 0") — so the value
+// is the last line that is not one, which is why the log shapes are recognized
+// rather than the value being taken off the end.
+func (e *itEnv) zkGet(ctx context.Context, t *testing.T, container, path string) string {
+	t.Helper()
+	out := e.zkCli(ctx, t, container, "get", path)
+	value := ""
+	for line := range strings.SplitSeq(out, "\n") {
+		if line = strings.TrimRight(line, " \t\r"); !zkLogLine(line) {
+			value = line
+		}
+	}
+	return value
+}
+
+// zkLogLine reports whether a line of zkCli's output is its own noise rather
+// than a result: a timestamped log record, the connect banner, or the watcher
+// notice it prints before every command.
+func zkLogLine(line string) bool {
+	if strings.TrimSpace(line) == "" || line == "WATCHER::" ||
+		strings.HasPrefix(line, "Connecting to ") || strings.HasPrefix(line, "WatchedEvent ") {
+		return true
+	}
+	// "2026-09-09 08:46:03,651 [myid:] - INFO  [main:…" — a record starts with
+	// a date, which no value this test writes does.
+	if len(line) < 10 {
+		return false
+	}
+	for i, r := range line[:10] {
+		if i == 4 || i == 7 {
+			if r != '-' {
+				return false
+			}
+			continue
+		}
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// TestIntegration_CopyRollbackOnBadTarget sabotages the NEW image after the
+// copy exists — the state a rollback has to undo — and asserts that the source
+// volume, the pin and the namespace are exactly as they were.
+//
+// It runs on ZooKeeper because the rollback is the shared one
+// (RollbackCopyUpgrade) and the dependency only decides how long the seed
+// takes.
+func TestIntegration_CopyRollbackOnBadTarget(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), itTestBudget)
+	defer cancel()
+	e := newITEnvFor(t, deps.Zookeeper, itZkFrom)
+	e.requirePrivilegeOverContainerFiles(ctx, t)
+	seeded := e.seedZookeeper(ctx, t)
+
+	src, dst := itVolumeOf(deps.Zookeeper, 1), itVolumeOf(deps.Zookeeper, 2)
+	before := e.volumeManifest(ctx, t, src)
+	// The sabotage image has to be present: a pull failure would fail the run
+	// at a step EARLIER than the one this test is about.
+	require.NoError(t, e.env.PullImage(ctx, itBadImage, func(float64) {}))
+
+	plan, journal, err := migrate.ZookeeperMigrator{}.Plan(ctx, e.env, itZkFrom, itZkTo, migrate.PlanOptions{})
+	require.NoError(t, err)
+
+	// What the world looked like at the moment of failure, so the assertions
+	// below cannot pass vacuously.
+	var (
+		copyExisted     bool
+		copyManifest    []string
+		journaledVolume string
+		dstRunning      bool
+	)
+	sabotaged := false
+	for i := range plan.Steps {
+		if plan.Steps[i].ID != "start-new" {
+			continue
+		}
+		sabotaged = true
+		plan.Steps[i].Run = func(ctx context.Context, j *migrate.Journal, _ migrate.StepProgress) error {
+			copyExisted, _ = e.env.VolumeExists(ctx, dst)
+			copyManifest = e.volumeManifest(ctx, t, dst)
+			journaledVolume = j.CreatedVolume
+
+			def, defErr := e.env.GenerateDefFor(deps.Zookeeper, deps.DependencyState{Image: itZkTo, VolumeGen: 2})
+			if defErr != nil {
+				return fmt.Errorf("generate the sabotaged target def: %w", defErr)
+			}
+			// Pulls, starts, and is not a ZooKeeper — so the target container
+			// EXISTS and runs when the step fails, which is what the rollback
+			// has to clean up. alpine:3 is a PROP, and this closure
+			// deliberately short-circuits the real step's readiness wait (which
+			// would poll an image that never answers for its full budget), so
+			// the wording below is the TEST's and must never be mistaken for
+			// the plan's.
+			def.Image = itBadImage
+			def.Cmd = []string{"sleep", "600"}
+			if _, runErr := e.env.RunAppDef(ctx, def, deps.TempContainerOpts{Name: migrate.DstContainer}); runErr != nil {
+				return fmt.Errorf("start the sabotaged target: %w", runErr)
+			}
+			dstRunning, _ = e.env.ContainerRunning(ctx, migrate.DstContainer)
+			return fmt.Errorf("test sabotage: %s runs %s, which is not a ZooKeeper server",
+				migrate.DstContainer, itBadImage)
+		}
+	}
+	require.True(t, sabotaged, "the plan has no start-new step to sabotage")
+
+	runErr := migrate.Run(ctx, e.rt, journal, plan, nil)
+	require.Error(t, runErr)
+	assert.Contains(t, runErr.Error(), "step start-new")
+	var finalizeErr *migrate.FinalizeError
+	assert.NotErrorAs(t, runErr, &finalizeErr, "the migration failed; it did not commit")
+
+	// The failure was LATE: a real copy of the data existed by then.
+	//
+	// It is compared by ENTRY and not byte for byte, because by `start-new` the
+	// plan has already run the OLD image on the copy — and a ZooKeeper that
+	// boots snapshots right after loading and preallocates a fresh transaction
+	// log (measured: `snapshot.1f` and `log.20` appear beside the seeded
+	// `snapshot.0` and `log.1`). What must be true is that the seed's own files
+	// are in there: a copy of an empty volume would have none of them, and the
+	// rollback assertions below would then be about nothing.
+	assert.True(t, copyExisted, "the copy must exist before the sabotage, or this proves nothing")
+	assert.Subset(t, itManifestPaths(copyManifest), itManifestPaths(before),
+		"the sabotaged run must have copied the real data, not an empty volume")
+	assert.Equal(t, dst, journaledVolume, "the volume is journaled before it is created")
+	assert.True(t, dstRunning, "the sabotaged target container must be running when the step fails")
+
+	// --- nothing moved -------------------------------------------------------
+	st := e.rt.DependencyStates()[deps.Zookeeper]
+	assert.Equal(t, itZkFrom, st.Image, "the pin never moves on failure")
+	assert.Equal(t, 1, st.Gen(), "and neither does the generation")
+	_, hasPrev := st.Previous()
+	assert.False(t, hasPrev, "a failed migration records no rollback target")
+	assert.Equal(t, before, e.volumeManifest(ctx, t, src), "the source volume was written to")
+
+	// --- nothing was left behind ---------------------------------------------
+	assert.NoDirExists(t, e.volumeDir(dst), "the rollback deletes the volume the plan created")
+	for _, c := range []string{migrate.SrcContainer, migrate.DstContainer} {
+		running, cErr := e.env.ContainerRunning(ctx, c)
+		require.NoError(t, cErr)
+		assert.False(t, running, "temp container %s survived the rollback", c)
+	}
+	assert.Zero(t, e.reloads.get(), "a namespace that was not running is not started by a rollback")
+
+	// --- the verdict ---------------------------------------------------------
+	assert.Nil(t, e.rt.MigrationJournal(), "a SUCCESSFUL rollback clears the journal")
+	last := e.rt.LastDependencyMigration()
+	require.NotNil(t, last)
+	assert.False(t, last.OK())
+	assert.Contains(t, last.Error, "start-new")
+	assert.NotContains(t, last.Error, "rollback failed")
+
+	// The source is not merely intact on disk, it still SERVES the same tree.
+	def, err := e.env.GenerateDefFor(deps.Zookeeper, deps.DependencyState{Image: itZkFrom})
+	require.NoError(t, err)
+	_, err = e.env.RunAppDef(ctx, def, deps.TempContainerOpts{Name: itCheckContainer})
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, e.env.StopRemove(context.Background(), itCheckContainer)) }()
+	e.waitZk(ctx, t, itCheckContainer)
+	got := e.zkPaths(ctx, t, itCheckContainer)
+	for _, node := range itZkDataset {
+		assert.Containsf(t, got, node.path, "the failed migration cost the source %s", node.path)
+	}
+	assert.Subset(t, seeded, got)
+}
+
+// --- the temp container's node identity -------------------------------------
+
+// TestIntegration_TempRabbitDoesNotAnswerOnTheNamespaceNetwork is the other
+// half of the node-identity decision (ruling 2, candidate A), end to end.
+//
+// Pinning RabbitMQ's node name needs the name to RESOLVE, and the rejected way
+// to get that was a Hostname override — which moby registers as a DNS name on a
+// user-defined network, so the temp container would answer to "rabbitmq" there
+// and take a share of the real container's traffic, one connection at a time
+// and with no error anywhere. /etc/hosts is container-local, and this test is
+// what says so about the real thing rather than about the intention.
+func TestIntegration_TempRabbitDoesNotAnswerOnTheNamespaceNetwork(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), itTestBudget)
+	defer cancel()
+	e := newITEnvFor(t, deps.RabbitMQ, itRabbitFrom)
+
+	vol := itVolumeOf(deps.RabbitMQ, 2)
+	require.NoError(t, e.env.CreateVolume(ctx, vol))
+	require.NoError(t, e.env.PullImage(ctx, itRabbitFrom, func(float64) {}))
+	def, err := e.env.GenerateDefFor(deps.RabbitMQ, deps.DependencyState{Image: itRabbitFrom, VolumeGen: 2})
+	require.NoError(t, err)
+	// Exactly as the plan starts it: the temp name, the node-identity pin, and
+	// no hostname override.
+	_, err = e.env.RunAppDef(ctx, def, itRabbitTempOpts(migrate.SrcContainer))
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, e.env.StopRemove(context.Background(), migrate.SrcContainer)) }()
+	e.waitRabbit(ctx, t, migrate.SrcContainer)
+
+	// Inside the temp container the pinned node name resolves — the half
+	// without which Erlang refuses to boot ("epmd error for host rabbitmq:
+	// nxdomain").
+	assert.Contains(t, e.mustExec(ctx, t, migrate.SrcContainer, "getent", "hosts", appdef.AppRabbitmq),
+		"127.0.0.1", "the /etc/hosts alias is what makes the pinned node name resolvable")
+
+	// …and from ANOTHER container on the same namespace network it does not.
+	probe := appdef.ApplicationDef{
+		Name: "dnsprobe", Image: config.UtilsImage(), Cmd: []string{"sleep", "600"},
+	}
+	_, err = e.env.RunAppDef(ctx, probe, deps.TempContainerOpts{Name: itDNSProbeContainer})
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, e.env.StopRemove(context.Background(), itDNSProbeContainer)) }()
+
+	// The positive control first: without it a broken resolver would make the
+	// assertion below pass while proving nothing. Docker registers a
+	// container's NAME on a user-defined network, so the temp container IS
+	// reachable — under its own name.
+	tempName := e.dc.ContainerName(migrate.SrcContainer)
+	assert.NotEmpty(t, e.mustExec(ctx, t, itDNSProbeContainer, "getent", "hosts", tempName),
+		"the namespace network's DNS must resolve the temp container's own name")
+
+	stdout, _, code, err := e.env.Exec(ctx, itDNSProbeContainer, []string{"getent", "hosts", appdef.AppRabbitmq})
+	require.NoError(t, err)
+	assert.NotZerof(t, code, "%q resolved to %q on the namespace network: the temp container answers as the app",
+		appdef.AppRabbitmq, strings.TrimSpace(stdout))
+	assert.Empty(t, strings.TrimSpace(stdout))
+}
