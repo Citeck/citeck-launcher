@@ -70,6 +70,17 @@ func generateQdrant(ctx *NsGenContext) {
 	}
 	qdrant.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: memoryLimit}}
 
+	// Unlike generateSttSidecar (which drops the AI->stt-sidecar wiring when
+	// stt-sidecar itself is detached), rag's dependency on qdrant is left
+	// unconditional here — no `if !ctx.DetachedApps[appdef.AppQdrant]` guard.
+	// The two cases are not symmetric: AI works fully without the STT sidecar
+	// (it just serves no speech-to-text), so blocking AI on a detached sidecar
+	// would be a needless outage. rag without qdrant is not a smaller rag — it
+	// is a rag that starts, looks RUNNING, and silently can't search or index
+	// anything. A silently broken app is worse than an honest one: with the
+	// dependency kept, detaching qdrant parks rag in DEPS_WAITING with
+	// StatusText naming what it's waiting on (see task 3), which is
+	// diagnosable and reversible with a plain `citeck start qdrant`.
 	ragApp.AddEnv("QDRANT_HOST", appdef.AppQdrant)
 	ragApp.AddEnv("QDRANT_GRPC_PORT", fmt.Sprintf("%d", grpcPort))
 	ragApp.AddDependsOn(appdef.AppQdrant)

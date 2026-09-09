@@ -93,3 +93,53 @@ func TestQdrant_MarksRagAsGating(t *testing.T) {
 	assert.True(t, resp.GatingApps[appdef.AppRag],
 		"без этого Start на rag не перегенерирует неймспейс и qdrant не появится")
 }
+
+// TestQdrant_MarksRagAsGating_EvenWhenRagIsDetached closes a gap the reviewer
+// found by mutation: TestQdrant_MarksRagAsGating only exercises the
+// rag-attached branch, where MarkGatingApp could be moved after the
+// `if ctx.DetachedApps[appdef.AppRag] { return }` early exit without any test
+// noticing (the early return still lets the not-detached test pass). If that
+// happened, a Start on a detached rag would never regenerate the namespace
+// and qdrant would never appear. This test pins gating specifically for the
+// detached case.
+func TestQdrant_MarksRagAsGating_EvenWhenRagIsDetached(t *testing.T) {
+	config.ResetDesktopMode()
+	resp, err := Generate(basicCfg(), ragBundle(), ragWorkspace(),
+		SystemSecrets{JWT: "j", OIDC: "o"},
+		GenerateOpts{DetachedApps: map[string]bool{appdef.AppRag: true}})
+	require.NoError(t, err)
+	assert.True(t, resp.GatingApps[appdef.AppRag],
+		"rag detached всё равно должен остаться gating — иначе Start на нём не перегенерирует неймспейс")
+}
+
+// TestQdrant_DetachedQdrant_RagKeepsHardDependency pins the decision from
+// review round 1: unlike generateSttSidecar (which drops the AI->stt-sidecar
+// wiring when stt-sidecar is detached), rag's dependency on qdrant is NOT
+// conditioned on qdrant's own detached state. AI works fine without STT; rag
+// without qdrant is not a smaller rag, it's a rag that looks RUNNING and
+// silently can't search or index anything. So a detached qdrant must still
+// leave rag's QDRANT_HOST/QDRANT_GRPC_PORT env vars and DependsOn(qdrant) in
+// place — rag ends up parked in DEPS_WAITING (task 3 behavior) rather than
+// starting broken. If a future change "unifies" this with the stt pattern by
+// adding a `!ctx.DetachedApps[appdef.AppQdrant]` guard around the rag wiring,
+// this test must fail.
+func TestQdrant_DetachedQdrant_RagKeepsHardDependency(t *testing.T) {
+	config.ResetDesktopMode()
+	resp, err := Generate(basicCfg(), ragBundle(), ragWorkspace(),
+		SystemSecrets{JWT: "j", OIDC: "o"},
+		GenerateOpts{DetachedApps: map[string]bool{appdef.AppQdrant: true}})
+	require.NoError(t, err)
+
+	require.NotNil(t, findGeneratedApp(resp, appdef.AppQdrant),
+		"спека qdrant остаётся даже detached, как у stt-sidecar")
+
+	rag := findGeneratedApp(resp, appdef.AppRag)
+	require.NotNil(t, rag)
+	host, ok := rag.Environments.Get("QDRANT_HOST")
+	require.True(t, ok, "detached qdrant не должен вырезать зависимость rag — иначе rag стартует молча сломанным")
+	assert.Equal(t, appdef.AppQdrant, host)
+	_, ok = rag.Environments.Get("QDRANT_GRPC_PORT")
+	require.True(t, ok)
+	assert.Contains(t, []string(rag.DependsOn), appdef.AppQdrant,
+		"без dependsOn rag не встанет в DEPS_WAITING, а стартует без векторной БД")
+}
