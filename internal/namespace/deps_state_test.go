@@ -3,6 +3,7 @@ package namespace
 import (
 	"encoding/json"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -250,22 +251,33 @@ func TestMigrationWritesReportAFailedPersist(t *testing.T) {
 		return r
 	}
 
+	// Reporting the error is only half of it: the record did not reach disk,
+	// so the runtime still owes the write and must say so — clearing r.dirty
+	// here would additionally drop whatever unrelated change was pending.
 	t.Run("SetMigrationJournal", func(t *testing.T) {
-		err := newRuntime().SetMigrationJournal(&deps.MigrationJournal{ID: deps.Postgres, Step: "pull-image"})
+		r := newRuntime()
+		err := r.SetMigrationJournal(&deps.MigrationJournal{ID: deps.Postgres, Step: "pull-image"})
 		require.ErrorIs(t, err, errPersistFailed)
+		assert.True(t, r.dirty.Load(), "the write is still owed")
 	})
 	t.Run("CommitMigration", func(t *testing.T) {
-		err := newRuntime().CommitMigration(deps.Postgres, "postgres:18",
+		r := newRuntime()
+		err := r.CommitMigration(deps.Postgres, "postgres:18",
 			deps.MigrationResult{ID: deps.Postgres, From: "postgres:17.5", To: "postgres:18"})
 		require.ErrorIs(t, err, errPersistFailed)
+		assert.True(t, r.dirty.Load(), "the write is still owed")
 	})
 	t.Run("RecordMigrationFailure", func(t *testing.T) {
-		err := newRuntime().RecordMigrationFailure(deps.MigrationResult{ID: deps.Postgres, Error: "restore failed"})
+		r := newRuntime()
+		err := r.RecordMigrationFailure(deps.MigrationResult{ID: deps.Postgres, Error: "restore failed"})
 		require.ErrorIs(t, err, errPersistFailed)
+		assert.True(t, r.dirty.Load(), "the write is still owed")
 	})
 	t.Run("RecordRollbackFailure", func(t *testing.T) {
-		err := newRuntime().RecordRollbackFailure(deps.MigrationResult{ID: deps.Postgres, Error: "rollback failed"})
+		r := newRuntime()
+		err := r.RecordRollbackFailure(deps.MigrationResult{ID: deps.Postgres, Error: "rollback failed"})
 		require.ErrorIs(t, err, errPersistFailed)
+		assert.True(t, r.dirty.Load(), "the write is still owed")
 	})
 }
 
@@ -376,4 +388,104 @@ func TestLoopTailRePinsARunningDependency(t *testing.T) {
 		return json.Unmarshal([]byte(fp.lastJSON()), &st) == nil &&
 			st.Dependencies[deps.Postgres].Image == "postgres:17.11"
 	}), "the tail's dirty-flag persist never wrote the new pin to the state record")
+}
+
+// A pin the store refused exists in memory and nowhere else — and after
+// SetDependencyPin the in-memory pin already equals the running container's
+// image, so syncDependencyPinsUnderLock (pin writer #1) finds nothing to
+// re-flag. Unless the failed write stays OWED, it is dropped until the image
+// itself changes, and the restart in between hands 17 data to 18.
+func TestAPinWriteThatFailedIsStillOwed(t *testing.T) {
+	r := NewRuntime(&Config{ID: "nsX"}, nil, t.TempDir())
+	r.SetStatePersister(failingPersister{})
+
+	r.SetDependencyPin(deps.Postgres, "postgres:17.5")
+
+	assert.Equal(t, "postgres:17.5", r.DependencyPins()[deps.Postgres],
+		"the pin is held in memory whatever the store did")
+	assert.True(t, r.dirty.Load(),
+		"a pin write that never reached disk must leave the runtime owing it")
+}
+
+// armedFailPersister fails the next n writes and succeeds afterwards, which is
+// the one sequence the retry is about: a write that does not reach disk,
+// followed by a store that works again. A toggle would race the loop tail
+// (which today clears r.dirty even when its own write fails), so the failure
+// budget is armed instead of switched off.
+type armedFailPersister struct {
+	mu     sync.Mutex
+	armed  int
+	json   string
+	calls  int
+	failed int
+}
+
+func (p *armedFailPersister) SaveNamespaceState(_, stateJSON string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.calls++
+	if p.armed > 0 {
+		p.armed--
+		p.failed++
+		return errPersistFailed
+	}
+	p.json = stateJSON
+	return nil
+}
+
+func (p *armedFailPersister) arm(n int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.armed = n
+}
+
+func (p *armedFailPersister) stats() (calls, armed, failed int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.calls, p.armed, p.failed
+}
+
+func (p *armedFailPersister) lastJSON() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.json
+}
+
+// The call-site half of the contract above: the real runtimeLoop's dirty-flag
+// tail is what makes "still owed" mean something, so this drives it. The app is
+// deliberately NOT a dependency — the pin under test can then only come from
+// SetDependencyPin, never from syncDependencyPinsUnderLock.
+func TestTheLoopTailRetriesAPinWriteThatDidNotReachDisk(t *testing.T) {
+	md := newMockDocker()
+	r := NewRuntime(testConfig(), md, t.TempDir())
+	r.tickerPeriod = 20 * time.Millisecond
+	p := &armedFailPersister{}
+	r.SetStatePersister(p)
+	defer r.Shutdown()
+
+	r.Start([]appdef.ApplicationDef{simpleApp("gateway", "gw:1")}, false)
+	require.True(t, waitForAppStatus(r, "gateway", AppStatusRunning, 10*time.Second),
+		"gateway did not reach RUNNING")
+
+	// Settle first, so the pin write below is the only thing left to persist:
+	// an idle loop cannot re-mark r.dirty on its own, which is what makes the
+	// final wait a test of the retry and not of some unrelated transition.
+	require.True(t, waitUntil(5*time.Second, func() bool { return !r.dirty.Load() }),
+		"the loop never went idle")
+	before, _, _ := p.stats()
+	time.Sleep(200 * time.Millisecond)
+	idle, _, _ := p.stats()
+	require.Equal(t, before, idle, "the loop must be idle before the pin write")
+
+	p.arm(1)
+	r.SetDependencyPin(deps.Postgres, "postgres:17.5")
+	_, armed, failed := p.stats()
+	require.Equal(t, 0, armed, "the pin write must have been attempted")
+	require.Equal(t, 1, failed)
+
+	require.True(t, waitUntil(5*time.Second, func() bool {
+		var st NsPersistedState
+		return json.Unmarshal([]byte(p.lastJSON()), &st) == nil &&
+			st.Dependencies[deps.Postgres].Image == "postgres:17.5"
+	}), "the loop tail never retried the pin write the store refused")
 }
