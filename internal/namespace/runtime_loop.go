@@ -18,11 +18,13 @@ import (
 	"fmt"
 	"log/slog"
 	"runtime/pprof"
+	"strings"
 	"time"
 
 	"github.com/citeck/citeck-launcher/internal/api"
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/docker"
+	"github.com/citeck/citeck-launcher/internal/i18n"
 	"github.com/citeck/citeck-launcher/internal/namespace/nsactions"
 	"github.com/citeck/citeck-launcher/internal/namespace/workers"
 )
@@ -216,6 +218,8 @@ func (r *Runtime) stepAllAppsUnderLock() []dispatchPlan { //nolint:gocyclo // si
 			// T7 vs T8: deps satisfied → STARTING (dispatch first init or
 			// start), else → DEPS_WAITING.
 			if !r.appsDepsSatisfied(app) {
+				app.StatusText = i18n.T("app.status.waitingForDeps",
+					"deps", strings.Join(r.unmetDeps(app), ", "))
 				r.setAppStatus(app, AppStatusDepsWaiting)
 				continue
 			}
@@ -223,6 +227,9 @@ func (r *Runtime) stepAllAppsUnderLock() []dispatchPlan { //nolint:gocyclo // si
 		case AppStatusDepsWaiting:
 			// T9: deps satisfied → STARTING. Same dispatch criterion as T7.
 			if !r.appsDepsSatisfied(app) {
+				app.StatusText = i18n.T("app.status.waitingForDeps",
+					"deps", strings.Join(r.unmetDeps(app), ", "))
+				r.setAppStatus(app, AppStatusDepsWaiting)
 				continue
 			}
 			plans = r.beginStartingUnderLock(app, plans)
@@ -296,6 +303,9 @@ func (r *Runtime) beginStartingUnderLock(app *AppRuntime, plans []dispatchPlan) 
 	// initName). The STARTING app_status event below already triggers a UI
 	// refetch, so step 1/N needs no dedicated init-step event.
 	app.initActive = len(app.Def.InitContainers) > 0
+	// StatusText may hold a "Waiting for: ..." message from DEPS_WAITING —
+	// must not survive into STARTING.
+	app.StatusText = ""
 	r.setAppStatus(app, AppStatusStarting)
 	appDef := app.Def
 	if len(appDef.InitContainers) == 0 {
@@ -321,8 +331,13 @@ func buildInitContainerDef(appName string, initC appdef.InitContainerDef) appdef
 
 // appsDepsSatisfied reports whether every dependency listed by app is in a
 // state that lets app proceed past DEPS_WAITING. A dep is satisfied if it is
-// (a) absent from r.apps (different mode/generation), (b) RUNNING, or
-// (c) detached (manualStoppedApps). Caller must hold r.mu (read or write).
+// (a) absent from r.apps (different mode/generation), or (b) RUNNING. A
+// manually stopped (detached) dependency is deliberately NOT treated as
+// satisfied: generators that can run without a given app (e.g. onlyoffice,
+// alfresco) simply omit it from DependsOn when detached, so any dependency
+// that survives to here is one the dependent genuinely needs — recreating it
+// would just start it out of order and fail its probes. Caller must hold
+// r.mu (read or write).
 func (r *Runtime) appsDepsSatisfied(app *AppRuntime) bool {
 	for _, dep := range app.Def.DependsOn {
 		depApp, ok := r.apps[dep]
@@ -336,12 +351,24 @@ func (r *Runtime) appsDepsSatisfied(app *AppRuntime) bool {
 		if depApp.Status == AppStatusRunning {
 			continue
 		}
-		if r.manualStoppedApps[dep] {
-			continue
-		}
 		return false
 	}
 	return true
+}
+
+// unmetDeps lists the dependencies that are keeping app out of STARTING, each
+// with the state it is in, so the UI can say what the user has to start.
+// Caller must hold r.mu.
+func (r *Runtime) unmetDeps(app *AppRuntime) []string {
+	var unmet []string
+	for _, dep := range app.Def.DependsOn {
+		depApp, ok := r.apps[dep]
+		if !ok || depApp.Status == AppStatusRunning {
+			continue
+		}
+		unmet = append(unmet, fmt.Sprintf("%s (%s)", dep, depApp.Status))
+	}
+	return unmet
 }
 
 // makePullProgressFn returns a docker.PullProgressFn that updates app.StatusText

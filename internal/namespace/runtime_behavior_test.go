@@ -11,6 +11,7 @@ import (
 
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/docker"
+	"github.com/citeck/citeck-launcher/internal/i18n"
 	"github.com/moby/moby/api/types/container"
 )
 
@@ -533,7 +534,10 @@ func TestStopAppMarksDetachedAndPersists(t *testing.T) {
 	}
 }
 
-func TestWaitForDepsSkipsDetached(t *testing.T) {
+func TestWaitForDepsHoldsOnDetachedDependency(t *testing.T) {
+	i18n.InitI18n("en")
+	t.Cleanup(i18n.ResetForTest)
+
 	md := newMockDocker()
 	r := NewRuntime(testConfig(), md, t.TempDir())
 	defer r.Shutdown()
@@ -548,24 +552,47 @@ func TestWaitForDepsSkipsDetached(t *testing.T) {
 	}
 	r.Start(apps, false)
 
-	// B should reach RUNNING because detached A is treated as satisfied
+	// A should be STOPPED (detached)
+	if !waitForAppStatus(r, "app-a", AppStatusStopped, 10*time.Second) {
+		a := r.FindApp("app-a")
+		status := "nil"
+		if a != nil {
+			status = string(a.Status)
+		}
+		t.Fatalf("app-a should be STOPPED (detached), got %s", status)
+	}
+
+	// B must NOT reach RUNNING — a detached dependency is not satisfied, so
+	// B parks in DEPS_WAITING and names the dependency it is waiting on.
+	if !waitForAppStatus(r, "app-b", AppStatusDepsWaiting, 10*time.Second) {
+		app := r.FindApp("app-b")
+		status := "nil"
+		if app != nil {
+			status = string(app.Status)
+		}
+		t.Fatalf("app-b should hold in DEPS_WAITING while app-a is detached, got %s", status)
+	}
+	b := r.FindApp("app-b")
+	if b == nil || !strings.Contains(b.StatusText, "app-a") {
+		text := "nil"
+		if b != nil {
+			text = b.StatusText
+		}
+		t.Fatalf("app-b StatusText should name the unmet dependency app-a, got %q", text)
+	}
+
+	// Re-attaching app-a (StartApp, the normal un-detach path) must release
+	// app-b into RUNNING.
+	if err := r.StartApp("app-a"); err != nil {
+		t.Fatalf("StartApp(app-a) failed: %v", err)
+	}
 	if !waitForAppStatus(r, "app-b", AppStatusRunning, 10*time.Second) {
 		app := r.FindApp("app-b")
 		status := "nil"
 		if app != nil {
 			status = string(app.Status)
 		}
-		t.Fatalf("app-b should reach RUNNING when dependency is detached, got %s", status)
-	}
-
-	// A should be STOPPED (detached)
-	a := r.FindApp("app-a")
-	if a == nil || a.Status != AppStatusStopped {
-		status := "nil"
-		if a != nil {
-			status = string(a.Status)
-		}
-		t.Fatalf("app-a should be STOPPED (detached), got %s", status)
+		t.Fatalf("app-b should reach RUNNING once app-a is re-attached, got %s", status)
 	}
 }
 
