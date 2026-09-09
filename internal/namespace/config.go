@@ -85,6 +85,7 @@ type WebappProps struct {
 	JavaOpts         string                             `yaml:"javaOpts" json:"javaOpts"`
 	SpringProfiles   string                             `yaml:"springProfiles" json:"springProfiles"`
 	LivenessDisabled bool                               `yaml:"livenessDisabled,omitempty" json:"livenessDisabled,omitempty"`
+	DependsOn        []string                           `yaml:"dependsOn,omitempty" json:"dependsOn,omitempty"`
 }
 
 // EmailConfig configures external SMTP. When set, mailpit is not generated.

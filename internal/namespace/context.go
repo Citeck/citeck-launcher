@@ -128,7 +128,11 @@ type NsGenContext struct {
 	DependencyStates   map[deps.ID]deps.DependencyState
 	DependencyUpgrades []DependencyUpgrade
 	DependencyImages   map[deps.ID]DependencyGen
-	portsCounter       atomic.Int32
+	// DependencyErrors accumulates errors discovered while generating individual
+	// apps (currently: a webapp configured to depend on itself). Generate returns
+	// the first one after all generators have run.
+	DependencyErrors []error
+	portsCounter     atomic.Int32
 }
 
 // NewNsGenContext creates a new generation context for the given config and bundle.

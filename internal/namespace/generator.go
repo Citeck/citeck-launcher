@@ -147,6 +147,10 @@ func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secre
 	// pruneAppsWithMissingDeps.
 	pruneAppsWithMissingDeps(ctx)
 
+	if err := checkAppDependencyErrors(ctx); err != nil {
+		return nil, err
+	}
+
 	// Server mode: only proxy publishes ports — all other apps are internal to Docker network.
 	// Desktop mode: all ports published for local debugging (CloudConfigServer, direct DB access, etc.)
 	if !config.IsDesktopMode() {
@@ -311,8 +315,8 @@ func pruneAppsWithMissingDeps(ctx *NsGenContext) {
 		for name, app := range ctx.Applications {
 			for _, dep := range app.DependsOn {
 				if _, present := ctx.Applications[dep]; !present {
-					slog.Error("app dependsOn an app not present in the generated set; excluding it from the namespace",
-						"name", name, "missingDep", dep)
+					slog.Error("App excluded from the namespace: it depends on an app that is not there",
+						"app", name, "missingDep", dep)
 					delete(ctx.Applications, name)
 					removed = true
 					break
@@ -323,6 +327,71 @@ func pruneAppsWithMissingDeps(ctx *NsGenContext) {
 			return
 		}
 	}
+}
+
+// checkAppDependencyErrors runs the post-prune dependency validations and
+// returns the first failure: a dependsOn cycle, then a configuration error
+// recorded while generating individual apps (e.g. a webapp configured to
+// depend on itself — checked after prune so it isn't silently pruned first
+// instead). Extracted from Generate to keep its cyclomatic complexity under
+// the linter threshold.
+func checkAppDependencyErrors(ctx *NsGenContext) error {
+	if err := detectDependencyCycles(ctx.Applications); err != nil {
+		return err
+	}
+	if len(ctx.DependencyErrors) > 0 {
+		return ctx.DependencyErrors[0]
+	}
+	return nil
+}
+
+// detectDependencyCycles fails generation on a dependsOn cycle. Without this a
+// cycle is silent: every app in it sits in DEPS_WAITING forever, with nothing in
+// the UI explaining why.
+func detectDependencyCycles(apps map[string]*AppBuilder) error {
+	const (
+		white = 0
+		gray  = 1
+		black = 2
+	)
+	color := make(map[string]int, len(apps))
+	var path []string
+
+	var visit func(name string) error
+	visit = func(name string) error {
+		app, ok := apps[name]
+		if !ok {
+			return nil
+		}
+		switch color[name] {
+		case gray:
+			return fmt.Errorf("dependsOn cycle: %s -> %s", strings.Join(path, " -> "), name)
+		case black:
+			return nil
+		}
+		color[name] = gray
+		path = append(path, name)
+		for _, dep := range app.DependsOn {
+			if err := visit(dep); err != nil {
+				return err
+			}
+		}
+		path = path[:len(path)-1]
+		color[name] = black
+		return nil
+	}
+
+	names := make([]string, 0, len(apps))
+	for name := range apps {
+		names = append(names, name)
+	}
+	sort.Strings(names) // детерминированное сообщение об ошибке
+	for _, name := range names {
+		if err := visit(name); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // sortedKeys returns a plain map's keys in sorted order — used at env-build

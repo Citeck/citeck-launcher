@@ -165,6 +165,8 @@ func generateWebapp(name string, ctx *NsGenContext) {
 		app.AddDependsOn(appdef.AppKeycloak)
 	}
 
+	applyConfiguredDependsOn(name, app, ctx)
+
 	if javaOpts != "" {
 		app.AddEnv("JAVA_OPTS", strings.TrimSpace(javaOpts))
 	}
@@ -381,6 +383,41 @@ func webappEnabled(name string, ctx *NsGenContext) bool {
 		enabled = *wp.Enabled
 	}
 	return enabled
+}
+
+// webappDependsOn resolves the configured dependencies of a webapp: the per-app
+// workspace layer, overridden wholesale by namespace.yml when that file mentions
+// the app at all (an empty list there deliberately clears them).
+func webappDependsOn(name string, ctx *NsGenContext) []string {
+	var deps []string
+	if ctx.WorkspaceConfig != nil {
+		for _, wsCfg := range ctx.WorkspaceConfig.Webapps {
+			if wsCfg.ID == name {
+				deps = wsCfg.DefaultProps.DependsOn
+				break
+			}
+		}
+	}
+	if wp, ok := ctx.Config.Webapps[name]; ok && wp.DependsOn != nil {
+		deps = wp.DependsOn
+	}
+	return deps
+}
+
+// applyConfiguredDependsOn adds the configured dependencies from
+// webappDependsOn onto app, rejecting a self-dependency into
+// ctx.DependencyErrors instead of wiring it (a webapp cannot legitimately wait
+// on its own container). Extracted from generateWebapp to keep its cyclomatic
+// complexity under the linter threshold (same rationale as addWebappInfraEnv).
+func applyConfiguredDependsOn(name string, app *AppBuilder, ctx *NsGenContext) {
+	for _, dep := range webappDependsOn(name, ctx) {
+		if dep == name {
+			ctx.DependencyErrors = append(ctx.DependencyErrors,
+				fmt.Errorf("webapp %q depends on itself", name))
+			continue
+		}
+		app.AddDependsOn(dep)
+	}
 }
 
 // seedWebappLocals folds a workspace defaultProps layer into the computed locals

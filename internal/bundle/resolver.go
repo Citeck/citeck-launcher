@@ -78,6 +78,11 @@ type WebappDefaultProps struct {
 	// licenses and other per-app workspace overrides would never reach
 	// webapps.
 	CloudConfig map[string]any `yaml:"cloudConfig,omitempty"`
+	// DependsOn lists apps this webapp must wait for, on top of the ones the
+	// generator always adds (zookeeper, rabbitmq, postgres, keycloak). Structural,
+	// not a value default — but it lives here because this struct is the per-app
+	// workspace layer that namespace.yml already overrides.
+	DependsOn []string `yaml:"dependsOn,omitempty"`
 }
 
 // WebappConfig describes a webapp with its aliases and default props.
