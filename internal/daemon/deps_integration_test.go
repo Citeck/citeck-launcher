@@ -253,21 +253,46 @@ func newITEnv(t *testing.T) *itEnv {
 	})
 
 	// Not t.TempDir(): t.TempDir()'s own cleanup FAILS the test when the
-	// directory will not go, and here it sometimes legitimately will not. The
-	// dump is written by the postgres container as uid 999, and under rootless
-	// Docker that uid maps to a subuid the test process does not own — so
-	// unless the test was launched through `unshare --user --map-auto
-	// --map-root-user` (or against a rootful daemon via sudo, see the skip
-	// message at the top of this file), os.RemoveAll gets EACCES on the dump
-	// and the directory survives. That is a leftover to report, not a
-	// migration that failed: the removal is best-effort and names what is left
-	// behind, under $TMPDIR with this namespace's own id in the name.
+	// directory will not go, and here it sometimes legitimately will not.
+	//
+	// What resists removal is NOT the dump. That lands in a 1777 scratch
+	// directory THIS process created, and the sticky bit restricts unlink to
+	// the file's owner OR the DIRECTORY's owner — we are the latter — so a
+	// dump written by the container's uid 999 unlinks with no privilege at
+	// all (measured: dir 1777 owned by the test uid, file owned by the
+	// mapped subuid, os.RemoveAll returns nil), and the plan removes that
+	// directory itself on both the success and the rollback path anyway.
+	//
+	// What resists is the CLUSTER: the postgres container writes PGDATA under
+	// volumes/ as uid 999 with 0700 DIRECTORIES. Unlinking needs write
+	// permission on the parent directory, and here the parent is neither
+	// readable nor writable nor ours to chmod (chmod requires ownership), so
+	// os.RemoveAll stops at `openfdat .../postgres2: permission denied` and
+	// no mode fixing this process is allowed to perform can open it.
+	//
+	// Under both invocations this target supports the process IS privileged
+	// over uid 999 — `unshare --user --map-auto --map-root-user` maps the
+	// subuid range, `sudo` is real root (see the header of this file) — so a
+	// run that got as far as writing a cluster also removes it. The leftover
+	// is the MISCONFIGURED run: requireReadableCluster fatals on exactly that
+	// uid gap, and by then the seed has written a cluster this process cannot
+	// delete. That is a leftover to report, not a migration that failed: the
+	// removal is best-effort and names what is left behind, under $TMPDIR
+	// with this namespace's own id in the name.
 	base, err := os.MkdirTemp("", nsID+"-*")
 	require.NoError(t, err)
 	t.Cleanup(func() {
-		if rmErr := os.RemoveAll(base); rmErr != nil {
-			t.Logf("leftover test directory %s: %v", base, rmErr)
+		rmErr := os.RemoveAll(base)
+		if rmErr == nil {
+			return
 		}
+		hint := ""
+		if errors.Is(rmErr, fs.ErrPermission) {
+			hint = "\n\tit belongs to the container's uid: remove it with the privilege this test needs anyway —\n" +
+				"\tunshare --user --map-auto --map-root-user rm -rf " + base + "   (rootless Docker)\n" +
+				"\tsudo rm -rf " + base + "   (rootful daemon)"
+		}
+		t.Logf("leftover test directory %s: %v%s", base, rmErr, hint)
 	})
 
 	nsCfg := &namespace.Config{
