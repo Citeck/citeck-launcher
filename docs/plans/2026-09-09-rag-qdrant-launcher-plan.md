@@ -1244,16 +1244,21 @@ GitHub Release. Показать пользователю собранный а�
 **Файлы:**
 - Изменить: `launcher-public-workspace/enterprise/2026.2.yaml`,
   `launcher-public-workspace/enterprise-rc/2026.3-RC2.yaml`, `.../2026.3-RC3.yaml`
-- Изменить: `docker-compose-kit/ecos-enterprise/develop/2026.3-RC3/values.yaml` и соседние
-  enterprise-бандлы, где есть `EcosRagApp`
+- Изменить: `docker-compose-kit/ecos-enterprise/develop/2026.3-RC3/values.yaml` — **и только его**.
+  В этом репозитории `EcosRagApp` встречается ещё в десятке бандлов (release-ветки, ecos-citeck,
+  ecos-mash, архивы) — их трогать нельзя.
 
-- [ ] **Шаг 1: найти все бандлы с rag**
+- [ ] **Шаг 1: убедиться в списке целей**
 
 ```bash
-grep -rln "EcosRagApp" launcher-public-workspace docker-compose-kit
+grep -rln "EcosRagApp" launcher-public-workspace
+grep -n "EcosRagApp" docker-compose-kit/ecos-enterprise/develop/2026.3-RC3/values.yaml
 ```
+Цели: три файла в `launcher-public-workspace` (`enterprise/2026.2.yaml`,
+`enterprise-rc/2026.3-RC2.yaml`, `enterprise-rc/2026.3-RC3.yaml`) плюс ровно один файл в
+`docker-compose-kit` (`ecos-enterprise/develop/2026.3-RC3/values.yaml`, запись на строке 104).
 
-- [ ] **Шаг 2: добавить запись в каждый из них**
+- [ ] **Шаг 2: добавить запись в каждый из четырёх файлов**
 
 Сразу после блока `EcosRagApp`, тем же отступом:
 
