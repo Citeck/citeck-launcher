@@ -1,0 +1,10 @@
+## Neue Funktionen
+- **Semantische Suche mit RAG.** Enterprise-Bundles bieten jetzt eine `rag`-App für die semantische Suche über Ihre Wissensdatenbank, standardmäßig deaktiviert. Beim Start wird automatisch eine Qdrant-Vektordatenbank hochgefahren und der Wissensdatenbank-Zugriff für den KI-Assistenten aktiviert; eine deaktivierte `rag`-App verbraucht weiterhin keinen zusätzlichen Speicher – Qdrant wird gar nicht erst erstellt. Community-Bundles sind nicht betroffen – weder `rag` noch Qdrant erscheinen dort.
+- **Konfigurierbare Webapp-Abhängigkeiten.** Das `dependsOn` einer Webapp lässt sich jetzt über `webapps[].defaultProps.dependsOn` des Arbeitsbereichs und `webapps.<id>.dependsOn` eines Namespace erweitern – konfigurierte Abhängigkeiten kommen zu den eingebauten hinzu, statt sie zu ersetzen. Ein `dependsOn`-Zyklus lässt die Generierung jetzt mit einer klaren Fehlermeldung fehlschlagen, statt die beteiligten Apps für immer warten zu lassen.
+
+## Änderungen
+- **Eine gestoppte Abhängigkeit lässt die davon abhängige App nicht mehr an ihr vorbeistarten.** Bisher startete eine App, deren Abhängigkeit manuell gestoppt war, trotzdem und scheiterte dann an ihren Health-Prüfungen. Sie wartet jetzt und zeigt in ihrem Status an, worauf sie wartet; sobald die Abhängigkeit gestartet wird, geht es weiter.
+- **Ein im Bundle festgelegtes Image kann nicht mehr durch Arbeitsbereichs- oder Namespace-Konfiguration überschrieben werden.** Das Bundle gewinnt jetzt immer; um auf einem einzelnen Stand ein anderes Image zu verwenden, nutzen Sie explizit `citeck edit <app>`. Eine Konfiguration, die trotzdem versucht, das Image zu überschreiben, wird jetzt als Warnung protokolliert, statt still zu wirken.
+
+## Fehlerbehebungen
+- **Das Umschalten von alfresco löst jetzt eine Neugenerierung des Namespace aus** – wie bei onlyoffice und ai bereits seit 1.4.1. Bisher behandelte der Proxy alfresco nach einem manuellen Stopp/Start weiter als verfügbar (oder nicht) entgegen der Tatsache, bis das nächste, unabhängige Reload dies nachzog.

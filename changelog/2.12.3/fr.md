@@ -1,0 +1,10 @@
+## Nouveautés
+- **Recherche sémantique RAG.** Les bundles enterprise proposent désormais une application `rag` pour la recherche sémantique dans votre base de connaissances, désactivée par défaut. La démarrer fait automatiquement apparaître une base de données vectorielle Qdrant et active l'accès à la base de connaissances pour l'assistant IA ; une `rag` désactivée ne consomme toujours pas de mémoire supplémentaire — Qdrant n'est même pas créé. Les bundles community ne sont pas concernés : ni `rag` ni Qdrant n'y apparaissent.
+- **Dépendances des webapps configurables.** Le `dependsOn` d'une webapp peut désormais être étendu via `webapps[].defaultProps.dependsOn` de l'espace de travail et `webapps.<id>.dependsOn` d'un namespace — les dépendances configurées s'ajoutent aux dépendances intégrées, elles ne les remplacent pas. Un cycle dans `dependsOn` fait maintenant échouer la génération avec une erreur claire, au lieu de laisser les applications concernées attendre indéfiniment.
+
+## Changements
+- **Une dépendance arrêtée ne laisse plus l'application qui en dépend démarrer sans elle.** Auparavant, une application dont la dépendance avait été arrêtée manuellement démarrait quand même puis échouait à ses sondes de santé. Elle attend désormais, en indiquant dans son statut ce qu'elle attend, et reprend dès que la dépendance est démarrée.
+- **Une image fixée par le bundle ne peut plus être remplacée par la configuration de l'espace de travail ou du namespace.** Le bundle l'emporte désormais toujours ; pour utiliser une autre image sur un stand donné, utilisez explicitement `citeck edit <app>`. Une configuration qui tente malgré tout de remplacer l'image est désormais journalisée comme avertissement au lieu de s'appliquer silencieusement.
+
+## Corrections
+- **Basculer alfresco régénère désormais le namespace**, comme c'était déjà le cas pour onlyoffice et ai depuis la 1.4.1. Auparavant, après un arrêt/démarrage manuel, le proxy continuait de considérer alfresco comme disponible (ou non) contrairement à la réalité, jusqu'à ce qu'un rechargement sans rapport le corrige.
