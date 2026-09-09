@@ -41,6 +41,9 @@ func newRestartCmd() *cobra.Command {
 			output.PrintResult(result, func() {
 				output.PrintText(result.Message)
 			})
+			// A restart re-attaches a detached app, which is durable intent —
+			// and it may not have been recorded (see state_write_report.go).
+			warnIfStateNotSaved(c)
 
 			// Fire-and-forget in --detach, JSON output, or non-TTY (scripts).
 			if detach || output.IsJSON() || !output.IsTTY() {

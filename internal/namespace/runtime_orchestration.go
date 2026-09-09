@@ -756,7 +756,6 @@ func (r *Runtime) doDetach() {
 		time.Sleep(20 * time.Millisecond)
 	}
 
-	r.mu.Lock()
 	// Final persist on detach. This is the LAST write of this runtime: the
 	// containers are left running for the next daemon to adopt, and the state
 	// record is the only thing that tells it what it is adopting.
@@ -768,12 +767,19 @@ func (r *Runtime) doDetach() {
 	// flag would buy exactly ONE retry and then be abandoned by a loop that no
 	// longer exists — and a retry capped at one is not a retry. Marking a debt
 	// nothing will ever collect would make r.dirty mean two different things.
-	// So the failure is reported instead, at the level it deserves: the
-	// operator is mid-binary-upgrade, and the state the next daemon reads is
-	// the one from the previous successful write.
-	if err := r.persistState(); err != nil {
+	//
+	// What it gets instead is a BOUNDED inline retry (persistOnDetach) and,
+	// when that is spent, a verdict the caller can act on: the failure is
+	// recorded on the runtime and reported at ERROR, because the operator is
+	// mid-binary-upgrade and the state the next daemon reads is the one from
+	// the previous successful write.
+	stateErr := r.persistOnDetach()
+
+	r.mu.Lock()
+	r.detachStateErr = stateErr
+	if stateErr != nil {
 		slog.Error("Namespace state was NOT saved on detach; nothing will retry it — the next daemon adopts these containers with the state of the last successful write",
-			"namespace", r.nsID, "err", err)
+			"namespace", r.nsID, "attempts", detachPersistAttempts, "err", stateErr)
 	}
 	r.dirty.Store(false)
 	leftRunning := len(r.apps)

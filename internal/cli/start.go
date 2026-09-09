@@ -431,6 +431,9 @@ func startSingleApp(c *client.DaemonClient, appName string, detach bool) error {
 	output.PrintResult(result, func() {
 		output.PrintText(result.Message)
 	})
+	// The re-attach really happened; whether it was RECORDED is a separate
+	// question (see state_write_report.go).
+	warnIfStateNotSaved(c)
 	// Fire-and-forget in --detach, JSON output, or non-TTY (scripts).
 	if detach || output.IsJSON() || !output.IsTTY() {
 		return nil

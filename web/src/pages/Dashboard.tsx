@@ -24,6 +24,7 @@ import { BottomPanel } from '../components/BottomPanel'
 import { DiskLowBanner } from '../components/DiskLowBanner'
 import { RegistryAuthBanner } from '../components/RegistryAuthBanner'
 import { BundleErrorBanner } from '../components/BundleErrorBanner'
+import { StateWriteBanner } from '../components/StateWriteBanner'
 import { DependencyUpgradeBanner } from '../components/DependencyUpgradeBanner'
 import { DependenciesDialog } from '../components/DependenciesDialog'
 import { RightDrawer } from '../components/RightDrawer'
@@ -227,6 +228,11 @@ export function Dashboard() {
           the app table below simply shows the seven infra containers going
           green, and nothing says the product is missing from them. */}
       <BundleErrorBanner />
+      {/* The daemon's state writes are being refused: detaching an app, saving
+          an app config and editing a mounted file all still report success
+          (they did succeed), so without this the loss is invisible until the
+          next daemon start. */}
+      <StateWriteBanner />
       {/* Infra dependency (postgres, rabbitmq, …) upgrades the generator held
           back because applying them to existing data would break it — plus the
           pending-rollback state, which nothing else surfaces. */}

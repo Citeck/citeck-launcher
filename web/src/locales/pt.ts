@@ -72,6 +72,9 @@ const pt = {
   'dashboard.bundleError.title': 'Este namespace não tem serviços do Citeck',
   'dashboard.bundleError.reason': 'Causa: {reason}',
   'dashboard.bundleError.hint': 'Apenas a infraestrutura de terceiros seria iniciada. Verifique o repositório e a versão do bundle nas configurações do namespace.',
+  'dashboard.stateWrite.title': 'As alterações não estão a ser guardadas',
+  'dashboard.stateWrite.reason': 'Causa: {reason}',
+  'dashboard.stateWrite.hint': 'As aplicações desanexadas, as edições de configuração e as versões das dependências estão aplicadas mas não registadas. O lançador continua a repetir a gravação; se o daemon reiniciar antes, serão revertidas. Liberte espaço em disco e verifique as permissões da pasta de dados do lançador.',
 
   // -- Loading 30s hint --
   'loadingHint.stillLoading': 'Ainda carregando... Isso está demorando mais do que o esperado.\nPara nos ajudar a diagnosticar o problema, clique no botão \'Despejo do sistema\' e envie os dados aos mantenedores.',

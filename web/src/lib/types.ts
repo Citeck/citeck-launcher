@@ -1,6 +1,13 @@
 export interface ActionResultDto {
   success: boolean
   message: string
+  // Set only by POST /daemon/shutdown?leave_running=true, and only when that
+  // detach could not write the namespace state. The detach still happened (the
+  // containers are running, hence success: true) but the record the NEXT daemon
+  // adopts them with is stale. Nothing in the web UI issues that request — the
+  // desktop wrapper and `citeck install` do — it is declared here because the
+  // field is part of the shared result shape.
+  stateSaveError?: string
 }
 
 export interface AppDto {
@@ -69,6 +76,14 @@ export interface NamespaceDto {
   status: string
   bundleRef: string
   bundleError?: string
+  // Why the namespace's state is not reaching the store (a full disk, a
+  // permission change, a damaged SQLite file), or absent when the last write
+  // landed. Actions that produce such a write — detaching an app, saving an app
+  // config, editing a mounted file — all SUCCEED on a refused write, because
+  // the action itself succeeded; only the record of it was lost. Rendered by
+  // StateWriteBanner. Self-healing: the daemon derives it from its live
+  // failure streak, so the first write that lands clears it.
+  stateWriteError?: string
   apps: AppDto[]
   links?: LinkDto[]
   // Host CPU core count from the daemon (runtime.NumCPU). Caps the aggregate

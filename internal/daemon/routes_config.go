@@ -108,6 +108,24 @@ func (d *Daemon) handleDaemonShutdown(w http.ResponseWriter, r *http.Request) {
 		}
 		leaveRunning = v
 	}
+	// wait_state=true asks the daemon to answer only once its detach has
+	// actually run, so the response can carry the verdict on the final
+	// namespace-state write. Opt-in rather than the default for leave_running:
+	// see answerDetachShutdown.
+	waitState := false
+	if raw := r.URL.Query().Get("wait_state"); raw != "" {
+		v, err := strconv.ParseBool(raw)
+		if err != nil {
+			writeErrorCode(w, http.StatusBadRequest, api.ErrCodeInvalidRequest,
+				"invalid wait_state value (must be true or false)")
+			return
+		}
+		waitState = v
+	}
+	if leaveRunning && waitState {
+		d.answerDetachShutdown(w)
+		return
+	}
 	msg := "Shutting down"
 	if leaveRunning {
 		msg = "Detaching daemon (containers will keep running)"
@@ -116,6 +134,49 @@ func (d *Daemon) handleDaemonShutdown(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		time.Sleep(100 * time.Millisecond)
 		d.shutdown(leaveRunning)
+	}()
+}
+
+// answerDetachShutdown serves leave_running=true&wait_state=true.
+//
+// It cannot follow the ordinary shape (answer, then tear down 100ms later),
+// because the one thing this caller needs to know does not exist yet at that
+// point: the detach's FINAL namespace-state write is the last one this process
+// makes, nothing retries it, and if it is refused the next daemon adopts the
+// still-running containers with the state of the previous successful write —
+// detached apps re-attached, per-app config and file edits gone. The caller is
+// `citeck install`, which was about to swap the binary on top of that.
+//
+// So the namespace phases of the teardown run synchronously and their verdict
+// goes into the response; only the SERVER phases — which drain the listener this
+// response travels on — are left for the goroutine. The write deadline is lifted
+// for the same reason the other long routes lift it: phase 1 alone allows
+// background goroutines 10s, and the detach adds its worker drain on top.
+//
+// Why wait_state is OPT-IN rather than implied by leave_running: the other
+// caller of this route is the desktop wrapper on quit, and its POST is capped at
+// daemonDialTimeout (2s, internal/desktop/supervisor.go) because a quitting
+// wrapper must not block on a slow daemon. Making every detach synchronous would
+// time that request out on any teardown longer than 2s and log a misleading
+// "shutdown POST failed; will kill child" on an ordinary quit — while still not
+// delivering the verdict, since the response never arrives. The wrapper keeps
+// the fire-and-forget shape and reads the daemon's own ERROR line instead.
+func (d *Daemon) answerDetachShutdown(w http.ResponseWriter) {
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
+	stateErr := d.shutdownRuntime(true)
+	res := api.ActionResultDto{
+		// The detach itself succeeded whatever the state write did — the
+		// containers are running, which is what was asked for.
+		Success: true,
+		Message: "Detaching daemon (containers will keep running)",
+	}
+	if stateErr != nil {
+		res.StateSaveError = stateErr.Error()
+	}
+	writeJSON(w, res)
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		d.shutdownServer()
 	}()
 }
 

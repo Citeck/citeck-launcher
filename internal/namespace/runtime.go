@@ -211,10 +211,17 @@ type Runtime struct {
 	// r.dirty stays set when a write fails, so these keep the resulting
 	// per-iteration retry from flooding the log and from pinning the loop
 	// inside a store that fails slowly.
-	persistFailStreak int              // consecutive failed state writes; 0 when the last one landed.
-	persistRetryAt    time.Time        // earliest time the loop tail may retry; zero when no streak is open.
-	persistRetryBase  time.Duration    // first retry delay, doubling per failure (default defaultPersistRetryBase).
-	nowFunc           func() time.Time // returns current time (test-injectable via WithTestClock).
+	persistFailStreak int           // consecutive failed state writes; 0 when the last one landed.
+	persistFailErr    error         // why the streak's writes are being refused; nil when the last one landed. Reported as NamespaceDto.StateWriteError.
+	persistRetryAt    time.Time     // earliest time the loop tail may retry; zero when no streak is open.
+	persistRetryBase  time.Duration // first retry delay, doubling per failure (default defaultPersistRetryBase).
+	// detachStateErr records what doDetach's FINAL state write did, after its
+	// bounded inline retry. It is not part of the streak above: nothing
+	// retries it (there is no loop left) and nothing reads the DTO afterwards
+	// — its only reader is the shutdown path, which threads it to the caller
+	// that asked the daemon to detach. Guarded by r.mu.
+	detachStateErr error
+	nowFunc        func() time.Time // returns current time (test-injectable via WithTestClock).
 	// refreshSnapshotDigestsFn defaults to r.refreshSnapshotDigests (wired in
 	// NewRuntime, since a method value needs r to already exist). Test-injectable
 	// seam so orchestration tests can assert doStart/doRegenerate call it iff

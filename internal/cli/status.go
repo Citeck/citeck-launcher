@@ -120,6 +120,12 @@ func newStatusCmd() *cobra.Command {
 				if hint := dependencyHintLine(ns, depsDto); hint != "" {
 					output.PrintText("%s  %s", output.Colorize(output.Bold, padRight("Deps:", 8)), hint)
 				}
+				// A store that keeps refusing is otherwise invisible here: the
+				// per-app commands answered success (the actions did succeed)
+				// and the only trace is one WARN in the daemon log.
+				if line := stateWriteStatusLine(ns); line != "" {
+					output.PrintText("%s  %s", output.Colorize(output.Bold, padRight("State:", 8)), line)
+				}
 				for _, link := range ns.Links {
 					if link.Name == "Citeck UI" {
 						output.PrintText("%s  %s", output.Colorize(output.Bold, padRight("URL:", 8)), link.URL)

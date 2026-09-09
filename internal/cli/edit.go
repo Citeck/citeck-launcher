@@ -177,7 +177,8 @@ func newEditCmd() *cobra.Command {
 					defer closeFn()
 					o.file = r
 				}
-				return finishEdit(runEditFile(o))
+				res, editErr := runEditFile(o)
+				return finishEdit(c, res, editErr)
 			}
 
 			if noApply {
@@ -198,7 +199,8 @@ func newEditCmd() *cobra.Command {
 				defer closeFn()
 				o.file = r
 			}
-			return finishEdit(runEdit(o))
+			res, editErr := runEdit(o)
+			return finishEdit(c, res, editErr)
 		},
 	}
 
@@ -210,8 +212,16 @@ func newEditCmd() *cobra.Command {
 	return cmd
 }
 
-// finishEdit renders the shared success/no-change output for both editors.
-func finishEdit(res *api.ActionResultDto, err error) error {
+// finishEdit renders the shared success/no-change output for both editors —
+// the ApplicationDef patch and the mounted-file delta, each with its --reset
+// and --from variants.
+//
+// It is also where the "applied but not saved" warning belongs, for the same
+// reason: an edit is applied to the LIVE container (or, on a stopped namespace,
+// held in memory) whatever the store answered, so the command reports success
+// on a refused write and the operator would find the override gone at the next
+// daemon start. Only the success path asks — errNoChanges wrote nothing.
+func finishEdit(c stateWriteChecker, res *api.ActionResultDto, err error) error {
 	if err != nil {
 		if errors.Is(err, errNoChanges) {
 			output.PrintText("No changes, edit canceled.")
@@ -220,5 +230,6 @@ func finishEdit(res *api.ActionResultDto, err error) error {
 		return err
 	}
 	output.PrintResult(res, func() { output.PrintText(res.Message) })
+	warnIfStateNotSaved(c)
 	return nil
 }

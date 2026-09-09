@@ -72,6 +72,9 @@ const zh = {
   'dashboard.bundleError.title': '此命名空间中没有 Citeck 服务',
   'dashboard.bundleError.reason': '原因：{reason}',
   'dashboard.bundleError.hint': '将只会启动第三方基础设施。请在命名空间设置中检查捆绑包仓库和版本。',
+  'dashboard.stateWrite.title': '更改未被保存',
+  'dashboard.stateWrite.reason': '原因：{reason}',
+  'dashboard.stateWrite.hint': '已分离的应用、配置修改和依赖版本均已生效，但没有被记录下来。启动器会持续重试；如果守护进程先行重启，这些更改就会回退。请释放磁盘空间，并检查启动器数据目录的权限。',
 
   // -- Loading 30s hint --
   'loadingHint.stillLoading': '仍在加载…耗时比预期更长。\n为帮助我们诊断问题，请点击“系统转储”按钮，并将数据发送给维护人员。',

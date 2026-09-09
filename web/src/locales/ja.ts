@@ -72,6 +72,9 @@ const ja = {
   'dashboard.bundleError.title': 'この名前空間には Citeck のサービスがありません',
   'dashboard.bundleError.reason': '原因: {reason}',
   'dashboard.bundleError.hint': 'サードパーティのインフラのみが起動します。名前空間の設定でバンドルのリポジトリとバージョンを確認してください。',
+  'dashboard.stateWrite.title': '変更が保存されていません',
+  'dashboard.stateWrite.reason': '原因: {reason}',
+  'dashboard.stateWrite.hint': '切り離したアプリ、設定の変更、依存関係のバージョンは反映されていますが、記録されていません。ランチャーは書き込みを再試行し続けますが、その前にデーモンが再起動すると元に戻ります。ディスクの空き容量を確保し、ランチャーのデータディレクトリの権限を確認してください。',
 
   // -- Loading 30s hint --
   'loadingHint.stillLoading': 'まだ読み込み中です... 想定より時間がかかっています。\n問題の診断にご協力いただくため、「Dump System Info」ボタンをクリックして、データをメンテナーに送信してください。',

@@ -202,9 +202,18 @@ func (c *DaemonClient) Shutdown() (*api.ActionResultDto, error) {
 // ShutdownLeaveRunning asks the daemon to exit without stopping containers.
 // Used for binary upgrades — the next daemon adopts the running platform
 // via doStart's hash-matching path.
+//
+// wait_state=true makes the daemon answer only once the detach has run, so the
+// result carries StateSaveError when its final namespace-state write was
+// refused. That write is the last one the process makes and nothing retries it,
+// so this response is the only place it can be reported — and the CLI is the
+// caller that can act on it (the upgrade refuses to swap the binary). The wait
+// is bounded by the daemon's own teardown budgets and fits the client's 120s
+// timeout; the desktop wrapper deliberately does not ask (see
+// answerDetachShutdown).
 func (c *DaemonClient) ShutdownLeaveRunning() (*api.ActionResultDto, error) {
 	var dto api.ActionResultDto
-	err := c.post(api.DaemonShutdown+"?leave_running=true", nil, &dto)
+	err := c.post(api.DaemonShutdown+"?leave_running=true&wait_state=true", nil, &dto)
 	return &dto, err
 }
 

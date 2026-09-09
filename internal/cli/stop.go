@@ -46,6 +46,15 @@ func newStopCmd() *cobra.Command {
 				output.PrintResult(r, func() {
 					output.PrintText(r.Message)
 				})
+				// The detach happened — the containers are running, which is
+				// what was asked for — but its FINAL state write may not have.
+				// Nothing retries that one, so this response is the only place
+				// it can be reported. This is the systemd ExecStop path, so the
+				// warning goes to stderr and the exit code stays 0.
+				if r != nil && r.StateSaveError != "" {
+					ensureI18n()
+					output.Errf("%s", t("cli.stateWrite.detachWarning", "err", r.StateSaveError))
+				}
 				return nil
 			}
 
@@ -65,6 +74,12 @@ func newStopCmd() *cobra.Command {
 						output.PrintText(result.Message)
 					})
 				}
+				// The apps really stopped; whether the DETACH INTENT behind
+				// them was recorded is a separate question (see
+				// state_write_report.go). Asked once for the whole batch — the
+				// condition is namespace-wide, so one round-trip answers for
+				// every app named on the command line.
+				warnIfStateNotSaved(c)
 				return firstErr
 			}
 

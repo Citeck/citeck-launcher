@@ -132,12 +132,20 @@ type Daemon struct {
 	configMu sync.RWMutex
 	// activeNs holds ALL swap-on-activate per-namespace state. Guarded by
 	// configMu; nil only in zero-value test Daemons (d.active() tolerates it).
-	activeNs     *activeNamespace
-	version      string
-	shutdownOnce sync.Once
-	bgCtx        context.Context // canceled on daemon shutdown
-	bgCancel     context.CancelFunc
-	bgWg         sync.WaitGroup // tracks background goroutines (snapshot, downloads)
+	activeNs *activeNamespace
+	version  string
+	// The teardown is two one-shot halves (see shutdownRuntime): the namespace
+	// phases, whose verdict the detach route puts in its response, and the
+	// server phases, which drain the listener that response goes out on.
+	shutdownOnce    sync.Once
+	shutdownSrvOnce sync.Once
+	// detachStateErr is what the detach's final namespace-state write did.
+	// Written inside shutdownOnce and read only after it has returned, which is
+	// what makes it safe without a lock — Once.Do returns only once f has.
+	detachStateErr error
+	bgCtx          context.Context // canceled on daemon shutdown
+	bgCancel       context.CancelFunc
+	bgWg           sync.WaitGroup // tracks background goroutines (snapshot, downloads)
 	// longOp is THE exclusive long-operation lock, and it records WHO holds it
 	// (longOpKind). Held for the whole of a snapshot export/import, of a
 	// dependency migration, and of an asynchronous update pass (ownership is
@@ -512,12 +520,35 @@ func diskEvent(evtType, path string, freeGB float64) api.EventDto {
 }
 
 func (d *Daemon) shutdown(leaveRunning bool) {
-	d.shutdownOnce.Do(func() { d.doShutdown(leaveRunning) })
+	_ = d.shutdownRuntime(leaveRunning)
+	d.shutdownServer()
 }
 
-func (d *Daemon) doShutdown(leaveRunning bool) {
+// shutdownRuntime runs the teardown phases that touch the NAMESPACE: the
+// background goroutines, the services that can call back into the runtime, and
+// the runtime itself. It returns the verdict on the detach's final state write
+// (nil unless leaveRunning was requested AND that write was refused) — see
+// namespace.Runtime.ShutdownDetached.
+//
+// It is split from shutdownServer for one reason: that verdict does not exist
+// until the runtime has detached, which is AFTER the shutdown route would
+// otherwise have answered. The detach route therefore runs this half
+// synchronously and puts the answer in its response, leaving the other half —
+// which drains the very HTTP server the response goes out on — for afterwards.
+//
+// One-shot: a second caller (a SIGTERM racing the route) gets the recorded
+// verdict rather than a fresh nil, because sync.Once.Do returns only after the
+// first call's function has completed.
+func (d *Daemon) shutdownRuntime(leaveRunning bool) error {
+	d.shutdownOnce.Do(func() { d.detachStateErr = d.doShutdownRuntime(leaveRunning) })
+	return d.detachStateErr
+}
+
+func (d *Daemon) doShutdownRuntime(leaveRunning bool) error {
 	// Phase 1: Cancel background goroutines with 10s timeout
-	d.bgCancel()
+	if d.bgCancel != nil {
+		d.bgCancel()
+	}
 	bgDone := make(chan struct{})
 	go func() { d.bgWg.Wait(); close(bgDone) }()
 	select {
@@ -545,18 +576,39 @@ func (d *Daemon) doShutdown(leaveRunning bool) {
 	// Phase 3: Shutdown runtime. When leaveRunning is set, the runtime exits
 	// without stopping containers — the next daemon will adopt them via
 	// doStart's hash-matching path. Used for binary upgrades.
+	//
+	// The detach's own final state write is the last one this process makes,
+	// and nothing retries it: its verdict is what this function returns.
+	var stateErr error
 	if act.runtime != nil {
 		if leaveRunning {
-			act.runtime.ShutdownDetached()
+			if err := act.runtime.ShutdownDetached(); err != nil {
+				stateErr = fmt.Errorf("save namespace state on detach: %w", err)
+			}
 		} else {
 			act.runtime.Shutdown()
 		}
 	}
+	return stateErr
+}
 
+// shutdownServer runs the rest of the teardown: the HTTP listeners, the store,
+// the Docker client and the socket file. Split from shutdownRuntime so the
+// detach route can answer BEFORE the server it answered on is drained; safe to
+// call more than once.
+func (d *Daemon) shutdownServer() {
+	d.shutdownSrvOnce.Do(func() { d.doShutdownServer() })
+}
+
+func (d *Daemon) doShutdownServer() {
+	act := d.active()
 	// Phase 4: Drain HTTP connections with 10s timeout
 	httpCtx, httpCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer httpCancel()
-	_ = d.server.Shutdown(httpCtx)
+	// nil only in tests that never bound a listener.
+	if d.server != nil {
+		_ = d.server.Shutdown(httpCtx)
+	}
 	if d.tcpServer != nil {
 		_ = d.tcpServer.Shutdown(httpCtx)
 	}

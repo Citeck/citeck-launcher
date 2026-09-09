@@ -72,6 +72,9 @@ const de = {
   'dashboard.bundleError.title': 'Dieser Namespace enthält keine Citeck-Dienste',
   'dashboard.bundleError.reason': 'Ursache: {reason}',
   'dashboard.bundleError.hint': 'Es würde nur die Infrastruktur von Drittanbietern starten. Prüfen Sie Bundle-Repository und -Version in den Namespace-Einstellungen.',
+  'dashboard.stateWrite.title': 'Änderungen werden nicht gespeichert',
+  'dashboard.stateWrite.reason': 'Ursache: {reason}',
+  'dashboard.stateWrite.hint': 'Abgekoppelte Anwendungen, Konfigurationsänderungen und Abhängigkeitsversionen sind angewendet, aber nicht festgehalten. Der Launcher wiederholt den Schreibvorgang; startet der Daemon vorher neu, werden sie zurückgesetzt. Geben Sie Speicherplatz frei und prüfen Sie die Rechte am Datenverzeichnis des Launchers.',
 
   // -- Loading 30s hint --
   'loadingHint.stillLoading': 'Lädt noch... Dies dauert länger als erwartet.\nUm uns bei der Diagnose des Problems zu helfen, klicken Sie bitte auf „Systeminfo ausgeben“ und senden Sie die Daten an die Betreuer.',

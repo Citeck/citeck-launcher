@@ -56,6 +56,12 @@ func (r *Runtime) ToNamespaceDto() api.NamespaceDto {
 		// no cpuset restrictions are set on the daemon, which is the case
 		// in every supported deployment.
 		HostCPUs: goruntime.NumCPU(),
+		// Why this namespace's state is not reaching the store, or "" when the
+		// last write landed. Every mutator that records durable user intent
+		// answers its caller success on a refused write (the action itself
+		// succeeded), so without this the operator's only clue is one WARN in
+		// the daemon log. See persist_retry.go StateWriteError.
+		StateWriteError: r.stateWriteErrorUnderLock(),
 	}
 }
 

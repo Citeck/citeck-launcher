@@ -72,6 +72,9 @@ const es = {
   'dashboard.bundleError.title': 'Este espacio de nombres no tiene servicios de Citeck',
   'dashboard.bundleError.reason': 'Causa: {reason}',
   'dashboard.bundleError.hint': 'Solo se iniciaría la infraestructura de terceros. Revise el repositorio y la versión del paquete en la configuración del espacio de nombres.',
+  'dashboard.stateWrite.title': 'Los cambios no se están guardando',
+  'dashboard.stateWrite.reason': 'Causa: {reason}',
+  'dashboard.stateWrite.hint': 'Las aplicaciones desacopladas, las ediciones de configuración y las versiones de dependencias están aplicadas pero no registradas. El lanzador sigue reintentando; si el demonio se reinicia antes, se revertirán. Libere espacio en disco y revise los permisos del directorio de datos del lanzador.',
 
   // -- Loading 30s hint --
   'loadingHint.stillLoading': 'Aún cargando... Esto está tardando más de lo esperado.\nPara ayudarnos a diagnosticar el problema, haga clic en el botón «Dump System Info» y envíe los datos a los mantenedores.',

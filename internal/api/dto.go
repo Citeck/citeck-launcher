@@ -4,6 +4,17 @@ package api
 type ActionResultDto struct {
 	Success bool   `json:"success"`
 	Message string `json:"message"`
+	// StateSaveError is set only by POST /daemon/shutdown?leave_running=true,
+	// and only when that detach could not write the namespace state.
+	//
+	// The detach still happened — the containers are running, which is why
+	// Success stays true — but the record the NEXT daemon adopts them with is
+	// the one from the last successful write: detached apps re-attach, per-app
+	// config and mounted-file edits are gone, dependency pins revert. After the
+	// detach there is no runtime loop left to retry the write, so this response
+	// is the only chance the caller has to learn about it, and it is what lets
+	// `citeck install` refuse to layer a version change on top of a lost state.
+	StateSaveError string `json:"stateSaveError,omitempty"`
 }
 
 // AppDto represents an application in the namespace.
@@ -180,6 +191,25 @@ type NamespaceDto struct {
 	// DependencyMigration above already describes), and scoped to this
 	// namespace by construction — the journal belongs to its runtime.
 	DependencyRollbackPending string `json:"dependencyRollbackPending,omitempty"`
+	// StateWriteError is why this namespace's state is not reaching the store
+	// (a full disk, a permission change, a damaged SQLite file), or "" when
+	// the last write landed.
+	//
+	// It is a STATE, not a per-call result, because the mutators it covers —
+	// `citeck stop <app>`, `citeck start <app>`, `citeck edit <app>`, the gear
+	// editor, a mounted-file edit — all did what they were asked: the
+	// container really stopped, the patch really applied to it. Only the
+	// RECORD of that was refused, so failing the action would be a lie, and a
+	// silent success is how the operator ends up learning about it at the next
+	// daemon start, where the app is un-detached again and the edit is gone.
+	// One namespace-level signal also covers the case no per-call result can:
+	// a write refused by the runtime loop's tail, long after the response went
+	// out.
+	//
+	// Self-healing: it is derived from the persist failure STREAK the tail
+	// retry already keeps (internal/namespace/persist_retry.go), so the first
+	// write that lands clears it with no action from anyone.
+	StateWriteError string `json:"stateWriteError,omitempty"`
 }
 
 // Dependency status values carried by DependencyDto.Status.

@@ -459,6 +459,14 @@ func postDaemonShutdown(ctx context.Context) error {
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("daemon shutdown returned %d", resp.StatusCode)
 	}
+	// Deliberately does NOT ask for the detach's state-write verdict
+	// (?wait_state=true): that makes the daemon answer only once its namespace
+	// teardown is done, and this request is capped at daemonDialTimeout — the
+	// wrapper is quitting and must not block on a slow daemon. Every teardown
+	// longer than that would time out here and log the misleading "will kill
+	// child" below on an ordinary quit. The daemon reports a failed detach
+	// write at ERROR in its own log, which is where a "my detached app came
+	// back" report is diagnosed from anyway.
 	return nil
 }
 

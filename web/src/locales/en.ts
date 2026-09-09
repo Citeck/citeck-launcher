@@ -74,6 +74,9 @@ const en = {
   'dashboard.bundleError.title': 'This namespace has no Citeck services',
   'dashboard.bundleError.reason': 'Cause: {reason}',
   'dashboard.bundleError.hint': 'Only third-party infrastructure would start. Check the bundle repository and version in the namespace settings.',
+  'dashboard.stateWrite.title': 'Changes are not being saved',
+  'dashboard.stateWrite.reason': 'Cause: {reason}',
+  'dashboard.stateWrite.hint': 'Detached apps, config edits and dependency versions are applied but not recorded. The launcher keeps retrying; if the daemon restarts first, they revert. Free disk space and check the permissions on the launcher data directory.',
 
   // -- Loading 30s hint --
   'loadingHint.stillLoading': 'Still loading... This is taking longer than expected.\nTo help us diagnose the issue, please click the \'Dump System Info\' button and send the data to the maintainers.',

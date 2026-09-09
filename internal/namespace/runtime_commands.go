@@ -168,8 +168,31 @@ func (r *Runtime) Shutdown() {
 // degrades into a regular shutdown wait. The first caller into
 // teardownOnce wins, so concurrent Shutdown/ShutdownDetached invocations
 // produce a single teardown — whichever path that turns out to be.
-func (r *Runtime) ShutdownDetached() {
+//
+// The returned error is the verdict on the FINAL state write (see
+// DetachStateError): non-nil means the containers were left running but the
+// record of what they are is stale, so the next daemon will adopt them with
+// the state of the last successful write. It is a REPORT, not a failure of the
+// detach — the detach itself happened. Returning it is what lets a binary
+// upgrade refuse to layer a version change on top of a lost state; every other
+// caller may ignore it, since the runtime has already logged it at ERROR.
+//
+// Safe to call again after the teardown has run: teardownOnce blocks until the
+// first call's work completed, so the recorded verdict is visible to a second
+// caller too.
+func (r *Runtime) ShutdownDetached() error {
 	r.shutdownAfter(true)
+	return r.DetachStateError()
+}
+
+// DetachStateError reports what doDetach's final state write did, or nil when
+// it landed (or when no detach ran — a runtime that was never started, or one
+// whose ShutdownDetached degraded into a regular stop, has no detach write and
+// therefore nothing to report).
+func (r *Runtime) DetachStateError() error {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.detachStateErr
 }
 
 // shutdownAfter is the shared one-shot teardown path. When leaveRunning is

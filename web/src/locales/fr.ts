@@ -72,6 +72,9 @@ const fr = {
   'dashboard.bundleError.title': 'Cet espace de noms ne contient aucun service Citeck',
   'dashboard.bundleError.reason': 'Cause : {reason}',
   'dashboard.bundleError.hint': 'Seule l’infrastructure tierce démarrerait. Vérifiez le dépôt et la version du bundle dans les paramètres de l’espace de noms.',
+  'dashboard.stateWrite.title': 'Les modifications ne sont pas enregistrées',
+  'dashboard.stateWrite.reason': 'Cause : {reason}',
+  'dashboard.stateWrite.hint': 'Les applications détachées, les modifications de configuration et les versions des dépendances sont appliquées mais non consignées. Le lanceur continue de réessayer ; si le démon redémarre avant, elles reviendront en arrière. Libérez de l’espace disque et vérifiez les droits sur le répertoire de données du lanceur.',
 
   // -- Loading 30s hint --
   'loadingHint.stillLoading': 'Chargement toujours en cours... Cela prend plus de temps que prévu.\nPour nous aider à diagnostiquer le problème, veuillez cliquer sur le bouton « Vidage système » et envoyer les données aux mainteneurs.',

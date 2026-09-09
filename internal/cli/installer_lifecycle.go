@@ -53,6 +53,15 @@ const (
 	installerCacheEnv = "CITECK_INSTALLER_CACHE"
 )
 
+// stopDaemonFn / startDaemonFn are the two daemon steps of the binary
+// lifecycle. They are vars only so tests can drive the upgrade and rollback
+// sequences — in particular the "the old daemon lost its state" abort — without
+// a running daemon, systemd or a real binary swap.
+var (
+	stopDaemonFn  = stopDaemonPreservePlatform
+	startDaemonFn = startDaemonAfterSwap
+)
+
 // installerState is process-local transient state shared between the stop
 // and start phases of the lifecycle — in particular, whether we installed
 // a runtime Restart=no drop-in so the stop-phase SIGKILL wouldn't trigger
@@ -173,7 +182,22 @@ func lifecycleUpgrade(selfPath, installedVer, newVer string) error {
 	}
 
 	output.PrintText("Stopping old daemon (platform containers stay running)...")
-	if err := stopDaemonPreservePlatform(installedVer); err != nil {
+	if err := stopDaemonFn(installedVer); err != nil {
+		// The old daemon detached but could not write the namespace state, so
+		// the record the NEXT daemon adopts these containers with is stale.
+		// Abort BEFORE the swap: the loss already happened (the daemon is down,
+		// the containers are detached) and nothing here can undo it, but
+		// layering a version change on top makes it strictly harder to reason
+		// about — and restarting the SAME binary, which re-adopts the running
+		// containers, is the safe next step. The backup taken above is left in
+		// place; the binary on disk is untouched.
+		var stateErr *stateNotSavedError
+		if errors.As(err, &stateErr) {
+			for _, line := range stateNotSavedAbortLines(stateErr.detail) {
+				output.PrintText("%s", line)
+			}
+			return err
+		}
 		return fmt.Errorf("stop old daemon: %w", err)
 	}
 
@@ -187,7 +211,7 @@ func lifecycleUpgrade(selfPath, installedVer, newVer string) error {
 	migrateSystemdUnitIfStale()
 
 	output.PrintText("Starting new daemon...")
-	if err := startDaemonAfterSwap(); err != nil {
+	if err := startDaemonFn(); err != nil {
 		return fmt.Errorf("start new daemon: %w", err)
 	}
 
@@ -215,8 +239,16 @@ func runRollback() error {
 	}
 
 	output.PrintText(t("install.lifecycle.rollback.stopping"))
-	if err := stopDaemonPreservePlatform(currentVer); err != nil {
-		return fmt.Errorf("stop daemon: %w", err)
+	if err := stopDaemonFn(currentVer); err != nil {
+		// Deliberately asymmetric with the upgrade above: rollback is the way
+		// back off a binary that does not work, so refusing it over a lost
+		// state would take the escape hatch away exactly when it is needed.
+		// The operator is told and the rollback proceeds.
+		var stateErr *stateNotSavedError
+		if !errors.As(err, &stateErr) {
+			return fmt.Errorf("stop daemon: %w", err)
+		}
+		output.Errf("%s", t("cli.stateWrite.detachWarning", "err", stateErr.detail))
 	}
 
 	output.PrintText(t("install.lifecycle.rollback.restoring"))
@@ -226,7 +258,7 @@ func runRollback() error {
 	_ = os.Remove(bakPath)
 
 	output.PrintText(t("install.lifecycle.rollback.starting"))
-	if err := startDaemonAfterSwap(); err != nil {
+	if err := startDaemonFn(); err != nil {
 		return fmt.Errorf("start daemon: %w", err)
 	}
 
@@ -342,8 +374,16 @@ func stopDaemonPreservePlatform(installedVer string) error {
 	}
 
 	if versionAtLeast(installedVer, "2.1.0") {
-		if _, err := c.ShutdownLeaveRunning(); err == nil {
-			return waitForDaemonStop()
+		if res, err := c.ShutdownLeaveRunning(); err == nil {
+			if stopErr := waitForDaemonStop(); stopErr != nil {
+				return stopErr
+			}
+			// The daemon DID stop, and the containers are running. What the
+			// response may still carry is that its final state write was
+			// refused — the one thing nothing retries. Reported as a distinct
+			// error so the caller can decide (the upgrade refuses; the
+			// rollback warns and continues).
+			return detachStateError(res)
 		}
 		output.PrintText("  warn: clean detach failed, falling back to SIGKILL")
 	}
