@@ -169,6 +169,7 @@ type Runtime struct {
 	lastGenFiles          map[string][]byte                // last generated (pre-merge) file set; baseline source for the editor + WriteEditedFile template
 	generatedDefs         map[string]appdef.ApplicationDef // last generated (pre-patch) app defs; baseline for config view/edit when the ns is stopped/never-started
 	dependsOnDetachedApps map[string]bool                  // detached apps that trigger regen on restart
+	gatingApps            map[string]bool                  // apps whose attach/detach changes which other apps exist (GenResp.GatingApps)
 	lastApps              []appdef.ApplicationDef          // last app defs passed to doStart
 	cachedBundle          *bundle.Def                      // last successfully resolved bundle (persisted)
 	customLinks           []bundle.WorkspaceLink           // workspace-config custom quick links (dependsOn-gated in generateLinks)
@@ -376,6 +377,19 @@ func (r *Runtime) ManualStoppedApps() map[string]bool {
 	defer r.mu.RUnlock()
 	result := make(map[string]bool, len(r.manualStoppedApps))
 	maps.Copy(result, r.manualStoppedApps)
+	return result
+}
+
+// GatingApps returns a copy of the gating-app set from the last generation —
+// apps whose attach/detach state changes WHICH other apps are generated at
+// all (see GenResp.GatingApps / NsGenContext.MarkGatingApp). The daemon uses
+// this instead of a hardcoded app-name set to decide whether starting/stopping
+// a single app must trigger a full namespace regeneration.
+func (r *Runtime) GatingApps() map[string]bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	result := make(map[string]bool, len(r.gatingApps))
+	maps.Copy(result, r.gatingApps)
 	return result
 }
 
@@ -621,6 +635,14 @@ func (r *Runtime) SetDependsOnDetachedApps(apps map[string]bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.dependsOnDetachedApps = maps.Clone(apps)
+}
+
+// SetGatingApps stores the gating-app set produced by the last generation
+// (GenResp.GatingApps). Takes a defensive copy — the generator's map may be reused.
+func (r *Runtime) SetGatingApps(apps map[string]bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.gatingApps = maps.Clone(apps)
 }
 
 // NewRuntime creates a new namespace runtime.

@@ -132,7 +132,12 @@ type NsGenContext struct {
 	// apps (currently: a webapp configured to depend on itself). Generate returns
 	// the first one after all generators have run.
 	DependencyErrors []error
-	portsCounter     atomic.Int32
+	// GatingApps records, via MarkGatingApp, which apps' detach state decides
+	// whether OTHER apps are generated at all (as opposed to DetachedApps /
+	// DependsOnDetachedApps, which are about dependency wiring on apps that are
+	// generated either way). Surfaced to the daemon as GenResp.GatingApps.
+	GatingApps   map[string]bool
+	portsCounter atomic.Int32
 }
 
 // NewNsGenContext creates a new generation context for the given config and bundle.
@@ -149,6 +154,7 @@ func NewNsGenContext(cfg *Config, bun *bundle.Def) *NsGenContext {
 		// to re-check for nil on each call, and GenResp.Dependencies is a map
 		// the caller can range over whatever the namespace generated.
 		DependencyImages: make(map[deps.ID]DependencyGen),
+		GatingApps:       make(map[string]bool),
 	}
 	ctx.portsCounter.Store(17020)
 	return ctx
@@ -172,6 +178,17 @@ func (c *NsGenContext) GetOrCreateApp(name string) *AppBuilder {
 	}
 	c.Applications[name] = b
 	return b
+}
+
+// MarkGatingApp records that the detach state of `name` decides whether some
+// other app is generated at all. The daemon regenerates the namespace when such
+// an app is started or stopped; without that, the dependent app would appear or
+// disappear only on the next unrelated reload.
+func (c *NsGenContext) MarkGatingApp(name string) {
+	if c.GatingApps == nil {
+		c.GatingApps = map[string]bool{}
+	}
+	c.GatingApps[name] = true
 }
 
 // ProxyHost returns the configured proxy host or "localhost" if blank.

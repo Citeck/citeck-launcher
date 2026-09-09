@@ -292,7 +292,7 @@ func (d *Daemon) handleAppStop(w http.ResponseWriter, r *http.Request) {
 	// make the toggle skip its own regeneration. release is idempotent, so the
 	// defer above stays correct for every path that returned earlier.
 	release()
-	if regenOnAttachToggle(name) {
+	if regenOnAttachToggle(rt, name) {
 		d.regenAfterAttachToggleAsync(name, "detach")
 	}
 	writeJSON(w, api.ActionResultDto{Success: true, Message: fmt.Sprintf("App %s stopped", name)})
@@ -352,7 +352,7 @@ func (d *Daemon) handleAppStart(w http.ResponseWriter, r *http.Request) {
 	// make the toggle skip its own regeneration. release is idempotent, so the
 	// defer above stays correct for every path that returned earlier.
 	release()
-	if regenOnAttachToggle(name) {
+	if regenOnAttachToggle(rt, name) {
 		d.regenAfterAttachToggleAsync(name, "attach")
 	}
 	writeJSON(w, api.ActionResultDto{Success: true, Message: fmt.Sprintf("App %s start requested", name)})

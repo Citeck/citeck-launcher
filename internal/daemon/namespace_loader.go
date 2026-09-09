@@ -591,6 +591,10 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 
 	// Wire DependsOnDetachedApps so RestartApp can trigger regen for dependency apps
 	runtime.SetDependsOnDetachedApps(genResp.DependsOnDetachedApps)
+	// Wire GatingApps so attach/detach of a composition-deciding app (e.g. ai,
+	// onlyoffice, alfresco) triggers a namespace regeneration — see
+	// regenOnAttachToggle in internal/daemon/attach_toggle_regen.go.
+	runtime.SetGatingApps(genResp.GatingApps)
 
 	// Status recovery hint: caller chooses whether to act on it.
 	// - RUNNING / STARTING / STALLED → ShouldStart=true (re-adopt detached containers).

@@ -10,27 +10,55 @@ import (
 	"testing"
 	"time"
 
+	"github.com/citeck/citeck-launcher/internal/appdef"
+	"github.com/citeck/citeck-launcher/internal/namespace"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/citeck/citeck-launcher/internal/api"
-	"github.com/citeck/citeck-launcher/internal/appdef"
-	"github.com/citeck/citeck-launcher/internal/namespace"
 )
 
-// TestRegenOnAttachToggle pins the Kotlin-parity set of apps whose attach/detach
-// state changes OTHER apps' generated config (proxy upstreams, AI↔STT wiring),
-// so toggling them at runtime must regenerate the namespace rather than just
-// start/stop the single container. Kotlin: NamespaceGenerator's static
-// dependsOnDetachedApps set {ONLYOFFICE, AI, STT_SIDECAR} + detachedAppsChanged
-// (v1.4.1 changelog).
-func TestRegenOnAttachToggle(t *testing.T) {
-	for _, name := range []string{appdef.AppOnlyoffice, appdef.AppAi, appdef.AppSttSidecar} {
-		assert.True(t, regenOnAttachToggle(name), "toggling %q must regenerate the namespace", name)
-	}
-	for _, name := range []string{appdef.AppGateway, appdef.AppProxy, appdef.AppEmodel, "postgres", ""} {
-		assert.False(t, regenOnAttachToggle(name), "toggling %q must NOT regenerate the namespace", name)
-	}
+// TestRegenOnAttachToggle_ReadsRuntimeGatingApps pins that regenOnAttachToggle
+// is a pure lookup into the runtime's last-generation GatingApps set (see
+// GenResp.GatingApps / NsGenContext.MarkGatingApp) — NOT a hardcoded app-name
+// list in the daemon. That is the point of this refactor: a bundle/generator
+// can add a new gating app (e.g. a future "rag" app gating "qdrant") and the
+// daemon regenerates on its toggle automatically, with no daemon code change.
+//
+// Superseded assertion: this used to pin a package-level hardcoded set
+// {onlyoffice, ai, stt-sidecar} via a name-only regenOnAttachToggle(name)
+// free function (Kotlin parity: NamespaceGenerator's static
+// dependsOnDetachedApps set consulted by NamespaceRuntime.detachedAppsChanged,
+// v1.4.1 changelog). That hardcode is exactly what internal/namespace/generator.go's
+// GatingApps field replaces, so pinning it here would just reintroduce the
+// hardcode in the test. The real Kotlin-parity set is still pinned — from the
+// generator side, where it is actually produced — by
+// TestGatingApps_ReportedByGenerator and the onlyoffice/alfresco assertions in
+// internal/namespace/generator_test.go.
+func TestRegenOnAttachToggle_ReadsRuntimeGatingApps(t *testing.T) {
+	rt := namespace.NewRuntime(&namespace.Config{ID: "test"}, nil, t.TempDir())
+	rt.SetGatingApps(map[string]bool{"rag": true, appdef.AppAi: true})
+
+	assert.True(t, regenOnAttachToggle(rt, "rag"),
+		"an app the generator marked gating must trigger regen, even one the daemon has never heard of")
+	assert.True(t, regenOnAttachToggle(rt, appdef.AppAi))
+	assert.False(t, regenOnAttachToggle(rt, appdef.AppGateway), "a non-gating app must NOT trigger regen")
+	assert.False(t, regenOnAttachToggle(rt, ""), "empty name must NOT trigger regen")
+
+	// The answer reflects the runtime's LATEST generation, not a fixed set: a
+	// bundle change that drops "rag" from GatingApps (and adds onlyoffice)
+	// changes the answer on the next SetGatingApps call, with no daemon change.
+	rt.SetGatingApps(map[string]bool{appdef.AppOnlyoffice: true})
+	assert.False(t, regenOnAttachToggle(rt, "rag"), "gating set must come from the latest generation, not accumulate")
+	assert.True(t, regenOnAttachToggle(rt, appdef.AppOnlyoffice))
+}
+
+// TestRegenOnAttachToggle_NilGatingApps covers a runtime that never had
+// SetGatingApps called (e.g. before the first successful generation) — must
+// report false rather than panic on a nil map.
+func TestRegenOnAttachToggle_NilGatingApps(t *testing.T) {
+	rt := namespace.NewRuntime(&namespace.Config{ID: "test"}, nil, t.TempDir())
+	assert.False(t, regenOnAttachToggle(rt, appdef.AppAi))
 }
 
 // syncBuffer is a race-free log sink: the regeneration WARN is written from the

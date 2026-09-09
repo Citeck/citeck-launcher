@@ -938,6 +938,9 @@ func generateSttSidecar(ctx *NsGenContext) {
 	if !ok {
 		return
 	}
+	// ai's detach state decides whether stt-sidecar exists at all — toggling it
+	// must regenerate the namespace (see NsGenContext.MarkGatingApp).
+	ctx.MarkGatingApp(appdef.AppAi)
 	if ctx.DetachedApps[appdef.AppAi] {
 		// AI off the table → STT serves nothing.
 		return

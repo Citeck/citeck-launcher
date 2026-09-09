@@ -1538,3 +1538,25 @@ func sortedFileKeys(files map[string][]byte) []string {
 	sort.Strings(keys)
 	return keys
 }
+
+// TestGatingApps_ReportedByGenerator pins that Generate reports which apps are
+// "gating" — apps whose detach state changes the composition of the namespace
+// (which other apps get generated at all), as opposed to DependsOnDetachedApps
+// (detached apps referenced via dependsOn). The daemon regenerates the
+// namespace when a gating app is attached/detached; without a dynamic set here
+// it would have to hardcode app names, which is exactly what this field
+// replaces (see internal/daemon/attach_toggle_regen.go).
+func TestGatingApps_ReportedByGenerator(t *testing.T) {
+	config.ResetDesktopMode()
+	bun := &bundle.Def{Applications: map[string]bundle.AppDef{
+		"ai":          {Image: "bundle/ai:1.0"},
+		"stt-sidecar": {Image: "bundle/stt:1.0"},
+	}}
+	ws := &bundle.WorkspaceConfig{Webapps: []bundle.WebappConfig{{ID: "ai"}}}
+
+	resp, err := Generate(basicCfg(), bun, ws, SystemSecrets{JWT: "j", OIDC: "o"})
+	require.NoError(t, err)
+
+	assert.True(t, resp.GatingApps["ai"],
+		"переключение ai меняет состав неймспейса, значит требует регенерации")
+}

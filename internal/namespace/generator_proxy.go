@@ -24,6 +24,9 @@ func generateProxy(ctx *NsGenContext) {
 	app := ctx.GetOrCreateApp(appdef.AppProxy)
 	hasInitActions := false
 
+	// Toggling onlyoffice must regenerate the namespace so the proxy picks up
+	// or drops ONLYOFFICE_TARGET (see NsGenContext.MarkGatingApp).
+	ctx.MarkGatingApp(appdef.AppOnlyoffice)
 	if !ctx.DetachedApps[appdef.AppOnlyoffice] {
 		app.AddEnv("ONLYOFFICE_TARGET", OnlyofficeHost)
 		app.AddDependsOn(appdef.AppOnlyoffice)
@@ -143,6 +146,9 @@ func generateProxy(ctx *NsGenContext) {
 	app.AddEnv("GATEWAY_TARGET", fmt.Sprintf("%s:%s", appdef.AppGateway, gatewayPort))
 	app.AddEnv("ECOS_INIT_DELAY", "0")
 	alfrescoEnabled := ctx.WorkspaceConfig != nil && ctx.WorkspaceConfig.Alfresco.Enabled && ctx.Applications[appdef.AppAlfresco] != nil && !ctx.DetachedApps[appdef.AppAlfresco]
+	// Toggling alfresco must regenerate the namespace so the proxy picks up or
+	// drops it as the PROXY_TARGET (see NsGenContext.MarkGatingApp).
+	ctx.MarkGatingApp(appdef.AppAlfresco)
 	if alfrescoEnabled {
 		app.AddEnv("ALFRESCO_ENABLED", "true")
 		proxyTarget = fmt.Sprintf("%s:8080", appdef.AppAlfresco)
