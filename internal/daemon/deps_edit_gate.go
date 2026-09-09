@@ -16,10 +16,14 @@ import (
 // `citeck edit postgres` (or the gear editor) setting `image: postgres:18`
 // would put PostgreSQL 18 onto a 17 data directory with no migration.
 //
-// An edit with no image says nothing about the version — DiffAppDef records no
-// image at all when the edit did not change it, so the generated def's own
-// (already pin-gated) image stands — and with no pin there is no recorded
-// version to refuse against; both pass.
+// Two shapes pass. An edit with no image names no VERSION, which is the only
+// question this gate asks. (It is NOT the same as "the image is unchanged":
+// handlePutAppConfig unmarshals the whole submitted YAML into a def, and
+// ApplicationDef.Image has no `omitempty`, so DiffAppDef records `image: ""`
+// and the merged def ends up with a BLANK image that fails at pull time. That
+// is a malformed def, not a version move onto data it does not fit, and
+// refusing it here would answer the wrong question with the wrong message.)
+// And with no pin there is no recorded version to refuse against.
 func dependencyEditLocked(rt *namespace.Runtime, name string, newDef appdef.ApplicationDef) (deps.ID, string, bool) {
 	d, ok := deps.ByApp(name)
 	if !ok || newDef.Image == "" {

@@ -27,6 +27,13 @@ import (
 // namespace-switch path (handleActivateNamespace) so the two routes share one
 // definition of "what a loaded namespace looks like".
 type loadNamespaceInput struct {
+	// Ctx bounds the load's own I/O — today the dependency-pin seeding, which
+	// talks to Docker. Every caller that HAS a daemon passes d.bgCtx, so a
+	// shutdown mid-activate cancels the probes instead of holding the switch
+	// open; the boot path (Daemon.Start) genuinely has none — bgCtx is created
+	// from the result of this very call — and leaves it nil. nil means
+	// context.Background(): the seeding's own 30s deadline still bounds it.
+	Ctx           context.Context
 	Store         storage.Store
 	SecretService *storage.SecretService
 	DockerClient  *docker.Client
@@ -36,6 +43,14 @@ type loadNamespaceInput struct {
 	NamespaceID   string
 	Offline       bool
 	Desktop       bool
+}
+
+// context is the load's context, or Background when the caller had none.
+func (in loadNamespaceInput) context() context.Context {
+	if in.Ctx == nil {
+		return context.Background()
+	}
+	return in.Ctx
 }
 
 // loadedNamespace captures everything loadNamespace produces. The caller is
@@ -395,8 +410,9 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 			persistedPins[id] = st.Image
 		}
 	}
-	pins, seededPins := resolveDependencyPins(context.Background(),
-		persistedPins, dockerDependencyProbe{dc: depsDockerOf(dc), volumesBase: volumesBase})
+	pins, seededPins := resolveDependencyPins(in.context(),
+		persistedPins, dockerDependencyProbe{dc: depsDockerOf(dc), volumesBase: volumesBase},
+		namespaceDependencies(nsCfg))
 	for id, img := range seededPins {
 		slog.Info("Dependency pin seeded", "ns", nsID, "dependency", id, "image", img)
 	}

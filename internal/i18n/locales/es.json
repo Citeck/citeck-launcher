@@ -398,6 +398,7 @@
   "deps.preflight.data": "Tamaño de los datos: {size}",
   "deps.preflight.host": "Host (volcado): se necesitan {need}, libres {free}",
   "deps.preflight.volume": "Volúmenes: se necesitan {need}, libres {free}",
+  "deps.preflight.shared": "Disco (volcado + nuevo clúster): se necesitan {need}, libres {free}",
   "deps.preflight.willStop": "El espacio de nombres se detendrá y se volverá a iniciar",
   "deps.preflight.existingVolume": "El volumen {volume} ya existe ({size}, versión {version})",
   "deps.preflightFailed": "Las comprobaciones previas fallaron; no se cambió nada",

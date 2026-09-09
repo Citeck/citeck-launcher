@@ -63,6 +63,21 @@ function isPreparing(migration: DepsMigrationView): boolean {
 const PREPARING_STEP = 'preparing'
 
 /**
+ * Free space on the ONE filesystem both halves land on (Go: `smallerFree`).
+ *
+ * It is measured twice by two different mechanisms — a host statfs and a `df`
+ * inside a container — so when they disagree the smaller is the one that can
+ * run out, and it is the one the daemon judges by. A half the daemon could not
+ * measure is left at 0 and reported as a problem of its own, so a 0 is skipped
+ * rather than taken as the minimum: it would turn a measurement failure into a
+ * claim that the disk is full.
+ */
+function smallerFree(pre: PreflightResult): number {
+  const measured = [pre.freeHostBytes, pre.freeVolumeBytes].filter((n) => n > 0)
+  return measured.length > 0 ? Math.min(...measured) : 0
+}
+
+/**
  * What each infrastructure dependency runs on, what the bundle offers, and the
  * migration flow (confirm → progress → result) for the ones the launcher can
  * migrate. Closing never cancels a migration; reopening shows the current step
@@ -84,6 +99,12 @@ export function DependenciesDialog({ open, onClose }: Props) {
   const result = useDepsStore((s) => s.result)
   const clearResult = useDepsStore((s) => s.clearResult)
   const data = useDepsStore((s) => s.data)
+  // From the store's own field rather than out of `data`: the ordinary
+  // namespace fetch writes it too (NamespaceDto.dependencyRollbackPending),
+  // and it is what decides whether Upgrade can do anything at all — a dialog
+  // holding a payload from before an interrupted migration would otherwise
+  // offer a button whose only possible answer is a 409.
+  const rollbackPending = useDepsStore((s) => s.rollbackPending)
   const refresh = useDepsStore((s) => s.refresh)
   const [view, setView] = useState<View>({ kind: 'list' })
   const [preflight, setPreflight] = useState<PreflightResult | null>(null)
@@ -102,6 +123,19 @@ export function DependenciesDialog({ open, onClose }: Props) {
     if (open) reload()
   }, [open, reload, resultAt])
 
+  // And on the END of a migration, verdict or not. A migration that vanishes
+  // with no verdict is the daemon-died case: its restart ran the recovery, and
+  // if the ROLLBACK failed the journal is still open — the pin is frozen and
+  // every new migration is refused with a 409. Nothing announces that: no
+  // event and no result. The namespace fetch now carries the alarm itself, but
+  // not the LIST: the items, the pin and the last verdict the dialog already
+  // had were all read before any of it happened.
+  // The store serves this from the verdict's own fetch when there was one.
+  const migrating = !!migration
+  useEffect(() => {
+    if (open && !migrating) reload()
+  }, [open, migrating, reload])
+
   // Follow the migration wherever the dialog is: a running one shows progress,
   // and its end shows the verdict. Derived during render (React's documented
   // way to adjust state from changed inputs) rather than in an effect, which
@@ -116,7 +150,6 @@ export function DependenciesDialog({ open, onClose }: Props) {
     setView(result ? { kind: 'result' } : { kind: 'list' })
   }
 
-  const rollbackPending = data?.rollbackPending ?? ''
   const lastResult = data?.lastResult
 
   const openConfirm = (item: DependencyDto) => {
@@ -247,7 +280,11 @@ export function DependenciesDialog({ open, onClose }: Props) {
               <tbody>
                 {data.items.map((item) => (
                   <tr key={item.id} data-testid={`dep-${item.id}`} className="border-b border-border/50">
-                    <td className="py-1.5">{item.app}</td>
+                    {/* The dependency ID, never `item.app`: the two differ for
+                        mongodb (app `mongo`), and the banner, the progress
+                        panel, the verdict and `citeck deps upgrade <id>` all
+                        name it by the id. One thing, one name. */}
+                    <td className="py-1.5">{item.id}</td>
                     <td className="py-1.5 font-mono text-xs">{item.currentImage}</td>
                     <td className="py-1.5 font-mono text-xs">{item.targetImage}</td>
                     <td className="py-1.5 text-xs">{statusLabel(item)}</td>
@@ -279,7 +316,7 @@ export function DependenciesDialog({ open, onClose }: Props) {
 
       {view.kind === 'confirm' && (
         <div className="space-y-2 text-sm">
-          <p>{t('deps.confirm.intro', { id: view.item.app, from: view.item.currentImage, to: view.item.targetImage })}</p>
+          <p>{t('deps.confirm.intro', { id: view.item.id, from: view.item.currentImage, to: view.item.targetImage })}</p>
           {!preflight && <Loader2 size={16} className="animate-spin" />}
           {preflight && (
             <>
@@ -294,8 +331,22 @@ export function DependenciesDialog({ open, onClose }: Props) {
                 {preflight.requiredHostBytes > 0 && (
                   <>
                     <li>{t('deps.preflight.data', { size: formatBytes(preflight.dataSizeBytes) })}</li>
-                    <li>{t('deps.preflight.host', { need: formatBytes(preflight.requiredHostBytes), free: formatBytes(preflight.freeHostBytes) })}</li>
-                    <li>{t('deps.preflight.volume', { need: formatBytes(preflight.requiredVolumeBytes), free: formatBytes(preflight.freeVolumeBytes) })}</li>
+                    {/* One filesystem carrying both writes is ONE line with the
+                        sum. As two lines each half looks satisfiable on its own
+                        while the daemon refuses the migration for wanting them
+                        together — the confirm screen would be arguing with the
+                        error it is about to produce. */}
+                    {preflight.sharedFilesystem ? (
+                      <li>{t('deps.preflight.shared', {
+                        need: formatBytes(preflight.requiredTotalBytes),
+                        free: formatBytes(smallerFree(preflight)),
+                      })}</li>
+                    ) : (
+                      <>
+                        <li>{t('deps.preflight.host', { need: formatBytes(preflight.requiredHostBytes), free: formatBytes(preflight.freeHostBytes) })}</li>
+                        <li>{t('deps.preflight.volume', { need: formatBytes(preflight.requiredVolumeBytes), free: formatBytes(preflight.freeVolumeBytes) })}</li>
+                      </>
+                    )}
                   </>
                 )}
                 {preflight.wasRunning && <li>{t('deps.preflight.willStop')}</li>}

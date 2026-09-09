@@ -465,6 +465,7 @@ const es = {
   'deps.preflight.data': 'Tamaño de los datos: {size}',
   'deps.preflight.host': 'Host (volcado): necesita {need}, libre {free}',
   'deps.preflight.volume': 'Volúmenes: necesita {need}, libre {free}',
+  'deps.preflight.shared': 'Disco (volcado + nuevo clúster): necesita {need}, libre {free}',
   'deps.preflight.willStop': 'El namespace se detendrá y se iniciará de nuevo',
   'deps.preflight.oldKept': 'El volumen de datos actual se mantiene intacto; cualquier fallo revierte a él',
   'deps.preflight.replaceVolume': 'Eliminar el volumen existente {volume} ({size}, PostgreSQL {version}) y volver a crearlo',

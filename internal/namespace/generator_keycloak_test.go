@@ -17,9 +17,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// update regenerates the golden files in testdata/keycloak when set.
-// Usage: go test ./internal/namespace -run TestRenderKeycloakInitScript -update
-var updateKeycloakGoldens = flag.Bool("update", false, "update keycloak init.sh golden files")
+// updateGolden rewrites every golden file this package keeps — the keycloak
+// init.sh scripts in testdata/keycloak and the postgres hash input in
+// testdata/postgres17.hashinput.golden. ONE flag for the package: with two
+// spellings, refreshing "the goldens" with either one silently left the other
+// family stale.
+// Usage: go test ./internal/namespace -count=1 -args -update
+var updateGolden = flag.Bool("update", false, "rewrite golden files")
 
 func TestRenderKeycloakInitScript(t *testing.T) {
 	tests := []struct {
@@ -118,7 +122,7 @@ func TestRenderKeycloakInitScript(t *testing.T) {
 			got, err := appfiles.RenderKeycloakInitScript(tc.params)
 			require.NoError(t, err)
 
-			if *updateKeycloakGoldens {
+			if *updateGolden {
 				require.NoError(t, os.MkdirAll(filepath.Dir(tc.golden), 0o755))
 				require.NoError(t, os.WriteFile(tc.golden, []byte(got), 0o644))
 				return

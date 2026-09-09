@@ -14,7 +14,9 @@ package migratetest
 import (
 	"context"
 	"fmt"
+	"maps"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 
@@ -31,9 +33,13 @@ type ExecFunc func(container, cmdline string) (stdout, stderr string, exitCode i
 // FakeEnv is an in-memory migrate.Env. Every field is exported so a test can
 // arrange the world directly; ExecFn scripts command output per container.
 //
-// The maps are guarded by mu because a plan may touch the env from a worker
-// goroutine, but the plain slices a test reads afterwards (Log, Pulled,
-// Reloads) must be read through the accessors once the run has finished.
+// Every piece of that state is guarded by mu, because a plan may touch the env
+// from a worker goroutine (the dump step's file-growth watcher is one) and
+// nothing but the mutex orders that against the test. The exported fields are
+// for ARRANGING the world before a run; reading it back goes through the
+// accessors — Log, Pulled, Reloads, PortsStripped, DirNames — or through the
+// Env methods themselves (ContainerRunning, VolumeExists, ReadVolumeFile),
+// which take the lock like every other caller.
 type FakeEnv struct {
 	mu sync.Mutex
 
@@ -50,14 +56,20 @@ type FakeEnv struct {
 	FreeHost   int64
 	FreeVolume int64
 	DumpRoot   string
+	// SharedFS is what DumpSharesFilesystemWithVolumes answers. It defaults to
+	// FALSE — two filesystems — because that is the world the fake's two
+	// independent free-space knobs already model: a macOS/Windows desktop,
+	// where the dump lands on the host and the new cluster inside the Docker
+	// VM. A test that wants the server layout (one disk under both) sets it.
+	SharedFS bool
 
 	// ExecFn scripts command results; the zero behavior is a silent success.
 	ExecFn ExecFunc
 	// FailOn injects an error into a single method call, keyed "op:arg" —
-	// "run:pg-src", "createvol:postgres3", "pull:postgres:18", "stopns:",
-	// "reload:", "rmvol:postgres3", "rm:pg-src", "mkdir:/host/x",
-	// "rmdir:/host/x", "rmdirempty:/host/x", "gendef:postgres:18",
-	// "readfile:postgres2/PG_VERSION".
+	// "run:pg-src", "running:pg-src", "createvol:postgres3",
+	// "pull:postgres:18", "stopns:", "reload:", "rmvol:postgres3", "rm:pg-src",
+	// "mkdir:/host/x", "rmdir:/host/x", "rmdirempty:/host/x",
+	// "gendef:postgres:18", "readfile:postgres2/PG_VERSION", "sharedfs:".
 	FailOn map[string]error
 
 	log           []string
@@ -119,7 +131,36 @@ func (f *FakeEnv) Reloads() []bool {
 	return append([]bool(nil), f.reloads...)
 }
 
-// Fail returns the injected error for op+arg, or nil. Caller must hold mu.
+// ContainerNames returns the containers the fake currently runs, sorted.
+func (f *FakeEnv) ContainerNames() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Sorted(maps.Keys(f.Containers))
+}
+
+// ContainerDef returns the def a container was started from — what RunAppDef
+// kept AFTER stripping the published ports, i.e. what the real Env would have
+// handed Docker. A test that wants to know what a temp container mounts has to
+// ask while it is still running, so this is called from inside an ExecFn more
+// often than after a run.
+func (f *FakeEnv) ContainerDef(name string) (appdef.ApplicationDef, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	d, ok := f.Containers[name]
+	return d, ok
+}
+
+// DirNames returns the directories the fake currently holds, sorted. Dirs is
+// the one inventory with no Env method to read it back, so this is how a test
+// inspects it without reaching past the mutex.
+func (f *FakeEnv) DirNames() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Sorted(maps.Keys(f.Dirs))
+}
+
+// failUnderLock returns the injected error for op+arg, or nil. The caller must
+// already hold mu — the name says so because the map it reads is guarded by it.
 func (f *FakeEnv) failUnderLock(op, arg string) error { return f.FailOn[op+":"+arg] }
 
 // NamespaceID is the fake namespace id.
@@ -156,9 +197,18 @@ func (f *FakeEnv) RunAppDef(_ context.Context, def appdef.ApplicationDef, name s
 }
 
 // ContainerRunning reports whether RunAppDef put the name in Containers.
+//
+// It takes an injected failure ("running:<name>") because the real Env asks
+// Docker, and Docker can refuse to answer — the daemon socket goes away, the
+// context expires. That is a different outcome from "not running" and the
+// readiness wait has to tell them apart: one is a container that has not come
+// up yet, the other is a world it can no longer see.
 func (f *FakeEnv) ContainerRunning(_ context.Context, name string) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if err := f.failUnderLock("running", name); err != nil {
+		return false, err
+	}
 	_, ok := f.Containers[name]
 	return ok, nil
 }
@@ -236,6 +286,22 @@ func (f *FakeEnv) VolumeFreeBytes(context.Context, string) (int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.FreeVolume, nil
+}
+
+// DumpSharesFilesystemWithVolumes answers SharedFS.
+//
+// It takes an injected failure ("sharedfs:") because the real Env can fail to
+// answer — a stat of a directory that is not there, an engine that will not
+// talk — and "cannot tell" is not the same as "different filesystems": the
+// preflight has to take the safe direction on it, and a fake that could not
+// fail would leave that path untested.
+func (f *FakeEnv) DumpSharesFilesystemWithVolumes(context.Context, string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.failUnderLock("sharedfs", ""); err != nil {
+		return false, err
+	}
+	return f.SharedFS, nil
 }
 
 // ReadVolumeFile answers from Volumes; a missing volume or file is an error.

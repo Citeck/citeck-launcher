@@ -186,11 +186,13 @@ func TestMutatingRoutesRefuseDuringALongOperation(t *testing.T) {
 }
 
 // TestSnapshotRoutesKeepTheirOwnCodeOnTheSharedLock: snapshot export/import
-// share the mutex with everything else, and their CODE is unchanged — the Web
-// UI's snapshot dialog keys on SNAPSHOT_IN_PROGRESS. The TEXT, however, must
-// name whoever actually holds the lock: "another snapshot operation is in
-// progress" while a dependency migration holds it sends the operator hunting
-// for a snapshot nobody took.
+// share the mutex with everything else, and their CODE is unchanged —
+// SNAPSHOT_IN_PROGRESS is these two routes' published answer, and renaming it
+// would break a client for nothing. The TEXT is what actually has to move:
+// nothing in the launcher BRANCHES on that code (no reference to it under
+// web/src or internal/cli), so the message is all any client shows, and
+// "another snapshot operation is in progress" while a dependency migration
+// holds the lock sends the operator hunting for a snapshot nobody took.
 func TestSnapshotRoutesKeepTheirOwnCodeOnTheSharedLock(t *testing.T) {
 	for _, holder := range []longOpKind{longOpSnapshot, longOpMigration, longOpUpdatePass} {
 		t.Run(string(holder), func(t *testing.T) {
@@ -210,8 +212,9 @@ func TestSnapshotRoutesKeepTheirOwnCodeOnTheSharedLock(t *testing.T) {
 					assert.Contains(t, rec.Body.String(), api.ErrCodeSnapshotInProgress,
 						"the snapshot dialog keys on this code; it must not change")
 					assert.NotContains(t, rec.Body.String(), api.ErrCodeLongOpInProgress)
-					assert.Contains(t, rec.Body.String(), holder.busyMessage(),
-						"the text must name the real holder, not assume a snapshot")
+					assert.Contains(t, rec.Body.String(), holder.busyMessage()+" — wait for it to finish",
+						"the text must name the real holder, not assume a snapshot — "+
+							"and say what to do about it, exactly like every other long-op refusal")
 				})
 			}
 		})
@@ -243,18 +246,20 @@ func TestTryLongOpIsExclusiveAndReleases(t *testing.T) {
 	release2()
 }
 
-// slowResponseWriter delays the handler inside its response write, which is the
-// last thing handleStartNamespace does before its deferred release runs. It
-// makes the hand-off window in TestUpdateAndStartClickIsNotRefusedByItsOwnLock
-// wide enough to be deterministic instead of a scheduling coin toss.
-type slowResponseWriter struct {
+// gatedResponseWriter holds the handler inside its response write — the last
+// thing handleStartNamespace does before its deferred release runs — until the
+// test says otherwise. That makes the hand-off window a CONDITION the test
+// controls rather than a sleep long enough to usually win: whatever the
+// scheduler does, the pass reaches its own gate while the handler is still
+// inside the section where a lock it failed to drop would still be held.
+type gatedResponseWriter struct {
 	*httptest.ResponseRecorder
-	delay time.Duration
+	release <-chan struct{}
 }
 
-func (s slowResponseWriter) Write(b []byte) (int, error) {
-	time.Sleep(s.delay)
-	return s.ResponseRecorder.Write(b) //nolint:wrapcheck // test double must return the recorder's error verbatim
+func (g gatedResponseWriter) Write(b []byte) (int, error) {
+	<-g.release
+	return g.ResponseRecorder.Write(b) //nolint:wrapcheck // test double must return the recorder's error verbatim
 }
 
 // TestUpdateAndStartClickIsNotRefusedByItsOwnLock: the handler gate and the
@@ -271,20 +276,30 @@ func TestUpdateAndStartClickIsNotRefusedByItsOwnLock(t *testing.T) {
 	mux := http.NewServeMux()
 	d.registerRoutes(mux)
 
-	req := httptest.NewRequest("POST", api.NamespaceStart, http.NoBody)
-	rec := slowResponseWriter{ResponseRecorder: httptest.NewRecorder(), delay: 100 * time.Millisecond}
-	mux.ServeHTTP(rec, req)
-	require.Equal(t, http.StatusOK, rec.Code)
+	release := make(chan struct{})
+	rec := gatedResponseWriter{ResponseRecorder: httptest.NewRecorder(), release: release}
+	served := make(chan struct{})
+	go func() {
+		defer close(served)
+		mux.ServeHTTP(rec, httptest.NewRequest("POST", api.NamespaceStart, http.NoBody))
+	}()
 
-	select {
-	case args := <-got:
-		assert.True(t, args.refreshImages)
-	case <-time.After(5 * time.Second):
-		msg, _ := d.updateFailureFor(&namespace.Config{ID: "ns1"})
-		t.Fatalf("the click never reached its reload; recorded failure: %q", msg)
-	}
-	msg, _ := d.updateFailureFor(&namespace.Config{ID: "ns1"})
+	// The handler is parked in its response write, i.e. before its deferred
+	// release: the pass either got the lock (because the handler let go
+	// explicitly) or refused itself and recorded why. Waiting for EITHER makes
+	// the failure immediate and readable instead of a five-second timeout.
+	var msg string
+	require.Eventually(t, func() bool {
+		msg, _ = d.updateFailureFor(&namespace.Config{ID: "ns1"})
+		return len(got) > 0 || msg != ""
+	}, 5*time.Second, 5*time.Millisecond, "the click neither reloaded nor reported a refusal")
 	assert.Empty(t, msg, "an uncontended click must not report a refusal")
+	require.NotEmpty(t, got, "the click never reached its reload")
+	assert.True(t, (<-got).refreshImages)
+
+	close(release)
+	<-served
+	require.Equal(t, http.StatusOK, rec.Code)
 }
 
 // TestUpdateAndStartPassRefusesWhileALongOperationHoldsTheLock is the second

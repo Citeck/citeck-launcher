@@ -465,6 +465,7 @@ const ru = {
   'deps.preflight.data': 'Размер данных: {size}',
   'deps.preflight.host': 'Хост (дамп): нужно {need}, свободно {free}',
   'deps.preflight.volume': 'Тома: нужно {need}, свободно {free}',
+  'deps.preflight.shared': 'Диск (дамп + новый кластер): нужно {need}, свободно {free}',
   'deps.preflight.willStop': 'namespace будет остановлен и запущен заново',
   'deps.preflight.oldKept': 'Текущий том с данными остаётся нетронутым; при любой ошибке выполняется откат на него',
   'deps.preflight.replaceVolume': 'Удалить существующий том {volume} ({size}, PostgreSQL {version}) и создать его заново',

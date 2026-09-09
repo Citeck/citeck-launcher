@@ -1,10 +1,12 @@
 package docker
 
 import (
+	"context"
 	"testing"
 
 	"github.com/moby/moby/api/types/container"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/citeck/citeck-launcher/internal/appdef"
 )
@@ -112,12 +114,13 @@ func TestEffectiveNameFeedsTheContainerNameNotJustTheLabels(t *testing.T) {
 	app := appdef.ApplicationDef{Name: "postgres", Image: "postgres:16"}
 	opts := ContainerCreateOpts{Name: "depsmig-src"}
 
-	name := effectiveName(app, opts)
+	name, overridden := effectiveName(app, opts)
 
 	assert.Equal(t, "depsmig-src", name)
+	assert.True(t, overridden)
 	assert.Equal(t, "citeck_depsmig-src_prod", c.ContainerName(name))
 	assert.Equal(t, "depsmig-src", c.containerLabels(app, name, nil)[LabelAppName])
-	assert.Equal(t, []string{"depsmig-src"}, networkAliases(app, name))
+	assert.Equal(t, []string{"depsmig-src"}, networkAliases(app, name, overridden))
 }
 
 // TestAnOverriddenContainerDoesNotAnswerToTheAppByHostnameEither is the third
@@ -129,7 +132,8 @@ func TestEffectiveNameFeedsTheContainerNameNotJustTheLabels(t *testing.T) {
 func TestAnOverriddenContainerDoesNotAnswerToTheAppByHostnameEither(t *testing.T) {
 	app := appdef.ApplicationDef{Name: "postgres", Image: "postgres:17.5"}
 
-	cfg := buildContainerConfig(app, effectiveName(app, ContainerCreateOpts{Name: "depsmig-src"}), nil, nil, nil)
+	name, _ := effectiveName(app, ContainerCreateOpts{Name: "depsmig-src"})
+	cfg := buildContainerConfig(app, name, nil, nil, nil)
 
 	assert.Equal(t, "depsmig-src", cfg.Hostname)
 	assert.NotEqual(t, app.Name, cfg.Hostname)
@@ -139,7 +143,9 @@ func TestAnOverriddenContainerDoesNotAnswerToTheAppByHostnameEither(t *testing.T
 // CreateContainer passes the zero opts and must keep getting app.Name.
 func TestEffectiveNameWithoutAnOverrideIsTheAppName(t *testing.T) {
 	app := appdef.ApplicationDef{Name: "postgres"}
-	assert.Equal(t, "postgres", effectiveName(app, ContainerCreateOpts{}))
+	name, overridden := effectiveName(app, ContainerCreateOpts{})
+	assert.Equal(t, "postgres", name)
+	assert.False(t, overridden)
 }
 
 // TestNetworkAliasesAreUnchangedWithoutAnOverride pins byte-identical
@@ -148,7 +154,8 @@ func TestEffectiveNameWithoutAnOverrideIsTheAppName(t *testing.T) {
 // apps' declared aliases).
 func TestNetworkAliasesAreUnchangedWithoutAnOverride(t *testing.T) {
 	app := appdef.ApplicationDef{Name: "mailhog", NetworkAliases: []string{"mail", "smtp"}}
-	assert.Equal(t, []string{"mailhog", "mail", "smtp"}, networkAliases(app, effectiveName(app, ContainerCreateOpts{})))
+	name, overridden := effectiveName(app, ContainerCreateOpts{})
+	assert.Equal(t, []string{"mailhog", "mail", "smtp"}, networkAliases(app, name, overridden))
 }
 
 // TestAnOverriddenContainerDoesNotAnswerToTheAppOnTheNetwork is the other half
@@ -162,7 +169,7 @@ func TestNetworkAliasesAreUnchangedWithoutAnOverride(t *testing.T) {
 func TestAnOverriddenContainerDoesNotAnswerToTheAppOnTheNetwork(t *testing.T) {
 	app := appdef.ApplicationDef{Name: "postgres", NetworkAliases: []string{"db", "primary"}}
 
-	aliases := networkAliases(app, "depsmig-src")
+	aliases := networkAliases(app, "depsmig-src", true)
 
 	assert.Equal(t, []string{"depsmig-src"}, aliases)
 	assert.NotContains(t, aliases, "postgres")
@@ -225,4 +232,157 @@ func TestContainerLabelsDoesNotMutateTheCallersExtraMap(t *testing.T) {
 func TestLabelTempKeyAndValue(t *testing.T) {
 	assert.Equal(t, "citeck.launcher.temp", LabelTemp)
 	assert.Equal(t, "true", LabelTempValue)
+}
+
+// TestAnOverrideEqualToTheAppsOwnNameIsStillAnOverride removes the last place
+// the create path decided "is this a temp container?" by COMPARING STRINGS.
+// effectiveName answered "" with app.Name, so an override a caller explicitly
+// set to the app's own name was indistinguishable from no override at all, and
+// networkAliases — which keyed off name != app.Name — silently handed that
+// container the app's full DNS identity (its name plus every alias in the def).
+// The answer is structural: an override is what the caller SET, never what it
+// happens to equal.
+func TestAnOverrideEqualToTheAppsOwnNameIsStillAnOverride(t *testing.T) {
+	app := appdef.ApplicationDef{Name: "postgres", NetworkAliases: []string{"db", "primary"}}
+
+	name, overridden := effectiveName(app, ContainerCreateOpts{Name: "postgres"})
+
+	assert.Equal(t, "postgres", name)
+	assert.True(t, overridden)
+	assert.Equal(t, []string{"postgres"}, networkAliases(app, name, overridden),
+		"an override drops the def's own aliases, whatever the override is spelled")
+
+	name, overridden = effectiveName(app, ContainerCreateOpts{})
+
+	assert.Equal(t, "postgres", name)
+	assert.False(t, overridden)
+	assert.Equal(t, []string{"postgres", "db", "primary"}, networkAliases(app, name, overridden),
+		"the namespace's own container keeps its full identity")
+}
+
+// TestAnOverrideThatIsTheAppsOwnNameIsRefused is the loud half of the same
+// finding. "It collides on the container name anyway" is only true while the
+// app's container EXISTS: a migration runs with the namespace stopped, and if
+// the real container has been removed (a recreate, a purge, a first start that
+// never happened) the create would SUCCEED — producing a container named
+// citeck_postgres_<ns> and labeled app.name=postgres, i.e. one the reconciler
+// adopts as the namespace's own postgres while a migration owns its data
+// volume. Docker's 409 is not a guard we may rely on, so the seam refuses
+// before it asks the engine, and the message says what to use instead.
+func TestAnOverrideThatIsTheAppsOwnNameIsRefused(t *testing.T) {
+	c := &Client{namespace: "prod"}
+	app := appdef.ApplicationDef{Name: "postgres", Image: "postgres:17.5"}
+
+	_, err := c.buildCreateOptions(context.Background(), app, "", ContainerCreateOpts{
+		Name:        "postgres",
+		ExtraLabels: map[string]string{LabelTemp: LabelTempValue},
+		NoRestart:   true,
+	})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "postgres")
+
+	// The namespace's own container — no override — is unaffected.
+	own, err := c.buildCreateOptions(context.Background(), app, "", ContainerCreateOpts{})
+	require.NoError(t, err)
+	assert.Equal(t, "citeck_postgres_prod", own.Name)
+
+	// So is a genuine override.
+	temp, err := c.buildCreateOptions(context.Background(), app, "", ContainerCreateOpts{Name: "depsmig-src"})
+	require.NoError(t, err)
+	assert.Equal(t, "citeck_depsmig-src_prod", temp.Name)
+}
+
+// TestCreateOptionsCarryTheCallersOptsIntoEveryPartOfTheRequest pins the
+// WIRING the reviewers could not reach: buildContainerConfig, containerLabels,
+// buildHostConfig and networkAliases were each covered on their own, but
+// nothing checked that CreateContainerWith hands its OWN opts to all four.
+// Dropping opts at any one of those call sites — passing a zero
+// ContainerCreateOpts to buildHostConfig is the easiest slip — brings back
+// exactly the failure the override exists to prevent, with every unit test
+// still green: a temp container that Docker restarts after a reboot, or one
+// that answers to "postgres" on the namespace network.
+//
+// The whole request is assembled without touching the engine; only the final
+// ContainerCreate call needs one.
+func TestCreateOptionsCarryTheCallersOptsIntoEveryPartOfTheRequest(t *testing.T) {
+	c := &Client{namespace: "prod"}
+	app := appdef.ApplicationDef{
+		Name:           "postgres",
+		Image:          "postgres:17.5",
+		NetworkAliases: []string{"db"},
+		Environments:   appdef.OrderedMap{{Key: "POSTGRES_PASSWORD", Value: "s3cret"}},
+		Ports:          []string{"5432:5432"},
+		Volumes:        []string{"/host/pgdata:/var/lib/postgresql/data"},
+		Resources:      &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: "512m"}},
+		ShmSize:        "64m",
+	}
+
+	got, err := c.buildCreateOptions(context.Background(), app, "", ContainerCreateOpts{
+		Name:        "depsmig-dst",
+		ExtraLabels: map[string]string{LabelTemp: LabelTempValue},
+		NoRestart:   true,
+	})
+	require.NoError(t, err)
+
+	// opts.Name → the container name, the hostname, the app-name label and the
+	// only network alias.
+	assert.Equal(t, "citeck_depsmig-dst_prod", got.Name)
+	assert.Equal(t, "depsmig-dst", got.Config.Hostname)
+	assert.Equal(t, "depsmig-dst", got.Config.Labels[LabelAppName])
+	assert.Equal(t, []string{"depsmig-dst"},
+		got.NetworkingConfig.EndpointsConfig["citeck_network_prod"].Aliases)
+
+	// opts.NoRestart → the host config. This is the assertion with no other
+	// home: buildHostConfig is the only consumer of opts outside the name.
+	assert.Equal(t, container.RestartPolicyDisabled, got.HostConfig.RestartPolicy.Name)
+
+	// opts.ExtraLabels → the labels, without losing the launcher's own.
+	assert.Equal(t, LabelTempValue, got.Config.Labels[LabelTemp])
+	assert.Equal(t, "prod", got.Config.Labels[LabelNamespace])
+
+	// ...and the def itself still reaches the request unchanged.
+	assert.Equal(t, "postgres:17.5", got.Config.Image)
+	assert.Equal(t, []string{"POSTGRES_PASSWORD=s3cret"}, got.Config.Env)
+	assert.Equal(t, []string{"/host/pgdata:/var/lib/postgresql/data"}, got.HostConfig.Binds)
+	assert.Equal(t, int64(512*1024*1024), got.HostConfig.Memory)
+	assert.Equal(t, int64(512*1024*1024), got.HostConfig.MemorySwap)
+	assert.Equal(t, int64(64*1024*1024), got.HostConfig.ShmSize)
+	assert.Equal(t, container.NetworkMode("citeck_network_prod"), got.HostConfig.NetworkMode)
+}
+
+// TestCreateOptionsWithoutOptsAreTheNamespacesOwnContainer is the other side of
+// the same seam: CreateContainer passes the zero opts, and everything a
+// namespace container has always been created with must be byte-identical.
+func TestCreateOptionsWithoutOptsAreTheNamespacesOwnContainer(t *testing.T) {
+	c := &Client{namespace: "prod"}
+	app := appdef.ApplicationDef{
+		Name:           "mailhog",
+		Image:          "mailhog:latest",
+		NetworkAliases: []string{"mail", "smtp"},
+	}
+
+	got, err := c.buildCreateOptions(context.Background(), app, "", ContainerCreateOpts{})
+	require.NoError(t, err)
+
+	assert.Equal(t, "citeck_mailhog_prod", got.Name)
+	assert.Equal(t, "mailhog", got.Config.Hostname)
+	assert.Equal(t, "mailhog", got.Config.Labels[LabelAppName])
+	assert.NotContains(t, got.Config.Labels, LabelTemp)
+	assert.Equal(t, []string{"mailhog", "mail", "smtp"},
+		got.NetworkingConfig.EndpointsConfig["citeck_network_prod"].Aliases)
+	assert.Equal(t, container.RestartPolicyUnlessStopped, got.HostConfig.RestartPolicy.Name)
+}
+
+// TestCreateOptionsRejectAnUnparsableContainerPort keeps the one error the
+// assembly can raise on its own reaching the caller instead of a half-built
+// request going to the engine.
+func TestCreateOptionsRejectAnUnparsableContainerPort(t *testing.T) {
+	c := &Client{namespace: "prod"}
+	app := appdef.ApplicationDef{Name: "postgres", Image: "postgres:17.5", Ports: []string{"5432:not-a-port"}}
+
+	_, err := c.buildCreateOptions(context.Background(), app, "", ContainerCreateOpts{})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not-a-port")
 }

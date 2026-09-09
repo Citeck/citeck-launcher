@@ -3,6 +3,9 @@ package namespace
 import (
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/citeck/citeck-launcher/internal/bundle"
 )
 
@@ -162,4 +165,28 @@ func TestNextPort(t *testing.T) {
 	if p2 <= p1 {
 		t.Error("expected incrementing ports")
 	}
+}
+
+// Every map on the generation context is built by the constructor, so no
+// generator has to nil-check before writing. DependencyImages was the one
+// exception (resolveDependencyImage created it on first use), which also left
+// GenResp.Dependencies nil for a namespace that registered no dependency —
+// readable in Go, but a map the caller cannot write to and, if it ever reached
+// the wire, JSON `null` rather than `{}`.
+func TestNewNsGenContextBuildsEveryMap(t *testing.T) {
+	ctx := makeCtx(80, "localhost", false)
+	assert.NotNil(t, ctx.DetachedApps)
+	assert.NotNil(t, ctx.Files)
+	assert.NotNil(t, ctx.Applications)
+	assert.NotNil(t, ctx.CloudConfig)
+	assert.NotNil(t, ctx.DependencyImages)
+}
+
+// And the generator hands that same map out, so a caller ranging over the
+// result never has to distinguish "no dependencies" from "not generated".
+func TestGenerateAlwaysReportsADependencyMap(t *testing.T) {
+	resp, err := Generate(&Config{ID: "ns1", Proxy: ProxyProps{Port: 80}}, &bundle.EmptyDef,
+		&bundle.WorkspaceConfig{}, SystemSecrets{JWT: "j", OIDC: "o"})
+	require.NoError(t, err)
+	assert.NotNil(t, resp.Dependencies)
 }

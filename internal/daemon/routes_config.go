@@ -176,6 +176,13 @@ func (d *Daemon) handleGetNamespace(w http.ResponseWriter, r *http.Request) {
 	if act.nsConfig != nil {
 		dto.DependencyMigration = d.currentDepsMigration(act.nsConfig.ID)
 	}
+	// An interrupted migration whose rollback failed: the load-time recovery
+	// that found it emits no event and no result, so without this the alarm
+	// reached a client only if it happened to open the dependencies dialog.
+	// rollbackBlocker (not journalBlocker) is deliberate — while a migration is
+	// running the journal is simply its record, and DependencyMigration above
+	// already says so.
+	dto.DependencyRollbackPending = d.rollbackBlocker(act)
 	// When namespace is stopped, runtime clears the app list. Populate from
 	// the resolved config so the UI always shows the full service catalog.
 	if len(dto.Apps) == 0 && len(appDefs) > 0 {

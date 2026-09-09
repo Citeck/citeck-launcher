@@ -24,6 +24,14 @@ func TestParseImageVersion(t *testing.T) {
 		{"postgres:latest", Version{}, false},
 		{"postgres", Version{}, false},
 		{"postgres@sha256:abcdef", Version{}, false},
+		// A digest reference is unknown even when it carries a readable tag:
+		// the digest is what Docker resolves and the tag beside it is a label
+		// anyone can move, so believing it would pin the version off a string
+		// that does not decide what runs. The documented consequence is a
+		// PERMANENT hold (deps.Breaking answers true for every candidate), and
+		// the only way out is an edit that gives the image a plain tag.
+		{"postgres:17@sha256:abcdef", Version{}, false},
+		{"nexus.citeck.ru:5000/infra/postgres:17.11@sha256:abcdef", Version{}, false},
 		{"", Version{}, false},
 		{"postgres:", Version{}, false},
 		{"postgres:1..2", Version{}, false},

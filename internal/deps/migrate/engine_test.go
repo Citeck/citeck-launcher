@@ -138,7 +138,9 @@ func TestRunJournalsEveryStepThenCommitsOnce(t *testing.T) {
 	assert.Equal(t, []string{"a", "b", "finalize"}, order)
 	assert.Equal(t, []string{"a", "b"}, progress)
 	// write-ahead: "" before a, "a" after a, "b" after b
-	assert.Equal(t, []string{"", "a", "b"}, st.steps())
+	require.Equal(t, []string{"", "a", "b"}, st.steps())
+	// Fatal above, because the next line indexes what it just counted: a
+	// non-fatal assert would report the real failure and then panic on it.
 	assert.Equal(t, "postgres3", st.journals[2].CreatedVolume, "journal carries what steps record")
 	require.Len(t, st.commits, 1)
 	assert.Equal(t, "postgres2", st.commits[0].OldVolume)
@@ -146,6 +148,63 @@ func TestRunJournalsEveryStepThenCommitsOnce(t *testing.T) {
 	assert.Equal(t, "postgres:18", st.pin)
 	assert.Nil(t, st.journal)
 	assert.Empty(t, st.failures)
+}
+
+// Progress is the engine's own bookkeeping: which step, 1-based, of how many,
+// plus whatever sub-progress the step reports under that same identity. The
+// web dialog renders "step 2 of 10" from it and the CLI draws its bar from the
+// percent, so an off-by-one index, a total taken from anything but the plan,
+// or a sub-report filed under the wrong step is a screen that lies about how
+// far a migration has come — and none of that fails anything else.
+func TestProgressNumbersEveryStepAndForwardsItsSubProgress(t *testing.T) {
+	type report struct {
+		id           string
+		index, total int
+		pct          float64
+		msg          string
+	}
+	st := &fakeStore{}
+	plan := &Plan{
+		Steps: []Step{
+			step("first", func(*deps.MigrationJournal) error { return nil }),
+			{ID: "second", Run: func(_ context.Context, _ *Journal, p StepProgress) error {
+				p(41.5, "dumped 512.0 MiB")
+				p(99, "dumped 1.2 GiB")
+				return nil
+			}},
+			step("third", func(*deps.MigrationJournal) error { return nil }),
+		},
+		Rollback: func(context.Context, *deps.MigrationJournal) error { return nil },
+		Result:   func(*deps.MigrationJournal) deps.MigrationResult { return deps.MigrationResult{} },
+	}
+	var got []report
+	require.NoError(t, Run(context.Background(), st, baseJournal(), plan,
+		func(id string, index, total int, pct float64, msg string) {
+			got = append(got, report{id, index, total, pct, msg})
+		}))
+	assert.Equal(t, []report{
+		{"first", 1, 3, 0, ""},
+		{"second", 2, 3, 0, ""},
+		{"second", 2, 3, 41.5, "dumped 512.0 MiB"},
+		{"second", 2, 3, 99, "dumped 1.2 GiB"},
+		{"third", 3, 3, 0, ""},
+	}, got)
+}
+
+// A step reports its sub-progress unconditionally, so a caller that wants no
+// progress at all must not make that a crash: the engine substitutes a no-op.
+func TestAStepMayReportProgressWithoutAProgressCallback(t *testing.T) {
+	st := &fakeStore{}
+	plan := &Plan{
+		Steps: []Step{{ID: "dump", Run: func(_ context.Context, _ *Journal, p StepProgress) error {
+			p(50, "halfway")
+			return nil
+		}}},
+		Rollback: func(context.Context, *deps.MigrationJournal) error { return nil },
+		Result:   func(*deps.MigrationJournal) deps.MigrationResult { return deps.MigrationResult{} },
+	}
+	require.NoError(t, Run(context.Background(), st, baseJournal(), plan, nil))
+	require.Len(t, st.commits, 1)
 }
 
 // Ruling 5: the pin, the journal id and the result's identity are one source

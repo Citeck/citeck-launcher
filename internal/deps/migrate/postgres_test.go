@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -110,6 +111,24 @@ func TestPreflightRefusesAnUnsupportedPairAsALauncherUpdate(t *testing.T) {
 	joined := strings.Join(res.Problems, "\n")
 	assert.Contains(t, joined, "update the launcher")
 	assert.NotContains(t, joined, "separate volume")
+}
+
+// The other same-volume refusal — a genuine in-place pair (16 → 17, one
+// cluster at the root of one volume) — has to name an exit too. Its REASON
+// differs from the unsupported pair's (those two majors really do share a
+// volume), but the operator's position is identical: nothing on this stand
+// changes it, and a message that only explains the volume layout sends them
+// looking for a disk problem they do not have. It must also say what happens
+// meanwhile — the namespace goes on running the major it has.
+func TestTheInPlaceRefusalNamesAnExitAndWhatKeepsRunning(t *testing.T) {
+	env := envWith17Data()
+	env.Volumes[oldVol]["PG_VERSION"] = "16\n"
+	res := PostgresMigrator{}.Preflight(context.Background(), env, "postgres:16", "postgres:17")
+	assert.False(t, res.OK)
+	joined := strings.Join(res.Problems, "\n")
+	assert.Contains(t, joined, "separate volume", "the reason this plan cannot do it")
+	assert.Contains(t, joined, "update the launcher", "the only lever the operator has")
+	assert.Contains(t, joined, "postgres:16", "what the namespace keeps running meanwhile")
 }
 
 // Supports is the migrator's own precondition — different volumes, forwards —
@@ -601,4 +620,171 @@ func TestDumpProgressFollowsTheGrowingFile(t *testing.T) {
 		<-reports
 	}
 	assert.Empty(t, reports)
+}
+
+// The container the restore runs in must mount the volume the plan created.
+// Both sides derive from deps.PostgresLayoutFor — the plan asks it which
+// volume to create, the generator asks it what the def mounts — and nothing
+// otherwise checks that the two answers agree. If they ever disagreed the
+// migration would still report success: the dump would be replayed into a
+// cluster in a volume nobody looks at again, and the namespace would come up
+// on an empty PGDATA with the "old" data still sitting where it was.
+func TestTheTargetContainerMountsTheVolumeThePlanCreated(t *testing.T) {
+	env := envWith17Data()
+	// The defs the daemon's generator would hand the plan: each mounts the
+	// layout of the major it runs, exactly as generator_infra.go does.
+	for _, c := range []struct {
+		image string
+		major int
+	}{{from17, 17}, {to18, 18}} {
+		layout := deps.PostgresLayoutFor(c.major)
+		env.Defs[c.image] = appdef.ApplicationDef{
+			Name: "postgres", Image: c.image,
+			Volumes: []string{layout.Volume + ":" + layout.MountPath},
+		}
+	}
+	// A temp container is gone by the time the run returns, so its mounts are
+	// captured while it is doing its job: the source when it is dumped from,
+	// the target when the dump is replayed into it.
+	var srcMounts, dstMounts []string
+	base := env.ExecFn
+	env.ExecFn = func(c, cmd string) (string, string, int, error) {
+		switch {
+		case c == SrcContainer && strings.HasPrefix(cmd, "pg_dumpall"):
+			if def, ok := env.ContainerDef(SrcContainer); ok {
+				srcMounts = def.Volumes
+			}
+		case c == DstContainer && strings.Contains(cmd, " -f "):
+			if def, ok := env.ContainerDef(DstContainer); ok {
+				dstMounts = def.Volumes
+			}
+		}
+		return base(c, cmd)
+	}
+	_, err := runPlan(t, env, PlanOptions{})
+	require.NoError(t, err)
+
+	created := createdVolume(t, env.Log())
+	require.NotEmpty(t, dstMounts, "the restore never ran")
+	assert.Equal(t, []string{created + ":" + deps.PostgresLayoutFor(18).MountPath}, dstMounts,
+		"the restore must land in the volume the plan created (%s), not %v", created, dstMounts)
+	// And the other half: the dump is taken from the OLD volume, which the plan
+	// only ever reads — that is what makes the rollback a deletion.
+	require.NotEmpty(t, srcMounts, "the dump never ran")
+	assert.Equal(t, []string{oldVol + ":" + deps.PostgresLayoutFor(17).MountPath}, srcMounts)
+	assert.NotEqual(t, oldVol, created)
+}
+
+// createdVolume reads the volume the plan actually created out of the call log,
+// so the assertion above compares what happened with what was mounted rather
+// than two copies of the same expectation.
+func createdVolume(t *testing.T, log []string) string {
+	t.Helper()
+	for _, entry := range log {
+		if v, ok := strings.CutPrefix(entry, "createvol:"); ok {
+			return v
+		}
+	}
+	t.Fatalf("no volume was created:\n%s", strings.Join(log, "\n"))
+	return ""
+}
+
+// The preflight is run before the user has confirmed anything — the confirm
+// dialog runs one when it opens, and `citeck deps upgrade` runs one to print
+// what it is about to do. Its doc says it never mutates; this is that claim.
+// A probe that created the scratch directory, pulled the target image or
+// stopped the namespace would be starting the migration on a screen whose
+// whole purpose is to let the operator say no.
+func TestPreflightNeverMutates(t *testing.T) {
+	ctx := context.Background()
+	env := envWith17Data()
+	env.Running = true
+	env.Volumes[newVol] = map[string]string{} // the interesting case: it has work it could do
+	res := PostgresMigrator{}.Preflight(ctx, env, from17, to18)
+	require.True(t, res.OK, res.Problems)
+	require.NotNil(t, res.ExistingTargetVolume, "the leftover volume is reported")
+
+	assert.Empty(t, env.Log(), "the preflight only asks questions")
+	assert.Empty(t, env.Pulled())
+	assert.Empty(t, env.Reloads())
+	assert.Empty(t, env.ContainerNames())
+	assert.Empty(t, env.DirNames())
+	assert.True(t, env.IsRunning(), "a preflight never stops the namespace")
+	exists, err := env.VolumeExists(ctx, newVol)
+	require.NoError(t, err)
+	assert.True(t, exists, "the volume it reported is still there for the user to decide about")
+}
+
+// A pull that fails is the ordinary first failure on a private-registry stand
+// (an expired token, an unreachable mirror), and it happens AFTER the namespace
+// has been stopped by step 1. Nothing has been created yet, so the whole
+// rollback is "put the namespace back" — which it must actually do.
+func TestAPullFailureStopsTheMigrationAndPutsTheNamespaceBack(t *testing.T) {
+	env := envWith17Data()
+	env.Running = true
+	env.FailOn["pull:"+to18] = errors.New("unauthorized: authentication required")
+	st, err := runPlan(t, env, PlanOptions{})
+	require.ErrorContains(t, err, "unauthorized")
+	require.ErrorContains(t, err, "pull-image", "the engine names the step that failed")
+
+	assert.Empty(t, st.pin, "a failed pull never moves the pin")
+	assert.Empty(t, env.ContainerNames(), "no temp container was ever started")
+	assert.Empty(t, env.DirNames(), "no scratch directory was left behind")
+	exists, verr := env.VolumeExists(context.Background(), newVol)
+	require.NoError(t, verr)
+	assert.False(t, exists)
+	assert.Equal(t, []bool{true}, env.Reloads(), "the namespace was running, so it is started again")
+	require.Len(t, st.failures, 1)
+	assert.Nil(t, st.journal, "a clean rollback closes the migration")
+}
+
+// Docker can refuse to answer "is it running?" — the socket goes away, the
+// context expires. That is not the same verdict as "no": one is a container
+// that has not come up yet, the other is a world the launcher can no longer
+// see, and treating the second as the first would report a perfectly healthy
+// container as a failed start.
+func TestReadinessFailsWhenDockerCannotAnswer(t *testing.T) {
+	env := migratetest.New()
+	env.Containers[SrcContainer] = appdef.ApplicationDef{Name: "postgres"}
+	env.FailOn["running:"+SrcContainer] = errors.New("docker daemon is not responding")
+	err := waitReady(context.Background(), env, SrcContainer, time.Minute, time.Millisecond, noProgress)
+	require.ErrorContains(t, err, "docker daemon is not responding")
+	require.ErrorContains(t, err, "check "+SrcContainer)
+	assert.NotContains(t, err.Error(), "is not running", "an unanswerable question is not an answer")
+}
+
+// stop() JOINS the reporter rather than merely signaling it. The progress
+// callback belongs to the step that started it, and the engine has already
+// moved on by the time the next one runs: a late report would file the dump's
+// percentage under the restore's step id, on a screen the operator is watching
+// precisely because the migration is slow.
+func TestDumpProgressStopWaitsForTheReporterToReturn(t *testing.T) {
+	env := migratetest.New()
+	dump := "/host/deps-migration/postgres/dump.sql"
+	env.Files[dump] = 1 << 20
+
+	entered, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	report := func(float64, string) {
+		once.Do(func() {
+			close(entered)
+			<-release
+		})
+	}
+	stop := watchFileGrowth(context.Background(), env, dump, 1<<30, time.Millisecond, report)
+	<-entered // the reporter is now INSIDE the progress callback
+
+	returned := make(chan struct{})
+	go func() { stop(); close(returned) }()
+	select {
+	case <-returned:
+		t.Fatal("stop() returned while the progress callback was still running")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case <-returned:
+	case <-time.After(5 * time.Second):
+		t.Fatal("stop() never returned after the callback finished")
+	}
 }

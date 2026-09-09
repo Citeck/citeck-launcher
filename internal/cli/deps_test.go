@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -18,11 +19,29 @@ import (
 )
 
 // depsTestSetup pins the locale and disables colors so the assertions below
-// compare rendered text, not ANSI escapes.
+// compare rendered text, not ANSI escapes. The colors flag is a PROCESS
+// global: it is restored on cleanup, or every test that runs after this one
+// silently inherits colorless output it never asked for.
 func depsTestSetup(t *testing.T) {
 	t.Helper()
 	initI18n("en")
+	prevColors := colorsAreEnabled()
 	output.SetColorsEnabled(false)
+	t.Cleanup(func() { output.SetColorsEnabled(prevColors) })
+}
+
+// A helper that flips a global and does not put it back is not a local
+// convenience — it is a change to every later test in the package.
+func TestDepsTestSetupRestoresTheColorsFlag(t *testing.T) {
+	prev := colorsAreEnabled()
+	output.SetColorsEnabled(true)
+	t.Cleanup(func() { output.SetColorsEnabled(prev) })
+
+	t.Run("inner", func(t *testing.T) {
+		depsTestSetup(t)
+		assert.False(t, colorsAreEnabled(), "the helper turns colors off for its own test")
+	})
+	assert.True(t, colorsAreEnabled(), "…and puts back what it found when that test ends")
 }
 
 func TestFormatDependencyStatus(t *testing.T) {
@@ -516,4 +535,453 @@ func findSubCommand(parent *cobra.Command, name string) *cobra.Command {
 		}
 	}
 	return nil
+}
+
+// One filesystem carrying both writes is ONE line quoting the SUM. Printed as
+// the two independent lines, each half looks satisfiable on its own while the
+// daemon refuses the migration for wanting them together — the confirm screen
+// would be arguing with the error it is about to produce. Same rule as the web
+// dialog (DependenciesDialog.tsx).
+func TestPreflightLines_SharedFilesystemIsOneLineWithTheSum(t *testing.T) {
+	depsTestSetup(t)
+	shared := migrate.NewPreflightResult("postgres:17.5", "postgres:18")
+	shared.OK = true
+	shared.DataSizeBytes = 3 << 30
+	shared.RequiredHostBytes = 3<<30 + 512<<20   // 3.5 GiB
+	shared.RequiredVolumeBytes = 3<<30 + 512<<20 // 3.5 GiB
+	shared.FreeHostBytes, shared.FreeVolumeBytes = 20<<30, 20<<30
+	shared.SharedFilesystem = true
+	shared.RequiredTotalBytes = 7 << 30
+
+	lines := strings.Join(preflightLines(&shared), "\n")
+	assert.Contains(t, lines, tHelper("deps.preflight.shared", "need", "7.0 GiB", "free", "20.0 GiB"))
+	// The pair must be GONE, not merely joined by a third line: quoting two
+	// requirements smaller than the one the daemon enforces is the defect.
+	assert.NotContains(t, lines, tHelper("deps.preflight.host", "need", "3.5 GiB", "free", "20.0 GiB"))
+	assert.NotContains(t, lines, tHelper("deps.preflight.volume", "need", "3.5 GiB", "free", "20.0 GiB"))
+	// The data size stays: it is what the two requirements are derived from.
+	assert.Contains(t, lines, tHelper("deps.preflight.data", "size", "3.0 GiB"))
+}
+
+// A zero free measurement is a measurement that FAILED — it has already
+// produced its own problem line — so it must not be taken as the minimum:
+// that renders a failed probe as a full disk.
+func TestPreflightLines_SharedFreeSkipsAFailedMeasurement(t *testing.T) {
+	depsTestSetup(t)
+	pre := migrate.NewPreflightResult("postgres:17.5", "postgres:18")
+	pre.RequiredHostBytes = 1 << 30
+	pre.RequiredTotalBytes = 2 << 30
+	pre.SharedFilesystem = true
+	pre.FreeHostBytes, pre.FreeVolumeBytes = 0, 40<<30
+
+	assert.Contains(t, strings.Join(preflightLines(&pre), "\n"),
+		tHelper("deps.preflight.shared", "need", "2.0 GiB", "free", "40.0 GiB"))
+
+	// The other way round, and with both halves measured (the smaller wins).
+	pre.FreeHostBytes, pre.FreeVolumeBytes = 40<<30, 0
+	assert.Contains(t, strings.Join(preflightLines(&pre), "\n"),
+		tHelper("deps.preflight.shared", "need", "2.0 GiB", "free", "40.0 GiB"))
+	pre.FreeHostBytes, pre.FreeVolumeBytes = 40<<30, 30<<30
+	assert.Contains(t, strings.Join(preflightLines(&pre), "\n"),
+		tHelper("deps.preflight.shared", "need", "2.0 GiB", "free", "30.0 GiB"))
+}
+
+// Two filesystems keep the two lines: a sum across two disks means nothing,
+// and SharedFilesystem — never the zero in RequiredTotalBytes — is what tells
+// the two layouts apart.
+func TestPreflightLines_SeparateFilesystemsKeepTheTwoLines(t *testing.T) {
+	depsTestSetup(t)
+	pre := migrate.NewPreflightResult("postgres:17.5", "postgres:18")
+	pre.RequiredHostBytes, pre.FreeHostBytes = 3<<30, 50<<30
+	pre.RequiredVolumeBytes, pre.FreeVolumeBytes = 4<<30, 40<<30
+
+	lines := strings.Join(preflightLines(&pre), "\n")
+	assert.Contains(t, lines, tHelper("deps.preflight.host", "need", "3.0 GiB", "free", "50.0 GiB"))
+	assert.Contains(t, lines, tHelper("deps.preflight.volume", "need", "4.0 GiB", "free", "40.0 GiB"))
+	assert.NotContains(t, lines, tHelper("deps.preflight.shared", "need", "0 B", "free", "40.0 GiB"))
+}
+
+// fakeDepsDaemon is the daemon surface `citeck deps upgrade` drives, so the
+// orchestration — the refusals, the confirmation, the follow loop, the verdict
+// and the exit code — can be tested without a socket.
+type fakeDepsDaemon struct {
+	list         *api.DependenciesDto
+	listErr      error
+	listCalls    int
+	onList       func(call int) *api.DependenciesDto
+	pre          *migrate.PreflightResult
+	preErr       error
+	preCalls     int
+	migrateRes   *api.ActionResultDto
+	migrateErr   error
+	migrateCalls int
+	gotReplace   bool
+	events       chan api.EventDto
+	streamErr    error
+	streamCalls  int
+}
+
+func (f *fakeDepsDaemon) GetDependencies() (*api.DependenciesDto, error) {
+	f.listCalls++
+	if f.onList != nil {
+		return f.onList(f.listCalls), f.listErr
+	}
+	return f.list, f.listErr
+}
+
+func (f *fakeDepsDaemon) DependencyPreflight(string) (*migrate.PreflightResult, error) {
+	f.preCalls++
+	return f.pre, f.preErr
+}
+
+func (f *fakeDepsDaemon) MigrateDependency(_ string, replaceExisting bool) (*api.ActionResultDto, error) {
+	f.migrateCalls++
+	f.gotReplace = replaceExisting
+	if f.migrateRes == nil && f.migrateErr == nil {
+		return &api.ActionResultDto{Success: true, Message: "migration of postgres started"}, nil
+	}
+	return f.migrateRes, f.migrateErr
+}
+
+func (f *fakeDepsDaemon) StreamEvents(context.Context) (<-chan api.EventDto, error) {
+	f.streamCalls++
+	if f.streamErr != nil {
+		return nil, f.streamErr
+	}
+	if f.events == nil {
+		f.events = make(chan api.EventDto)
+	}
+	return f.events, nil
+}
+
+// okPreflight is a preflight that passes, with the two names the report and
+// the confirmation quote.
+func okPreflight() *migrate.PreflightResult {
+	pre := migrate.NewPreflightResult("postgres:17.5", "postgres:18")
+	pre.OK = true
+	pre.DataSizeBytes = 1 << 30
+	pre.RequiredHostBytes = 1<<30 + migrate.SpaceMargin
+	pre.RequiredVolumeBytes = pre.RequiredHostBytes
+	pre.FreeHostBytes, pre.FreeVolumeBytes = 50<<30, 50<<30
+	return &pre
+}
+
+// testUpgradeOpts drives the follow loop in milliseconds instead of the
+// production 15s/6h, and answers the confirmation without a terminal.
+func testUpgradeOpts(detach, replaceExisting, confirm bool) depsUpgradeOpts {
+	return depsUpgradeOpts{
+		detach:          detach,
+		replaceExisting: replaceExisting,
+		confirm:         func(string, *migrate.PreflightResult) bool { return confirm },
+		follow:          depsFollow{poll: 5 * time.Millisecond, timeout: 2 * time.Second},
+	}
+}
+
+func bufferedEvents(evts ...api.EventDto) chan api.EventDto {
+	ch := make(chan api.EventDto, len(evts)+1)
+	for _, e := range evts {
+		ch <- e
+	}
+	return ch
+}
+
+// A pending rollback freezes the pin and the daemon refuses a new migration
+// anyway; asking for the preflight first would walk the whole data volume
+// before it could say so.
+func TestDepsUpgrade_PendingRollbackIsRefusedBeforeThePreflight(t *testing.T) {
+	depsTestSetup(t)
+	// The preflight is armed and healthy: the point is that it is never ASKED
+	// for, not that it would have failed.
+	f := &fakeDepsDaemon{list: &api.DependenciesDto{RollbackPending: "a rollback is pending"}, pre: okPreflight()}
+
+	rep, err := depsUpgradeSteps(f, "postgres", testUpgradeOpts(false, false, true))
+	require.ErrorContains(t, err, "a rollback is pending")
+	assert.Equal(t, depsOutcomeRefused, rep.Outcome)
+	assert.Zero(t, f.preCalls, "the preflight walks the data volume — it must not run")
+	assert.Zero(t, f.migrateCalls)
+}
+
+func TestDepsUpgrade_FailedPreflightStartsNothing(t *testing.T) {
+	depsTestSetup(t)
+	bad := migrate.NewPreflightResult("postgres:17.5", "postgres:18")
+	bad.Problems = append(bad.Problems, "not enough free space")
+	f := &fakeDepsDaemon{list: &api.DependenciesDto{}, pre: &bad}
+
+	rep, err := depsUpgradeSteps(f, "postgres", testUpgradeOpts(false, false, true))
+	require.Error(t, err)
+	assert.Equal(t, depsOutcomeRefused, rep.Outcome)
+	assert.Zero(t, f.migrateCalls)
+	// The reason travels with the verdict, not only on the terminal: this is
+	// the whole machine-readable answer a script gets.
+	require.NotNil(t, rep.Preflight)
+	assert.Contains(t, rep.Preflight.Problems, "not enough free space")
+}
+
+// Deleting a volume this launcher did not create is a separate decision from
+// "migrate": a refusal naming the flag, never one more prompt.
+func TestDepsUpgrade_ExistingTargetVolumeNeedsTheFlag(t *testing.T) {
+	depsTestSetup(t)
+	pre := okPreflight()
+	pre.ExistingTargetVolume = &migrate.ExistingVolume{Name: "citeck_pg18", SizeBytes: 1 << 30, Version: "18"}
+	f := &fakeDepsDaemon{list: &api.DependenciesDto{}, pre: pre}
+
+	rep, err := depsUpgradeSteps(f, "postgres", testUpgradeOpts(false, false, true))
+	require.ErrorContains(t, err, "citeck_pg18")
+	assert.Equal(t, depsOutcomeRefused, rep.Outcome)
+	assert.Zero(t, f.migrateCalls)
+
+	// With the flag the migration runs AND the confirmation is carried to the
+	// daemon, which re-checks it in the step.
+	f2 := &fakeDepsDaemon{list: &api.DependenciesDto{}, pre: pre}
+	rep2, err2 := depsUpgradeSteps(f2, "postgres", testUpgradeOpts(true, true, true))
+	require.NoError(t, err2)
+	assert.Equal(t, depsOutcomeStarted, rep2.Outcome)
+	assert.Equal(t, 1, f2.migrateCalls)
+	assert.True(t, f2.gotReplace, "--replace-existing must reach the daemon")
+}
+
+func TestDepsUpgrade_DeclinedConfirmationStartsNothing(t *testing.T) {
+	depsTestSetup(t)
+	f := &fakeDepsDaemon{list: &api.DependenciesDto{}, pre: okPreflight()}
+
+	rep, err := depsUpgradeSteps(f, "postgres", testUpgradeOpts(false, false, false))
+	require.NoError(t, err, "declining is not a failure")
+	assert.Equal(t, depsOutcomeCanceled, rep.Outcome)
+	assert.Zero(t, f.migrateCalls)
+	assert.Zero(t, f.streamCalls, "nothing to follow")
+}
+
+// --detach returns as soon as the daemon accepts: the migration runs there,
+// and this command's job is done.
+func TestDepsUpgrade_DetachReportsStarted(t *testing.T) {
+	depsTestSetup(t)
+	f := &fakeDepsDaemon{list: &api.DependenciesDto{}, pre: okPreflight()}
+
+	rep, err := depsUpgradeSteps(f, "postgres", testUpgradeOpts(true, false, true))
+	require.NoError(t, err)
+	assert.Equal(t, depsOutcomeStarted, rep.Outcome)
+	assert.Equal(t, "postgres:17.5", rep.From)
+	assert.Equal(t, "postgres:18", rep.To)
+	assert.Equal(t, "migration of postgres started", rep.Message)
+	assert.Zero(t, f.streamCalls, "--detach does not follow")
+}
+
+// A 400/409 refusal is already an error from the client; a 202 that reports
+// failure is one too, because nothing would follow it.
+func TestDepsUpgrade_ADaemonRefusalIsNotFollowed(t *testing.T) {
+	depsTestSetup(t)
+	f := &fakeDepsDaemon{
+		list: &api.DependenciesDto{}, pre: okPreflight(),
+		migrateRes: &api.ActionResultDto{Success: false, Message: "another long operation is running"},
+	}
+	rep, err := depsUpgradeSteps(f, "postgres", testUpgradeOpts(false, false, true))
+	require.ErrorContains(t, err, "another long operation is running")
+	assert.Equal(t, depsOutcomeRefused, rep.Outcome)
+}
+
+func TestDepsUpgrade_FollowsToTheTerminalEvent(t *testing.T) {
+	depsTestSetup(t)
+	f := &fakeDepsDaemon{list: &api.DependenciesDto{}, pre: okPreflight()}
+	f.events = bufferedEvents(
+		api.EventDto{Type: api.EventDepsMigrationStart, AppName: "postgres", After: "postgres:17.5 → postgres:18"},
+		// Another dependency's terminal event must not end this wait.
+		api.EventDto{Type: api.EventDepsMigrationComplete, AppName: "rabbitmq", After: "rabbitmq done"},
+		api.EventDto{Type: api.EventDepsMigrationProgress, AppName: "postgres", Phase: "dump", Current: 4, Total: 10},
+		api.EventDto{Type: api.EventDepsMigrationComplete, AppName: "postgres", After: "postgres migrated to postgres:18"},
+	)
+
+	rep, err := depsUpgradeSteps(f, "postgres", testUpgradeOpts(false, false, true))
+	require.NoError(t, err)
+	assert.Equal(t, depsOutcomeMigrated, rep.Outcome)
+	assert.Equal(t, 1, f.streamCalls)
+}
+
+func TestDepsUpgrade_TheErrorEventIsTheVerdict(t *testing.T) {
+	depsTestSetup(t)
+	f := &fakeDepsDaemon{list: &api.DependenciesDto{}, pre: okPreflight()}
+	f.events = bufferedEvents(
+		api.EventDto{Type: api.EventDepsMigrationError, AppName: "postgres", After: "restore failed"},
+	)
+
+	rep, err := depsUpgradeSteps(f, "postgres", testUpgradeOpts(false, false, true))
+	require.ErrorContains(t, err, "restore failed")
+	assert.Equal(t, depsOutcomeFailed, rep.Outcome)
+}
+
+// The daemon DROPS an event rather than block a full subscriber channel, and a
+// migration's own stop/start burst is the most likely thing to fill it. The
+// follow loop therefore polls the recorded verdict: without it a dropped
+// terminal event leaves the command waiting six hours on a finished migration.
+func TestDepsUpgrade_PollCatchesADroppedTerminalEvent(t *testing.T) {
+	depsTestSetup(t)
+	f := &fakeDepsDaemon{pre: okPreflight()}
+	f.events = make(chan api.EventDto) // open and silent: every event was dropped
+	f.onList = func(call int) *api.DependenciesDto {
+		if call == 1 {
+			return &api.DependenciesDto{} // the pre-flight rollback check
+		}
+		return &api.DependenciesDto{LastResult: &api.DependencyMigrationResultDto{
+			ID: "postgres", From: "postgres:17.5", To: "postgres:18",
+			Success: true, FinishedAt: time.Now().Add(time.Minute).UnixMilli(),
+		}}
+	}
+
+	rep, err := depsUpgradeSteps(f, "postgres", testUpgradeOpts(false, false, true))
+	require.NoError(t, err)
+	assert.Equal(t, depsOutcomeMigrated, rep.Outcome)
+	assert.Greater(t, f.listCalls, 1, "the verdict came from the poll, not from an event")
+}
+
+// A migration this command lost sight of is NOT a failed one: the daemon runs
+// it on its own context and finishes it whether or not anyone is listening.
+func TestDepsUpgrade_ALostStreamIsUnknownNotFailed(t *testing.T) {
+	depsTestSetup(t)
+	f := &fakeDepsDaemon{list: &api.DependenciesDto{}, pre: okPreflight()}
+	f.events = make(chan api.EventDto)
+	close(f.events)
+
+	rep, err := depsUpgradeSteps(f, "postgres", testUpgradeOpts(false, false, true))
+	require.ErrorContains(t, err, "citeck deps")
+	assert.Equal(t, depsOutcomeUnknown, rep.Outcome)
+}
+
+// …and so is a follow that runs out of time.
+func TestDepsUpgrade_ATimedOutFollowIsUnknown(t *testing.T) {
+	depsTestSetup(t)
+	f := &fakeDepsDaemon{list: &api.DependenciesDto{}, pre: okPreflight()}
+	f.events = make(chan api.EventDto)
+	opts := testUpgradeOpts(false, false, true)
+	opts.follow = depsFollow{poll: time.Hour, timeout: 20 * time.Millisecond}
+
+	rep, err := depsUpgradeSteps(f, "postgres", opts)
+	require.Error(t, err)
+	assert.Equal(t, depsOutcomeUnknown, rep.Outcome)
+}
+
+// `--format json` answers with ONE object and nothing else: no preflight
+// prose, no accept message, no per-step progress. AGENTS.md's CLI conventions
+// promise --format json on any command, and a verdict a script can parse is
+// what that means for a command whose whole point is the verdict.
+func TestDepsUpgrade_JSONPrintsOnlyTheVerdict(t *testing.T) {
+	depsTestSetup(t)
+	prev := output.GetFormat()
+	output.SetFormat(output.FormatJSON)
+	t.Cleanup(func() { output.SetFormat(prev) })
+
+	f := &fakeDepsDaemon{list: &api.DependenciesDto{}, pre: okPreflight()}
+	f.events = bufferedEvents(
+		api.EventDto{Type: api.EventDepsMigrationProgress, AppName: "postgres", Phase: "dump", Current: 4, Total: 10},
+		api.EventDto{Type: api.EventDepsMigrationComplete, AppName: "postgres", After: "postgres migrated to postgres:18"},
+	)
+
+	var err error
+	out := captureStdout(t, func() { err = depsUpgrade(f, "postgres", testUpgradeOpts(false, false, true)) })
+	require.NoError(t, err)
+
+	var rep depsUpgradeReport
+	require.NoError(t, json.Unmarshal([]byte(out), &rep), "the whole of stdout must be one JSON object:\n%s", out)
+	assert.Equal(t, depsOutcomeMigrated, rep.Outcome)
+	assert.Equal(t, "postgres", rep.ID)
+	assert.Equal(t, "postgres:17.5", rep.From)
+	assert.Equal(t, "postgres:18", rep.To)
+	assert.NotContains(t, out, tHelper("deps.preflight.title", "from", "postgres:17.5", "to", "postgres:18"))
+	assert.NotContains(t, out, tHelper("deps.step.dump"), "no per-step progress prose")
+	// The daemon's accept message is a FIELD, never a line of its own — the
+	// Unmarshal above is what proves nothing was printed beside the object.
+	assert.Equal(t, "migration of postgres started", rep.Message)
+}
+
+// A failure has to be IN the object: Execute() suppresses the "Error:" line in
+// JSON mode, so a report without the reason leaves a script with an exit code
+// and nothing else.
+func TestDepsUpgrade_JSONCarriesTheFailure(t *testing.T) {
+	depsTestSetup(t)
+	prev := output.GetFormat()
+	output.SetFormat(output.FormatJSON)
+	t.Cleanup(func() { output.SetFormat(prev) })
+
+	f := &fakeDepsDaemon{list: &api.DependenciesDto{}, pre: okPreflight()}
+	f.events = bufferedEvents(
+		api.EventDto{Type: api.EventDepsMigrationError, AppName: "postgres", After: "restore failed"},
+	)
+
+	var err error
+	out := captureStdout(t, func() { err = depsUpgrade(f, "postgres", testUpgradeOpts(false, false, true)) })
+	require.Error(t, err, "a failed migration must still exit non-zero")
+
+	var rep depsUpgradeReport
+	require.NoError(t, json.Unmarshal([]byte(out), &rep), out)
+	assert.Equal(t, depsOutcomeFailed, rep.Outcome)
+	assert.Contains(t, rep.Error, "restore failed")
+	assert.Equal(t, err.Error(), rep.Error, "the object and the exit code must tell the same story")
+}
+
+// Text mode is unchanged: the running commentary, and no JSON in it.
+func TestDepsUpgrade_TextPrintsTheProgressAndNoJSON(t *testing.T) {
+	depsTestSetup(t)
+	prev := output.GetFormat()
+	output.SetFormat(output.FormatText)
+	t.Cleanup(func() { output.SetFormat(prev) })
+
+	f := &fakeDepsDaemon{list: &api.DependenciesDto{}, pre: okPreflight()}
+	f.events = bufferedEvents(
+		api.EventDto{Type: api.EventDepsMigrationProgress, AppName: "postgres", Phase: "dump", Current: 4, Total: 10},
+		api.EventDto{Type: api.EventDepsMigrationComplete, AppName: "postgres", After: "postgres migrated to postgres:18"},
+	)
+
+	var err error
+	out := captureStdout(t, func() { err = depsUpgrade(f, "postgres", testUpgradeOpts(false, false, true)) })
+	require.NoError(t, err)
+	assert.Contains(t, out, tHelper("deps.preflight.title", "from", "postgres:17.5", "to", "postgres:18"))
+	assert.Contains(t, out, "migration of postgres started")
+	assert.Contains(t, out, tHelper("deps.step.dump"))
+	assert.Contains(t, out, "postgres migrated to postgres:18")
+	assert.NotContains(t, out, `"outcome"`)
+}
+
+// The poll's own verdict lines are prose too, and in JSON mode they would sit
+// in front of the object.
+func TestDepsUpgrade_JSONSuppressesThePollVerdictLines(t *testing.T) {
+	depsTestSetup(t)
+	prev := output.GetFormat()
+	output.SetFormat(output.FormatJSON)
+	t.Cleanup(func() { output.SetFormat(prev) })
+
+	f := &fakeDepsDaemon{pre: okPreflight()}
+	f.events = make(chan api.EventDto)
+	f.onList = func(call int) *api.DependenciesDto {
+		if call == 1 {
+			return &api.DependenciesDto{}
+		}
+		return &api.DependenciesDto{LastResult: &api.DependencyMigrationResultDto{
+			ID: "postgres", From: "postgres:17.5", To: "postgres:18", Success: true,
+			OldVolume: "citeck_postgres_default", FinishedAt: time.Now().Add(time.Minute).UnixMilli(),
+		}}
+	}
+
+	out := captureStdout(t, func() { _ = depsUpgrade(f, "postgres", testUpgradeOpts(false, false, true)) })
+	var rep depsUpgradeReport
+	require.NoError(t, json.Unmarshal([]byte(out), &rep), "the whole of stdout must be one JSON object:\n%s", out)
+	assert.Equal(t, depsOutcomeMigrated, rep.Outcome)
+	assert.NotContains(t, out, "citeck_postgres_default")
+}
+
+// The existing-target-volume warning is a STRUCTURED field (PreflightResult.
+// ExistingTargetVolume), and the CLI is the only thing that turns it into a
+// sentence — through the locale key, once. It used to arrive as an English
+// prose warning as well, which rendered the same fact twice, the second time
+// untranslated. The producer side of that rule lives in internal/deps/migrate
+// (checkTargetVolume sets the field and appends no warning); this pins the
+// consumer: one line, from the key, with all three facts in it.
+func TestPreflightLines_ExistingVolumeIsRenderedOnceThroughTheLocaleKey(t *testing.T) {
+	depsTestSetup(t)
+	pre := okPreflight()
+	pre.ExistingTargetVolume = &migrate.ExistingVolume{Name: "citeck_pg18", SizeBytes: 1 << 30, Version: "18"}
+
+	joined := strings.Join(preflightLines(pre), "\n")
+	assert.Equal(t, 1, strings.Count(joined, "citeck_pg18"), "the volume is named once:\n%s", joined)
+	assert.Contains(t, joined, tHelper("deps.preflight.existingVolume",
+		"volume", "citeck_pg18", "size", "1.0 GiB", "version", "18"))
+	// …and never as the bare lookup key, which is what a missing key renders as.
+	assert.NotContains(t, joined, "deps.preflight.existingVolume")
 }

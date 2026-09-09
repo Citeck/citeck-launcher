@@ -129,11 +129,19 @@ func (t longOpTolerance) allows(holder longOpKind) bool {
 }
 
 var (
-	// tolerateNothing refuses whoever holds the lock. The policy of 14 of the
-	// 19 gated routes — everything that is not lifecycle work: an app config or
-	// file edit, a reload, a bundle upgrade, a namespace edit/delete/activate,
-	// a workspace switch or delete, a volume delete. Any of those beside ANY
-	// long operation is exactly what the gate is for.
+	// tolerateNothing refuses whoever holds the lock. It is the policy of every
+	// gated route that is not lifecycle work: an app config or file edit (four
+	// routes), a reload, a bundle upgrade, a namespace edit / delete / activate
+	// / deactivate, a workspace activate / delete / settings update, a volume
+	// delete. Any of those beside ANY long operation is exactly what the gate
+	// is for.
+	//
+	// The counts live in the tests rather than in this sentence, so they cannot
+	// quietly stop being true: gatedRoutes() in longop_test.go is the whole
+	// list, TestGatedRoutesTableCoversEveryTryLongOpCallSite fails if a
+	// tryLongOp call site is missing from it, and
+	// TestGatedRoutesRefuseLifecycleWorkExceptTheLifecycleRoutes fails if the
+	// tolerant set is not exactly the five lifecycle routes.
 	tolerateNothing longOpTolerance
 	// tolerateLifecycleWork is the policy of the five LIFECYCLE routes:
 	// handleStartNamespace, handleStopNamespace, and the three per-app toggles

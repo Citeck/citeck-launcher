@@ -41,6 +41,8 @@ package daemon
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -73,10 +75,6 @@ const (
 
 	itSeedContainer  = "depsit-seed"
 	itCheckContainer = "depsit-check"
-
-	// itDumpFile mirrors the plan's scratch file name (unexported there); the
-	// rollback test asserts the dump was real before it sabotaged the target.
-	itDumpFile = "dump.sql"
 
 	itSeedRows   = 5000
 	itReadyWait  = 3 * time.Minute
@@ -160,6 +158,13 @@ func (o *observedEnv) stderrFor(prefix string) (execLog, bool) {
 // itNamespaceID derives a short, recognizable namespace id from the test name.
 // Clamped rather than sliced: a short or punctuated test name must not panic,
 // and every leftover on the host has to be recognizable as this test's.
+//
+// The clamp alone is not enough to keep it UNIQUE — two tests whose names
+// share their first eight alphanumerics would get one id, and this id names
+// the Docker network, the container labels, the data volumes and the temp
+// directory a test purges in its cleanup. That is not a flaky assertion, it is
+// one test deleting another's containers mid-run, so the FULL name is folded
+// into a short suffix: recognizable prefix, collision-free tail.
 func itNamespaceID(testName string) string {
 	name := strings.ToLower(strings.TrimPrefix(testName, "TestIntegration_"))
 	var b strings.Builder
@@ -171,7 +176,59 @@ func itNamespaceID(testName string) string {
 			break
 		}
 	}
-	return "depsit" + b.String()
+	sum := sha256.Sum256([]byte(testName))
+	return "depsit" + b.String() + hex.EncodeToString(sum[:2])
+}
+
+// The id is what scopes EVERY destructive act in these tests — the container
+// labels a cleanup purges, the data volumes, the temp directory. Two tests
+// sharing one id is one test purging another's containers while it runs, so
+// the property is checked here rather than left to the naming of future test
+// functions. It needs no Docker: run it alone with
+// `go test -tags integration ./internal/daemon/ -run TestIntegration_NamespaceIDsAreDistinct`.
+func TestIntegration_NamespaceIDsAreDistinct(t *testing.T) {
+	names := []string{
+		"TestIntegration_Postgres17To18",
+		"TestIntegration_RollbackOnBadTarget",
+		// The collision the clamp alone allowed: identical for eight
+		// alphanumerics, and both plausible names for real tests.
+		"TestIntegration_RollbackOnAMissingVolume",
+		"TestIntegration_RollbackOnAFailedRestore",
+		"Test", // no suffix at all must not panic
+	}
+	seen := map[string]string{}
+	for _, name := range names {
+		id := itNamespaceID(name)
+		assert.True(t, strings.HasPrefix(id, "depsit"), "%s → %q must stay recognizable", name, id)
+		if prev, dup := seen[id]; dup {
+			t.Errorf("%s and %s share the namespace id %q — each would purge the other's containers", prev, name, id)
+		}
+		seen[id] = name
+	}
+}
+
+// itDumpBytes is the total size of whatever the plan wrote into its scratch
+// directory, which is what "the dump was real" means here. It measures the
+// DIRECTORY rather than naming a file: the plan's scratch file name is its own
+// business (unexported), and a copy of that name here would be a second
+// definition of it that keeps compiling after the plan changes — the test
+// would then measure a file that does not exist, read 0, and report the dump
+// as empty. Server mode only, which is the mode this test runs in: the scratch
+// directory is a host path there.
+func itDumpBytes(dir string) int64 {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0
+	}
+	var total int64
+	for _, e := range entries {
+		info, statErr := e.Info()
+		if statErr != nil {
+			continue
+		}
+		total += info.Size()
+	}
+	return total
 }
 
 // newITEnv builds the daemon's REAL migration Env for a throwaway namespace:
@@ -195,9 +252,16 @@ func newITEnv(t *testing.T) *itEnv {
 		_ = dc.Close()
 	})
 
-	// Not t.TempDir(): a container writes into these directories as its own
-	// uid, so the removal is best-effort — a cleanup failure must not turn a
-	// passing test red, it must say what was left behind.
+	// Not t.TempDir(): t.TempDir()'s own cleanup FAILS the test when the
+	// directory will not go, and here it sometimes legitimately will not. The
+	// dump is written by the postgres container as uid 999, and under rootless
+	// Docker that uid maps to a subuid the test process does not own — so
+	// unless the test was launched through `unshare --user --map-auto
+	// --map-root-user` (or against a rootful daemon via sudo, see the skip
+	// message at the top of this file), os.RemoveAll gets EACCES on the dump
+	// and the directory survives. That is a leftover to report, not a
+	// migration that failed: the removal is best-effort and names what is left
+	// behind, under $TMPDIR with this namespace's own id in the name.
 	base, err := os.MkdirTemp("", nsID+"-*")
 	require.NoError(t, err)
 	t.Cleanup(func() {
@@ -508,7 +572,7 @@ func TestIntegration_RollbackOnBadTarget(t *testing.T) {
 		}
 		sabotaged = true
 		plan.Steps[i].Run = func(ctx context.Context, j *migrate.Journal, _ migrate.StepProgress) error {
-			dumpSize, _ = e.env.FileSize(filepath.Join(e.env.DumpDir(deps.Postgres), itDumpFile))
+			dumpSize = itDumpBytes(e.env.DumpDir(deps.Postgres))
 			targetVolume, _ = e.env.VolumeExists(ctx, deps.PostgresVolumeV18)
 			journaledVolume = j.CreatedVolume
 

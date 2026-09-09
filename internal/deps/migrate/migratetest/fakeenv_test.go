@@ -67,7 +67,7 @@ func TestTheFakeRecordsWhatAPlanDidToTheWorld(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, f.FreeHost, hostFree)
 	require.NoError(t, f.RemoveDir("/host/deps-migration/postgres"))
-	assert.Empty(t, f.Dirs)
+	assert.Empty(t, f.DirNames())
 
 	require.NoError(t, f.StopRemove(ctx, "pg-dst"))
 	require.NoError(t, f.RemoveVolume(ctx, "postgres3"))
@@ -142,15 +142,15 @@ func TestTheFakeKeepsANonEmptyDirectory(t *testing.T) {
 	f.Files["/host/deps-migration/postgres/dump.sql"] = 1 << 20
 
 	require.NoError(t, f.RemoveDirIfEmpty("/host/deps-migration"))
-	assert.Contains(t, f.Dirs, "/host/deps-migration", "another dependency still has a dump dir there")
+	assert.Contains(t, f.DirNames(), "/host/deps-migration", "another dependency still has a dump dir there")
 
 	require.NoError(t, f.RemoveDir("/host/deps-migration/rabbitmq"))
 	require.NoError(t, f.RemoveDirIfEmpty("/host/deps-migration"))
-	assert.Contains(t, f.Dirs, "/host/deps-migration", "a file below it counts as well")
+	assert.Contains(t, f.DirNames(), "/host/deps-migration", "a file below it counts as well")
 
 	delete(f.Files, "/host/deps-migration/postgres/dump.sql")
 	require.NoError(t, f.RemoveDirIfEmpty("/host/deps-migration"))
-	assert.NotContains(t, f.Dirs, "/host/deps-migration")
+	assert.NotContains(t, f.DirNames(), "/host/deps-migration")
 	assert.Equal(t, []string{
 		"mkdir:/host/deps-migration", "mkdir:/host/deps-migration/rabbitmq",
 		"rmdirempty-kept:/host/deps-migration", "rmdir:/host/deps-migration/rabbitmq",
@@ -163,11 +163,17 @@ func TestTheFakeInjectsAnErrorPerCall(t *testing.T) {
 	boom := errors.New("boom")
 	f := New()
 	f.Volumes["postgres2"] = map[string]string{"PG_VERSION": "17\n"}
+	// postgres3 is arranged as an EXISTING volume with content, so the two
+	// calls keyed on it below have something to destroy: without that, "the
+	// volume is not there afterwards" would hold whether or not CreateVolume
+	// ran, and the assertion would pass on a fake that ignored FailOn entirely.
+	f.Volumes["postgres3"] = map[string]string{"18/docker/PG_VERSION": "18\n"}
 	f.Containers["pg-src"] = appdef.ApplicationDef{Name: "postgres"}
 	f.FailOn["createvol:postgres3"] = boom
 	f.FailOn["rmvol:postgres3"] = boom
 	f.FailOn["rm:pg-src"] = boom
 	f.FailOn["run:pg-dst"] = boom
+	f.FailOn["running:pg-src"] = boom
 	f.FailOn["pull:postgres:18"] = boom
 	f.FailOn["mkdir:/host/x"] = boom
 	f.FailOn["rmdir:/host/x"] = boom
@@ -182,6 +188,9 @@ func TestTheFakeInjectsAnErrorPerCall(t *testing.T) {
 	require.ErrorIs(t, f.StopRemove(ctx, "pg-src"), boom)
 	_, err := f.RunAppDef(ctx, appdef.ApplicationDef{}, "pg-dst", nil)
 	require.ErrorIs(t, err, boom)
+	running, err := f.ContainerRunning(ctx, "pg-src")
+	require.ErrorIs(t, err, boom)
+	assert.False(t, running, "a failure to ask is not an answer")
 	require.ErrorIs(t, f.PullImage(ctx, "postgres:18", nil), boom)
 	require.ErrorIs(t, f.EnsureDir("/host/x"), boom)
 	require.ErrorIs(t, f.RemoveDir("/host/x"), boom)
@@ -193,9 +202,20 @@ func TestTheFakeInjectsAnErrorPerCall(t *testing.T) {
 	require.ErrorIs(t, f.StopNamespace(ctx), boom)
 	require.ErrorIs(t, f.ReloadAndStart(ctx, true), boom)
 
+	// Every assertion below names a world the failed call would have changed,
+	// read back through the fake's own mutex-taking methods.
 	assert.Empty(t, f.Log(), "an injected failure changes nothing")
-	assert.Contains(t, f.Containers, "pg-src")
-	assert.NotContains(t, f.Volumes, "postgres3")
+	assert.Empty(t, f.DirNames(), "the failed EnsureDir created nothing")
+	f.FailOn = map[string]error{} // ask the questions without injecting into them
+	stillThere, err := f.ContainerRunning(ctx, "pg-src")
+	require.NoError(t, err)
+	assert.True(t, stillThere, "a failed StopRemove leaves the container running")
+	exists, err := f.VolumeExists(ctx, "postgres3")
+	require.NoError(t, err)
+	assert.True(t, exists, "a failed RemoveVolume leaves the volume in place")
+	ver, err := f.ReadVolumeFile(ctx, "postgres3", "18/docker/PG_VERSION")
+	require.NoError(t, err)
+	assert.Equal(t, "18\n", ver, "a failed CreateVolume must not blank an existing volume")
 }
 
 func TestTheFakeReportsAMissingVolumeOrFile(t *testing.T) {

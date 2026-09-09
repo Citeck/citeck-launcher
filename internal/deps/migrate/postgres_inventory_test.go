@@ -92,10 +92,12 @@ func TestInventoryDiffNamesEveryDifference(t *testing.T) {
 	assert.Len(t, src.diff(pgInventory{Databases: []string{"a"}, Roles: src.Roles, Tables: map[string]int{"a": 10}}), 2)
 }
 
-// An EXTRA table in the target is not a migration failure: the restore creates
-// the same objects, and a stray one cannot have eaten source data. Only a
-// SHORTFALL is reported... but a count is a count, so equality is the rule and
-// this test states which way the message reads.
+// An extra table in the target fails the verify exactly like a missing one.
+// The restore replays ONE script into an EMPTY cluster, so a count that came
+// out higher is not "the migration went well and then some" — it means
+// something else created objects in there, and the target is not the copy of
+// the source this step exists to certify. Equality is the rule in both
+// directions; the message names which side is which.
 func TestInventoryDiffReportsAnExtraTableToo(t *testing.T) {
 	src := pgInventory{Tables: map[string]int{"a": 10}}
 	d := src.diff(pgInventory{Tables: map[string]int{"a": 11}})

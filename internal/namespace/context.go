@@ -138,6 +138,11 @@ func NewNsGenContext(cfg *Config, bun *bundle.Def) *NsGenContext {
 		Files:        make(map[string][]byte),
 		Applications: make(map[string]*AppBuilder),
 		CloudConfig:  make(map[string]map[string]any),
+		// Like every other map here: the constructor is the only place a
+		// generation context is built, so resolveDependencyImage does not need
+		// to re-check for nil on each call, and GenResp.Dependencies is a map
+		// the caller can range over whatever the namespace generated.
+		DependencyImages: make(map[deps.ID]DependencyGen),
 	}
 	ctx.portsCounter.Store(17020)
 	return ctx

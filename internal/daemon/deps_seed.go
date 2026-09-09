@@ -164,6 +164,37 @@ func classifyCatFailure(volume, rel string, code int, out string) error {
 	return fmt.Errorf("cat %s in %s: exit %d: %s", rel, volume, code, msg)
 }
 
+// namespaceDependencies answers WHICH registered dependencies this namespace
+// actually generates. Two of the five are conditional, and the condition is
+// the namespace CONFIG in both cases (see internal/namespace/generator.go):
+// mongo is emitted only when Config.MongoEnabled(), keycloak only when the
+// namespace authenticates through it.
+//
+// It is derived from the config rather than from a generated app set because
+// the pins are an INPUT to Generate — seeding runs before it on both the load
+// and the reload path, so there is no generated set to consult yet, and the
+// previous generation's would be stale for the very edit that turned one of
+// the two on. The config is what Generate itself reads, so this cannot
+// disagree with it for the run it is seeding; that agreement is pinned by
+// TestNamespaceDependenciesMatchesWhatTheGeneratorEmits, which drives the REAL
+// generator over the configurations that move either switch.
+//
+// A nil config means nothing is known yet and answers ALL of them: an
+// unnecessary probe costs a Docker call, a missing pin hands data to the
+// candidate image.
+func namespaceDependencies(cfg *namespace.Config) map[deps.ID]bool {
+	present := make(map[deps.ID]bool, len(deps.All()))
+	for _, d := range deps.All() {
+		present[d.ID()] = true
+	}
+	if cfg == nil {
+		return present
+	}
+	present[deps.MongoDB] = cfg.MongoEnabled()
+	present[deps.Keycloak] = cfg.Authentication.Type == namespace.AuthKeycloak
+	return present
+}
+
 // resolveDependencyPins turns "what this namespace has persisted" into "what
 // Generate must be told": the persisted pins plus a pin for every dependency
 // that has none but does have data. It is the single wiring point shared by
@@ -172,19 +203,29 @@ func classifyCatFailure(volume, rel string, code int, out string) error {
 // on load and one whose data appeared afterwards (a snapshot import) reach the
 // generator with the same map.
 //
+// present narrows the work to the dependencies this namespace HAS (see
+// namespaceDependencies). Seeding runs on every load and every probe costs a
+// Docker call — a utils container on a desktop. The case that motivated the
+// filter is a namespace that does not authenticate through Keycloak: keycloak
+// had no container to inspect, fell through to the postgres data — which
+// postgres itself never reads, because its own container answers first — and
+// paid for that read on every load, forever.
+//
 // Returns (all pins, only the seeded additions). The additions are reported
 // separately because the two callers do different things with them: the load
 // path only logs them and installs them through the NON-persisting
 // RestoreDependencyState (persisting there would write r.status, which is
 // still STOPPED before the caller acts on ShouldStart), the reload path
 // persists each one.
-func resolveDependencyPins(ctx context.Context, persisted map[deps.ID]string, probe dependencyProbe) (pins, seeded map[deps.ID]string) {
+func resolveDependencyPins(ctx context.Context, persisted map[deps.ID]string,
+	probe dependencyProbe, present map[deps.ID]bool,
+) (pins, seeded map[deps.ID]string) {
 	ctx, cancel := context.WithTimeout(ctx, dependencySeedTimeout)
 	defer cancel()
 
 	pins = make(map[deps.ID]string, len(persisted)+len(deps.All()))
 	maps.Copy(pins, persisted)
-	seeded = seedDependencyPins(ctx, pins, probe, nil)
+	seeded = seedDependencyPins(ctx, pins, probe, nil, present)
 	maps.Copy(pins, seeded)
 	return pins, seeded
 }
@@ -232,7 +273,13 @@ const (
 //
 // preferVolumes marks volumes a snapshot import just restored; when both
 // postgres layouts hold a cluster the imported one is the truth.
-func seedDependencyPins(ctx context.Context, existing map[deps.ID]string, probe dependencyProbe, preferVolumes map[string]bool) map[deps.ID]string {
+//
+// present (nil ⇒ all) limits the walk to the dependencies the namespace
+// generates: one that is not part of it has no container to gate, so probing
+// for its data buys nothing and costs a Docker call per namespace load.
+func seedDependencyPins(ctx context.Context, existing map[deps.ID]string, probe dependencyProbe,
+	preferVolumes map[string]bool, present map[deps.ID]bool,
+) map[deps.ID]string {
 	out := make(map[deps.ID]string)
 	// Read at most once, and only if something needs it: the postgres data
 	// answers for Keycloak too, whose state lives in that same database rather
@@ -250,6 +297,9 @@ func seedDependencyPins(ctx context.Context, existing map[deps.ID]string, probe 
 
 	for _, d := range deps.All() {
 		if img := existing[d.ID()]; img != "" {
+			continue
+		}
+		if present != nil && !present[d.ID()] {
 			continue
 		}
 		containerFailed := false
@@ -351,7 +401,10 @@ func legacyVolumeFor(id deps.ID) string {
 // neither layout holds one, seedUnknown that a probe failed and the caller
 // must assume rather than conclude.
 func postgresPinFromData(ctx context.Context, probe dependencyProbe, preferVolumes map[string]bool) (string, seedVerdict) {
-	layouts := []deps.PostgresLayout{deps.PostgresLayoutFor(18), deps.PostgresLayoutFor(17)}
+	// The probe ORDER — newest layout first — is the registry's to state, not
+	// this function's: teaching the launcher about a new layout, or about a new
+	// major inside one, is then an edit to internal/deps and nowhere else.
+	layouts := deps.KnownPostgresLayouts()
 	if preferVolumes[deps.PostgresVolumeLegacy] && !preferVolumes[deps.PostgresVolumeV18] {
 		layouts[0], layouts[1] = layouts[1], layouts[0]
 	}
@@ -390,7 +443,9 @@ func postgresPinFromData(ctx context.Context, probe dependencyProbe, preferVolum
 // reseedAfterSnapshotImport re-derives the pins of every dependency whose
 // data a snapshot just replaced. Without it a namespace already on 18 that
 // imports a 17 snapshot keeps a pin of 18 over 17 data.
-func reseedAfterSnapshotImport(ctx context.Context, rt *namespace.Runtime, probe dependencyProbe, importedVolumes []string) {
+func reseedAfterSnapshotImport(ctx context.Context, rt *namespace.Runtime, probe dependencyProbe,
+	importedVolumes []string, present map[deps.ID]bool,
+) {
 	imported := make(map[string]bool, len(importedVolumes))
 	for _, v := range importedVolumes {
 		imported[v] = true
@@ -412,7 +467,7 @@ func reseedAfterSnapshotImport(ctx context.Context, rt *namespace.Runtime, probe
 	}
 	seedCtx, cancel := context.WithTimeout(ctx, dependencySeedTimeout)
 	defer cancel()
-	for id, img := range seedDependencyPins(seedCtx, existing, probe, imported) {
+	for id, img := range seedDependencyPins(seedCtx, existing, probe, imported, present) {
 		slog.Info("Dependency pin re-seeded after snapshot import", "dependency", id, "image", img)
 		rt.SetDependencyPin(id, img)
 	}

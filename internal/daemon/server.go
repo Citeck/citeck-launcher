@@ -232,11 +232,13 @@ type Daemon struct {
 	// production — both fall back to the bundle resolver. Same pattern as
 	// planInputsFn.
 	wsCfgResolveFn func(ws storage.WorkspaceDto) (*bundle.WorkspaceConfig, error)
-	// runtimeStartFn is a test seam for handleUnlockSecrets' deferred-namespace
-	// start: real namespace.Runtime.Start spins up the runtimeLoop goroutine and
-	// drives real docker workers, unreachable from unit tests. nil in
-	// production — startRuntime() falls back to rt.Start(apps). Same pattern as
-	// planInputsFn.
+	// runtimeStartFn is the test seam for the two non-HTTP starts, both of
+	// which go through startRuntime: the BOOT auto-start (after crash recovery
+	// — recoverThenStartLoadedNamespace) and handleUnlockSecrets' deferred
+	// start once the secrets vault is unlocked. A real namespace.Runtime.Start
+	// spins up the runtimeLoop goroutine and drives real docker workers, which
+	// is unreachable from a unit test. nil in production — startRuntime() falls
+	// back to rt.Start(apps, false). Same pattern as planInputsFn.
 	runtimeStartFn func(rt *namespace.Runtime, apps []appdef.ApplicationDef)
 	// apiAuth enforces the opt-in bearer-token/session auth on the
 	// server-mode TCP transport (daemon.yml api_auth). nil when disabled
@@ -685,7 +687,8 @@ func (d *Daemon) doReloadEx(forceGitPull, startNotRegenerate, refreshImages bool
 	// Persisting here is right, unlike on the load path: the runtime exists
 	// and its status is live, so a persist writes the truth.
 	pins, seededPins := resolveDependencyPins(d.bgCtx, act.runtime.DependencyPins(),
-		dockerDependencyProbe{dc: depsDockerOf(act.dockerClient), volumesBase: act.volumesBase})
+		dockerDependencyProbe{dc: depsDockerOf(act.dockerClient), volumesBase: act.volumesBase},
+		namespaceDependencies(nsCfg))
 	for id, img := range seededPins {
 		slog.Info("Dependency pin seeded on reload", "ns", nsID, "dependency", id, "image", img)
 		act.runtime.SetDependencyPin(id, img)

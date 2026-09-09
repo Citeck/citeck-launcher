@@ -75,16 +75,49 @@ func TestOnlyPostgresIsMigratable(t *testing.T) {
 	}
 }
 
+// The layouts of 17 and 18 are stated here as LITERALS on purpose: they are a
+// release-safety contract, not an implementation detail. The generator mounts
+// what PostgresLayoutFor returns and the mount is part of GetHashInput, so a
+// value that moves by a byte recreates every user's postgres container on
+// upgrade — which is also what internal/namespace pins from the other side
+// with its postgres17.hashinput.golden. Deriving the expectation from the
+// table would only assert that the table equals itself.
 func TestPostgresLayout(t *testing.T) {
 	legacy := PostgresLayoutFor(17)
 	assert.Equal(t, PostgresLayout{Volume: "postgres2", MountPath: "/var/lib/postgresql/data",
 		PGData: "/var/lib/postgresql/data", PGVersionRel: "PG_VERSION"}, legacy)
 	assert.Equal(t, legacy, PostgresLayoutFor(9))
+	// A major below every rule is data the launcher could not identify;
+	// answering with the NEWEST layout would start an empty new cluster beside
+	// it. 0 is what an unparsable tag yields.
+	assert.Equal(t, legacy, PostgresLayoutFor(0))
+	assert.Equal(t, legacy, PostgresLayoutFor(-1))
 
 	v18 := PostgresLayoutFor(18)
 	assert.Equal(t, PostgresLayout{Volume: "postgres3", MountPath: "/var/lib/postgresql",
 		PGData: "", PGVersionRel: "18/docker/PG_VERSION"}, v18)
 	assert.Equal(t, "19/docker/PG_VERSION", PostgresLayoutFor(19).PGVersionRel)
+}
+
+// KnownPostgresLayouts is what the daemon's pin-seeding probe walks when there
+// is no pin and no container to ask: every layout it can spell a PG_VERSION
+// path for, newest first, so the newest cluster on disk wins. The order is the
+// verdict — a probe that tried the legacy layout first would find nothing on
+// an 18 namespace and seed it as legacy.
+func TestKnownPostgresLayoutsAreTheProbeOrder(t *testing.T) {
+	assert.Equal(t, []PostgresLayout{PostgresLayoutFor(18), PostgresLayoutFor(17)}, KnownPostgresLayouts())
+
+	// Every entry must be usable as a probe on its own: a volume to look in
+	// and a path to look at.
+	for _, l := range KnownPostgresLayouts() {
+		assert.NotEmpty(t, l.Volume)
+		assert.NotEmpty(t, l.PGVersionRel)
+	}
+	// The layout a given major RUNS on is always one the probe knows how to
+	// find, or a namespace could be seeded from data no probe can read.
+	for _, major := range []int{9, 17, 18} {
+		assert.Contains(t, KnownPostgresLayouts(), PostgresLayoutFor(major), "major %d", major)
+	}
 }
 
 func TestMigrationResultOK(t *testing.T) {

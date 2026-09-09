@@ -398,6 +398,7 @@
   "deps.preflight.data": "数据大小：{size}",
   "deps.preflight.host": "主机（转储）：需要 {need}，可用 {free}",
   "deps.preflight.volume": "卷：需要 {need}，可用 {free}",
+  "deps.preflight.shared": "磁盘（转储 + 新集群）：需要 {need}，可用 {free}",
   "deps.preflight.willStop": "命名空间将被停止并重新启动",
   "deps.preflight.existingVolume": "卷 {volume} 已存在（{size}，版本 {version}）",
   "deps.preflightFailed": "预检未通过；未做任何更改",

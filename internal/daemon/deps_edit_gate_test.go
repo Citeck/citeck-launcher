@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/citeck/citeck-launcher/internal/api"
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/deps"
 	"github.com/citeck/citeck-launcher/internal/namespace"
@@ -24,6 +25,7 @@ func newEditGateDaemon(t *testing.T, pins map[deps.ID]deps.DependencyState) (*Da
 	t.Cleanup(rt.Shutdown)
 	rt.SetGeneratedDefs([]appdef.ApplicationDef{
 		{Name: "postgres", Image: "postgres:17.5"},
+		{Name: "rabbitmq", Image: "rabbitmq:4.1.2-management"},
 		{Name: "gateway", Image: "gw:1"},
 	})
 	rt.RestoreDependencyState(pins, nil, nil)
@@ -78,12 +80,80 @@ func TestBreakingImageEditWithoutAPinIsNotGated(t *testing.T) {
 	assert.NotNil(t, rt.AppPatch("postgres"))
 }
 
-// An edit that leaves the image out entirely (a memory-limit tweak, the common
-// case) says nothing about the version and must pass even on a pinned
-// dependency — the generator's own pin gate fills the image in.
+// An edit that leaves the image out entirely says nothing about the VERSION,
+// which is the only thing this gate refuses, so it must pass even on a pinned
+// dependency. What such a def then means is a separate question the gate
+// deliberately does not answer: the editor round-trips the whole def, and
+// ApplicationDef.Image carries no `omitempty`, so the stored patch records
+// `image: ""` and the app ends up with a blank image — malformed, and caught
+// at pull time, not silently started on data it does not fit.
 func TestNonImageEditOnAPinnedDependencyIsNotGated(t *testing.T) {
 	_, mux, rt := newPinnedEditGateDaemon(t)
 	rec := putAppConfig(mux, "postgres", "name: postgres\nresources:\n  limits:\n    memory: 2g\n")
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.NotNil(t, rt.AppPatch("postgres"))
+}
+
+// The gate is driven by each descriptor's OWN rule, not by postgres' — and
+// postgres is the only one the tests above exercise. RabbitMQ and ZooKeeper
+// are minor-breaking (the vendor supports next-minor upgrades only), so a
+// move the postgres rule would wave through — same major, different minor —
+// has to be refused here, while a patch-level bump inside the pinned minor is
+// exactly the case the pin is supposed to let past.
+func TestBreakingMinorImageEditOnADependencyIsRefused(t *testing.T) {
+	pins := map[deps.ID]deps.DependencyState{deps.RabbitMQ: {Image: "rabbitmq:4.1.2-management"}}
+
+	_, mux, rt := newEditGateDaemon(t, pins)
+	rec := putAppConfig(mux, "rabbitmq", "name: rabbitmq\nimage: rabbitmq:4.2.9-management\n")
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), `"DEPENDENCY_VERSION_LOCKED"`)
+	assert.Contains(t, rec.Body.String(), "citeck deps upgrade rabbitmq")
+	assert.Nil(t, rt.AppPatch("rabbitmq"), "a refused edit must not be persisted")
+
+	_, mux2, rt2 := newEditGateDaemon(t, pins)
+	rec2 := putAppConfig(mux2, "rabbitmq", "name: rabbitmq\nimage: rabbitmq:4.1.9-management\n")
+	require.Equal(t, http.StatusOK, rec2.Code, rec2.Body.String())
+	assert.NotNil(t, rt2.AppPatch("rabbitmq"), "a same-minor bump is not a data migration")
+}
+
+// Every test above edits a STOPPED namespace, which takes the other half of
+// handlePutAppConfig: a RUNNING one takes reloadMu and applies the edit by
+// reloading the whole namespace, i.e. by regenerating and recreating
+// containers from the very image the gate exists to refuse. So the refusal has
+// to hold there too — nothing persisted, nothing reloaded, reloadMu left free.
+func TestTheEditGateRefusesOnARunningNamespace(t *testing.T) {
+	d, mux, rt := newPinnedEditGateDaemon(t)
+	rt.SetStatusForTest(namespace.NsStatusRunning)
+	reloads := 0
+	d.reloadFn = func() error { reloads++; return nil }
+
+	rec := putAppConfig(mux, "postgres", "name: postgres\nimage: postgres:18\n")
+
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), `"DEPENDENCY_VERSION_LOCKED"`)
+	assert.Zero(t, reloads, "a refused edit must not reload the namespace it was refused for")
+	assert.Nil(t, rt.AppPatch("postgres"), "a refused edit must not be persisted")
+	require.True(t, d.reloadMu.TryLock(), "a refused edit must not leave reloadMu held")
+	d.reloadMu.Unlock()
+}
+
+// …and it must answer BEFORE the running path claims reloadMu. With a reload
+// already in flight, a gate placed after that TryLock reports
+// RELOAD_IN_PROGRESS — a refusal that reads as "try again in a minute" for an
+// edit that will never be accepted, and that hides the one message telling the
+// operator to run the migration instead.
+func TestTheEditGateAnswersBeforeTheReloadLock(t *testing.T) {
+	d, mux, rt := newPinnedEditGateDaemon(t)
+	rt.SetStatusForTest(namespace.NsStatusRunning)
+	d.reloadFn = func() error { return nil }
+	d.reloadMu.Lock()
+	t.Cleanup(d.reloadMu.Unlock)
+
+	rec := putAppConfig(mux, "postgres", "name: postgres\nimage: postgres:18\n")
+
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), `"DEPENDENCY_VERSION_LOCKED"`)
+	assert.NotContains(t, rec.Body.String(), api.ErrCodeReloadInProgress,
+		"the operator must be told the version is locked, not to wait for a reload")
+	assert.Nil(t, rt.AppPatch("postgres"))
 }

@@ -40,9 +40,6 @@ func resolveDependencyImage(ctx *NsGenContext, id deps.ID, candidate string) str
 	if !ok {
 		return candidate
 	}
-	if ctx.DependencyImages == nil {
-		ctx.DependencyImages = make(map[deps.ID]DependencyGen)
-	}
 	// deps.Breaking already answers false for pinned == candidate and true for
 	// an unparsable tag on either side, so only the "no pin at all" case needs
 	// its own arm here.

@@ -399,6 +399,7 @@ func (d *Daemon) handleActivateNamespace(w http.ResponseWriter, r *http.Request)
 	// tearing down current state — if loading fails, the daemon stays on
 	// the previous namespace and the user can retry without a restart.
 	loaded, err := loadNamespace(loadNamespaceInput{
+		Ctx:           d.bgCtx,
 		Store:         d.store,
 		SecretService: d.secretService,
 		DockerClient:  nil, // build a fresh client scoped to this ns (loadNamespace)
@@ -846,6 +847,7 @@ func (d *Daemon) autoActivateAfterCreate(wsID, nsID string) {
 	}
 	defer d.reloadMu.Unlock()
 	loaded, loadErr := loadNamespace(loadNamespaceInput{
+		Ctx:           d.bgCtx,
 		Store:         d.store,
 		SecretService: d.secretService,
 		// nil → loadNamespace builds the runtime client scoped to

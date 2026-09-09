@@ -398,6 +398,7 @@
   "deps.preflight.data": "Taille des données : {size}",
   "deps.preflight.host": "Hôte (sauvegarde) : besoin de {need}, libre {free}",
   "deps.preflight.volume": "Volumes : besoin de {need}, libre {free}",
+  "deps.preflight.shared": "Disque (sauvegarde + nouveau cluster) : besoin de {need}, libre {free}",
   "deps.preflight.willStop": "L'espace de noms sera arrêté puis redémarré",
   "deps.preflight.existingVolume": "Le volume {volume} existe déjà ({size}, version {version})",
   "deps.preflightFailed": "Les vérifications préalables ont échoué ; rien n'a été modifié",

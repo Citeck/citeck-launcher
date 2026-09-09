@@ -398,6 +398,7 @@
   "deps.preflight.data": "Размер данных: {size}",
   "deps.preflight.host": "Хост (дамп): нужно {need}, свободно {free}",
   "deps.preflight.volume": "Тома: нужно {need}, свободно {free}",
+  "deps.preflight.shared": "Диск (дамп + новый кластер): нужно {need}, свободно {free}",
   "deps.preflight.willStop": "Пространство имён будет остановлено и запущено заново",
   "deps.preflight.existingVolume": "Том {volume} уже существует ({size}, версия {version})",
   "deps.preflightFailed": "Предварительные проверки не пройдены; ничего не изменено",

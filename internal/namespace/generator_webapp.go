@@ -723,6 +723,17 @@ func generateObserver(ctx *NsGenContext) {
 
 	// 1. Observer Postgres — separate instance tuned for observability workload:
 	// heavy writes (span/metric ingestion), aggregation queries, JSONB GIN lookups
+	//
+	// Its image does NOT go through resolveDependencyImage and it keeps the
+	// legacy data layout (explicit PGDATA under the volume) on purpose: this is
+	// the observer's own database, and the dependency registry knows exactly one
+	// postgres per namespace — deps.Postgres is keyed to the "postgres" app, and
+	// the pin, the data probe and the migration engine all name that container
+	// and its volumes (postgres2/postgres3). So nothing pins, seeds or migrates
+	// this one, which means nothing would ever move its data to a new layout
+	// either; naming PGDATA explicitly is what keeps a future image bump from
+	// starting an empty cluster in the image's new default directory beside the
+	// existing data. alf-postgres is in the same position for the same reason.
 	obsPg := ctx.GetOrCreateApp(appdef.AppObsPostgres)
 	obsPg.Image = "postgres:18"
 	obsPg.Kind = appdef.KindThirdParty

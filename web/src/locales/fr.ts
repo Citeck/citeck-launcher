@@ -465,6 +465,7 @@ const fr = {
   'deps.preflight.data': 'Taille des données : {size}',
   'deps.preflight.host': 'Hôte (export) : besoin de {need}, libre {free}',
   'deps.preflight.volume': 'Volumes : besoin de {need}, libre {free}',
+  'deps.preflight.shared': 'Disque (export + nouveau cluster) : besoin de {need}, libre {free}',
   'deps.preflight.willStop': 'Le namespace sera arrêté puis redémarré',
   'deps.preflight.oldKept': 'Le volume de données actuel reste intact ; toute erreur y revient',
   'deps.preflight.replaceVolume': 'Supprimer le volume existant {volume} ({size}, PostgreSQL {version}) et le recréer',

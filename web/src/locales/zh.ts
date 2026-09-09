@@ -465,6 +465,7 @@ const zh = {
   'deps.preflight.data': '数据大小：{size}',
   'deps.preflight.host': '主机（导出）：需要 {need}，可用 {free}',
   'deps.preflight.volume': '存储卷：需要 {need}，可用 {free}',
+  'deps.preflight.shared': '磁盘（导出 + 新集群）：需要 {need}，可用 {free}',
   'deps.preflight.willStop': 'namespace 将被停止并重新启动',
   'deps.preflight.oldKept': '当前数据卷保持不变；任何失败都会回滚到它',
   'deps.preflight.replaceVolume': '删除已存在的存储卷 {volume}（{size}，PostgreSQL {version}）并重新创建',

@@ -68,6 +68,23 @@ type Env interface {
 	// VM's disk, not the host's), probed through an existing volume.
 	VolumeFreeBytes(ctx context.Context, probeVolume string) (int64, error)
 	ReadVolumeFile(ctx context.Context, volume, rel string) (string, error)
+	// DumpSharesFilesystemWithVolumes reports whether the scratch directory the
+	// dump is written to (DumpDir) and the data volumes are on ONE filesystem.
+	//
+	// Only the environment can answer it: the plan knows a host path and a
+	// volume NAME, and nothing about a name says where its bytes land. On a
+	// server both are directories under the namespace's volumes base (usually
+	// one filesystem, but an operator is free to mount the volumes directory
+	// onto its own disk); on a macOS/Windows desktop the volumes live inside
+	// the Docker VM, whose disk the host cannot see at all.
+	//
+	// It matters because the dump and the new cluster COEXIST — the scratch
+	// directory is removed only after the commit, and the new cluster is built
+	// next to the old data — so on one filesystem what must fit is the SUM of
+	// the two, which is what the preflight demands when this answers true.
+	// probeVolume is one of the namespace's existing volumes, for
+	// implementations that have to ask the engine.
+	DumpSharesFilesystemWithVolumes(ctx context.Context, probeVolume string) (bool, error)
 
 	// --- host files --------------------------------------------------------
 	// DumpDir is the host directory a migration may use for scratch files.
@@ -78,8 +95,15 @@ type Env interface {
 	// root while an image runs as its own uid (postgres is 999), so a
 	// directory left with the daemon's ownership makes
 	// `pg_dumpall -f /citeck/depsmig/dump.sql` die with Permission denied —
-	// after the namespace has already been stopped. The sticky bit keeps one
-	// dependency's migration from deleting another's dump.
+	// after the namespace has already been stopped.
+	//
+	// World-writable is the part that does the work; the sticky bit is what
+	// makes world-writable safe, by restricting unlinking inside the directory
+	// to the owner of each file. It says nothing about the SHARED PARENT
+	// ("<volumes>/deps-migration"), which every dependency's scratch directory
+	// sits under: what keeps one migration from removing another's dump there
+	// is that each gets its own subdirectory (DumpDir) and that the parent is
+	// only ever removed when it is empty (RemoveDirIfEmpty).
 	EnsureDir(path string) error
 	RemoveDir(path string) error
 	// RemoveDirIfEmpty removes the directory only if it holds nothing. A

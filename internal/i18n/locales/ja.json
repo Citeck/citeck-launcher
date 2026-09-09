@@ -398,6 +398,7 @@
   "deps.preflight.data": "データサイズ: {size}",
   "deps.preflight.host": "ホスト（ダンプ）: 必要 {need}、空き {free}",
   "deps.preflight.volume": "ボリューム: 必要 {need}、空き {free}",
+  "deps.preflight.shared": "ディスク（ダンプ + 新しいクラスター）: 必要 {need}、空き {free}",
   "deps.preflight.willStop": "名前空間はいったん停止され、再度起動されます",
   "deps.preflight.existingVolume": "ボリューム {volume} はすでに存在します（{size}、バージョン {version}）",
   "deps.preflightFailed": "事前チェックに失敗しました。何も変更されていません",

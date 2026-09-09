@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -90,12 +91,15 @@ const depsScratchDirPerm = os.ModeSticky | 0o777
 type depsEnv struct {
 	d   *Daemon
 	act activeNamespace
-	dc  depsDocker
-	// probe is the seeding probe (deps_seed.go) — the ONE place that knows
-	// where a namespace's data physically lives (a desktop's scoped named
-	// volume vs. a server's bind directory). Volume reads and the server-mode
-	// volume path are delegated to it rather than re-derived here.
-	probe dockerDependencyProbe
+	// The seeding probe (deps_seed.go) is EMBEDDED, not held beside a second
+	// copy of its parts: it is the ONE place that knows where a namespace's
+	// data physically lives (a desktop's scoped named volume vs. a server's
+	// bind directory), and migrate.Env asks for exactly two of its methods —
+	// VolumeExists and ReadVolumeFile — with exactly its signatures. Embedding
+	// satisfies both directly, so there is no second wrapping of the same
+	// error ("check volume X: lookup volume X: …") and no second Docker client
+	// field to keep in step with this one: e.dc IS the probe's.
+	dockerDependencyProbe
 
 	stopWait time.Duration
 	stopPoll time.Duration
@@ -107,12 +111,11 @@ var _ migrate.Env = (*depsEnv)(nil)
 func (d *Daemon) newDepsEnv(act activeNamespace) *depsEnv {
 	dc := depsDockerOf(act.dockerClient)
 	return &depsEnv{
-		d:        d,
-		act:      act,
-		dc:       dc,
-		probe:    dockerDependencyProbe{dc: dc, volumesBase: act.volumesBase},
-		stopWait: depsStopTimeout,
-		stopPoll: depsStopPoll,
+		d:                     d,
+		act:                   act,
+		dockerDependencyProbe: dockerDependencyProbe{dc: dc, volumesBase: act.volumesBase},
+		stopWait:              depsStopTimeout,
+		stopPoll:              depsStopPoll,
 	}
 }
 
@@ -228,16 +231,6 @@ func (e *depsEnv) StopRemove(ctx context.Context, name string) error {
 
 // --- volumes ---------------------------------------------------------------
 
-// VolumeExists reports whether the plain-named data volume exists, through the
-// same rule seeding uses.
-func (e *depsEnv) VolumeExists(ctx context.Context, vol string) (bool, error) {
-	exists, err := e.probe.VolumeExists(ctx, vol)
-	if err != nil {
-		return false, fmt.Errorf("check volume %s: %w", vol, err)
-	}
-	return exists, nil
-}
-
 // CreateVolume creates the data volume: a scoped named volume on a desktop, a
 // bind directory on a server. The directory is left at 0755 and owned by the
 // daemon on purpose — the official postgres entrypoint chowns PGDATA to its own
@@ -253,7 +246,7 @@ func (e *depsEnv) CreateVolume(ctx context.Context, vol string) error {
 		return nil
 	}
 	//nolint:gosec // G301: Docker bind-mount sources need container-accessible perms
-	if err := os.MkdirAll(e.probe.volumeDir(vol), 0o755); err != nil {
+	if err := os.MkdirAll(e.volumeDir(vol), 0o755); err != nil {
 		return fmt.Errorf("create volume %s: %w", vol, err)
 	}
 	return nil
@@ -277,7 +270,7 @@ func (e *depsEnv) RemoveVolume(ctx context.Context, vol string) error {
 		}
 		return nil
 	}
-	if err := os.RemoveAll(e.probe.volumeDir(vol)); err != nil {
+	if err := os.RemoveAll(e.volumeDir(vol)); err != nil {
 		return fmt.Errorf("remove volume %s: %w", vol, err)
 	}
 	return nil
@@ -305,7 +298,7 @@ func (e *depsEnv) VolumeSize(ctx context.Context, vol string) (int64, error) {
 		return size, nil
 	}
 	var total int64
-	err := filepath.WalkDir(e.probe.volumeDir(vol), func(_ string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(e.volumeDir(vol), func(_ string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
 		}
@@ -370,6 +363,50 @@ func (e *depsEnv) serverVolumesDir() string {
 	return dir
 }
 
+// DumpSharesFilesystemWithVolumes answers whether the scratch directory the
+// dump is written to and the data volumes are on ONE filesystem — which is
+// what decides whether the preflight has to require room for both at once.
+//
+// SERVER mode is the case that motivated the seam, and the one that can be
+// answered exactly: both are directories under the namespace's volumes base
+// (the dump under <base>/deps-migration/<id>, the volumes under
+// <base>/volumes), so the filesystem identity of those two paths IS the
+// answer. It is not always "yes" — an operator is free to mount the volumes
+// directory onto its own disk — which is why it is measured rather than
+// assumed. The comparison uses the volumes BASE rather than the dump
+// directory, which does not exist until the migration creates it; that is the
+// same path HostFreeBytes measures, for the same reason.
+//
+// DESKTOP mode cannot be answered from here, so it is answered deliberately,
+// per OS — see desktopSharesHostFilesystem.
+func (e *depsEnv) DumpSharesFilesystemWithVolumes(_ context.Context, _ string) (bool, error) {
+	if config.IsDesktopMode() {
+		return desktopSharesHostFilesystem(goruntime.GOOS), nil
+	}
+	same, err := fsutil.SameFilesystem(e.act.volumesBase, e.serverVolumesDir())
+	if err != nil {
+		return false, fmt.Errorf("compare the dump and volume filesystems: %w", err)
+	}
+	return same, nil
+}
+
+// desktopSharesHostFilesystem is the desktop rule, as a pure function of the
+// OS so the choice itself is testable on any of them.
+//
+// On macOS and Windows the named volumes live inside the Docker VM, whose disk
+// the host cannot see at all — that is why VolumeFreeBytes has to ask the
+// engine through a container there. Two filesystems, certainly.
+//
+// On Linux the engine runs on the same kernel, and on an ordinary desktop
+// install its volume root sits on the same disk as the user's data directory.
+// We cannot PROVE it: /var/lib/docker is unreadable to the desktop user, so
+// stat'ing the volume's mountpoint fails, and a separate /var partition, a
+// rootless engine and a remote DOCKER_HOST all look identical from here. So
+// this takes the safe direction and says yes. Over-requiring refuses a
+// migration that would have fit and says exactly what it wanted;
+// under-requiring runs the restore out of space on a stopped namespace.
+func desktopSharesHostFilesystem(goos string) bool { return goos == "linux" }
+
 // parseDfAvailableKB reads the "Available" column of `df -kP` (POSIX format:
 // Filesystem, 1024-blocks, Used, Available, Capacity, Mounted on). It scans
 // from the LAST line up, because df wraps a long device name onto its own line
@@ -394,16 +431,6 @@ func parseDfAvailableKB(out string) (int64, error) {
 		}
 	}
 	return 0, fmt.Errorf("no data row in df output: %q", out)
-}
-
-// ReadVolumeFile reads a file out of a data volume — the seeding probe's rule,
-// not a second copy of it.
-func (e *depsEnv) ReadVolumeFile(ctx context.Context, vol, rel string) (string, error) {
-	out, err := e.probe.ReadVolumeFile(ctx, vol, rel)
-	if err != nil {
-		return "", err
-	}
-	return out, nil
 }
 
 // --- host files ------------------------------------------------------------

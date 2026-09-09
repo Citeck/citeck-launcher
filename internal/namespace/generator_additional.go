@@ -43,7 +43,13 @@ func generateAdditionalApps(ctx *NsGenContext) {
 		// reservedAppNames check in ValidateAdditionalApps cannot see bundle-loaded
 		// webapp IDs (edi, integrations, enterprise apps …), so guard here where the
 		// full app set is known: skip (never overwrite) and log loudly.
-		if _, exists := ctx.Applications[name]; exists {
+		//
+		// isBuiltInApp also covers the proxy and onlyoffice, whose generators run
+		// AFTER this one: they have no builder yet, so an entry naming one would
+		// SEED it instead of overwriting it, and the built-in generator would then
+		// leave every field it does not set (aliases, cmd, shmSize, init
+		// containers, stray env) on the real container.
+		if isBuiltInApp(ctx, name) {
 			slog.Error("additionalApps entry collides with a built-in app; skipping to avoid overwriting it", "name", name)
 			continue
 		}

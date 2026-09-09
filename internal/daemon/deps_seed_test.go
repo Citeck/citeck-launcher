@@ -15,6 +15,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	dockervol "github.com/moby/moby/api/types/volume"
+
+	"github.com/citeck/citeck-launcher/internal/bundle"
 	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/deps"
 	"github.com/citeck/citeck-launcher/internal/namespace"
@@ -33,6 +36,8 @@ type fakeProbe struct {
 	seenCtx *context.Context
 	// askedVolumes records every volume name the probe was asked about.
 	askedVolumes *[]string
+	// askedApps records every app whose container the probe was asked about.
+	askedApps *[]string
 }
 
 func (f fakeProbe) record(ctx context.Context) {
@@ -43,6 +48,9 @@ func (f fakeProbe) record(ctx context.Context) {
 
 func (f fakeProbe) ContainerImage(ctx context.Context, app string) (image string, ok bool, err error) {
 	f.record(ctx)
+	if f.askedApps != nil {
+		*f.askedApps = append(*f.askedApps, app)
+	}
 	if f.containerErr != nil {
 		return "", false, f.containerErr
 	}
@@ -83,7 +91,7 @@ func TestSeedFromRunningContainerWins(t *testing.T) {
 		containers: map[string]string{"postgres": "postgres:17.11", "rabbitmq": "rabbitmq:4.2.9-management"},
 		volumes:    map[string]map[string]string{"postgres2": {"PG_VERSION": "17\n"}},
 	}
-	got := seedDependencyPins(context.Background(), nil, p, nil)
+	got := seedDependencyPins(context.Background(), nil, p, nil, nil)
 	assert.Equal(t, "postgres:17.11", got[deps.Postgres])
 	assert.Equal(t, "rabbitmq:4.2.9-management", got[deps.RabbitMQ])
 	_, hasZK := got[deps.Zookeeper]
@@ -92,7 +100,7 @@ func TestSeedFromRunningContainerWins(t *testing.T) {
 
 func TestSeedFromPGVersionWhenNoContainer(t *testing.T) {
 	p := fakeProbe{volumes: map[string]map[string]string{"postgres2": {"PG_VERSION": "17\n"}}}
-	got := seedDependencyPins(context.Background(), nil, p, nil)
+	got := seedDependencyPins(context.Background(), nil, p, nil, nil)
 	assert.Equal(t, "postgres:17", got[deps.Postgres])
 }
 
@@ -101,26 +109,26 @@ func TestSeedPrefers18LayoutUnlessSnapshotSaysOtherwise(t *testing.T) {
 		"postgres2": {"PG_VERSION": "17\n"},
 		"postgres3": {"18/docker/PG_VERSION": "18\n"},
 	}}
-	assert.Equal(t, "postgres:18", seedDependencyPins(context.Background(), nil, p, nil)[deps.Postgres])
-	assert.Equal(t, "postgres:17", seedDependencyPins(context.Background(), nil, p, map[string]bool{"postgres2": true})[deps.Postgres])
+	assert.Equal(t, "postgres:18", seedDependencyPins(context.Background(), nil, p, nil, nil)[deps.Postgres])
+	assert.Equal(t, "postgres:17", seedDependencyPins(context.Background(), nil, p, map[string]bool{"postgres2": true}, nil)[deps.Postgres])
 }
 
 func TestSeedFallsBackToLegacyImageOnUnreadableData(t *testing.T) {
 	p := fakeProbe{volumes: map[string]map[string]string{"postgres2": {}}, readErr: errors.New("permission denied")}
-	got := seedDependencyPins(context.Background(), nil, p, nil)
+	got := seedDependencyPins(context.Background(), nil, p, nil, nil)
 	assert.Equal(t, deps.PostgresLegacyImage, got[deps.Postgres])
 }
 
 func TestSeedUsesLegacyImageForDependenciesWithoutADataFile(t *testing.T) {
 	p := fakeProbe{volumes: map[string]map[string]string{"rabbitmq2": {}, "zookeeper2": {}}}
-	got := seedDependencyPins(context.Background(), nil, p, nil)
+	got := seedDependencyPins(context.Background(), nil, p, nil, nil)
 	assert.Equal(t, "rabbitmq:4.1-management", got[deps.RabbitMQ])
 	assert.Equal(t, "zookeeper:3.9", got[deps.Zookeeper])
 }
 
 func TestSeedLeavesExistingPinsAlone(t *testing.T) {
 	p := fakeProbe{containers: map[string]string{"postgres": "postgres:18"}}
-	got := seedDependencyPins(context.Background(), map[deps.ID]string{deps.Postgres: "postgres:17.5"}, p, nil)
+	got := seedDependencyPins(context.Background(), map[deps.ID]string{deps.Postgres: "postgres:17.5"}, p, nil, nil)
 	_, touched := got[deps.Postgres]
 	assert.False(t, touched)
 }
@@ -132,7 +140,7 @@ func TestSeedLeavesExistingPinsAlone(t *testing.T) {
 func TestSeedNeverAsksAboutAnEmptyVolumeName(t *testing.T) {
 	var asked []string
 	p := fakeProbe{askedVolumes: &asked}
-	seedDependencyPins(context.Background(), nil, p, nil)
+	seedDependencyPins(context.Background(), nil, p, nil, nil)
 	assert.NotEmpty(t, asked, "the seeder no longer probes volumes at all — this guard is out of date")
 	assert.NotContains(t, asked, "", "an empty volume name matches the volumes ROOT in server mode")
 }
@@ -143,10 +151,10 @@ func TestSeedNeverAsksAboutAnEmptyVolumeName(t *testing.T) {
 func TestSeedKeycloakFollowsThePostgresData(t *testing.T) {
 	withData := fakeProbe{volumes: map[string]map[string]string{"postgres2": {"PG_VERSION": "17\n"}}}
 	assert.Equal(t, "keycloak/keycloak:26",
-		seedDependencyPins(context.Background(), nil, withData, nil)[deps.Keycloak])
+		seedDependencyPins(context.Background(), nil, withData, nil, nil)[deps.Keycloak])
 
 	empty := fakeProbe{volumes: map[string]map[string]string{"postgres2": {}}}
-	_, pinned := seedDependencyPins(context.Background(), nil, empty, nil)[deps.Keycloak]
+	_, pinned := seedDependencyPins(context.Background(), nil, empty, nil, nil)[deps.Keycloak]
 	assert.False(t, pinned, "no postgres cluster → keycloak has no data either")
 }
 
@@ -160,7 +168,7 @@ func TestSeedAssumesTheLegacyImageWhenTheContainerProbeFailsOverExistingData(t *
 			"postgres2": {"PG_VERSION": "17\n"}, "rabbitmq2": {}, "zookeeper2": {}, "mongo2": {},
 		},
 	}
-	got := seedDependencyPins(context.Background(), nil, p, nil)
+	got := seedDependencyPins(context.Background(), nil, p, nil, nil)
 	assert.Equal(t, "postgres:17", got[deps.Postgres], "the data still answers when the container probe cannot")
 	for _, d := range deps.All() {
 		if d.ID() == deps.Postgres {
@@ -180,7 +188,7 @@ func TestSeedAssumesTheLegacyImageWhenTheVolumeProbeFails(t *testing.T) {
 		"docker down (desktop)": {volumeErr: context.DeadlineExceeded, containerErr: errors.New("connection refused")},
 	} {
 		t.Run(name, func(t *testing.T) {
-			got := seedDependencyPins(context.Background(), nil, p, nil)
+			got := seedDependencyPins(context.Background(), nil, p, nil, nil)
 			for _, d := range deps.All() {
 				assert.Equal(t, d.LegacyImage(), got[d.ID()], string(d.ID()))
 			}
@@ -197,7 +205,7 @@ func TestSeedAssumesTheLegacyImageWhenTheVolumeProbeFails(t *testing.T) {
 // no path forward.
 func TestSeedLeavesAFreshNamespaceUnpinnedWhenOnlyTheContainerProbeFails(t *testing.T) {
 	p := fakeProbe{containerErr: errors.New("dial unix /var/run/docker.sock: connection refused")}
-	assert.Empty(t, seedDependencyPins(context.Background(), nil, p, nil))
+	assert.Empty(t, seedDependencyPins(context.Background(), nil, p, nil, nil))
 }
 
 // Ruling 6, arm 3 (already true before, kept explicit): a PG_VERSION that
@@ -205,7 +213,7 @@ func TestSeedLeavesAFreshNamespaceUnpinnedWhenOnlyTheContainerProbeFails(t *test
 func TestSeedAssumesTheLegacyImageWhenPGVersionIsGarbage(t *testing.T) {
 	p := fakeProbe{volumes: map[string]map[string]string{"postgres2": {"PG_VERSION": "seventeen"}}}
 	assert.Equal(t, deps.PostgresLegacyImage,
-		seedDependencyPins(context.Background(), nil, p, nil)[deps.Postgres])
+		seedDependencyPins(context.Background(), nil, p, nil, nil)[deps.Postgres])
 }
 
 // Ruling 2: a volume that exists but holds no PG_VERSION holds no cluster —
@@ -214,7 +222,7 @@ func TestSeedAssumesTheLegacyImageWhenPGVersionIsGarbage(t *testing.T) {
 // so the candidate applies.
 func TestSeedTreatsAVolumeWithoutPGVersionAsEmpty(t *testing.T) {
 	p := fakeProbe{volumes: map[string]map[string]string{"postgres2": {}, "postgres3": {}}}
-	got := seedDependencyPins(context.Background(), nil, p, nil)
+	got := seedDependencyPins(context.Background(), nil, p, nil, nil)
 	_, pinned := got[deps.Postgres]
 	assert.False(t, pinned, "an empty volume must not pin the namespace to the legacy image")
 }
@@ -226,11 +234,11 @@ func TestSeedSkipsAnEmptyLayoutAndKeepsLookingForTheCluster(t *testing.T) {
 		"postgres3": {},
 		"postgres2": {"PG_VERSION": "17\n"},
 	}}
-	assert.Equal(t, "postgres:17", seedDependencyPins(context.Background(), nil, p, nil)[deps.Postgres])
+	assert.Equal(t, "postgres:17", seedDependencyPins(context.Background(), nil, p, nil, nil)[deps.Postgres])
 }
 
 func TestSeedNothingForAFreshNamespace(t *testing.T) {
-	assert.Empty(t, seedDependencyPins(context.Background(), nil, fakeProbe{}, nil))
+	assert.Empty(t, seedDependencyPins(context.Background(), nil, fakeProbe{}, nil, nil))
 }
 
 func TestReseedAfterSnapshotImportReplacesThePinOfImportedVolumes(t *testing.T) {
@@ -244,7 +252,7 @@ func TestReseedAfterSnapshotImportReplacesThePinOfImportedVolumes(t *testing.T) 
 		"postgres2": {"PG_VERSION": "17\n"},
 		"postgres3": {"18/docker/PG_VERSION": "18\n"}, // left over on desktop
 	}}
-	reseedAfterSnapshotImport(context.Background(), rt, p, []string{"postgres2"})
+	reseedAfterSnapshotImport(context.Background(), rt, p, []string{"postgres2"}, nil)
 	pins := rt.DependencyPins()
 	assert.Equal(t, "postgres:17", pins[deps.Postgres], "the imported volume wins over the leftover 18 volume")
 	assert.Equal(t, "rabbitmq:4.2.9-management", pins[deps.RabbitMQ], "untouched dependency keeps its pin")
@@ -306,33 +314,40 @@ func TestDesktopCatFailureClassification(t *testing.T) {
 
 // The desktop read runs `cat` inside the launcher-utils container, so the image
 // has to be on the host first — otherwise the first data probe on a host that
-// never pulled it reports a read FAILURE and every dependency is seeded to its
-// legacy image. The call needs a real engine, so the ORDER is checked
-// structurally: the shared docker.Client.EnsureUtilsImage before
-// RunUtilsContainer, the same way volume sizing and snapshots do it.
+// never pulled it reports a read FAILURE, and every dependency is seeded to its
+// legacy image.
+//
+// Driven through the depsDocker seam rather than asserted on source positions:
+// the whole call sequence is the contract, not merely "one line is above
+// another". Both arms matter — the order on the happy path, and what a pull
+// failure means, which is a read FAILURE and never an absence (an absence
+// would hand the data to the candidate image).
 func TestDesktopReadEnsuresTheUtilsImageBeforeRunningIt(t *testing.T) {
-	fn := parseFuncDecl(t, "deps_seed.go", "ReadVolumeFile")
-	ensurePos, runPos := -1, -1
-	ast.Inspect(fn, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
-		if !ok {
-			return true
-		}
-		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok {
-			return true
-		}
-		switch sel.Sel.Name {
-		case "EnsureUtilsImage":
-			ensurePos = int(call.Pos())
-		case "RunUtilsContainer":
-			runPos = int(call.Pos())
-		}
-		return true
-	})
-	require.NotEqual(t, -1, runPos, "the desktop read no longer runs a utils container — this guard is out of date")
-	require.NotEqual(t, -1, ensurePos, "ReadVolumeFile must ensure the utils image is present")
-	assert.Less(t, ensurePos, runPos, "the image check must come before the container runs")
+	config.SetDesktopMode(true)
+	t.Cleanup(config.ResetDesktopMode)
+
+	fake := newFakeDepsDocker()
+	fake.volumes["postgres2"] = &dockervol.Volume{Name: "citeck_volume_postgres2"}
+	fake.utilsOut = "17\n"
+	p := dockerDependencyProbe{dc: fake}
+
+	raw, err := p.ReadVolumeFile(context.Background(), "postgres2", "PG_VERSION")
+	require.NoError(t, err)
+	assert.Equal(t, "17\n", raw)
+	assert.Equal(t, []string{"getvol:postgres2", "ensureutils", "utils:cat /vol/PG_VERSION"}, fake.Calls(),
+		"the image must be ensured BEFORE the container that needs it runs")
+
+	failing := newFakeDepsDocker()
+	failing.volumes["postgres2"] = &dockervol.Volume{Name: "citeck_volume_postgres2"}
+	failing.ensureUtilsErr = errors.New("no route to registry")
+	p2 := dockerDependencyProbe{dc: failing}
+
+	_, err = p2.ReadVolumeFile(context.Background(), "postgres2", "PG_VERSION")
+	require.Error(t, err)
+	require.NotErrorIs(t, err, errVolumeFileNotFound,
+		"a pull failure says nothing about the data; reading it as an absence applies the candidate image to it")
+	assert.Equal(t, []string{"getvol:postgres2", "ensureutils"}, failing.Calls(),
+		"the read must not be attempted once the image could not be ensured")
 }
 
 // The wiring helper both the load path and the reload path go through: what
@@ -344,7 +359,7 @@ func TestResolveDependencyPinsMergesPersistedWithSeeded(t *testing.T) {
 		volumes:    map[string]map[string]string{"postgres2": {"PG_VERSION": "17\n"}},
 	}
 	pins, seeded := resolveDependencyPins(context.Background(),
-		map[deps.ID]string{deps.Postgres: "postgres:17.5"}, p)
+		map[deps.ID]string{deps.Postgres: "postgres:17.5"}, p, nil)
 
 	assert.Equal(t, "postgres:17.5", pins[deps.Postgres], "a persisted pin is never re-derived")
 	assert.Equal(t, "rabbitmq:4.1.2-management", pins[deps.RabbitMQ], "a missing pin is seeded from the data")
@@ -358,7 +373,7 @@ func TestResolveDependencyPinsMergesPersistedWithSeeded(t *testing.T) {
 func TestResolveDependencyPinsDoesNotAliasThePersistedMap(t *testing.T) {
 	persisted := map[deps.ID]string{deps.Postgres: "postgres:17.5"}
 	p := fakeProbe{containers: map[string]string{"rabbitmq": "rabbitmq:4.1.2-management"}}
-	pins, _ := resolveDependencyPins(context.Background(), persisted, p)
+	pins, _ := resolveDependencyPins(context.Background(), persisted, p, nil)
 	pins[deps.Keycloak] = "keycloak/keycloak:26"
 	assert.Equal(t, map[deps.ID]string{deps.Postgres: "postgres:17.5"}, persisted,
 		"the caller's map must not be written through")
@@ -369,7 +384,7 @@ func TestResolveDependencyPinsDoesNotAliasThePersistedMap(t *testing.T) {
 func TestResolveDependencyPinsBoundsTheProbe(t *testing.T) {
 	var seen context.Context
 	p := fakeProbe{seenCtx: &seen, containers: map[string]string{"postgres": "postgres:17.11"}}
-	_, _ = resolveDependencyPins(context.Background(), nil, p)
+	_, _ = resolveDependencyPins(context.Background(), nil, p, nil)
 	require.NotNil(t, seen)
 	deadline, ok := seen.Deadline()
 	require.True(t, ok, "the probe context must carry a deadline")
@@ -382,24 +397,34 @@ func TestResolveDependencyPinsBoundsTheProbe(t *testing.T) {
 // doReloadEx can be driven from a unit test (git, bundle resolve, real Docker
 // client), so the call sites are checked structurally — a string match would
 // pass on a commented-out line, an AST walk does not.
+//
+// The two halves are checked as ONE fact: that the value handed to the
+// generator is the one the helper produced. Asked separately — "something is
+// assigned to genOpts.DependencyPins" and "resolveDependencyPins is called
+// somewhere in this function" — a call site that resolves the pins and then
+// assigns a DIFFERENT map passes both, which is precisely the defect this
+// guard exists to catch (the generator would silently fall back to the
+// bundle's images and move the data onto them).
 func TestPinsAreWiredIntoEveryGenerateCallSite(t *testing.T) {
 	cases := []struct {
-		file, fn      string
-		wantResolveFn bool
+		file, fn string
+		// wantSource names the call the assigned value must come FROM: the
+		// shared seeding helper on the two generate paths, and the runtime's
+		// own live pins on the read-only reload plan, which must never re-seed.
+		wantSource string
 	}{
-		{"namespace_loader.go", "loadNamespace", true},
-		{"server.go", "doReloadEx", true},
-		{"routes_reloadplan.go", "resolveReloadPlanInputs", false},
+		{"namespace_loader.go", "loadNamespace", "resolveDependencyPins"},
+		{"server.go", "doReloadEx", "resolveDependencyPins"},
+		{"routes_reloadplan.go", "resolveReloadPlanInputs", "DependencyPins"},
 	}
 	for _, c := range cases {
 		t.Run(c.fn, func(t *testing.T) {
 			fn := parseFuncDecl(t, c.file, c.fn)
 			assert.True(t, assignsField(fn, "genOpts", "DependencyPins"),
 				"%s must set genOpts.DependencyPins — the generator falls back to the bundle image without it", c.fn)
-			if c.wantResolveFn {
-				assert.True(t, callsFunc(fn, "resolveDependencyPins"),
-					"%s must resolve pins through the shared helper", c.fn)
-			}
+			ok, why := assignsFieldFrom(fn, "genOpts", "DependencyPins", c.wantSource)
+			assert.True(t, ok,
+				"%s must assign genOpts.DependencyPins from %s(...): %s", c.fn, c.wantSource, why)
 			if c.fn == "loadNamespace" {
 				// SetDependencyPin persists, and persistState writes
 				// Status: r.status — STOPPED at load time, before the caller
@@ -480,6 +505,97 @@ func assignsField(fn *ast.FuncDecl, recv, field string) bool {
 	return found
 }
 
+// assignsFieldFrom reports whether the value assigned to <recv>.<field> comes
+// from a call to source — either directly, or through ONE identifier defined by
+// an assignment whose right-hand side is that call (`pins, seeded :=
+// source(...)` followed by `genOpts.Field = pins`, which is the production
+// shape). source matches a plain function call (`resolveDependencyPins(...)`)
+// or a method call (`act.runtime.DependencyPins()`).
+//
+// It deliberately does not chase further than one hop: a longer chain is not a
+// shape this codebase uses, and silently following one would let the guard
+// approve wiring nobody can read either. The returned string explains a false,
+// because "the assertion failed" is useless on an AST walk.
+func assignsFieldFrom(fn *ast.FuncDecl, recv, field, source string) (ok bool, why string) {
+	rhs, found := assignedValue(fn, recv, field)
+	if !found {
+		return false, "no assignment to " + recv + "." + field
+	}
+	if callNamed(rhs, source) {
+		return true, ""
+	}
+	ident, isIdent := rhs.(*ast.Ident)
+	if !isIdent {
+		return false, "assigned from an expression that is not " + source + "(...) and not a variable"
+	}
+	def, defined := definingCall(fn, ident.Name)
+	if !defined {
+		return false, ident.Name + " is not defined by any assignment in this function"
+	}
+	if !callNamed(def, source) {
+		return false, ident.Name + " is defined from something other than " + source + "(...)"
+	}
+	return true, ""
+}
+
+// assignedValue returns the expression assigned to <recv>.<field>, matching the
+// left-hand position to the right-hand one so a multi-value assignment cannot
+// be read off by accident.
+func assignedValue(fn *ast.FuncDecl, recv, field string) (ast.Expr, bool) {
+	var found ast.Expr
+	ast.Inspect(fn, func(n ast.Node) bool {
+		assign, ok := n.(*ast.AssignStmt)
+		if !ok || len(assign.Lhs) != len(assign.Rhs) {
+			return true
+		}
+		for i, lhs := range assign.Lhs {
+			sel, ok := lhs.(*ast.SelectorExpr)
+			if !ok || sel.Sel.Name != field {
+				continue
+			}
+			if id, ok := sel.X.(*ast.Ident); ok && id.Name == recv {
+				found = assign.Rhs[i]
+			}
+		}
+		return true
+	})
+	return found, found != nil
+}
+
+// definingCall returns the right-hand side of the assignment that defines name
+// (`a, b := f()` counts for both a and b — the call is the single RHS).
+func definingCall(fn *ast.FuncDecl, name string) (ast.Expr, bool) {
+	var found ast.Expr
+	ast.Inspect(fn, func(n ast.Node) bool {
+		assign, ok := n.(*ast.AssignStmt)
+		if !ok || len(assign.Rhs) != 1 {
+			return true
+		}
+		for _, lhs := range assign.Lhs {
+			if id, ok := lhs.(*ast.Ident); ok && id.Name == name {
+				found = assign.Rhs[0]
+			}
+		}
+		return true
+	})
+	return found, found != nil
+}
+
+// callNamed reports whether e is a call to the function or method `name`.
+func callNamed(e ast.Expr, name string) bool {
+	call, ok := e.(*ast.CallExpr)
+	if !ok {
+		return false
+	}
+	switch fun := call.Fun.(type) {
+	case *ast.Ident:
+		return fun.Name == name
+	case *ast.SelectorExpr:
+		return fun.Sel.Name == name
+	}
+	return false
+}
+
 // callsMethod reports whether fn contains a call to any <x>.<name>(...).
 func callsMethod(fn *ast.FuncDecl, name string) bool {
 	found := false
@@ -496,17 +612,93 @@ func callsMethod(fn *ast.FuncDecl, name string) bool {
 	return found
 }
 
-func callsFunc(fn *ast.FuncDecl, name string) bool {
-	found := false
-	ast.Inspect(fn, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
-		if !ok {
-			return true
-		}
-		if ident, ok := call.Fun.(*ast.Ident); ok && ident.Name == name {
-			found = true
-		}
-		return true
-	})
-	return found
+// Seeding runs on EVERY namespace load, so a probe for a dependency the
+// namespace does not even generate is a Docker call — a utils container on a
+// desktop — bought forever for nothing. The shape that made it visible: a
+// namespace whose authentication is not Keycloak has no keycloak container,
+// so keycloak fell through to the postgres DATA, which nothing else reads
+// (postgres' own container answers first), and paid for that read on every
+// load.
+func TestSeedSkipsDependenciesTheNamespaceDoesNotHave(t *testing.T) {
+	var askedVolumes, askedApps []string
+	p := fakeProbe{
+		containers: map[string]string{
+			"postgres": "postgres:17.11", "rabbitmq": "rabbitmq:4.1.2-management", "zookeeper": "zookeeper:3.9.5",
+		},
+		volumes:      map[string]map[string]string{"postgres2": {"PG_VERSION": "17\n"}},
+		askedVolumes: &askedVolumes,
+		askedApps:    &askedApps,
+	}
+	// A namespace at config generation 2 with authentication off: no mongo, no
+	// keycloak (namespaceDependencies is what answers this in production).
+	present := map[deps.ID]bool{deps.Postgres: true, deps.RabbitMQ: true, deps.Zookeeper: true}
+
+	got := seedDependencyPins(context.Background(), nil, p, nil, present)
+
+	assert.Equal(t, "postgres:17.11", got[deps.Postgres], "a dependency the namespace HAS is seeded exactly as before")
+	assert.NotContains(t, got, deps.Keycloak, "a dependency the namespace does not generate gets no pin")
+	assert.NotContains(t, got, deps.MongoDB)
+	assert.Empty(t, askedVolumes,
+		"nothing needed the data: postgres' container answered, and keycloak is not part of this namespace")
+	assert.NotContains(t, askedApps, "keycloak", "an absent dependency is not even inspected")
+	assert.NotContains(t, askedApps, "mongodb")
+	assert.Contains(t, askedApps, "postgres")
+}
+
+// The filter must not change the answer for a dependency that IS present: the
+// tri-state verdict rules are what protect the data, and narrowing the walk is
+// only allowed to remove work.
+func TestSeedIsUnchangedForTheDependenciesThatArePresent(t *testing.T) {
+	p := fakeProbe{volumes: map[string]map[string]string{
+		"postgres2": {"PG_VERSION": "17\n"}, "rabbitmq2": {}, "zookeeper2": {}, "mongo2": {},
+	}}
+	all := namespaceDependencies(nil)
+	full := seedDependencyPins(context.Background(), nil, p, nil, nil)
+	assert.Equal(t, full, seedDependencyPins(context.Background(), nil, p, nil, all),
+		"an all-inclusive filter is the same as no filter")
+
+	present := map[deps.ID]bool{deps.Postgres: true, deps.Keycloak: true, deps.RabbitMQ: true, deps.Zookeeper: true}
+	narrowed := seedDependencyPins(context.Background(), nil, p, nil, present)
+	for id, img := range narrowed {
+		assert.Equal(t, full[id], img, "%s must be seeded to the same image either way", id)
+	}
+	assert.NotContains(t, narrowed, deps.MongoDB)
+}
+
+// namespaceDependencies restates a rule that LIVES in the generator, and the
+// pins it scopes are an input to that generator, so the two are checked
+// against each other by running the real thing: for every configuration that
+// moves either conditional switch, the predicted set must be exactly the set
+// Generate emitted. A dependency wrongly predicted ABSENT is the dangerous
+// direction — no pin means the candidate image is applied to existing data.
+func TestNamespaceDependenciesMatchesWhatTheGeneratorEmits(t *testing.T) {
+	on, off := true, false
+	cases := map[string]*namespace.Config{
+		"v1 default":            {ID: "ns"},
+		"v1 + keycloak":         {ID: "ns", Authentication: namespace.AuthenticationProps{Type: namespace.AuthKeycloak}},
+		"v1 + mongo off":        {ID: "ns", MongoDB: namespace.MongoDbProps{Enabled: &off}},
+		"v2 default":            {ID: "ns", APIVersion: "v2"},
+		"v2 + keycloak":         {ID: "ns", APIVersion: "v2", Authentication: namespace.AuthenticationProps{Type: namespace.AuthKeycloak}},
+		"v2 + mongo on":         {ID: "ns", APIVersion: "v2", MongoDB: namespace.MongoDbProps{Enabled: &on}},
+		"unparsable apiVersion": {ID: "ns", APIVersion: "banana"},
+	}
+	for name, cfg := range cases {
+		t.Run(name, func(t *testing.T) {
+			resp, err := namespace.Generate(cfg, &bundle.EmptyDef, &bundle.WorkspaceConfig{}, namespace.SystemSecrets{})
+			require.NoError(t, err)
+
+			generated := map[deps.ID]bool{}
+			for id := range resp.Dependencies {
+				generated[id] = true
+			}
+			predicted := map[deps.ID]bool{}
+			for id, ok := range namespaceDependencies(cfg) {
+				if ok {
+					predicted[id] = true
+				}
+			}
+			assert.Equal(t, generated, predicted,
+				"the seeding filter and the generator must agree about which dependencies this namespace has")
+		})
+	}
 }

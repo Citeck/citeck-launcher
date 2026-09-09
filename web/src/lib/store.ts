@@ -185,6 +185,15 @@ return ({
       // dependency migration — the deps_migration_* events only reach clients
       // that were already listening, so a reload or a reconnect needs this.
       useDepsStore.getState().hydrate(namespace.dependencyMigration)
+      // And about an interrupted one whose restart-recovery ROLLBACK FAILED:
+      // that recovery runs at load time, emits no event and produces no
+      // result, so before this the alarm reached the user only when something
+      // happened to re-read GET /namespace/dependencies — a remount, a
+      // namespace switch, or the banner's poll, which only runs once the alarm
+      // is already up. Absent means cleared: the launcher retries the rollback
+      // at every start, and the fetch that finds it gone must take the
+      // deliberately non-dismissible red banner down.
+      useDepsStore.getState().setRollbackPending(namespace.dependencyRollbackPending ?? '')
     } catch (err) {
       const msg = (err as Error).message
       // The daemon explicitly reports no namespace (deactivated, deleted, or
@@ -196,8 +205,10 @@ return ({
         set({ namespace: null, health: null, error: null, loading: false })
         // Same reason as on the success path, and it matters more here: a
         // migration view left over from the namespace that just went away
-        // would keep the controls disabled for whatever is selected next.
+        // would keep the controls disabled for whatever is selected next. The
+        // pending-rollback alarm is namespace-scoped in exactly the same way.
         useDepsStore.getState().hydrate(null)
+        useDepsStore.getState().setRollbackPending('')
         return
       }
       // Daemon still starting — retry silently instead of showing error

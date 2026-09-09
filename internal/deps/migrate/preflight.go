@@ -19,11 +19,23 @@ type PreflightResult struct {
 	// Sizes in bytes. Host = the filesystem holding the dump; Volume = the
 	// filesystem holding the data volumes (the Docker VM's disk on a
 	// macOS/Windows desktop, which is NOT the host's).
-	DataSizeBytes        int64           `json:"dataSizeBytes"`
-	RequiredHostBytes    int64           `json:"requiredHostBytes"`
-	RequiredVolumeBytes  int64           `json:"requiredVolumeBytes"`
-	FreeHostBytes        int64           `json:"freeHostBytes"`
-	FreeVolumeBytes      int64           `json:"freeVolumeBytes"`
+	DataSizeBytes       int64 `json:"dataSizeBytes"`
+	RequiredHostBytes   int64 `json:"requiredHostBytes"`
+	RequiredVolumeBytes int64 `json:"requiredVolumeBytes"`
+	FreeHostBytes       int64 `json:"freeHostBytes"`
+	FreeVolumeBytes     int64 `json:"freeVolumeBytes"`
+	// SharedFilesystem reports that those two are ONE filesystem — the ordinary
+	// server layout, where the dump directory and the data volumes are both
+	// under the namespace's volumes base. The dump and the new cluster coexist
+	// on it (the scratch directory is removed only after the commit, and the
+	// new cluster is built next to the old data), so what has to fit there is
+	// RequiredTotalBytes and not either half on its own.
+	SharedFilesystem bool `json:"sharedFilesystem"`
+	// RequiredTotalBytes is what that one filesystem must have free: the two
+	// halves added up. It is 0 when SharedFilesystem is false, where a sum
+	// across two disks means nothing — SharedFilesystem is the discriminator,
+	// never the zero (the same rule Measured() states for the other sizes).
+	RequiredTotalBytes   int64           `json:"requiredTotalBytes"`
 	ExistingTargetVolume *ExistingVolume `json:"existingTargetVolume,omitempty"`
 	WasRunning           bool            `json:"wasRunning"`
 }
@@ -84,8 +96,32 @@ func RefusedPreflight(from, to string, problems ...string) PreflightResult {
 // an action on the LAUNCHER because that is the only thing that can change:
 // the bundle offers the version, the generator holds it back, and no amount of
 // disk space or namespace juggling will make this release move the data.
+//
+// 18 → 19 is the pair that exists today: deps.PostgresLayoutFor maps every
+// major from 18 up into ONE volume, so until a release adds a layout for 19
+// (an entry in deps' postgresLayouts table) that move is reported here and
+// refused by both routes. The namespace keeps running 18 in the meantime.
 func UnsupportedPairProblem(from, to string) string {
 	return fmt.Sprintf("this launcher cannot migrate %s → %s yet; update the launcher", from, to)
+}
+
+// InPlaceUpgradeProblem is the OTHER same-volume refusal: two majors that share
+// one volume AND one cluster directory (16 → 17), which is a genuine in-place
+// upgrade — something this migrator deliberately does not do, since its whole
+// safety story is that the old data is only ever read and the rollback is
+// "delete the volume we made".
+//
+// The reason differs from UnsupportedPairProblem's, but the operator's position
+// does not, so the message has to carry the same two things: the exit (only a
+// launcher release can change this) and what happens meanwhile (the namespace
+// goes on running the major it has). Without them it reads as a disk-layout
+// complaint and sends the operator looking for a problem they do not have.
+func InPlaceUpgradeProblem(from, to, volume string) string {
+	return fmt.Sprintf(
+		"%s → %s keeps the data in volume %s; this migration builds the new cluster in a separate "+
+			"volume and cannot upgrade one in place, so the namespace goes on running %s — "+
+			"update the launcher once a release can do it",
+		from, to, volume, from)
 }
 
 // PostgresStepIDs are the ids of the PostgreSQL plan's steps, in order. It is

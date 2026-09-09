@@ -398,6 +398,7 @@
   "deps.preflight.data": "Datengröße: {size}",
   "deps.preflight.host": "Host (Dump): benötigt {need}, frei {free}",
   "deps.preflight.volume": "Volumes: benötigt {need}, frei {free}",
+  "deps.preflight.shared": "Datenträger (Dump + neuer Cluster): benötigt {need}, frei {free}",
   "deps.preflight.willStop": "Der Namespace wird gestoppt und erneut gestartet",
   "deps.preflight.existingVolume": "Volume {volume} existiert bereits ({size}, Version {version})",
   "deps.preflightFailed": "Vorabprüfungen fehlgeschlagen; es wurde nichts geändert",

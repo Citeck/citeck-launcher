@@ -23,6 +23,12 @@ export function LauncherUpdateHint() {
   if (isDesktopModeSync() && updateAvailable) {
     return (
       <>
+        {/* `border-current` / `bg-current` take the element's own text color
+            (CSS currentColor), `/40` and `/10` its opacity. The hint sits
+            inside surfaces that carry their own color — the sky-blue upgrade
+            banner and the dependencies table's ordinary foreground — so the
+            button borrows whichever it landed in instead of pinning one that
+            would be wrong on the other. */}
         <button
           type="button"
           className="shrink-0 rounded border border-current/40 px-2 py-0.5 text-xs hover:bg-current/10"

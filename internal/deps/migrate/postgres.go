@@ -74,9 +74,7 @@ func (PostgresMigrator) Preflight(ctx context.Context, env Env, from, to string)
 	// — what they need is a newer launcher.
 	if newLayout.Volume == oldLayout.Volume {
 		if newLayout == oldLayout {
-			res.Problems = append(res.Problems, fmt.Sprintf(
-				"%s → %s keeps the data in volume %s; this migration builds the new cluster in a separate volume and cannot run in place",
-				from, to, oldLayout.Volume))
+			res.Problems = append(res.Problems, InPlaceUpgradeProblem(from, to, oldLayout.Volume))
 		} else {
 			res.Problems = append(res.Problems, UnsupportedPairProblem(from, to))
 		}
@@ -162,9 +160,28 @@ func (res *PreflightResult) checkDataVersion(ctx context.Context, env Env, layou
 	}
 }
 
-// checkSpace measures the data and both filesystems. Two of them, because on a
-// macOS/Windows desktop the dump lands on the host while the new cluster is
-// built inside the Docker VM.
+// checkSpace measures the data and the two filesystems a migration writes to:
+// the one holding the scratch directory the dump goes into, and the one
+// holding the data volumes the new cluster is built in.
+//
+// Whether those are TWO filesystems or one is the whole question. On a
+// macOS/Windows desktop they are genuinely two — the dump lands on the host
+// while the cluster is built inside the Docker VM — and each is checked
+// against its own half. On a server they are usually ONE (both are
+// directories under the namespace's volumes base), and there the two halves
+// COEXIST: the scratch directory is removed only in Finalize, after the
+// commit, and the new cluster is built next to the old data. Checking each
+// half against the same free space independently therefore passed a disk with
+// room for only one of them, and the migration died of ENOSPC in the middle of
+// the restore with the namespace already stopped. The rollback saves the data,
+// but that is precisely the failure this function exists to prevent before
+// anything is stopped — so on one filesystem it demands the SUM.
+//
+// The sum is deliberately (data + margin) twice rather than something derived
+// from an assumed compression ratio: a logical dump is normally far smaller
+// than the cluster it came from (175 MiB out of 387 MB, measured), but nothing
+// guarantees it, and a guessed ratio that is wrong once is an out-of-space
+// restore. Charging the dump a full data size is honest and checkable.
 func (res *PreflightResult) checkSpace(ctx context.Context, env Env, volume string) {
 	size, err := env.VolumeSize(ctx, volume)
 	if err != nil {
@@ -173,27 +190,94 @@ func (res *PreflightResult) checkSpace(ctx context.Context, env Env, volume stri
 	res.DataSizeBytes = size
 	res.RequiredHostBytes = size + SpaceMargin
 	res.RequiredVolumeBytes = size + SpaceMargin
+	res.SharedFilesystem = res.dumpSharesTheVolumesFilesystem(ctx, env, volume)
 
-	if free, ferr := env.HostFreeBytes(); ferr != nil {
-		res.Problems = append(res.Problems, "cannot measure free space on the host: "+ferr.Error())
-	} else {
-		res.FreeHostBytes = free
-		if free < res.RequiredHostBytes {
+	host, vol := res.measureFree(ctx, env, volume)
+	if !res.SharedFilesystem {
+		if host.short(res.RequiredHostBytes) {
 			res.Problems = append(res.Problems, fmt.Sprintf(
 				"not enough free space on the host for the dump: need %s, free %s",
-				fsutil.FormatBytes(res.RequiredHostBytes), fsutil.FormatBytes(free)))
+				fsutil.FormatBytes(res.RequiredHostBytes), fsutil.FormatBytes(host.bytes)))
 		}
-	}
-	if free, ferr := env.VolumeFreeBytes(ctx, volume); ferr != nil {
-		res.Problems = append(res.Problems, "cannot measure free space on the volume filesystem: "+ferr.Error())
-	} else {
-		res.FreeVolumeBytes = free
-		if free < res.RequiredVolumeBytes {
+		if vol.short(res.RequiredVolumeBytes) {
 			res.Problems = append(res.Problems, fmt.Sprintf(
 				"not enough free space on the volume filesystem for the new cluster: need %s, free %s",
-				fsutil.FormatBytes(res.RequiredVolumeBytes), fsutil.FormatBytes(free)))
+				fsutil.FormatBytes(res.RequiredVolumeBytes), fsutil.FormatBytes(vol.bytes)))
 		}
+		return
 	}
+	res.RequiredTotalBytes = res.RequiredHostBytes + res.RequiredVolumeBytes
+	if free := smallerFree(host, vol); free.short(res.RequiredTotalBytes) {
+		res.Problems = append(res.Problems, fmt.Sprintf(
+			"not enough free space: the dump (%s) and the new cluster (%s) are written to the same "+
+				"filesystem and exist side by side, so it needs %s free, and has %s",
+			fsutil.FormatBytes(res.RequiredHostBytes), fsutil.FormatBytes(res.RequiredVolumeBytes),
+			fsutil.FormatBytes(res.RequiredTotalBytes), fsutil.FormatBytes(free.bytes)))
+	}
+}
+
+// dumpSharesTheVolumesFilesystem asks the env whether the two writes land on
+// one filesystem, and answers a FAILURE to tell with "yes".
+//
+// The two mistakes are not symmetric. Over-requiring on filesystems that are
+// genuinely separate refuses a migration that would have fit — annoying, and
+// the message says exactly what it wanted — while under-requiring runs a
+// restore out of space on a namespace that is already stopped. So the doubt
+// takes the safe direction, and says so: a requirement the operator cannot
+// derive from their own disk needs its reason on the same screen.
+func (res *PreflightResult) dumpSharesTheVolumesFilesystem(ctx context.Context, env Env, volume string) bool {
+	shared, err := env.DumpSharesFilesystemWithVolumes(ctx, volume)
+	if err != nil {
+		res.Warnings = append(res.Warnings, fmt.Sprintf(
+			"cannot tell whether the dump and the data volumes are on the same filesystem (%v); "+
+				"requiring room for both at once", err))
+		return true
+	}
+	return shared
+}
+
+// freeSpace is one filesystem's measurement. ok is what separates "0 bytes
+// free" from "not measured": a measurement that failed is already a problem,
+// and checking a requirement against its zero would report a full disk on top
+// of it.
+type freeSpace struct {
+	bytes int64
+	ok    bool
+}
+
+// short reports whether the measured filesystem cannot hold need. An
+// unmeasured one is never short — it is unknown.
+func (f freeSpace) short(need int64) bool { return f.ok && f.bytes < need }
+
+// smallerFree is the honest reading of two measurements of ONE filesystem:
+// they are taken by two different mechanisms (a host statfs, and df inside a
+// container on a desktop), so if they ever disagree the smaller one is the one
+// that can run out.
+func smallerFree(a, b freeSpace) freeSpace {
+	if !a.ok {
+		return b
+	}
+	if b.ok && b.bytes < a.bytes {
+		return b
+	}
+	return a
+}
+
+// measureFree records both filesystems' free space on the result and returns
+// it. A measurement that fails is a problem in its own right and leaves that
+// half unknown rather than zero.
+func (res *PreflightResult) measureFree(ctx context.Context, env Env, volume string) (host, vol freeSpace) {
+	if free, err := env.HostFreeBytes(); err != nil {
+		res.Problems = append(res.Problems, "cannot measure free space on the host: "+err.Error())
+	} else {
+		res.FreeHostBytes, host = free, freeSpace{bytes: free, ok: true}
+	}
+	if free, err := env.VolumeFreeBytes(ctx, volume); err != nil {
+		res.Problems = append(res.Problems, "cannot measure free space on the volume filesystem: "+err.Error())
+	} else {
+		res.FreeVolumeBytes, vol = free, freeSpace{bytes: free, ok: true}
+	}
+	return host, vol
 }
 
 // checkExistingTarget reports an existing target volume as a WARNING, not a

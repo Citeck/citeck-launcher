@@ -608,6 +608,7 @@ func (d *Daemon) SwitchWorkspace(wsID string) error {
 		return nil
 	}
 	loaded, loadErr := loadNamespace(loadNamespaceInput{
+		Ctx:           d.bgCtx,
 		Store:         d.store,
 		SecretService: d.secretService,
 		// nil → loadNamespace builds a client scoped to (wsID, newNsID). Never

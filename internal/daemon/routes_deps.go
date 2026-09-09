@@ -483,6 +483,17 @@ func (d *Daemon) handleDependencyMigrate(w http.ResponseWriter, r *http.Request)
 	steps := len(plan.Steps)
 	d.setDepsMigration(nsID, &api.DependencyMigrationDto{ID: string(id), StepCount: steps})
 	rt := act.runtime
+	// No recover() in here, and that is a decision rather than an oversight: it
+	// is parity with every other bgWg goroutine (both snapshot paths, the
+	// workspace-snapshot download), and for THIS one a crash is the RECOVERABLE
+	// outcome. The write-ahead journal is already on disk, the process is
+	// restarted (systemd in server mode, the wrapper on the desktop), and boot
+	// recovery rolls the interrupted migration back before the runtime touches
+	// the data. Swallowing the panic instead would leave a live daemon holding
+	// an open journal that nothing retries until the next launcher start — a
+	// namespace that refuses every start with no way forward from inside the
+	// app. The deferred unlock and the cleared progress below still run, since
+	// deferred calls run while the panic unwinds.
 	d.bgWg.Go(func() {
 		defer d.longOp.Unlock()
 		defer d.setDepsMigration(nsID, nil)

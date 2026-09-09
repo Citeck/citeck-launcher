@@ -45,9 +45,13 @@ func TestHealthBanner_MatchesExitCode(t *testing.T) {
 // must produce the matching label.
 func TestRenderHealth_BannerMatchesExit(t *testing.T) {
 	prev := output.GetFormat()
+	prevColors := colorsAreEnabled()
 	output.SetFormat(output.FormatText)
 	output.SetColorsEnabled(false)
-	t.Cleanup(func() { output.SetFormat(prev) })
+	t.Cleanup(func() {
+		output.SetFormat(prev)
+		output.SetColorsEnabled(prevColors)
+	})
 
 	tests := []struct {
 		name     string
@@ -92,6 +96,14 @@ func TestRenderHealth_BannerMatchesExit(t *testing.T) {
 		})
 	}
 }
+
+// colorsAreEnabled probes internal/output's colors flag through its public
+// API — there is no getter, and a test that flips a process-global without
+// putting back what it FOUND leaks into every later test in the package (an
+// ANSI-wrapped string where the next assertion compares plain text, or the
+// reverse). Colorize is the flag's only observable effect, so the probe cannot
+// drift from it.
+func colorsAreEnabled() bool { return output.Colorize(output.Red, "x") != "x" }
 
 // captureStdout runs fn and returns everything it wrote to os.Stdout.
 // Used for CLI render tests without pulling in a heavier harness.

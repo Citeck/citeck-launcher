@@ -1,6 +1,10 @@
 package docker
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/citeck/citeck-launcher/internal/appdef"
+)
 
 // TestDockerLabelsMatchKotlin verifies that Go labels match Kotlin DockerLabels.kt.
 func TestDockerLabelsMatchKotlin(t *testing.T) {
@@ -65,23 +69,50 @@ func TestNetworkNameFormat_Desktop(t *testing.T) {
 	}
 }
 
-// TestLabelWorkspaceValue verifies that LabelWorkspace carries the workspace
-// ID (Kotlin contract — see container labels list). The bug
-// fix here ensures the container-create path no longer mis-uses c.namespace
-// as the workspace value (the network and utils-container paths already used
-// c.workspace correctly). The label value must be derivable from c.workspace
-// across all three call sites so that label-filter queries are consistent.
+// TestLabelWorkspaceValue verifies that the LabelWorkspace a container is
+// created with carries the WORKSPACE ID (Kotlin contract — see the container
+// labels list), never the namespace. The bug this pins is a real one the
+// container-create path had: it wrote c.namespace into the workspace label
+// while the network and utils-container paths wrote c.workspace, so a
+// label-filter query answered differently depending on which object it looked
+// at — and in server mode every container claimed to belong to a workspace
+// named after its namespace.
+//
+// The assertions therefore read the label OUT of the producer
+// (containerLabels, the only pure one — the network and volume writers need a
+// live engine) instead of reading the field back off the struct the test just
+// populated, which is what this test used to do and what could never have
+// failed.
 func TestLabelWorkspaceValue(t *testing.T) {
+	app := appdef.ApplicationDef{Name: "postgres", Image: "postgres:17.5"}
+
 	t.Run("server-mode-empty", func(t *testing.T) {
 		c := &Client{workspace: "", namespace: "prod"}
-		if c.workspace != "" {
-			t.Errorf("server-mode workspace should be empty, got %q", c.workspace)
+
+		labels := c.containerLabels(app, app.Name, nil)
+
+		if got, ok := labels[LabelWorkspace]; !ok || got != "" {
+			t.Errorf("%s = %q (present=%v), want %q in server mode — never the namespace",
+				LabelWorkspace, got, ok, "")
+		}
+		if labels[LabelWorkspace] == c.namespace {
+			t.Errorf("%s must not be mis-attributed to the namespace %q", LabelWorkspace, c.namespace)
+		}
+		if labels[LabelNamespace] != "prod" {
+			t.Errorf("%s = %q, want %q", LabelNamespace, labels[LabelNamespace], "prod")
 		}
 	})
+
 	t.Run("desktop-mode-set", func(t *testing.T) {
 		c := &Client{workspace: "default", namespace: "prod"}
-		if c.workspace != "default" {
-			t.Errorf("desktop-mode workspace should be %q, got %q", "default", c.workspace)
+
+		labels := c.containerLabels(app, app.Name, nil)
+
+		if labels[LabelWorkspace] != "default" {
+			t.Errorf("%s = %q, want %q", LabelWorkspace, labels[LabelWorkspace], "default")
+		}
+		if labels[LabelNamespace] != "prod" {
+			t.Errorf("%s = %q, want %q", LabelNamespace, labels[LabelNamespace], "prod")
 		}
 	})
 }

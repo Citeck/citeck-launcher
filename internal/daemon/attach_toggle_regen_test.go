@@ -164,9 +164,12 @@ func TestAttachToggleHandlerIsRefusedDuringAMigration(t *testing.T) {
 // regeneration pass share one lock, so a handler that kept holding it across
 // the hand-off would make every attach/detach of a cross-wiring app skip its
 // own regeneration — 200 on the wire, a WARN in the log, and a proxy left
-// pointing at an upstream the operator just removed. The slow response writer
-// makes the hand-off window deterministic instead of a scheduling coin toss:
-// the write is the last thing the handler does before its deferred release.
+// pointing at an upstream the operator just removed.
+//
+// The response write is the last thing the handler does before its deferred
+// release, so parking it there (gatedResponseWriter, longop_test.go) holds the
+// handler inside the window under test for as long as the test needs, instead
+// of betting on a sleep being longer than the scheduler's whim.
 func TestAttachToggleHandlerDoesNotSkipItsOwnRegeneration(t *testing.T) {
 	d, mux, reloads := newAttachToggleTestDaemon(t)
 	d.activeNs.runtime.InjectAppsForTest(&namespace.AppRuntime{
@@ -175,14 +178,24 @@ func TestAttachToggleHandlerDoesNotSkipItsOwnRegeneration(t *testing.T) {
 		Def:    appdef.ApplicationDef{Name: appdef.AppAi},
 	})
 
-	req := httptest.NewRequest("POST", api.AppStart(appdef.AppAi), http.NoBody)
-	rec := slowResponseWriter{ResponseRecorder: httptest.NewRecorder(), delay: 100 * time.Millisecond}
-	mux.ServeHTTP(rec, req)
-	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	release := make(chan struct{})
+	rec := gatedResponseWriter{ResponseRecorder: httptest.NewRecorder(), release: release}
+	served := make(chan struct{})
+	go func() {
+		defer close(served)
+		mux.ServeHTTP(rec, httptest.NewRequest("POST", api.AppStart(appdef.AppAi), http.NoBody))
+	}()
 
+	// The regeneration must happen while the handler is still parked: that is
+	// exactly the stretch in which a lock it failed to drop would still be
+	// held, so reaching the reload here is proof it dropped it.
 	select {
 	case <-reloads:
 	case <-time.After(5 * time.Second):
-		t.Fatal("the toggle skipped its own regeneration — the handler was still holding the lock")
+		t.Error("the toggle skipped its own regeneration — the handler was still holding the lock")
 	}
+
+	close(release)
+	<-served
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 }

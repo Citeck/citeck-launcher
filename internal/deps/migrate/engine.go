@@ -45,9 +45,26 @@ const RollbackTimeout = 10 * time.Minute
 type JournalStore interface {
 	MigrationJournal() *deps.MigrationJournal
 	SetMigrationJournal(j *deps.MigrationJournal) error
+	// CommitMigration moves the pin to image, clears the journal and records
+	// res. The engine REQUIRES those three to be one write, and to be atomic in
+	// memory as well as on disk: an implementation that moved the pin and then
+	// failed to persist would have the runtime believe the data is on the new
+	// volume while this engine's failAndRollback deletes it — leaving a brand
+	// new empty cluster standing beside the intact old data. A failed commit
+	// must therefore leave the pin, the journal and the last result exactly as
+	// they were, and say so by returning an error.
 	CommitMigration(id deps.ID, image string, res deps.MigrationResult) error
 	// RecordMigrationFailure closes a migration that was fully rolled back:
 	// the verdict is recorded and the journal cleared.
+	//
+	// That it does NOT mirror RecordRollbackFailure below is the point, not an
+	// oversight to tidy up: the two differ in exactly one thing — whether the
+	// journal survives — and recordVerdict is the single place that chooses
+	// between them, on the rollback's own outcome. Collapsing them into one
+	// method with a flag, or making both clear the journal, erases the
+	// difference between a closed migration and leftovers (a half-built volume,
+	// temp containers holding the namespace's data volume) that the next start
+	// must still find and clean up.
 	RecordMigrationFailure(res deps.MigrationResult) error
 	// RecordRollbackFailure records the verdict of a migration whose ROLLBACK
 	// failed and leaves the journal in place, so the next start retries it.
@@ -218,16 +235,26 @@ func recordVerdict(store JournalStore, res deps.MigrationResult, rbErr error) er
 }
 
 // RollbackInterrupted undoes a migration whose journal survived a daemon
-// restart. rolledBack=false when there was nothing to do.
+// restart.
+//
+// rolledBack=false means NOTHING WAS ATTEMPTED, which happens two ways and
+// they are not the same: there was no journal (err nil — the ordinary boot),
+// or there is one and this launcher has no rollback for it (err non-nil, and
+// the journal is deliberately left untouched: a launcher that cannot undo a
+// migration must not erase the only record of what it left behind).
+//
+// rolledBack=true means the rollback was ATTEMPTED, not that it restored
+// anything: on a failed rollback it is true AND err is non-nil, with the
+// journal still open.
 //
 // A rollback that succeeds clears the journal; one that fails keeps it (with
 // the verdict recorded), so the next start finds the record and tries again —
 // the alternative is a target volume and temp containers nobody knows about.
 //
-// rolledBack means the rollback was ATTEMPTED, not that it restored anything:
-// on a failed rollback it is true AND err is non-nil, with the journal still
-// open. A caller that restarts the namespace on the journal's WasRunning must
-// therefore key that on err == nil, not on rolledBack.
+// So err, never rolledBack, is what a caller may key a namespace restart on:
+// true-with-an-error is precisely the state in which the temp containers may
+// still hold the namespace's own data volume, and starting the namespace over
+// them would put a second postmaster on the user's only copy of the data.
 func RollbackInterrupted(ctx context.Context, store JournalStore, rollback func(context.Context, *deps.MigrationJournal) error) (bool, error) {
 	j := store.MigrationJournal()
 	if j == nil {

@@ -58,11 +58,47 @@ func TestRestoreDependencyStateIsReadBack(t *testing.T) {
 	assert.Equal(t, "dump", r.MigrationJournal().Step)
 	assert.Equal(t, "boom", r.LastDependencyMigration().Error)
 
-	// Accessors return copies: mutating them must not reach the runtime.
-	r.DependencyPins()[deps.Postgres] = "hacked"
+	// The two POINTER accessors hand out clones: the daemon reads a journal or a
+	// verdict, and writing through it would move runtime state nobody locked.
+	// Mutate what they returned, then read the runtime again.
 	r.MigrationJournal().Step = "hacked"
-	assert.Equal(t, "postgres:17.5", r.DependencyPins()[deps.Postgres])
+	r.MigrationJournal().CreatedVolume = "hacked"
+	r.LastDependencyMigration().Error = "hacked"
 	assert.Equal(t, "dump", r.MigrationJournal().Step)
+	assert.Empty(t, r.MigrationJournal().CreatedVolume)
+	assert.Equal(t, "boom", r.LastDependencyMigration().Error)
+
+	// DependencyPins cannot be checked the same way, and does not need to be:
+	// the field is map[deps.ID]deps.DependencyState while the accessor returns
+	// map[deps.ID]string, so an aliasing implementation does not compile. The
+	// assertion below documents the contract; it is the type that enforces it.
+	pins := r.DependencyPins()
+	pins[deps.Postgres] = "hacked"
+	assert.Equal(t, "postgres:17.5", r.DependencyPins()[deps.Postgres])
+}
+
+// A pin is per dependency, and the map is the state file's dependency record:
+// re-pinning replaces a value rather than adding one, and a second dependency
+// leaves the first alone. Both mistakes would mix two dependencies' versions in
+// one state record, which the generator gate then reads back.
+func TestSetDependencyPinOverwritesAndCoexists(t *testing.T) {
+	r := NewRuntime(&Config{ID: "nsX"}, nil, t.TempDir())
+	fp := &fakePersister{}
+	r.SetStatePersister(fp)
+
+	r.SetDependencyPin(deps.Postgres, "postgres:17.5")
+	r.SetDependencyPin(deps.RabbitMQ, "rabbitmq:4.1.2-management")
+	r.SetDependencyPin(deps.Postgres, "postgres:18")
+
+	assert.Equal(t, map[deps.ID]string{
+		deps.Postgres: "postgres:18",
+		deps.RabbitMQ: "rabbitmq:4.1.2-management",
+	}, r.DependencyPins())
+	require.Equal(t, 3, fp.callCount(), "each pin write is durable on its own")
+
+	st := decodeState(t, fp.lastJSON())
+	assert.Equal(t, "postgres:18", st.Dependencies[deps.Postgres].Image)
+	assert.Equal(t, "rabbitmq:4.1.2-management", st.Dependencies[deps.RabbitMQ].Image)
 }
 
 func TestSetMigrationJournalPersistsAndNilClears(t *testing.T) {
@@ -205,8 +241,10 @@ func (failingPersister) SaveNamespaceState(_, _ string) error { return errPersis
 // back on it, and a swallowed error would leave a journal-less migration in
 // flight (or a pin the next boot never sees) with the UI reporting success.
 func TestMigrationWritesReportAFailedPersist(t *testing.T) {
+	// No t.Helper() here: this is a closure, not a helper called with the
+	// subtest's *testing.T, so marking it would report nothing — and it makes
+	// no assertions to attribute in the first place.
 	newRuntime := func() *Runtime {
-		t.Helper()
 		r := NewRuntime(&Config{ID: "nsX"}, nil, t.TempDir())
 		r.SetStatePersister(failingPersister{})
 		return r
@@ -238,6 +276,7 @@ func TestRunningDependencyUpdatesPin(t *testing.T) {
 	r.RestoreDependencyState(map[deps.ID]deps.DependencyState{deps.Postgres: {Image: "postgres:17.5"}}, nil, nil)
 	r.InjectAppsForTest(
 		&AppRuntime{Name: "postgres", Status: AppStatusRunning, Def: appdef.ApplicationDef{Name: "postgres", Image: "postgres:17.11"}},
+		&AppRuntime{Name: "zookeeper", Status: AppStatusRunning, Def: appdef.ApplicationDef{Name: "zookeeper", Image: "zookeeper:3.9.5"}},
 		&AppRuntime{Name: "rabbitmq", Status: AppStatusStarting, Def: appdef.ApplicationDef{Name: "rabbitmq", Image: "rabbitmq:4.2.9-management"}},
 		&AppRuntime{Name: "gateway", Status: AppStatusRunning, Def: appdef.ApplicationDef{Name: "gateway", Image: "gw:1"}},
 	)
@@ -246,13 +285,15 @@ func TestRunningDependencyUpdatesPin(t *testing.T) {
 	r.syncDependencyPinsUnderLock()
 	r.mu.Unlock()
 
-	pins := r.DependencyPins()
-	assert.Equal(t, "postgres:17.11", pins[deps.Postgres], "RUNNING dependency re-pins to what actually runs")
-	_, hasRabbit := pins[deps.RabbitMQ]
-	assert.False(t, hasRabbit, "a STARTING dependency must not be pinned yet")
-	// gateway is RUNNING with an image, and is not a registered dependency:
-	// only the pin the dependency registry knows about may appear.
-	assert.Len(t, pins, 1, "an app outside the dependency registry is never pinned")
+	// The whole map, not its size: postgres re-pinned to what actually runs,
+	// zookeeper pinned beside it (two dependencies coexist), rabbitmq absent
+	// because STARTING is no proof the data accepted that version, and gateway
+	// absent because an app outside the dependency registry is never pinned —
+	// which a count would state only by arithmetic.
+	assert.Equal(t, map[deps.ID]string{
+		deps.Postgres:  "postgres:17.11",
+		deps.Zookeeper: "zookeeper:3.9.5",
+	}, r.DependencyPins())
 	assert.True(t, r.dirty.Load(), "a pin change marks the state dirty for the loop-tail persist")
 	assert.Equal(t, 0, fp.callCount(), "the hook never persists itself; the loop tail drains r.dirty")
 }
@@ -264,7 +305,9 @@ func TestSyncPinsIsIdempotent(t *testing.T) {
 	r.mu.Lock()
 	r.syncDependencyPinsUnderLock()
 	r.mu.Unlock()
-	assert.False(t, r.dirty.Load())
+	assert.Equal(t, "postgres:17.5", r.DependencyPins()[deps.Postgres],
+		"a pin that already matches the running container must be left exactly as it is")
+	assert.False(t, r.dirty.Load(), "and nothing may be marked for persisting")
 }
 
 // A RUNNING container whose def carries no image tells us nothing about what

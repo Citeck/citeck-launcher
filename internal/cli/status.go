@@ -21,6 +21,46 @@ import (
 const editedLegend = "* config edited — `citeck edit <app> --reset` reverts an override; " +
 	"reset an edited file in the app's config editor"
 
+// statusExtrasClient is the daemon surface `citeck status` needs on TOP of the
+// namespace DTO. Narrowed to the two calls so the policy below can be tested
+// without a daemon.
+type statusExtrasClient interface {
+	GetLicenseStatus() (*api.LicenseStatusDto, error)
+	GetDependencies() (*api.DependenciesDto, error)
+}
+
+// fetchStatusExtras gets the license state and the dependency state that the
+// TEXT rendering adds to the namespace — and gets neither in JSON mode, where
+// output.PrintResult marshals the namespace DTO alone. The two requests would
+// buy output that is never produced, against a daemon a scripted caller is
+// typically polling in a loop. (The JSON shape is deliberately left as that
+// one type: NamespaceDto already carries DependencyUpgrades and
+// DependencyMigration, so the machine contract is not missing the dependency
+// state it reports — widening it here would change what every existing
+// `--format json` consumer parses.)
+//
+// Both are best-effort in text mode too: an older daemon does not expose the
+// endpoint, a locked secret store errors, and a namespace that is not
+// configured yet answers 400 for the dependencies. Each failure drops its own
+// line rather than failing the command. The dependency list is fetched rather
+// than read off the namespace DTO because a PENDING ROLLBACK lives only in the
+// dependencies DTO, and it is the one dependency state the operator must act
+// on.
+func fetchStatusExtras(c statusExtrasClient) (*api.LicenseStatusDto, *api.DependenciesDto) {
+	if output.IsJSON() {
+		return nil, nil
+	}
+	licStatus, licErr := c.GetLicenseStatus()
+	if licErr != nil {
+		licStatus = nil
+	}
+	depsDto, depsErr := c.GetDependencies()
+	if depsErr != nil {
+		depsDto = nil
+	}
+	return licStatus, depsDto
+}
+
 func newStatusCmd() *cobra.Command {
 	var watch bool
 
@@ -62,23 +102,7 @@ func newStatusCmd() *cobra.Command {
 				return fmt.Errorf("get namespace: %w", err)
 			}
 
-			// License info is best-effort: older daemons don't expose the
-			// endpoint (GetLicenseStatus returns nil) and a locked secret
-			// store errors — both cases omit the line rather than fail.
-			licStatus, licErr := c.GetLicenseStatus()
-			if licErr != nil {
-				licStatus = nil
-			}
-
-			// Dependency versions are best-effort for the same reason: an older
-			// daemon has no endpoint and a namespace that is not configured yet
-			// answers 400. Fetched (rather than read off the namespace DTO)
-			// because a PENDING ROLLBACK lives only in the dependencies DTO,
-			// and it is the one dependency state the operator must act on.
-			depsDto, depsErr := c.GetDependencies()
-			if depsErr != nil {
-				depsDto = nil
-			}
+			licStatus, depsDto := fetchStatusExtras(c)
 
 			output.PrintResult(ns, func() {
 				// Pad labels to the width of the longest ("License:" = 8)

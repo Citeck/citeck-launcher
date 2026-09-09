@@ -4,7 +4,7 @@ import { getDependencies } from './api'
 
 vi.mock('./api', () => ({ getDependencies: vi.fn() }))
 
-const empty = { migration: null, result: null, dismissedKey: null, data: null }
+const empty = { migration: null, result: null, dismissedKey: null, data: null, rollbackPending: '' }
 
 beforeEach(() => {
   useDepsStore.setState(empty)
@@ -115,5 +115,67 @@ describe('depsStore', () => {
     // The last good payload survives a failed refresh — a transient error must
     // not blank a rollback notice the user still has to act on.
     expect(useDepsStore.getState().data).toEqual(dto)
+    expect(useDepsStore.getState().rollbackPending).toBe('rollback pending')
+  })
+
+  // The pending-rollback alarm has TWO writers that report ONE daemon
+  // condition in the same words: GET /namespace/dependencies, and the ordinary
+  // namespace fetch (NamespaceDto.dependencyRollbackPending). Holding it in a
+  // single field is what lets whichever of them ran last both raise it and
+  // take it down — reading it off the dependencies payload alone left the
+  // alarm waiting for a remount, a namespace switch or the banner's poll.
+  it('keeps the pending rollback in one field, written by the deps GET and by the namespace fetch', async () => {
+    vi.mocked(getDependencies).mockResolvedValueOnce({ items: [], rollbackPending: 'rollback pending' })
+    await useDepsStore.getState().refresh()
+    expect(useDepsStore.getState().rollbackPending).toBe('rollback pending')
+
+    // A payload that no longer carries it takes the alarm down...
+    vi.mocked(getDependencies).mockResolvedValueOnce({ items: [] })
+    await useDepsStore.getState().refresh()
+    expect(useDepsStore.getState().rollbackPending).toBe('')
+
+    // ...and the namespace fetch writes the same field, in both directions.
+    useDepsStore.getState().setRollbackPending('a previous migration of postgres left a rollback pending')
+    expect(useDepsStore.getState().rollbackPending).toBe('a previous migration of postgres left a rollback pending')
+    useDepsStore.getState().setRollbackPending('')
+    expect(useDepsStore.getState().rollbackPending).toBe('')
+  })
+
+  // The banner and the dialog ask for the same payload on the same triggers (a
+  // verdict, an open, a namespace switch), and they are mounted at the same
+  // time — two surfaces must not become two requests. Callers join whatever is
+  // already in flight; the joiner's answer can predate its own ask by at most
+  // one round trip, which for an in-memory localhost route is nothing next to
+  // doubling the request rate.
+  it('serves callers that ask while a fetch is in flight from that one fetch', async () => {
+    let release!: (dto: { items: [] }) => void
+    vi.mocked(getDependencies).mockReturnValueOnce(new Promise((res) => { release = res }))
+    const first = useDepsStore.getState().refresh()
+    const second = useDepsStore.getState().refresh()
+    expect(getDependencies).toHaveBeenCalledTimes(1)
+    release({ items: [] })
+    await Promise.all([first, second])
+    expect(useDepsStore.getState().data).toEqual({ items: [] })
+
+    // The dedupe lasts exactly as long as the request: the next ask is a new one.
+    vi.mocked(getDependencies).mockResolvedValueOnce({ items: [] })
+    await useDepsStore.getState().refresh()
+    expect(getDependencies).toHaveBeenCalledTimes(2)
+  })
+
+  // A failed shared fetch must reject for every joiner, and must not leave the
+  // store believing a request is still running (which would answer every later
+  // refresh with a promise that can never settle).
+  it('rejects every joiner of a failed fetch and still allows the next one', async () => {
+    vi.mocked(getDependencies).mockRejectedValueOnce(new Error('nope'))
+    const first = useDepsStore.getState().refresh()
+    const second = useDepsStore.getState().refresh()
+    await expect(first).rejects.toThrow('nope')
+    await expect(second).rejects.toThrow('nope')
+    expect(getDependencies).toHaveBeenCalledTimes(1)
+
+    vi.mocked(getDependencies).mockResolvedValueOnce({ items: [] })
+    await useDepsStore.getState().refresh()
+    expect(getDependencies).toHaveBeenCalledTimes(2)
   })
 })

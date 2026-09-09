@@ -116,18 +116,10 @@ func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secre
 	}
 	sort.Strings(webappNames)
 	for _, name := range webappNames {
-		// Collision guard, same rule as generateAdditionalApps: every infra app
-		// (postgres, rabbitmq, zookeeper, keycloak, mongo, mailpit, pgadmin) plus
-		// alfresco and observer already has a builder by now, and GetOrCreateApp
-		// would hand generateWebapp THAT builder to overwrite. It bites whenever
-		// the workspace config lists no webapps at all — the filter above then
-		// admits every bundle application, infra included — and it is not merely
-		// cosmetic: it lands AFTER resolveDependencyImage has decided which image
-		// the dependency's data may run on, so a bundle entry named "postgres"
-		// would put the held-back candidate into the container while GenResp
-		// still reports the pin as effective. An infra/core app cannot be
-		// redefined as a webapp: skip it, never overwrite, and say so loudly.
-		if _, exists := ctx.Applications[name]; exists {
+		// Collision guard, same rule as generateAdditionalApps: an infra/core app
+		// cannot be redefined as a webapp — skip it, never overwrite, and say so
+		// loudly. See isBuiltInApp for the two directions it covers.
+		if isBuiltInApp(ctx, name) {
 			slog.Error("bundle application collides with a built-in app; skipping it as a webapp to avoid overwriting the built-in definition",
 				"name", name)
 			continue
@@ -257,6 +249,42 @@ func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secre
 		DependencyUpgrades:    sortedUpgrades(ctx),
 		Dependencies:          ctx.DependencyImages,
 	}, nil
+}
+
+// lateBuiltInApps are the built-in apps whose generators run AFTER the bundle
+// webapp loop: stt-sidecar (it needs the ai app to exist), the proxy (it reads
+// the gateway's resolved port) and onlyoffice (which the proxy depends on).
+// Nothing else may name them.
+//
+// The loop's "does it already have a builder?" test cannot see these three —
+// at that point they do not exist yet — so a bundle entry with one of their
+// names would be generated as a JVM webapp first and then only PARTIALLY
+// overwritten by its own generator, which sets the fields it knows about and
+// leaves the rest: nginx carrying SERVER_PORT and a spring-props mount, and,
+// because IsJVM survives, a JVM memory budget writing -Xmx into an image with
+// no JVM in it. A hybrid container is worse than either definition alone.
+var lateBuiltInApps = map[string]bool{
+	appdef.AppSttSidecar: true,
+	appdef.AppProxy:      true,
+	appdef.AppOnlyoffice: true,
+}
+
+// isBuiltInApp reports whether name belongs to a built-in generator, in both
+// directions: it ALREADY has a builder (every infra app, keycloak, alfresco,
+// observer — generated before the webapp loop), or its generator has not run
+// yet (lateBuiltInApps). The first arm is not merely cosmetic: it lands AFTER
+// resolveDependencyImage has decided which image a dependency's data may run
+// on, so a bundle entry named "postgres" would put the held-back candidate into
+// the container while GenResp still reports the pin as effective.
+//
+// Both arms bite in the same situation — a workspace config that lists no
+// webapps at all, which makes Generate's filter admit every bundle application,
+// infra included.
+func isBuiltInApp(ctx *NsGenContext, name string) bool {
+	if _, exists := ctx.Applications[name]; exists {
+		return true
+	}
+	return lateBuiltInApps[name]
 }
 
 // pruneAppsWithMissingDeps removes any app whose dependsOn references an app that

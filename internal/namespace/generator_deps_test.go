@@ -1,7 +1,7 @@
 package namespace
 
 import (
-	"flag"
+	"maps"
 	"os"
 	"path/filepath"
 	"testing"
@@ -13,8 +13,6 @@ import (
 	"github.com/citeck/citeck-launcher/internal/bundle"
 	"github.com/citeck/citeck-launcher/internal/deps"
 )
-
-var updateGolden = flag.Bool("update-golden", false, "rewrite golden files")
 
 func depsTestConfig() *Config {
 	return &Config{
@@ -32,8 +30,12 @@ func depsTestConfig() *Config {
 // with an error rather than overwriting the infra builder. Keeping the real
 // shape here means these tests exercise the gate, not that guard (which has
 // its own test below). A real workspace config always lists its webapps, and
-// infra is never among them; gateway is not in these bundles, so nothing extra
-// is generated.
+// infra is never among them.
+//
+// The one webapp is the gateway, and generateCfgWithPins puts a gateway into
+// every bundle to match: the proxy hard-depends on it, so a bundle without one
+// has its proxy pruned and every generation in this file logged an ERROR about
+// a missing dependency that has nothing to do with what is being tested.
 func depsTestWorkspace() *bundle.WorkspaceConfig {
 	return &bundle.WorkspaceConfig{Webapps: []bundle.WebappConfig{{ID: appdef.AppGateway}}}
 }
@@ -92,20 +94,28 @@ func generateWithPins(t *testing.T, bun *bundle.Def, pins map[deps.ID]string) *G
 	return generateCfgWithPins(t, depsTestConfig(), bun, pins)
 }
 
+// generateCfgWithPins runs one generation against the caller's bundle, which is
+// completed with the gateway depsTestWorkspace declares (see there). The gateway
+// carries no dataSources, so it contributes no init action, no dependency and no
+// env to any infra def — the byte-stability golden is unaffected by its presence.
 func generateCfgWithPins(t *testing.T, cfg *Config, bun *bundle.Def, pins map[deps.ID]string) *GenResp {
 	t.Helper()
-	if bun == nil {
-		bun = &bundle.Def{Applications: map[string]bundle.AppDef{}}
+	apps := map[string]bundle.AppDef{appdef.AppGateway: {Image: "citeck/gateway:1.0.0"}}
+	if bun != nil {
+		maps.Copy(apps, bun.Applications)
 	}
-	resp, err := Generate(cfg, bun, depsTestWorkspace(), SystemSecrets{JWT: "j", OIDC: "o"},
-		GenerateOpts{DependencyPins: pins})
+	resp, err := Generate(cfg, &bundle.Def{Applications: apps}, depsTestWorkspace(),
+		SystemSecrets{JWT: "j", OIDC: "o"}, GenerateOpts{DependencyPins: pins})
 	require.NoError(t, err)
 	return resp
 }
 
 // upgradeFor finds the reported upgrade for one dependency: every generation
 // here also emits mongo (these configs predate the flag), so an assertion on
-// resp.DependencyUpgrades[0] alone would not say which dependency it is about.
+// resp.DependencyUpgrades[0] alone would not say which dependency it is about,
+// and an upgrade added to a fixture later would shift the index under it. Every
+// identity assertion in this file goes through here; the two ORDER tests below
+// index deliberately, because the index is what they are about.
 func upgradeFor(t *testing.T, resp *GenResp, id deps.ID) *DependencyUpgrade {
 	t.Helper()
 	for i := range resp.DependencyUpgrades {
@@ -140,9 +150,10 @@ func TestPinHoldsBreakingCandidateAndReportsUpgrade(t *testing.T) {
 	pg := appByName(t, resp, appdef.AppPostgres)
 	assert.Equal(t, "postgres:17.5", pg.Image)
 	assert.Contains(t, pg.Volumes, "postgres2:/var/lib/postgresql/data")
-	require.Len(t, resp.DependencyUpgrades, 1)
-	assert.Equal(t, DependencyUpgrade{ID: deps.Postgres, App: "postgres", From: "postgres:17.5", To: "postgres:18", Migratable: true},
-		resp.DependencyUpgrades[0])
+	require.Len(t, resp.DependencyUpgrades, 1, "nothing else may be held back")
+	up := upgradeFor(t, resp, deps.Postgres)
+	require.NotNil(t, up)
+	assert.Equal(t, DependencyUpgrade{ID: deps.Postgres, App: "postgres", From: "postgres:17.5", To: "postgres:18", Migratable: true}, *up)
 	assert.Equal(t, DependencyGen{Effective: "postgres:17.5", Candidate: "postgres:18"}, resp.Dependencies[deps.Postgres])
 }
 
@@ -168,16 +179,20 @@ func TestNonMigratableDependencyIsHeldAndReported(t *testing.T) {
 	bun := &bundle.Def{Applications: map[string]bundle.AppDef{appdef.AppRabbitmq: {Image: "rabbitmq:4.2.9-management"}}}
 	resp := generateWithPins(t, bun, map[deps.ID]string{deps.RabbitMQ: "rabbitmq:4.1.2-management"})
 	assert.Equal(t, "rabbitmq:4.1.2-management", appByName(t, resp, appdef.AppRabbitmq).Image)
-	require.Len(t, resp.DependencyUpgrades, 1)
-	assert.False(t, resp.DependencyUpgrades[0].Migratable)
-	assert.Equal(t, deps.RabbitMQ, resp.DependencyUpgrades[0].ID)
+	require.Len(t, resp.DependencyUpgrades, 1, "nothing else may be held back")
+	up := upgradeFor(t, resp, deps.RabbitMQ)
+	require.NotNil(t, up)
+	assert.False(t, up.Migratable, "this launcher ships no RabbitMQ migration")
 }
 
 func TestUnknownCandidateTagIsHeld(t *testing.T) {
 	bun := &bundle.Def{Applications: map[string]bundle.AppDef{appdef.AppPostgres: {Image: "postgres:latest"}}}
 	resp := generateWithPins(t, bun, map[deps.ID]string{deps.Postgres: "postgres:17.5"})
 	assert.Equal(t, "postgres:17.5", appByName(t, resp, appdef.AppPostgres).Image)
-	require.Len(t, resp.DependencyUpgrades, 1)
+	require.Len(t, resp.DependencyUpgrades, 1, "nothing else may be held back")
+	up := upgradeFor(t, resp, deps.Postgres)
+	require.NotNil(t, up)
+	assert.Equal(t, "postgres:latest", up.To, "the unreadable tag is what is being offered")
 }
 
 func TestUpgradesAreReportedInRegistryOrder(t *testing.T) {
@@ -261,7 +276,13 @@ func TestUnparsableTagKeepsTheLegacyLayout(t *testing.T) {
 // recorded the hold: the container ran the breaking candidate while GenResp
 // reported it held back, which is worse than either outcome alone.
 func TestPinSurvivesAWorkspaceConfigWithNoWebapps(t *testing.T) {
-	bun := &bundle.Def{Applications: map[string]bundle.AppDef{appdef.AppPostgres: {Image: "postgres:18"}}}
+	// The gateway is here for the same reason as in generateCfgWithPins: without
+	// it the proxy is pruned and the run logs a missing-dependency ERROR beside
+	// the collision ERROR this test is actually about.
+	bun := &bundle.Def{Applications: map[string]bundle.AppDef{
+		appdef.AppPostgres: {Image: "postgres:18"},
+		appdef.AppGateway:  {Image: "citeck/gateway:1.0.0"},
+	}}
 	resp, err := Generate(depsTestConfig(), bun, &bundle.WorkspaceConfig{}, SystemSecrets{JWT: "j", OIDC: "o"},
 		GenerateOpts{DependencyPins: map[deps.ID]string{deps.Postgres: "postgres:17.5"}})
 	require.NoError(t, err)

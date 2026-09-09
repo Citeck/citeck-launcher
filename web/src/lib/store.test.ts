@@ -332,6 +332,36 @@ describe('useDashboardStore', () => {
     expect(useDepsStore.getState().migration).toBeNull()
   })
 
+  // An interrupted migration whose restart-recovery ROLLBACK FAILED is
+  // announced by nothing: no deps_migration_* event, no result. Before the
+  // daemon carried it in NamespaceDto the alarm reached the user only when
+  // something happened to re-read GET /namespace/dependencies — a remount, a
+  // namespace switch, or the banner's own poll, which only runs once the alarm
+  // is already up. The ordinary namespace fetch now raises it and clears it.
+  it('publishes the namespace DTO pending rollback into the deps store, and clears it with the namespace', async () => {
+    const pending = 'a previous migration of postgres left a rollback pending'
+    const namespace = { id: 'ns1', name: 'x', status: 'STOPPED', bundleRef: '', apps: [], dependencyRollbackPending: pending }
+    mockedGetNamespace.mockResolvedValueOnce(namespace)
+    mockedGetHealth.mockResolvedValueOnce({ status: 'healthy', healthy: true, checks: [] })
+    await useDashboardStore.getState().fetchData()
+    expect(useDepsStore.getState().rollbackPending).toBe(pending)
+
+    // The daemon's next start retried the rollback and it succeeded: the field
+    // is simply absent, and the alarm has to come down on the same fetch.
+    mockedGetNamespace.mockResolvedValueOnce({ ...namespace, dependencyRollbackPending: undefined })
+    mockedGetHealth.mockResolvedValueOnce({ status: 'healthy', healthy: true, checks: [] })
+    await useDashboardStore.getState().fetchData()
+    expect(useDepsStore.getState().rollbackPending).toBe('')
+
+    // And a namespace that went away takes its alarm with it — the same rule
+    // as the migration view: it belongs to a namespace that is no longer here.
+    useDepsStore.getState().setRollbackPending(pending)
+    mockedGetNamespace.mockRejectedValueOnce(new Error('no namespace configured'))
+    mockedGetHealth.mockRejectedValueOnce(new Error('no namespace configured'))
+    await useDashboardStore.getState().fetchData()
+    expect(useDepsStore.getState().rollbackPending).toBe('')
+  })
+
   it('uses the Wails bridge transport in desktop mode (not EventSource)', () => {
     mockedIsWailsDesktop.mockReturnValue(true)
     try {

@@ -191,13 +191,13 @@ func TestSnapshotExport_DuplicateName_Rejected(t *testing.T) {
 func TestSnapshotExport_ConcurrentInProgress(t *testing.T) {
 	d, mux, _ := newSnapshotsTestDaemon(t)
 
-	// Simulate another snapshot op holding the mutex.
+	// Simulate another snapshot op holding the mutex. The release is
+	// unconditional on purpose: the handler under test is REFUSED by this very
+	// lock, so nothing else can have unlocked it — and the recover() this used
+	// to carry could not have saved the test anyway, since sync.Mutex reports a
+	// double unlock through fatal(), which no recover() catches.
 	require.True(t, d.longOp.TryLock(longOpSnapshot))
-	t.Cleanup(func() {
-		// Try to release; if another path already did, ignore.
-		defer func() { _ = recover() }()
-		d.longOp.Unlock()
-	})
+	t.Cleanup(d.longOp.Unlock)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", api.SnapshotsExport, http.NoBody)
@@ -265,11 +265,9 @@ func TestSnapshotImport_ConcurrentInProgress(t *testing.T) {
 	d, mux, snapDir := newSnapshotsTestDaemon(t)
 	require.NoError(t, os.WriteFile(filepath.Join(snapDir, "real.zip"), []byte("data"), 0o644))
 
+	// Unconditional release — see TestSnapshotExport_ConcurrentInProgress.
 	require.True(t, d.longOp.TryLock(longOpSnapshot))
-	t.Cleanup(func() {
-		defer func() { _ = recover() }()
-		d.longOp.Unlock()
-	})
+	t.Cleanup(d.longOp.Unlock)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", api.SnapshotsImport+"?name=real.zip", http.NoBody)

@@ -162,6 +162,9 @@ func Start(opts StartOptions) error {
 	// loadNamespace returns a non-nil result with a nil NsConfig when there's
 	// no namespace.yml on disk — the daemon still boots into the wizard.
 	loaded, err := loadNamespace(loadNamespaceInput{
+		// No Ctx: the daemon — and its bgCtx — is built BELOW, out of what this
+		// call returns. The load's own I/O stays bounded by the seeding
+		// deadline, and a shutdown cannot arrive before the daemon exists.
 		Store:         store,
 		SecretService: secretSvc,
 		DockerClient:  dockerClient,

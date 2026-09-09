@@ -102,11 +102,17 @@ func (d *Daemon) handleListSnapshots(w http.ResponseWriter, _ *http.Request) {
 
 func (d *Daemon) handleExportSnapshot(w http.ResponseWriter, r *http.Request) {
 	if !d.longOp.TryLock(longOpSnapshot) {
-		// The CODE stays SNAPSHOT_IN_PROGRESS (the snapshot dialog keys on it),
-		// but the text names whoever actually holds the shared lock — telling
-		// the operator "another snapshot operation is in progress" while a
-		// dependency migration holds it sends them looking for a snapshot.
-		writeErrorCode(w, http.StatusConflict, api.ErrCodeSnapshotInProgress, d.longOp.Holder().busyMessage())
+		// The CODE stays SNAPSHOT_IN_PROGRESS: it is these two routes' published
+		// answer and pinned as such, and renaming it would break a client for
+		// nothing. No client BRANCHES on it today — nothing under web/src or
+		// internal/cli references the constant — which is exactly why the TEXT
+		// carries the whole meaning: it names whoever actually holds the shared
+		// lock, because telling the operator "another snapshot operation is in
+		// progress" while a dependency migration holds it sends them looking
+		// for a snapshot nobody took. Same sentence as every other long-op
+		// refusal, tail included.
+		writeErrorCode(w, http.StatusConflict, api.ErrCodeSnapshotInProgress,
+			d.longOp.Holder().busyMessage()+" — wait for it to finish")
 		return
 	}
 	// Validation + capture from ONE snapshot: the background export keeps
@@ -245,11 +251,17 @@ func (d *Daemon) handleImportSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !d.longOp.TryLock(longOpSnapshot) {
-		// The CODE stays SNAPSHOT_IN_PROGRESS (the snapshot dialog keys on it),
-		// but the text names whoever actually holds the shared lock — telling
-		// the operator "another snapshot operation is in progress" while a
-		// dependency migration holds it sends them looking for a snapshot.
-		writeErrorCode(w, http.StatusConflict, api.ErrCodeSnapshotInProgress, d.longOp.Holder().busyMessage())
+		// The CODE stays SNAPSHOT_IN_PROGRESS: it is these two routes' published
+		// answer and pinned as such, and renaming it would break a client for
+		// nothing. No client BRANCHES on it today — nothing under web/src or
+		// internal/cli references the constant — which is exactly why the TEXT
+		// carries the whole meaning: it names whoever actually holds the shared
+		// lock, because telling the operator "another snapshot operation is in
+		// progress" while a dependency migration holds it sends them looking
+		// for a snapshot nobody took. Same sentence as every other long-op
+		// refusal, tail included.
+		writeErrorCode(w, http.StatusConflict, api.ErrCodeSnapshotInProgress,
+			d.longOp.Holder().busyMessage()+" — wait for it to finish")
 		return
 	}
 	// Validation + capture from ONE snapshot: the background import keeps
@@ -337,7 +349,9 @@ func (d *Daemon) handleImportSnapshot(w http.ResponseWriter, r *http.Request) {
 			for _, v := range meta.Volumes {
 				names = append(names, v.Name)
 			}
-			reseedAfterSnapshotImport(d.bgCtx, rt, dockerDependencyProbe{dc: depsDockerOf(dc), volumesBase: volumesBase}, names)
+			reseedAfterSnapshotImport(d.bgCtx, rt,
+				dockerDependencyProbe{dc: depsDockerOf(dc), volumesBase: volumesBase},
+				names, namespaceDependencies(act.nsConfig))
 		}
 		d.broadcastEvent(api.EventDto{
 			Type: "snapshot_complete", Timestamp: time.Now().UnixMilli(),

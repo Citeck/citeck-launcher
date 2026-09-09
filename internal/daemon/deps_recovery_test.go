@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -286,5 +287,76 @@ func TestInstallLoadedNamespaceRecoversBeforeTheSwap(t *testing.T) {
 		"the rollback must finish before the new namespace becomes reachable")
 	assert.Equal(t, "ns1", namespaceIDOf(d.active()), "and the swap still happens")
 	assert.Nil(t, f.rt.MigrationJournal(), "the interrupted migration was closed on the way in")
+	assert.NotContains(t, f.env.Volumes, "postgres3")
+}
+
+// reloadingEnv mirrors the ONE thing about the production Env that makes the
+// recovery path's lock discipline load-bearing: depsEnv.ReloadAndStart takes
+// d.reloadMu (see its doc — the migration holds longOp for its whole run, and
+// reloadMu is the only other lock it may take). The shared fake takes nothing,
+// so without this the deadlock below could only be argued about, not observed.
+type reloadingEnv struct {
+	*migratetest.FakeEnv
+	d *Daemon
+}
+
+func (e reloadingEnv) ReloadAndStart(ctx context.Context, start bool) error {
+	e.d.reloadMu.Lock()
+	defer e.d.reloadMu.Unlock()
+	return e.FakeEnv.ReloadAndStart(ctx, start) //nolint:wrapcheck // decorator must return the fake's error verbatim
+}
+
+// installLoadedNamespace runs crash recovery while its CALLERS hold reloadMu
+// (its own doc says they must), and the rollback it runs would take that same
+// lock if it ever restarted the namespace. What keeps that from being a
+// deadlock is one line in recoverInterruptedMigration: the journal it hands to
+// RollbackPostgres carries WasRunning=false, because restarting is the
+// caller's decision at this point — the namespace is not installed yet.
+//
+// Until now that was a comment. Here it is the test: the journal says the
+// namespace WAS running, the active namespace has the same id as the one being
+// installed (so the Env's other guard — "refuse a reload aimed at a namespace
+// that is not active" — does not apply and cannot be what saves us), and
+// reloadMu is held throughout. A rollback that inherited WasRunning would hang
+// on it forever.
+func TestInstallLoadedNamespaceRollbackCannotDeadlockOnReloadMu(t *testing.T) {
+	f := newRecoveryFixture(t)
+	f.openJournal(&deps.MigrationJournal{ID: deps.Postgres, From: "postgres:17.5", To: "postgres:18",
+		CreatedVolume: "postgres3", WasRunning: true})
+
+	store, err := storage.NewSQLiteStore(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+
+	d := f.d
+	d.store = store
+	// The SAME namespace is already active: this is the arrangement in which
+	// the Env's active-namespace refusal is not what prevents the reload.
+	d.activeNs = &activeNamespace{workspaceID: "ws1", nsConfig: &namespace.Config{ID: "ns1"}}
+	base := f.env
+	d.depsEnvFn = func(activeNamespace) migrate.Env { return reloadingEnv{FakeEnv: base, d: d} }
+
+	loaded := &loadedNamespace{
+		NsConfig:    &namespace.Config{ID: "ns1"},
+		Runtime:     f.rt,
+		AppDefs:     []appdef.ApplicationDef{{Name: "postgres"}},
+		VolumesBase: f.act.volumesBase,
+	}
+
+	// Exactly what handleActivateNamespace does around this call.
+	d.reloadMu.Lock()
+	done := make(chan error, 1)
+	go func() { done <- d.installLoadedNamespace(loaded, "ws1", "ns1") }()
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("installLoadedNamespace deadlocked: its crash recovery tried to reload under reloadMu")
+	}
+	d.reloadMu.Unlock()
+
+	assert.Empty(t, f.env.Reloads(),
+		"recovery must not restart a namespace that is not installed yet — the caller decides that")
+	assert.Nil(t, f.rt.MigrationJournal(), "the rollback still ran to completion")
 	assert.NotContains(t, f.env.Volumes, "postgres3")
 }

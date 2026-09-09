@@ -28,10 +28,13 @@ const items = [
   },
 ]
 
+// The desktop shape: the dump lands on the host and the cluster inside the
+// Docker VM, so the two halves are checked against two different filesystems.
 const okPreflight = {
   ok: true, problems: [], warnings: [], from: 'postgres:17.5', to: 'postgres:18',
   dataSizeBytes: 10, requiredHostBytes: 20, requiredVolumeBytes: 20,
   freeHostBytes: 100, freeVolumeBytes: 100, wasRunning: true,
+  sharedFilesystem: false, requiredTotalBytes: 0,
 }
 
 function mockDeps(dto: Partial<DependenciesDto> = {}) {
@@ -54,7 +57,7 @@ beforeEach(() => {
   mockDeps()
   vi.mocked(getDependencyPreflight).mockResolvedValue(okPreflight)
   vi.mocked(postDependencyMigrate).mockResolvedValue({ success: true, message: 'started' })
-  useDepsStore.setState({ migration: null, result: null, dismissedKey: null, data: null })
+  useDepsStore.setState({ migration: null, result: null, dismissedKey: null, data: null, rollbackPending: '' })
   useUpdateStore.setState({ status: null })
 })
 
@@ -184,6 +187,22 @@ describe('DependenciesDialog', () => {
     expect(screen.getByRole('button', { name: /^upgrade$/i })).toBeDisabled()
   })
 
+  // The list and the alarm are two different reads of the daemon. Since the
+  // daemon began carrying the alarm in NamespaceDto, the ordinary namespace
+  // fetch learns it first — a dialog still holding the payload from before it
+  // happened would otherwise offer an Upgrade button whose only possible
+  // answer is a 409.
+  it('refuses to start on a rollback the namespace fetch learned after the list was read', async () => {
+    render(<DependenciesDialog open onClose={() => {}} />)
+    await screen.findByTestId('dep-postgres')
+    expect(screen.getByRole('button', { name: /^upgrade$/i })).toBeEnabled()
+
+    // What `fetchData` does with NamespaceDto.dependencyRollbackPending.
+    act(() => useDepsStore.getState().setRollbackPending('a previous migration of postgres left a rollback pending'))
+    expect(await screen.findByRole('alert')).toHaveTextContent('rollback pending')
+    expect(screen.getByRole('button', { name: /^upgrade$/i })).toBeDisabled()
+  })
+
   it('reports the verdict of the last migration on the list', async () => {
     mockDeps({
       lastResult: {
@@ -220,6 +239,7 @@ describe('DependenciesDialog', () => {
       from: 'postgres:17.5', to: 'postgres:18',
       dataSizeBytes: 0, requiredHostBytes: 0, requiredVolumeBytes: 0,
       freeHostBytes: 0, freeVolumeBytes: 0, wasRunning: false,
+      sharedFilesystem: false, requiredTotalBytes: 0,
     })
     render(<DependenciesDialog open onClose={() => {}} />)
     fireEvent.click(await screen.findByRole('button', { name: /^upgrade$/i }))
@@ -302,5 +322,123 @@ describe('DependenciesDialog', () => {
     vi.mocked(getDependencies).mockRejectedValue(new Error('daemon is gone'))
     render(<DependenciesDialog open onClose={() => {}} />)
     await waitFor(() => expect(showError).toHaveBeenCalled())
+  })
+
+  // The banner lists a held-back upgrade by its dependency ID and so do the
+  // progress panel, the verdict and the CLI (`citeck deps upgrade <id>`); the
+  // dialog named the same thing by its generated APP name. Those differ for
+  // exactly one dependency — id `mongodb`, container `mongo` — so on the one
+  // stand where it matters the two surfaces the user has open at the same time
+  // disagreed. The id wins: it is the stable API value, the pin-map key and
+  // what every other surface already shows.
+  it('names a dependency by its id, the way the banner and the CLI do', async () => {
+    mockDeps({
+      items: [{
+        id: 'mongodb', app: 'mongo', currentImage: 'mongo:6', currentVersion: '6',
+        targetImage: 'mongo:7', targetVersion: '7', status: 'upgrade-available', migratable: true,
+      }],
+    })
+    render(<DependenciesDialog open onClose={() => {}} />)
+    const row = await screen.findByTestId('dep-mongodb')
+    expect(row.querySelector('td')).toHaveTextContent(/^mongodb$/)
+
+    fireEvent.click(screen.getByRole('button', { name: /^upgrade$/i }))
+    expect(await screen.findByText(/Migrate mongodb from/)).toBeInTheDocument()
+  })
+
+  // The checkbox is the only thing that sets it, so the ordinary migration —
+  // no leftover volume, nobody confirming anything — posts false. Sending true
+  // by accident would authorise deleting a volume the user was never asked
+  // about.
+  it('posts replaceExistingVolume=false when nothing was confirmed', async () => {
+    render(<DependenciesDialog open onClose={() => {}} />)
+    fireEvent.click(await screen.findByRole('button', { name: /^upgrade$/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /start migration/i }))
+    await waitFor(() => expect(postDependencyMigrate).toHaveBeenCalledWith('postgres', false))
+  })
+
+  // A newer daemon's plan can name steps this launcher has never heard of. They
+  // are APPENDED to the known plan rather than dropped or spliced in — dropping
+  // one hides work that is running, and the known list is the order this
+  // launcher can vouch for. Both an unknown step already DONE and the unknown
+  // step running have to appear.
+  it('appends unknown step ids after the known plan, done ones included', async () => {
+    render(<DependenciesDialog open onClose={() => {}} />)
+    await screen.findByTestId('dep-postgres')
+    act(() => {
+      useDepsStore.getState().onStart('postgres', 12)
+      useDepsStore.getState().onProgress({ appName: 'postgres', phase: 'reindex', current: 11, total: 12, percent: 0, after: '' })
+      useDepsStore.getState().onProgress({ appName: 'postgres', phase: 'revacuum', current: 12, total: 12, percent: 0, after: '' })
+    })
+    expect(await screen.findByTestId('deps-step-reindex')).toHaveAttribute('data-state', 'done')
+    expect(screen.getByTestId('deps-step-revacuum')).toHaveAttribute('data-state', 'active')
+    // Order: the whole known plan first, then the unknown ones as they appeared.
+    const ids = screen.getAllByTestId(/^deps-step-/).map((li) => li.getAttribute('data-testid'))
+    expect(ids.slice(-3)).toEqual(['deps-step-stop-target', 'deps-step-reindex', 'deps-step-revacuum'])
+    // Nothing was dropped: the known plan is still all there.
+    expect(ids).toHaveLength(12)
+  })
+
+  // The daemon can die mid-migration; its restart rolls back, and if THAT
+  // fails the journal stays open — the pin is frozen and every new migration is
+  // refused. That recovery emits no event and produces no result, so the
+  // dialog's migration simply vanishes (hydrate(null)). Falling back to the
+  // list is not enough: the list it had was fetched before any of this, so it
+  // would show a healthy set of dependencies with an Upgrade button that can
+  // only ever answer 409. The end of a migration is a reason to re-read.
+  it('shows the pending rollback when a migration vanishes with no verdict', async () => {
+    render(<DependenciesDialog open onClose={() => {}} />)
+    await screen.findByTestId('dep-postgres')
+    act(() => useDepsStore.getState().onStart('postgres', 10))
+    await screen.findByTestId('deps-progress')
+
+    // What the daemon's failed recovery leaves behind, learned only by asking.
+    mockDeps({ rollbackPending: 'a previous migration of postgres left a rollback pending' })
+    act(() => useDepsStore.getState().hydrate(null))
+    expect(await screen.findByRole('alert')).toHaveTextContent('rollback pending')
+    expect(screen.queryByTestId('deps-progress')).toBeNull()
+    expect(screen.getByRole('button', { name: /^upgrade$/i })).toBeDisabled()
+  })
+
+  // On the ordinary SERVER layout the dump and the new cluster are written to
+  // ONE filesystem and exist side by side until the commit, so what has to fit
+  // is the two halves ADDED UP. Rendering them as two independent lines told
+  // the user that 20 B had to fit and that 100 B was free — twice — while the
+  // daemon was refusing the migration for wanting 40 B. One line, the real
+  // number.
+  it('states one combined requirement when both halves land on one filesystem', async () => {
+    vi.mocked(getDependencyPreflight).mockResolvedValue({
+      ...okPreflight,
+      sharedFilesystem: true, requiredTotalBytes: 40,
+      // Two measurements of one filesystem, by two different mechanisms (a host
+      // statfs and a df inside a container). The daemon believes the smaller
+      // one — it is the one that can run out — so the dialog must not quote the
+      // bigger and look roomier than the refusal it is about to get.
+      freeHostBytes: 100, freeVolumeBytes: 90,
+    })
+    render(<DependenciesDialog open onClose={() => {}} />)
+    fireEvent.click(await screen.findByRole('button', { name: /^upgrade$/i }))
+    const line = await screen.findByText(/dump \+ new cluster/i)
+    expect(line).toHaveTextContent('40 B')
+    expect(line).toHaveTextContent('90 B')
+    // Never beside the two halves it replaces — that is the understatement.
+    expect(screen.queryByText(/Host \(dump\):/)).toBeNull()
+    expect(screen.queryByText(/^Volumes:/)).toBeNull()
+    // The data size is unaffected: it is one measurement of one volume.
+    expect(screen.getByText(/Data size:/)).toBeInTheDocument()
+  })
+
+  // An unmeasurable half is left at 0 by the daemon (with a problem line of its
+  // own saying so), not at a real "nothing free" — quoting it as the smaller
+  // free would turn a measurement failure into a fake out-of-space claim.
+  it('ignores an unmeasured half when it quotes the free space', async () => {
+    vi.mocked(getDependencyPreflight).mockResolvedValue({
+      ...okPreflight,
+      sharedFilesystem: true, requiredTotalBytes: 40,
+      freeHostBytes: 0, freeVolumeBytes: 90,
+    })
+    render(<DependenciesDialog open onClose={() => {}} />)
+    fireEvent.click(await screen.findByRole('button', { name: /^upgrade$/i }))
+    expect(await screen.findByText(/dump \+ new cluster/i)).toHaveTextContent('90 B')
   })
 })

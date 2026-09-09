@@ -15,6 +15,7 @@ import (
 
 	"github.com/citeck/citeck-launcher/internal/api"
 	"github.com/citeck/citeck-launcher/internal/appdef"
+	"github.com/citeck/citeck-launcher/internal/bundle"
 	"github.com/citeck/citeck-launcher/internal/deps"
 	"github.com/citeck/citeck-launcher/internal/deps/migrate"
 	"github.com/citeck/citeck-launcher/internal/deps/migrate/migratetest"
@@ -67,6 +68,15 @@ func depsPost(mux *http.ServeMux, path, body string) *httptest.ResponseRecorder 
 	req.Header.Set("Content-Type", "application/json")
 	mux.ServeHTTP(rec, req)
 	return rec
+}
+
+// decodeNamespace reads the namespace DTO the dashboard polls.
+func decodeNamespace(t *testing.T, rec *httptest.ResponseRecorder) api.NamespaceDto {
+	t.Helper()
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var dto api.NamespaceDto
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &dto))
+	return dto
 }
 
 func decodeDependencies(t *testing.T, rec *httptest.ResponseRecorder) api.DependenciesDto {
@@ -132,6 +142,94 @@ func TestListDependenciesReportsAPendingRollback(t *testing.T) {
 	require.NotNil(t, dto.LastResult)
 	assert.False(t, dto.LastResult.Success)
 	assert.Equal(t, "postgres", dto.LastResult.ID)
+}
+
+// The same pending rollback has to reach a client that never opens the
+// dependencies dialog. Load-time recovery (recoverInterruptedMigration) is
+// what finds it, and that emits no deps_migration_* event and produces no
+// result, so before this the alarm depended on the user going looking for it.
+// The ordinary namespace fetch — which every client makes on connect and after
+// every reconnect — now carries it.
+func TestNamespaceDtoCarriesAPendingRollback(t *testing.T) {
+	d, mux, rt := newDepsRoutesDaemon(t)
+	rt.RestoreDependencyState(map[deps.ID]deps.DependencyState{deps.Postgres: {Image: "postgres:17.5"}},
+		&deps.MigrationJournal{ID: deps.Postgres, From: "postgres:17.5", To: "postgres:18", Step: "restore"},
+		&deps.MigrationResult{ID: deps.Postgres, From: "postgres:17.5", To: "postgres:18",
+			FinishedAt: time.Now(), Error: "rollback failed: remove volume postgres3: boom"})
+
+	dto := decodeNamespace(t, depsGet(mux, "/api/v1/namespace"))
+	assert.Contains(t, dto.DependencyRollbackPending, "rollback")
+	assert.Contains(t, dto.DependencyRollbackPending, "postgres")
+	assert.Contains(t, dto.DependencyRollbackPending, "boom",
+		"the reason the rollback failed is the actionable part, exactly as on the dependencies route")
+	assert.Equal(t, decodeDependencies(t, depsGet(mux, api.Dependencies)).RollbackPending,
+		dto.DependencyRollbackPending, "one condition, one wording — the two surfaces must not drift")
+
+	// While a migration for this namespace IS running, the journal is simply
+	// its record: DependencyMigration already describes it, and reporting both
+	// would show one condition as two.
+	d.setDepsMigration("ns1", &api.DependencyMigrationDto{ID: "postgres", StepCount: 10})
+	assert.Empty(t, decodeNamespace(t, depsGet(mux, "/api/v1/namespace")).DependencyRollbackPending)
+	d.setDepsMigration("ns1", nil)
+
+	// A namespace with no journal says nothing.
+	rt.RestoreDependencyState(map[deps.ID]deps.DependencyState{deps.Postgres: {Image: "postgres:17.5"}}, nil, nil)
+	assert.Empty(t, decodeNamespace(t, depsGet(mux, "/api/v1/namespace")).DependencyRollbackPending)
+}
+
+// The alarm belongs to ONE namespace: the journal it reports lives on that
+// namespace's runtime, so switching to another namespace must not carry it
+// over — the same rule Updating and UpdateError follow, and for the same
+// reason (an alarm shown on a namespace it has nothing to do with).
+func TestPendingRollbackIsScopedToItsNamespace(t *testing.T) {
+	d, mux, rt := newDepsRoutesDaemon(t)
+	rt.RestoreDependencyState(map[deps.ID]deps.DependencyState{deps.Postgres: {Image: "postgres:17.5"}},
+		&deps.MigrationJournal{ID: deps.Postgres, From: "postgres:17.5", To: "postgres:18"}, nil)
+	require.NotEmpty(t, decodeNamespace(t, depsGet(mux, "/api/v1/namespace")).DependencyRollbackPending)
+
+	other := namespace.NewRuntime(&namespace.Config{ID: "ns2"}, planStubDocker{}, t.TempDir())
+	t.Cleanup(other.Shutdown)
+	d.activeNs = &activeNamespace{runtime: other, nsConfig: &namespace.Config{ID: "ns2"}}
+	assert.Empty(t, decodeNamespace(t, depsGet(mux, "/api/v1/namespace")).DependencyRollbackPending,
+		"the namespace the user switched to has no interrupted migration")
+}
+
+// An EMPTY bundle is the launcher's most misleading state, and the dependency
+// list is one of the surfaces that could quietly say nothing in it: the infra
+// containers are generated unconditionally, with hardcoded fallback images, so
+// the namespace really does run postgres/rabbitmq/zookeeper (and mongo, before
+// generation 2) even when not one Citeck app was resolved. The list reports
+// exactly those — it is about infrastructure versions, and the namespace being
+// empty is BundleError's story (a non-dismissible banner) — and an EMPTY list
+// would mean something else entirely: that no generation has been recorded for
+// this namespace at all.
+func TestDependenciesAreListedEvenWithAnEmptyBundle(t *testing.T) {
+	cfg := &namespace.Config{ID: "ns1"}
+	resp, err := namespace.Generate(cfg, &bundle.EmptyDef, &bundle.WorkspaceConfig{}, namespace.SystemSecrets{})
+	require.NoError(t, err)
+	for _, app := range resp.Applications {
+		require.NotEqual(t, "gateway", app.Name, "this fixture must really be an empty bundle")
+	}
+
+	rt := namespace.NewRuntime(cfg, planStubDocker{}, t.TempDir())
+	t.Cleanup(rt.Shutdown)
+	d := &Daemon{activeNs: &activeNamespace{
+		runtime: rt, nsConfig: cfg, dependencies: resp.Dependencies,
+		bundleError: "bundle citeck:community-latest resolved to 0 applications",
+	}}
+	mux := http.NewServeMux()
+	d.registerRoutes(mux)
+
+	dto := decodeDependencies(t, depsGet(mux, api.Dependencies))
+	ids := make([]string, 0, len(dto.Items))
+	for _, it := range dto.Items {
+		ids = append(ids, it.ID)
+		assert.NotEmpty(t, it.CurrentImage, "%s is listed, so it must name the image it runs", it.ID)
+	}
+	assert.Contains(t, ids, "postgres")
+	assert.Contains(t, ids, "rabbitmq")
+	assert.Contains(t, ids, "zookeeper")
+	assert.NotContains(t, ids, "keycloak", "authentication is off in this config, so no keycloak is generated")
 }
 
 func TestListDependenciesRefusesWithoutANamespace(t *testing.T) {

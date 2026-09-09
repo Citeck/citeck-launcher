@@ -183,7 +183,8 @@ func (r *Runtime) syncDependencyPinsUnderLock() {
 		if r.dependencyPins[d.ID()].Image == app.Def.Image {
 			continue
 		}
-		slog.Info("Dependency pin updated from running container", "dependency", d.ID(), "image", app.Def.Image)
+		slog.Info("Dependency pin updated from running container",
+			"namespace", r.nsID, "dependency", d.ID(), "image", app.Def.Image)
 		r.dependencyPins[d.ID()] = deps.DependencyState{Image: app.Def.Image}
 		r.dirty.Store(true)
 	}

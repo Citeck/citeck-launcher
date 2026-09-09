@@ -96,6 +96,12 @@ export interface NamespaceDto {
   // connects or reloads mid-way still sees it (the deps_migration_* events
   // only reach clients already listening).
   dependencyMigration?: DependencyMigrationDto
+  // Why an interrupted migration's journal is still open with no migration
+  // running (a crash whose restart-recovery rollback failed): the version is
+  // frozen and every start of this namespace is refused until it succeeds.
+  // Carried here because that recovery runs at load time — it emits no
+  // deps_migration_* event and produces no result.
+  dependencyRollbackPending?: string
 }
 
 /** One infrastructure dependency of the active namespace. */
@@ -180,6 +186,14 @@ export interface PreflightResult {
   /** Free space where the data volumes live — the Docker VM's disk on a
    *  macOS/Windows desktop, which is NOT the host's. */
   freeVolumeBytes: number
+  /** The dump and the data volumes are on ONE filesystem (the ordinary server
+   *  layout). The two coexist until the migration commits, so what has to fit
+   *  there is requiredTotalBytes, not either half alone. */
+  sharedFilesystem: boolean
+  /** What that one filesystem must have free: the two halves added up. 0 when
+   *  sharedFilesystem is false, where a sum across two disks means nothing —
+   *  read sharedFilesystem, never the zero. */
+  requiredTotalBytes: number
   existingTargetVolume?: ExistingVolume
   wasRunning: boolean
 }

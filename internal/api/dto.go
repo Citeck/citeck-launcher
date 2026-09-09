@@ -166,6 +166,20 @@ type NamespaceDto struct {
 	// runs one migration at a time, and a namespace switch must not show it
 	// on a namespace it has nothing to do with.
 	DependencyMigration *DependencyMigrationDto `json:"dependencyMigration,omitempty"`
+	// DependencyRollbackPending is why an interrupted migration's journal is
+	// still open with NO migration running: the daemon died mid-migration and
+	// the rollback its next start attempted did not succeed, so the leftovers
+	// it describes are still on the host, the dependency's version is frozen
+	// and every start of this namespace is refused.
+	//
+	// It rides on the ordinary namespace fetch because that recovery happens
+	// at LOAD time: it emits no deps_migration_* event and produces no result,
+	// so a client that was not already looking at the dependencies dialog had
+	// nothing to learn it from. Same wording and same rule as the dependencies
+	// route's RollbackPending (empty while a migration IS running, which
+	// DependencyMigration above already describes), and scoped to this
+	// namespace by construction — the journal belongs to its runtime.
+	DependencyRollbackPending string `json:"dependencyRollbackPending,omitempty"`
 }
 
 // Dependency status values carried by DependencyDto.Status.

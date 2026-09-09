@@ -154,6 +154,37 @@ func TestSuspendLivenessProbe_IsRefcounted(t *testing.T) {
 	assert.Zero(t, count)
 }
 
+// Release is idempotent, and that is refcounting's load-bearing half: a caller
+// that releases twice (a defer plus an explicit release on an early return)
+// must not free somebody ELSE's suspension. The count-based check above cannot
+// see this — the floor at zero hides a stray decrement — so the second holder
+// has to be watching.
+func TestSuspendLivenessProbe_ReleaseIsIdempotent(t *testing.T) {
+	r := newRuntimeForTest(testConfig(), newMockDocker(), t.TempDir())
+	defer r.Shutdown()
+	seedRunningProbedApp(t, r, "eproc")
+
+	release := r.SuspendLivenessProbe("eproc")
+	other := r.SuspendLivenessProbe("eproc")
+
+	release()
+	release()
+
+	r.mu.Lock()
+	r.livenessNextAt["eproc"] = time.Now().Add(-time.Second)
+	count := r.livenessSuspended["eproc"]
+	r.mu.Unlock()
+	assert.Equal(t, 1, count, "the second release must be a no-op, not a second decrement")
+	assert.False(t, livenessPlanned(r.tickUnderLock(), "eproc"),
+		"the app is still under a diagnostic — the other holder has not released")
+
+	other()
+	r.mu.Lock()
+	r.livenessNextAt["eproc"] = time.Now().Add(-time.Second)
+	r.mu.Unlock()
+	assert.True(t, livenessPlanned(r.tickUnderLock(), "eproc"), "and it comes back when it does")
+}
+
 // The point of the helper: an operation that fails, panics or returns early
 // still gives the app back its probe. An app left unwatched because a
 // diagnostic errored is a worse failure than the one being diagnosed.

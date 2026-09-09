@@ -10,6 +10,11 @@ interface Props {
   onDetails: () => void
 }
 
+/** How often the pending-rollback alarm re-reads the state that raised it. It
+ *  changes only when a launcher start retries the rollback, so this is about
+ *  taking a stale alarm down promptly, not about catching a fast transition. */
+export const ROLLBACK_POLL_MS = 10_000
+
 /**
  * Tells the user that a bundle offers a newer version of an infra dependency
  * which the launcher deliberately did NOT apply (it would be a breaking change
@@ -17,45 +22,62 @@ interface Props {
  * of offered upgrades changes. Two wordings: the launcher can migrate it, or a
  * newer launcher is needed.
  *
- * It also owns the refresh of GET /namespace/dependencies, because the one
- * state it must never hide — a PENDING ROLLBACK — is not part of NamespaceDto:
- * an interrupted migration whose rollback has not succeeded freezes the
- * version pin and refuses every new migration, and the user has to know
- * without opening anything. That variant is NOT dismissible (same rule as
+ * It also owns the TRIGGERS for GET /namespace/dependencies (the request
+ * itself belongs to the store, which serves the dialog the same one when both
+ * ask on the same trigger), because the payload carries state no other fetch
+ * does — the per-dependency list and the last verdict.
+ *
+ * The one state it must never hide is a PENDING ROLLBACK: an interrupted
+ * migration whose rollback has not succeeded freezes the version pin and
+ * refuses every new migration AND every start of the namespace, and the user
+ * has to know without opening anything. It reaches the store from two writers
+ * — that GET and the ordinary namespace fetch — so the alarm no longer waits
+ * for a remount. That variant is NOT dismissible (same rule as
  * BundleErrorBanner: it describes something that is broken right now).
  */
 export function DependencyUpgradeBanner({ onDetails }: Props) {
   const upgrades = useDashboardStore((s) => s.namespace?.dependencyUpgrades)
   const nsID = useDashboardStore((s) => s.namespace?.id ?? '')
-  // Object identity, not a field: `fetchData` publishes a NEW namespace object
-  // on every successful fetch, which is the only observable "the daemon just
-  // told us something" the store has.
-  const namespace = useDashboardStore((s) => s.namespace)
   const dismissedKey = useDepsStore((s) => s.dismissedKey)
   const dismissBanner = useDepsStore((s) => s.dismissBanner)
   const refresh = useDepsStore((s) => s.refresh)
-  const rollbackPending = useDepsStore((s) => s.data?.rollbackPending ?? '')
+  // One field, two writers: GET /namespace/dependencies and the ordinary
+  // namespace fetch (NamespaceDto.dependencyRollbackPending) — so the alarm
+  // goes up on whichever ran last instead of waiting for a remount.
+  const rollbackPending = useDepsStore((s) => s.rollbackPending)
   // A finished migration is what CREATES or CLEARS a pending rollback, so the
   // verdict's timestamp is the trigger to look again.
   const resultAt = useDepsStore((s) => s.result?.at ?? 0)
   const { t } = useTranslation()
 
   const upgradeKey = upgradeSetKey(upgrades)
-  // While the alarm is UP, follow every namespace fetch. A pending rollback is
-  // normally cleared by the daemon's load-time recovery
-  // (`recoverInterruptedMigration`), which emits no deps_migration_* event and
-  // produces no result — so mount / namespace / verdict triggers alone would
-  // leave a red, deliberately non-dismissible banner standing after its cause
-  // was gone, until the user opened the dialog or switched namespace. Gated on
-  // the alarm because `fetchData` is debounced at 100ms: following every fetch
-  // unconditionally would roughly double the dashboard's request rate during a
-  // start, for a state that is quiet the rest of the time.
-  const alarmRevision = rollbackPending ? namespace : null
   useEffect(() => {
     // Best-effort: the daemon answers this from memory, and a failure here has
-    // no user-facing action (the dialog reports its own).
+    // no user-facing action (the dialog reports its own). The store serves the
+    // dialog from the same request when it asks on the same trigger.
     void refresh().catch(() => {})
-  }, [refresh, nsID, resultAt, upgradeKey, alarmRevision])
+  }, [refresh, nsID, resultAt, upgradeKey])
+
+  // While the alarm is UP, poll — still, even though the namespace fetch now
+  // raises AND clears it. A pending rollback is cleared by the daemon's
+  // load-time recovery (`recoverInterruptedMigration`), which emits no
+  // deps_migration_* event and produces no result, so nothing pushes a frame:
+  // the namespace fetch runs on SSE events and, with a healthy stream, its
+  // poll fallback stays dormant. The namespace of a failed rollback is not
+  // handed back running either, so there may be no events at all — the fetch
+  // that would take the banner down is exactly the one that never happens.
+  // This is the recovery path for that case, and it costs one request per
+  // interval only while a deliberately non-dismissible red banner is up.
+  //
+  // A poll rather than "follow every namespace fetch": following the store's
+  // namespace identity cost one dependencies GET per running app per 5s
+  // (`fetchData` publishes a new namespace object on each `app_stats`), i.e.
+  // several a second on a 24-app stand, forever.
+  useEffect(() => {
+    if (!rollbackPending) return
+    const timer = setInterval(() => { void refresh().catch(() => {}) }, ROLLBACK_POLL_MS)
+    return () => clearInterval(timer)
+  }, [refresh, rollbackPending])
 
   if (rollbackPending) {
     return (

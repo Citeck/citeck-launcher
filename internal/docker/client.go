@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -349,8 +350,55 @@ func (c *Client) CreateContainer(ctx context.Context, app appdef.ApplicationDef,
 // labels — what a dependency migration needs to run the namespace's real
 // postgres def under another name, next to (not instead of) the namespace's
 // own container.
+//
+// Everything except the engine call itself lives in buildCreateOptions, so the
+// wiring of opts into the four places it has to reach can be pinned without a
+// live Docker daemon.
 func (c *Client) CreateContainerWith(ctx context.Context, app appdef.ApplicationDef, volumesBaseDir string, opts ContainerCreateOpts) (string, error) {
-	name := effectiveName(app, opts)
+	createOpts, err := c.buildCreateOptions(ctx, app, volumesBaseDir, opts)
+	if err != nil {
+		return "", err
+	}
+
+	resp, err := c.cli.ContainerCreate(ctx, createOpts)
+	if err != nil {
+		return "", fmt.Errorf("create container %s: %w", createOpts.Name, err)
+	}
+
+	return resp.ID, nil
+}
+
+// buildCreateOptions assembles the whole ContainerCreate request for app under
+// opts: the container name, config, host config and networking config, plus
+// the bind-mount sources it has to materialize on the host.
+//
+// It is a seam, not just a helper. CreateContainerWith has to hand its OWN
+// opts to four different builders — the name, the labels, the host config and
+// the network aliases — and each builder was unit-tested on its own while
+// nothing checked that the create path actually passes opts to all of them.
+// Dropping opts at any one of those call sites reproduces exactly what the
+// override exists to prevent (a temp container Docker restarts after a reboot,
+// or one that answers to "postgres" on the namespace network) with every unit
+// test still green.
+func (c *Client) buildCreateOptions(
+	ctx context.Context,
+	app appdef.ApplicationDef,
+	volumesBaseDir string,
+	opts ContainerCreateOpts,
+) (client.ContainerCreateOptions, error) {
+	name, overridden := effectiveName(app, opts)
+	// An override spelled exactly like the app's own name is refused rather
+	// than served. It would produce a container named and labeled like the
+	// namespace's own app — LabelAppName is how buildExistingContainerMap and
+	// the reconciler index containers — so the caller's temp container would be
+	// ADOPTED as the app's. Docker's name conflict is not a guard we may lean
+	// on: it only fires while the app's container exists, and a migration runs
+	// with the namespace stopped, where a removed or never-created container
+	// leaves the name free.
+	if overridden && name == app.Name {
+		return client.ContainerCreateOptions{}, fmt.Errorf(
+			"container name override %q is the app's own name: use CreateContainer for the namespace's own container", name)
+	}
 	containerName := c.ContainerName(name)
 	networkName := c.NetworkName()
 
@@ -371,7 +419,7 @@ func (c *Client) CreateContainerWith(ctx context.Context, app appdef.Application
 		hostPort := parts[0]
 		containerPort, err := network.ParsePort(parts[1] + "/tcp")
 		if err != nil {
-			return "", fmt.Errorf("invalid container port %q for %s: %w", parts[1], app.Name, err)
+			return client.ContainerCreateOptions{}, fmt.Errorf("invalid container port %q for %s: %w", parts[1], app.Name, err)
 		}
 		exposedPorts[containerPort] = struct{}{}
 		portBindings[containerPort] = []network.PortBinding{{HostPort: hostPort}}
@@ -391,14 +439,14 @@ func (c *Client) CreateContainerWith(ctx context.Context, app appdef.Application
 				// a directory at the file path (its default for missing bind sources).
 				hostPath := filepath.Join(volumesBaseDir, source[2:])
 				if err := os.MkdirAll(filepath.Dir(hostPath), 0o755); err != nil { //nolint:gosec // Docker bind-mount dirs need container-accessible perms
-					return "", fmt.Errorf("create bind-mount directory %s: %w", filepath.Dir(hostPath), err)
+					return client.ContainerCreateOptions{}, fmt.Errorf("create bind-mount directory %s: %w", filepath.Dir(hostPath), err)
 				}
 				v = hostPath + ":" + parts[1]
 			} else if !strings.ContainsAny(source, "/.") && volumesBaseDir != "" && !c.desktopVolumes {
 				// Server mode: convert named volume to bind mount in runtime dir.
 				hostDir := filepath.Join(volumesBaseDir, "volumes", source)
 				if err := os.MkdirAll(hostDir, 0o755); err != nil { //nolint:gosec // Docker bind-mount dirs need container-accessible perms
-					return "", fmt.Errorf("create bind-mount directory %s: %w", hostDir, err)
+					return client.ContainerCreateOptions{}, fmt.Errorf("create bind-mount directory %s: %w", hostDir, err)
 				}
 				v = hostDir + ":" + parts[1]
 			} else if !strings.ContainsAny(source, "/.") && c.desktopVolumes {
@@ -407,7 +455,7 @@ func (c *Client) CreateContainerWith(ctx context.Context, app appdef.Application
 				// one Docker volume. Matches Kotlin DockerApi.createVolume.
 				scopedName, err := c.CreateVolume(ctx, source)
 				if err != nil {
-					return "", err
+					return client.ContainerCreateOptions{}, err
 				}
 				v = scopedName + ":" + parts[1]
 			}
@@ -432,7 +480,7 @@ func (c *Client) CreateContainerWith(ctx context.Context, app appdef.Application
 	ctrConfig := buildContainerConfig(app, name, env, exposedPorts, labels)
 	hostConfig := buildHostConfig(app, opts, binds, portBindings, networkName, memoryBytes, shmSize)
 
-	aliases := networkAliases(app, name)
+	aliases := networkAliases(app, name, overridden)
 
 	networkConfig := &network.NetworkingConfig{
 		EndpointsConfig: map[string]*network.EndpointSettings{
@@ -442,17 +490,12 @@ func (c *Client) CreateContainerWith(ctx context.Context, app appdef.Application
 		},
 	}
 
-	resp, err := c.cli.ContainerCreate(ctx, client.ContainerCreateOptions{
+	return client.ContainerCreateOptions{
 		Config:           ctrConfig,
 		HostConfig:       hostConfig,
 		NetworkingConfig: networkConfig,
 		Name:             containerName,
-	})
-	if err != nil {
-		return "", fmt.Errorf("create container %s: %w", containerName, err)
-	}
-
-	return resp.ID, nil
+	}, nil
 }
 
 // effectiveName is the name a container is created UNDER: the override when
@@ -462,11 +505,18 @@ func (c *Client) CreateContainerWith(ctx context.Context, app appdef.Application
 // precisely the accident this seam exists to prevent: a temp container created
 // as citeck_postgres_<ns> would collide with (or, worse, be adopted as) the
 // namespace's real postgres container.
-func effectiveName(app appdef.ApplicationDef, opts ContainerCreateOpts) string {
+//
+// It reports whether the name CAME FROM an override, and every decision that
+// depends on "is this the app's own container?" takes that boolean rather than
+// comparing the result with app.Name. The comparison is not the same question:
+// an override a caller spelled exactly like the app's name is still an
+// override, and answering it as "no override" would hand a foreign container
+// the app's whole DNS identity.
+func effectiveName(app appdef.ApplicationDef, opts ContainerCreateOpts) (name string, overridden bool) {
 	if opts.Name != "" {
-		return opts.Name
+		return opts.Name, true
 	}
-	return app.Name
+	return app.Name, false
 }
 
 // networkAliases is the DNS identity the container takes on the namespace
@@ -480,8 +530,13 @@ func effectiveName(app appdef.ApplicationDef, opts ContainerCreateOpts) string {
 // connection at a time and with no error anywhere. Clearing
 // def.NetworkAliases at the call site would not have been enough: the primary
 // alias comes from app.Name, not from that field.
-func networkAliases(app appdef.ApplicationDef, name string) []string {
-	if name != app.Name {
+//
+// overridden is effectiveName's answer, not a comparison of name against
+// app.Name: the two differ exactly when a caller overrode the name with the
+// app's own spelling, and treating that as "no override" is what would give a
+// foreign container the app's aliases.
+func networkAliases(app appdef.ApplicationDef, name string, overridden bool) []string {
+	if overridden {
 		return []string{name}
 	}
 	aliases := make([]string, 0, 1+len(app.NetworkAliases))
@@ -924,7 +979,19 @@ func demuxExecOutput(reader io.Reader) (stdout, stderr string, err error) {
 // tell the two apart — anything parsing machine-readable output — want
 // ExecInContainerSplit instead.
 func (c *Client) ExecInContainer(ctx context.Context, containerID string, cmd []string) (output string, exitCode int, err error) {
-	stdout, stderr, exitCode, err := c.ExecInContainerSplit(ctx, containerID, cmd)
+	return execInContainerVia(ctx, c.ExecInContainerSplit, containerID, cmd)
+}
+
+// execSplitFn is the shape of ExecInContainerSplit.
+type execSplitFn func(ctx context.Context, containerID string, cmd []string) (stdout, stderr string, exitCode int, err error)
+
+// execInContainerVia is everything ExecInContainer does besides running the
+// command: it appends stderr to stdout and passes the exit code and the error
+// through untouched. It takes the split call as a parameter so the JOIN — an
+// ORDER its callers depend on, since they scan one transcript for a marker —
+// can be pinned without a live engine.
+func execInContainerVia(ctx context.Context, split execSplitFn, containerID string, cmd []string) (output string, exitCode int, err error) {
+	stdout, stderr, exitCode, err := split(ctx, containerID, cmd)
 	return stdout + stderr, exitCode, err
 }
 
@@ -1161,6 +1228,11 @@ type ContainerStat struct {
 
 // RunUtilsContainer runs a command in a temporary launcher-utils container with the given bind mounts.
 // It creates the container, starts it, waits for exit, captures output, and removes it.
+//
+// err is reserved for a failure to RUN the command — the create, the start,
+// the wait, or an inspect that would not say how the container exited (see
+// utilsExitCode). A command that ran and failed reports its own exit code with
+// a nil err, which is the distinction every caller is written against.
 func (c *Client) RunUtilsContainer(ctx context.Context, cmd, binds []string) (output string, exitCode int, err error) {
 	utilsImage := config.UtilsImage()
 
@@ -1199,9 +1271,34 @@ func (c *Client) RunUtilsContainer(ctx context.Context, cmd, binds []string) (ou
 
 	output, _ = c.ContainerLogs(ctx, containerID, 1000)
 
-	inspect, inspErr := c.InspectContainer(ctx, containerID)
+	exitCode, err = utilsExitCode(c.InspectContainer(ctx, containerID))
+	return output, exitCode, err
+}
+
+// utilsExitCode reads a finished utils container's exit code out of an inspect
+// answer, and reports the two ways that can fail as ERRORS rather than as an
+// exit code of -1.
+//
+// The distinction is the whole contract of RunUtilsContainer: err means the
+// command could not be RUN, an exit code means it ran and failed. Answering a
+// failed inspect with (-1, nil) blurred the two — and its callers are built on
+// keeping them apart. The dependency-pin seeding probe reads PG_VERSION out of
+// a volume through this call and its verdict is deliberately tri-state (a probe
+// FAILURE pins the legacy image, a successful "there is nothing here" writes no
+// pin), so an engine that would not say how the `cat` exited must not be
+// reported as the `cat` having failed. The migration Env states the same rule
+// for ContainerRunning: an absent container is an ANSWER, a failed inspect is
+// not.
+//
+// A response with no State block is the second shape, and used to be worse than
+// wrong: InspectResponse.State is a pointer, so reading ExitCode off it
+// panicked inside the daemon.
+func utilsExitCode(inspect container.InspectResponse, inspErr error) (int, error) {
 	if inspErr != nil {
-		return output, -1, nil
+		return -1, fmt.Errorf("inspect utils container: %w", inspErr)
 	}
-	return output, inspect.State.ExitCode, nil
+	if inspect.State == nil {
+		return -1, errors.New("inspect utils container: the engine reported no container state")
+	}
+	return inspect.State.ExitCode, nil
 }

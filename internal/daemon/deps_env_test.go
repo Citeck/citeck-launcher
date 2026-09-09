@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -222,8 +224,9 @@ func newTestDepsEnv(t *testing.T, fake *fakeDepsDocker) (env *depsEnv, volumesBa
 		nsConfig:    &namespace.Config{ID: "ns1"},
 		volumesBase: base,
 	})
+	// One assignment, not two: the Env's Docker client IS the probe's (the
+	// probe is embedded), which is the point of that shape.
 	env.dc = fake
-	env.probe.dc = fake
 	return env, base
 }
 
@@ -495,6 +498,68 @@ func TestVolumeFreeBytesOnTheDesktopFailsWhenTheProbeVolumeIsGone(t *testing.T) 
 
 	_, err := env.VolumeFreeBytes(context.Background(), "postgres2")
 	require.Error(t, err)
+}
+
+// On a server the dump directory and the data volumes are both under the
+// namespace's volumes base, so the migration writes both halves — the dump and
+// the new cluster, which coexist until the commit — onto ONE filesystem. The
+// preflight has to know that to demand the sum instead of one half, and the
+// daemon is the only one that can tell it: a volume NAME says nothing about
+// where its bytes land.
+func TestOnAServerTheDumpAndTheVolumesShareOneFilesystem(t *testing.T) {
+	config.SetDesktopMode(false)
+	t.Cleanup(config.ResetDesktopMode)
+
+	fake := newFakeDepsDocker()
+	env, base := newTestDepsEnv(t, fake)
+	require.NoError(t, os.MkdirAll(filepath.Join(base, "volumes"), 0o755))
+
+	shared, err := env.DumpSharesFilesystemWithVolumes(context.Background(), "postgres2")
+	require.NoError(t, err)
+	assert.True(t, shared, "both are directories under the same volumes base")
+	assert.Empty(t, fake.Calls(), "the host filesystem answers directly — no container")
+}
+
+// A comparison that cannot be made is an ERROR, never a "different
+// filesystems": the preflight reads the failure as "require room for both",
+// and a guessed answer would silently halve what it demands.
+func TestTheServerFilesystemComparisonRefusesToGuess(t *testing.T) {
+	config.SetDesktopMode(false)
+	t.Cleanup(config.ResetDesktopMode)
+
+	fake := newFakeDepsDocker()
+	env, _ := newTestDepsEnv(t, fake)
+	env.act.volumesBase = filepath.Join(t.TempDir(), "not-there")
+
+	_, err := env.DumpSharesFilesystemWithVolumes(context.Background(), "postgres2")
+	require.Error(t, err, `an unmeasurable path must not be reported as "two filesystems"`)
+}
+
+// On a desktop the answer comes from the OS rule and nothing else — no stat of
+// a path the desktop user cannot read, and no engine call: the migration must
+// not depend on Docker to decide how much space it needs.
+func TestOnADesktopTheAnswerIsTheOSRuleAndCostsNothing(t *testing.T) {
+	config.SetDesktopMode(true)
+	t.Cleanup(config.ResetDesktopMode)
+
+	fake := newFakeDepsDocker()
+	env, _ := newTestDepsEnv(t, fake)
+	env.act.volumesBase = filepath.Join(t.TempDir(), "not-there")
+
+	shared, err := env.DumpSharesFilesystemWithVolumes(context.Background(), "postgres2")
+	require.NoError(t, err, "the rule needs no filesystem to answer")
+	assert.Equal(t, goruntime.GOOS == "linux", shared)
+	assert.Empty(t, fake.Calls())
+}
+
+// The desktop rule itself, stated per OS so the choice is testable on any of
+// them: the Docker VM's disk on macOS/Windows is certainly a different
+// filesystem, while on Linux the engine runs on the same kernel and we cannot
+// prove either way — so that one takes the safe direction.
+func TestTheDesktopFilesystemRuleIsPerOS(t *testing.T) {
+	assert.False(t, desktopSharesHostFilesystem("darwin"), "the volumes live in the Docker VM")
+	assert.False(t, desktopSharesHostFilesystem("windows"), "the volumes live in the Docker VM")
+	assert.True(t, desktopSharesHostFilesystem("linux"), "cannot be proven; require room for both")
 }
 
 func TestParseDfAvailableKB(t *testing.T) {
@@ -815,6 +880,66 @@ func TestGenerateDefForForcesThePinAndKeepsTheRealConfig(t *testing.T) {
 		"the runtime's pins are copied, never overwritten")
 	assert.Empty(t, rt.AppliedConfig().Authentication.Users,
 		"the runtime keeps the config it was driving — generating a def does not apply one")
+}
+
+// GenerateDefFor's "it writes NOTHING" contract rests on a claim about the
+// generated def: the files a temp container binds are the ones already on disk
+// from the last real reload, because they do not depend on the dependency's
+// VERSION. That claim is only true while the source def and the target def
+// bind exactly the same non-data files — the moment a major moves one of them
+// (a version-specific postgresql.conf, say), a temp container would mount a
+// path nobody wrote and the migration would fail on a stopped namespace, with
+// the cause two layers away from the symptom.
+//
+// So it is checked directly: same config binds, and — the other half, without
+// which the comparison could pass vacuously — DIFFERENT data volumes, which is
+// the plan's own precondition (the new cluster is built beside the old data,
+// and the rollback is a deletion).
+func TestGenerateDefForGivesBothMajorsTheSameNonDataBinds(t *testing.T) {
+	rt := namespace.NewRuntime(&namespace.Config{ID: "ns1"}, planStubDocker{}, t.TempDir())
+	t.Cleanup(rt.Shutdown)
+	rt.RestoreDependencyState(map[deps.ID]deps.DependencyState{deps.Postgres: {Image: "postgres:17.5"}}, nil, nil)
+	env := (&Daemon{}).newDepsEnv(activeNamespace{
+		runtime:         rt,
+		nsConfig:        &namespace.Config{ID: "ns1", Proxy: namespace.ProxyProps{Port: 80}},
+		bundleDef:       &bundle.Def{Applications: map[string]bundle.AppDef{}},
+		workspaceConfig: &bundle.WorkspaceConfig{},
+		volumesBase:     t.TempDir(),
+	})
+
+	src, err := env.GenerateDefFor(deps.Postgres, "postgres:17.5")
+	require.NoError(t, err)
+	dst, err := env.GenerateDefFor(deps.Postgres, "postgres:18")
+	require.NoError(t, err)
+
+	srcData, srcFiles := splitDataAndFileBinds(src.Volumes)
+	dstData, dstFiles := splitDataAndFileBinds(dst.Volumes)
+
+	require.NotEmpty(t, srcFiles, "postgres binds its config files — this guard is out of date without them")
+	assert.Equal(t, srcFiles, dstFiles,
+		"both majors must bind the same files: GenerateDefFor writes none of them, "+
+			"so a file only one version asks for would be mounted from a path that does not exist")
+	require.NotEmpty(t, srcData)
+	assert.NotEqual(t, srcData, dstData,
+		"the two majors must land in DIFFERENT volumes — the migration builds the new cluster beside the old data")
+}
+
+// splitDataAndFileBinds separates a def's volume list into the DATA mounts
+// (plain volume names, which is what moves between majors) and the file/dir
+// binds (relative or absolute host paths), each sorted so the comparison does
+// not depend on generator order.
+func splitDataAndFileBinds(vols []string) (data, files []string) {
+	for _, v := range vols {
+		src, _, _ := strings.Cut(v, ":")
+		if strings.HasPrefix(src, ".") || strings.HasPrefix(src, "/") {
+			files = append(files, v)
+			continue
+		}
+		data = append(data, v)
+	}
+	slices.Sort(data)
+	slices.Sort(files)
+	return data, files
 }
 
 func TestGenerateDefForRefusesWhatItCannotAnswer(t *testing.T) {

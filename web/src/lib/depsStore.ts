@@ -44,16 +44,32 @@ interface DepsState {
   dismissedKey: string | null
   /**
    * Last payload of GET /namespace/dependencies. It lives here rather than in
-   * the dialog because `rollbackPending` and `lastResult` are NOT part of
-   * NamespaceDto, and the banner has to show a pending rollback whether or not
-   * the dialog was ever opened.
+   * the dialog because `lastResult` is NOT part of NamespaceDto, and the
+   * banner has to show a pending rollback whether or not the dialog was ever
+   * opened.
    */
   data: DependenciesDto | null
+  /**
+   * Why an interrupted migration's journal is still open with no migration
+   * running — "" when there is nothing pending.
+   *
+   * Kept OUT of `data` because it has two writers reporting one daemon
+   * condition in the same words: GET /namespace/dependencies (`refresh`) and
+   * the ordinary namespace fetch (`NamespaceDto.dependencyRollbackPending`,
+   * pushed in by the dashboard store). Whichever ran last is the freshest
+   * answer, and both the banner and the dialog read this one field, so they
+   * cannot disagree about a state that refuses every migration AND every start
+   * of the namespace. Reading it off the dependencies payload alone is what
+   * left the alarm waiting for a remount, a namespace switch, or the banner's
+   * poll — which only starts once the alarm is already up.
+   */
+  rollbackPending: string
   onStart: (id: string, stepCount: number) => void
   onProgress: (e: DepsProgressEvent) => void
   onComplete: (id: string, message: string) => void
   onError: (id: string, message: string) => void
   hydrate: (dto: DependencyMigrationDto | null | undefined) => void
+  setRollbackPending: (message: string) => void
   dismissBanner: (key: string) => void
   clearResult: () => void
   refresh: () => Promise<void>
@@ -63,6 +79,19 @@ interface DepsState {
 export function upgradeSetKey(upgrades: DependencyUpgradeDto[] | undefined): string {
   return (upgrades ?? []).map((u) => `${u.id}:${u.to}`).join('|')
 }
+
+/**
+ * The GET currently in flight, shared by every caller.
+ *
+ * The banner and the dialog are two views of ONE payload and they ask on the
+ * same triggers — a verdict, a namespace switch, opening the dialog — so
+ * without this the user paid two identical requests for every one of them.
+ * A caller that joins an in-flight request accepts an answer that may have
+ * been computed just before it asked; the route is answered from the daemon's
+ * memory over a local socket, so that window is a round trip, against a
+ * permanently doubled request rate.
+ */
+let inFlight: Promise<void> | null = null
 
 function pushMessage(messages: string[], msg: string): string[] {
   if (!msg || messages[messages.length - 1] === msg) return messages
@@ -74,6 +103,7 @@ export const useDepsStore = create<DepsState>((set, get) => ({
   result: null,
   dismissedKey: null,
   data: null,
+  rollbackPending: '',
 
   onStart: (id, stepCount) => {
     const cur = get().migration
@@ -141,13 +171,27 @@ export const useDepsStore = create<DepsState>((set, get) => ({
     })
   },
 
+  setRollbackPending: (message) => {
+    // Only on a real transition: this is written on every namespace fetch, and
+    // the banner and the dialog subscribe to it.
+    if (get().rollbackPending !== message) set({ rollbackPending: message })
+  },
+
   dismissBanner: (key) => set({ dismissedKey: key }),
   clearResult: () => set({ result: null }),
 
-  refresh: async () => {
+  refresh: () => {
+    if (inFlight) return inFlight
     // Deliberately no try/catch: the dialog surfaces the failure on the shared
     // error modal, the banner ignores it. Keeping the previous payload on a
     // failure matters — a transient error must not blank a rollback notice.
-    set({ data: await getDependencies() })
+    // Both arms clear `inFlight` themselves rather than through `.finally`,
+    // which would build a SECOND promise and reject it for whoever did not
+    // attach a handler to it — an unhandled rejection instead of a refresh.
+    inFlight = getDependencies().then(
+      (data) => { inFlight = null; set({ data, rollbackPending: data.rollbackPending ?? '' }) },
+      (e: unknown) => { inFlight = null; throw e },
+    )
+    return inFlight
   },
 }))

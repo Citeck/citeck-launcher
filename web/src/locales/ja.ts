@@ -465,6 +465,7 @@ const ja = {
   'deps.preflight.data': 'データサイズ: {size}',
   'deps.preflight.host': 'ホスト (ダンプ): 必要 {need}、空き {free}',
   'deps.preflight.volume': 'ボリューム: 必要 {need}、空き {free}',
+  'deps.preflight.shared': 'ディスク (ダンプ + 新しいクラスター): 必要 {need}、空き {free}',
   'deps.preflight.willStop': 'namespace は停止してから再度起動されます',
   'deps.preflight.oldKept': '現在のデータボリュームはそのまま保持され、失敗時はそこにロールバックします',
   'deps.preflight.replaceVolume': '既存のボリューム {volume} ({size}、PostgreSQL {version}) を削除して作り直す',

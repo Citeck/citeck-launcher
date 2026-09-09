@@ -289,7 +289,9 @@ func newDepsUpgradeCmd() *cobra.Command {
 			"verifies it, then switches the namespace over. The old volume is left untouched; any failure\n" +
 			"rolls back to it. Use --replace-existing to allow deleting a leftover target volume.\n\n" +
 			"The migration runs in the daemon: interrupting this command stops the progress output, not\n" +
-			"the migration. `citeck deps` reports what happened.",
+			"the migration. `citeck deps` reports what happened.\n\n" +
+			"With --format json nothing is printed until it is over: the whole answer is one object with\n" +
+			"the outcome (refused / canceled / started / migrated / failed / unknown) and the preflight.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			return runDepsUpgrade(args[0], detach, replaceExisting)
@@ -301,6 +303,76 @@ func newDepsUpgradeCmd() *cobra.Command {
 	return cmd
 }
 
+// depsUpgradeAPI is the daemon surface `citeck deps upgrade` drives. The
+// command is built from a package-global client, so without this seam its
+// orchestration — which refusal comes before which request, what the follow
+// loop makes of an event, what the verdict and the exit code are — could only
+// be exercised against a live daemon, i.e. never.
+type depsUpgradeAPI interface {
+	GetDependencies() (*api.DependenciesDto, error)
+	DependencyPreflight(id string) (*migrate.PreflightResult, error)
+	MigrateDependency(id string, replaceExisting bool) (*api.ActionResultDto, error)
+	StreamEvents(ctx context.Context) (<-chan api.EventDto, error)
+}
+
+// depsFollow are the two durations the follow loop is built on, kept together
+// so a test can drive it in milliseconds instead of 15s/6h.
+type depsFollow struct {
+	poll    time.Duration
+	timeout time.Duration
+}
+
+// depsUpgradeOpts is one invocation of the command. confirm is injected for
+// the same reason the client is: promptConfirm needs a terminal, and "the user
+// said no" is a branch that must not start a migration.
+type depsUpgradeOpts struct {
+	detach          bool
+	replaceExisting bool
+	confirm         func(id string, pre *migrate.PreflightResult) bool
+	follow          depsFollow
+}
+
+func defaultDepsUpgradeOpts(detach, replaceExisting bool) depsUpgradeOpts {
+	return depsUpgradeOpts{
+		detach:          detach,
+		replaceExisting: replaceExisting,
+		confirm:         confirmMigration,
+		follow:          depsFollow{poll: depsPollInterval, timeout: depsMigrationTimeout},
+	}
+}
+
+// The outcomes `citeck deps upgrade --format json` reports. They answer one
+// question — what happened to the DATA — and they are deliberately distinct
+// where a single "ok/error" would mislead: `refused` means nothing was
+// started, so nothing was touched; `failed` means it ran, failed and was
+// rolled back; and `unknown` means this command lost sight of a migration that
+// is very probably still running, since the daemon runs it on its own context
+// and finishes it whether or not anyone is listening. Collapsing that last one
+// into `failed` would tell a script the opposite of what happened.
+const (
+	depsOutcomeRefused  = "refused"
+	depsOutcomeCanceled = "canceled"
+	depsOutcomeStarted  = "started"
+	depsOutcomeMigrated = "migrated"
+	depsOutcomeFailed   = "failed"
+	depsOutcomeUnknown  = "unknown"
+)
+
+// depsUpgradeReport is the whole of stdout under `--format json`. Every field
+// is filled from something every path has: the preflight (which is also what
+// carries the reason for a refusal) and the outcome. Nothing that only ONE
+// path could fill belongs here — a shape that changes with the route taken is
+// not a machine contract.
+type depsUpgradeReport struct {
+	ID        string                   `json:"id"`
+	From      string                   `json:"from,omitempty"`
+	To        string                   `json:"to,omitempty"`
+	Outcome   string                   `json:"outcome"`
+	Error     string                   `json:"error,omitempty"`
+	Message   string                   `json:"message,omitempty"`
+	Preflight *migrate.PreflightResult `json:"preflight,omitempty"`
+}
+
 func runDepsUpgrade(id string, detach, replaceExisting bool) error {
 	ensureI18n()
 	c, err := client.New(clientOpts())
@@ -308,48 +380,85 @@ func runDepsUpgrade(id string, detach, replaceExisting bool) error {
 		return fmt.Errorf("connect to daemon: %w", err)
 	}
 	defer c.Close()
+	return depsUpgrade(c, id, defaultDepsUpgradeOpts(detach, replaceExisting))
+}
+
+// depsUpgrade runs the command and prints its answer. The error is returned
+// unchanged for the exit code AND copied into the report, because in JSON mode
+// Execute() prints nothing to stderr: a report without the reason would leave
+// a script with an exit code and no way to learn what happened.
+func depsUpgrade(c depsUpgradeAPI, id string, opts depsUpgradeOpts) error {
+	report, err := depsUpgradeSteps(c, id, opts)
+	if err != nil {
+		report.Error = err.Error()
+	}
+	if output.IsJSON() {
+		output.PrintJSON(report)
+	}
+	return err
+}
+
+// depsUpgradeSteps is the orchestration itself: the two refusals that come
+// before any work, the confirmation, and then either the detached start or the
+// follow. It always returns a report — a refusal is an answer too.
+func depsUpgradeSteps(c depsUpgradeAPI, id string, opts depsUpgradeOpts) (*depsUpgradeReport, error) {
+	report := &depsUpgradeReport{ID: id, Outcome: depsOutcomeRefused}
 
 	// A pending rollback is refused here rather than after the preflight: it
 	// freezes the pin and the daemon will not accept a new migration either
 	// way, and the preflight walks the whole data volume before it can say so.
 	list, err := c.GetDependencies()
 	if err != nil {
-		return fmt.Errorf("list dependencies: %w", err)
+		return report, fmt.Errorf("list dependencies: %w", err)
 	}
 	if list.RollbackPending != "" {
-		return errors.New(list.RollbackPending)
+		return report, errors.New(list.RollbackPending)
 	}
 
 	pre, err := c.DependencyPreflight(id)
 	if err != nil {
-		return fmt.Errorf("preflight %s: %w", id, err)
+		return report, fmt.Errorf("preflight %s: %w", id, err)
 	}
+	report.Preflight, report.From, report.To = pre, pre.From, pre.To
 	for _, line := range preflightLines(pre) {
-		output.PrintText("%s", line)
+		sayProgress(line)
 	}
 	if !pre.OK {
-		return errors.New(t("deps.preflightFailed"))
+		return report, errors.New(t("deps.preflightFailed"))
 	}
 	// An existing target volume is data this launcher did not create. Deleting
 	// it is a separate decision from "migrate", so it is a refusal naming the
 	// flag, not one more prompt inside the confirmation.
-	if pre.ExistingTargetVolume != nil && !replaceExisting {
-		return errors.New(t("deps.existingVolumeRefused", "volume", pre.ExistingTargetVolume.Name))
+	if pre.ExistingTargetVolume != nil && !opts.replaceExisting {
+		return report, errors.New(t("deps.existingVolumeRefused", "volume", pre.ExistingTargetVolume.Name))
 	}
-	if !confirmMigration(id, pre) {
-		output.PrintText("%s", t("deps.cancelled"))
-		return nil
+	if !opts.confirm(id, pre) {
+		report.Outcome = depsOutcomeCanceled
+		sayProgress(t("deps.cancelled"))
+		return report, nil
 	}
 
-	if detach {
-		res, startErr := startMigration(c, id, replaceExisting)
+	if opts.detach {
+		res, startErr := startMigration(c, id, opts.replaceExisting)
 		if startErr != nil {
-			return startErr
+			return report, startErr
 		}
-		output.PrintText("%s", res.Message)
-		return nil
+		report.Outcome, report.Message = depsOutcomeStarted, res.Message
+		sayProgress(res.Message)
+		return report, nil
 	}
-	return migrateAndFollow(c, id, replaceExisting)
+	return migrateAndFollow(c, id, report, opts)
+}
+
+// sayProgress prints one line of the command's running commentary. JSON mode
+// prints nothing until the end: the machine contract is the single verdict
+// object, and prose interleaved with it is neither valid JSON nor readable
+// prose.
+func sayProgress(line string) {
+	if line == "" || output.IsJSON() {
+		return
+	}
+	output.PrintText("%s", line)
 }
 
 // confirmMigration asks for the go-ahead. The default is YES because under the
@@ -371,13 +480,8 @@ func preflightLines(pre *migrate.PreflightResult) []string {
 	// holds no data and the host has no free space, above the line that gives
 	// the actual reason.
 	if pre.Measured() {
-		lines = append(lines,
-			"  "+t("deps.preflight.data", "size", fsutil.FormatBytes(pre.DataSizeBytes)),
-			"  "+t("deps.preflight.host",
-				"need", fsutil.FormatBytes(pre.RequiredHostBytes), "free", fsutil.FormatBytes(pre.FreeHostBytes)),
-			"  "+t("deps.preflight.volume",
-				"need", fsutil.FormatBytes(pre.RequiredVolumeBytes), "free", fsutil.FormatBytes(pre.FreeVolumeBytes)),
-		)
+		lines = append(lines, "  "+t("deps.preflight.data", "size", fsutil.FormatBytes(pre.DataSizeBytes)))
+		lines = append(lines, spaceRequirementLines(pre)...)
 	}
 	if pre.WasRunning {
 		lines = append(lines, "  "+t("deps.preflight.willStop"))
@@ -395,10 +499,48 @@ func preflightLines(pre *migrate.PreflightResult) []string {
 	return lines
 }
 
+// spaceRequirementLines renders the free-space requirement. On a SERVER — the
+// ordinary case — the dump directory and the data volumes are ONE filesystem,
+// and what has to fit on it is the two halves ADDED UP: the scratch dump is
+// removed only after the commit, and the new cluster is built next to the old
+// data. Printed as the two independent lines, each half looks satisfiable on
+// its own while the daemon refuses the migration for wanting them together, so
+// the confirm screen would quote two requirements and then be contradicted by
+// a third number in the refusal. The shared case is therefore ONE line
+// INSTEAD of the pair, not one more line beside it. Same rule as the web
+// dialog (web/src/components/DependenciesDialog.tsx).
+func spaceRequirementLines(pre *migrate.PreflightResult) []string {
+	if pre.SharedFilesystem {
+		return []string{"  " + t("deps.preflight.shared",
+			"need", fsutil.FormatBytes(pre.RequiredTotalBytes),
+			"free", fsutil.FormatBytes(smallerFreeBytes(pre)))}
+	}
+	return []string{
+		"  " + t("deps.preflight.host",
+			"need", fsutil.FormatBytes(pre.RequiredHostBytes), "free", fsutil.FormatBytes(pre.FreeHostBytes)),
+		"  " + t("deps.preflight.volume",
+			"need", fsutil.FormatBytes(pre.RequiredVolumeBytes), "free", fsutil.FormatBytes(pre.FreeVolumeBytes)),
+	}
+}
+
+// smallerFreeBytes is the free number the shared line quotes: the smaller of
+// the two measurements, SKIPPING a zero. A zero is not "no space left" — it is
+// a measurement that FAILED, which has already produced its own problem line;
+// taking it as the minimum would render a failed probe as a full disk.
+func smallerFreeBytes(pre *migrate.PreflightResult) int64 {
+	smallest := int64(0)
+	for _, free := range []int64{pre.FreeHostBytes, pre.FreeVolumeBytes} {
+		if free > 0 && (smallest == 0 || free < smallest) {
+			smallest = free
+		}
+	}
+	return smallest
+}
+
 // startMigration posts the request and checks the daemon accepted it. A
 // refusal (400/409 with a code) is already an error from the client; a 202
 // that somehow reports failure is one too, because nothing would follow it.
-func startMigration(c *client.DaemonClient, id string, replaceExisting bool) (*api.ActionResultDto, error) {
+func startMigration(c depsUpgradeAPI, id string, replaceExisting bool) (*api.ActionResultDto, error) {
 	res, err := c.MigrateDependency(id, replaceExisting)
 	if err != nil {
 		return nil, fmt.Errorf("start migration of %s: %w", id, err)
@@ -415,49 +557,57 @@ func startMigration(c *client.DaemonClient, id string, replaceExisting bool) (*a
 // snapshotAndWait follows). The daemon's answer is checked before anything is
 // awaited, so a refusal exits immediately instead of waiting for events that
 // will never come.
-func migrateAndFollow(c *client.DaemonClient, id string, replaceExisting bool) error {
-	ctx, cancel := context.WithTimeout(context.Background(), depsMigrationTimeout)
+func migrateAndFollow(c depsUpgradeAPI, id string, report *depsUpgradeReport, opts depsUpgradeOpts) (*depsUpgradeReport, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), opts.follow.timeout)
 	defer cancel()
 
 	events, err := c.StreamEvents(ctx)
 	if err != nil {
-		return fmt.Errorf("connect to event stream: %w", err)
+		return report, fmt.Errorf("connect to event stream: %w", err)
 	}
 
 	clickedAt := time.Now()
-	res, err := startMigration(c, id, replaceExisting)
+	res, err := startMigration(c, id, opts.replaceExisting)
 	if err != nil {
-		return err
+		return report, err
 	}
-	output.PrintText("%s", res.Message)
+	report.Message = res.Message
+	sayProgress(res.Message)
+	// From here on the migration is running in the daemon: it outlives this
+	// command, so every exit below reports what became of it, never "refused".
+	report.Outcome = depsOutcomeUnknown
 
-	poll := time.NewTicker(depsPollInterval)
+	poll := time.NewTicker(opts.follow.poll)
 	defer poll.Stop()
 	for {
 		select {
 		case evt, open := <-events:
 			if !open {
-				return errors.New(t("deps.streamClosed"))
+				return report, errors.New(t("deps.streamClosed"))
 			}
 			if !isMigrationEventFor(evt, id) {
 				continue
 			}
 			line, terminal, failed := renderMigrationEvent(evt)
-			if line != "" {
-				output.PrintText("%s", line)
-			}
+			sayProgress(line)
 			if terminal {
 				if failed {
-					return errors.New(t("deps.failed", "error", evt.After))
+					report.Outcome = depsOutcomeFailed
+					return report, errors.New(t("deps.failed", "error", evt.After))
 				}
-				return nil
+				report.Outcome = depsOutcomeMigrated
+				return report, nil
 			}
 		case <-poll.C:
 			if done, verdict := pollMigrationVerdict(c.GetDependencies, id, clickedAt); done {
-				return verdict
+				report.Outcome = depsOutcomeMigrated
+				if verdict != nil {
+					report.Outcome = depsOutcomeFailed
+				}
+				return report, verdict
 			}
 		case <-ctx.Done():
-			return errors.New(t("deps.streamClosed"))
+			return report, errors.New(t("deps.streamClosed"))
 		}
 	}
 }
@@ -487,7 +637,7 @@ func pollMigrationVerdict(fetch func() (*api.DependenciesDto, error), id string,
 		return false, nil
 	}
 	for _, line := range lastResultLines(r) {
-		output.PrintText("%s", line)
+		sayProgress(line)
 	}
 	if !r.Success {
 		return true, errors.New(t("deps.failed", "error", r.Error))

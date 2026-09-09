@@ -398,6 +398,7 @@
   "deps.preflight.data": "Data size: {size}",
   "deps.preflight.host": "Host (dump): need {need}, free {free}",
   "deps.preflight.volume": "Volumes: need {need}, free {free}",
+  "deps.preflight.shared": "Disk (dump + new cluster): need {need}, free {free}",
   "deps.preflight.willStop": "The namespace will be stopped and started again",
   "deps.preflight.existingVolume": "Volume {volume} already exists ({size}, version {version})",
   "deps.preflightFailed": "Pre-checks failed; nothing was changed",

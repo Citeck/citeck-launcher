@@ -2,6 +2,7 @@ package namespace
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -1427,4 +1428,113 @@ func TestAppDefPatchCannotChangeTheJVMVersion(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 8, out.JVMMajor)
 	assert.True(t, out.IsJVM)
+}
+
+// TestLateBuiltInsAreNotRedefinedByABundleWebapp is the reverse direction of the
+// collision guard in Generate's webapp loop. That guard skips a bundle
+// application whose name already has a builder — which covers every built-in
+// generated BEFORE the loop (infra, keycloak, alfresco, observer). Three
+// built-ins run AFTER it: stt-sidecar, proxy and onlyoffice. For those the
+// bundle entry wins the race: generateWebapp populates the builder as a JVM
+// webapp and the built-in generator then overwrites only the fields it sets,
+// leaving a HYBRID container — nginx carrying SERVER_PORT, a spring-props mount
+// and, because IsJVM survives, a JVM memory budget writing -Xmx into an image
+// with no JVM in it.
+//
+// It is reachable exactly where the forward guard is: a workspace config that
+// lists no webapps admits EVERY bundle application into the loop (the degraded
+// shape a thin or lossily-migrated workspace leaves behind). Real workspace
+// configs list their webapps and never name these three.
+//
+// The rule is the one the other two guards already state: the built-in wins
+// wholesale. So the reference is a generation where the loop never sees the
+// colliding entries — same bundle, a workspace config that lists only the real
+// webapps — and every generated def must match it exactly.
+//
+// The fixture bundle is DERIVED from a probe generation rather than hand-listed,
+// so a built-in added to Generate later is covered by this test on the day it is
+// added instead of on the day someone remembers to extend a list here.
+func TestLateBuiltInsAreNotRedefinedByABundleWebapp(t *testing.T) {
+	config.ResetDesktopMode()
+	gen := func(bun *bundle.Def, ws *bundle.WorkspaceConfig) *GenResp {
+		t.Helper()
+		resp, err := Generate(depsTestConfig(), bun, ws, SystemSecrets{JWT: "j", OIDC: "o"})
+		require.NoError(t, err)
+		return resp
+	}
+
+	// The two real webapps plus the sidecar: none of the three is produced by a
+	// bundle that does not declare it, so the probe cannot discover them. The
+	// gateway also keeps the proxy alive — with no gateway the proxy is pruned
+	// for a missing dependency and would drop out of the probe.
+	apps := map[string]bundle.AppDef{
+		appdef.AppGateway:    {Image: "citeck/gateway:1.0.0"},
+		appdef.AppAi:         {Image: "citeck/ai:1.0.0"},
+		appdef.AppSttSidecar: {Image: "citeck/stt-sidecar:1.0.0"},
+	}
+	wsReal := &bundle.WorkspaceConfig{Webapps: []bundle.WebappConfig{
+		{ID: appdef.AppGateway}, {ID: appdef.AppAi},
+	}}
+	// Everything else that generation produces is a built-in; give the bundle an
+	// entry for each so the webapp loop is offered all of them.
+	for _, name := range appNamesOf(gen(&bundle.Def{Applications: apps}, wsReal)) {
+		if _, ok := apps[name]; !ok {
+			apps[name] = bundle.AppDef{Image: "vendor/" + name + ":1.0.0"}
+		}
+	}
+	bun := &bundle.Def{Applications: apps}
+
+	want := gen(bun, wsReal)
+	got := gen(bun, &bundle.WorkspaceConfig{})
+
+	require.Equal(t, appNamesOf(want), appNamesOf(got),
+		"a bundle entry colliding with a built-in must not add or drop an app")
+	for _, name := range appNamesOf(want) {
+		assert.Equal(t, findGeneratedApp(want, name), findGeneratedApp(got, name),
+			"%s must be exactly the def the built-in generator produces", name)
+	}
+	// The discarded webapp must leave nothing behind either: generateWebapp
+	// writes app/<name>/props/application-launcher.yml and a cloud-config entry
+	// on its way past, and a stale props tree is materialized on disk.
+	assert.Equal(t, sortedFileKeys(want.Files), sortedFileKeys(got.Files))
+	assert.Equal(t, want.CloudConfig, got.CloudConfig)
+
+	// Stated positively too, so a failure names the symptom rather than a diff:
+	// nginx is not a JVM and has no spring props to mount.
+	proxy := findGeneratedApp(got, appdef.AppProxy)
+	require.NotNil(t, proxy)
+	assert.False(t, proxy.IsJVM, "the proxy runs nginx; IsJVM would hand it a JVM memory budget")
+	assert.Empty(t, envGet(proxy.Environments, "JAVA_OPTS"))
+	assert.Empty(t, envGet(proxy.Environments, "SERVER_PORT"))
+	for _, v := range proxy.Volumes {
+		assert.NotContains(t, v, "spring-props", "a webapp props mount has no business on the proxy")
+	}
+
+	office := findGeneratedApp(got, appdef.AppOnlyoffice)
+	require.NotNil(t, office)
+	assert.False(t, office.IsJVM)
+	assert.Equal(t, appdef.KindThirdParty, office.Kind)
+
+	stt := findGeneratedApp(got, appdef.AppSttSidecar)
+	require.NotNil(t, stt, "the sidecar is still generated — through its own generator")
+	assert.False(t, stt.IsJVM)
+	assert.Equal(t, appdef.KindCiteckAdditional, stt.Kind)
+}
+
+func appNamesOf(resp *GenResp) []string {
+	names := make([]string, 0, len(resp.Applications))
+	for i := range resp.Applications {
+		names = append(names, resp.Applications[i].Name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func sortedFileKeys(files map[string][]byte) []string {
+	keys := make([]string, 0, len(files))
+	for k := range files {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }

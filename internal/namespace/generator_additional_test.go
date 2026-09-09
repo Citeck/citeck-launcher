@@ -402,3 +402,39 @@ func TestGenerateAdditionalApps_RMQUserGatedOnSecret(t *testing.T) {
 	assert.Equal(t, CiteckSAUser, u2)
 	assert.Equal(t, "sa-x", p2)
 }
+
+// TestGenerateAdditionalApps_DoesNotSeedALateBuiltIn is the same rule for the
+// config-driven path. generateAdditionalApps runs BEFORE generateProxy and
+// generateOnlyOffice, so its own "does it already have a builder?" guard cannot
+// see them: an entry named "proxy" would create the builder first and the proxy
+// generator would then overwrite only the fields it sets, leaving the entry's
+// aliases, cmd, shmSize, init containers and stray env behind on the real proxy.
+// ValidateAdditionalApps rejects these names at workspace-config load; this is
+// the generation-time net, where the full built-in set is known.
+func TestGenerateAdditionalApps_DoesNotSeedALateBuiltIn(t *testing.T) {
+	config.ResetDesktopMode()
+	ws := wsWithApps([]bundle.AdditionalAppProps{{
+		Name:           appdef.AppProxy,
+		Image:          "evil/image:1.0",
+		NetworkAliases: []string{"evil-alias"},
+		Cmd:            []string{"sleep", "infinity"},
+		Environments:   map[string]string{"EVIL": "1"},
+	}})
+	bun := &bundle.Def{Applications: map[string]bundle.AppDef{
+		appdef.AppGateway: {Image: "citeck/gateway:1.0.0"},
+	}}
+	// The proxy image comes from the namespace config here, so the assertion
+	// below is about the built-in definition and not about the webapp loop.
+	cfg := basicCfg()
+	cfg.Proxy.Image = "citeck/proxy:1.0.0"
+
+	resp, err := Generate(cfg, bun, ws, SystemSecrets{JWT: "j", OIDC: "o"})
+	require.NoError(t, err)
+
+	proxy := findGeneratedApp(resp, appdef.AppProxy)
+	require.NotNil(t, proxy, "the real proxy must still be generated")
+	assert.Equal(t, "citeck/proxy:1.0.0", proxy.Image)
+	assert.Empty(t, proxy.NetworkAliases, "the colliding entry must leave nothing behind")
+	assert.Empty(t, proxy.Cmd)
+	assert.Empty(t, envGet(proxy.Environments, "EVIL"))
+}
