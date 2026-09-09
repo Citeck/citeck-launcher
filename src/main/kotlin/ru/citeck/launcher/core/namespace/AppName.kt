@@ -19,6 +19,8 @@ object AppName {
     const val EDI = "edi"
     const val AI = "ai"
     const val STT_SIDECAR = "stt-sidecar"
+    const val RAG = "rag"
+    const val QDRANT = "qdrant"
 
     // other
     const val ECOM = "ecom"

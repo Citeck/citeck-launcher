@@ -16,6 +16,7 @@ data class WorkspaceConfig(
     val alfresco: AlfrescoProps = AlfrescoProps.DEFAULT,
     val onlyoffice: OnlyOfficeProps = OnlyOfficeProps.DEFAULT,
     val sttSidecar: SttSidecarProps = SttSidecarProps.DEFAULT,
+    val qdrant: QdrantProps = QdrantProps.DEFAULT,
     val pgadmin: PgAdminProps = PgAdminProps.DEFAULT,
     val zookeeper: ZookeeperProps = ZookeeperProps.DEFAULT,
     val citeckProxy: CiteckProxy = CiteckProxy(),
@@ -96,6 +97,15 @@ data class WorkspaceConfig(
     ) {
         companion object {
             val DEFAULT = SttSidecarProps()
+        }
+    }
+
+    class QdrantProps(
+        val memoryLimit: String = "1g",
+        val grpcPort: Int = 6334
+    ) {
+        companion object {
+            val DEFAULT = QdrantProps()
         }
     }
 

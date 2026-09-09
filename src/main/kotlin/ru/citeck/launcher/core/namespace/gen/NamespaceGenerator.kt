@@ -35,6 +35,20 @@ class NamespaceGenerator {
             AppName.CONTENT
         )
 
+        /**
+         * Apps that, even when detached, must still be marked as affecting the namespace's
+         * generated composition: a Start/Regenerate command on a detached app in this set has
+         * to re-run [generate] so that whatever it conditionally produces (e.g. rag -> qdrant)
+         * appears once the app is re-attached. Without this, re-attaching one of these apps
+         * would not trigger regeneration and its dependents would silently never appear.
+         */
+        internal val DEPENDS_ON_DETACHED_APPS = setOf(
+            AppName.ONLYOFFICE,
+            AppName.AI,
+            AppName.STT_SIDECAR,
+            AppName.RAG
+        )
+
         private val EMPTY_SPRING_PROPS_CONTENT = """
             ---
             # You can add spring properties here in yaml format
@@ -85,6 +99,7 @@ class NamespaceGenerator {
             generateWebapp(app.key, context)
         }
         generateSttSidecar(context)
+        generateQdrant(context)
         generateProxyApp(context)
         generateOnlyOffice(context)
 
@@ -107,7 +122,7 @@ class NamespaceGenerator {
             context.files,
             context.cloudConfig,
             context.links,
-            setOf(AppName.ONLYOFFICE, AppName.AI, AppName.STT_SIDECAR)
+            DEPENDS_ON_DETACHED_APPS
         )
     }
 
@@ -288,6 +303,48 @@ class NamespaceGenerator {
         if (!context.detachedApps.contains(AppName.STT_SIDECAR)) {
             aiApp.addEnv("CITECK_AI_CALLRECORDING_STT_SIDECARURL", "http://${AppName.STT_SIDECAR}:$port")
                 .addDependsOn(AppName.STT_SIDECAR)
+        }
+    }
+
+    internal fun generateQdrant(context: NsGenContext) {
+        val ragApp = context.applications[AppName.RAG] ?: return
+        if (context.detachedApps.contains(AppName.RAG)) {
+            return
+        }
+
+        val props = context.workspaceConfig.qdrant
+        // Image is deliberately not configurable via WorkspaceConfig (unlike stt-sidecar):
+        // qdrant is an implementation detail of the rag bundle app and its version is pinned
+        // by the bundle release, not by workspace-local overrides.
+        val image = context.bundle.applications[AppName.QDRANT]?.image?.takeIf { it.isNotBlank() }
+            ?: return
+
+        context.getOrCreateApp(AppName.QDRANT)
+            .withImage(image)
+            .addVolume("qdrant_storage:/qdrant/storage")
+            .withKind(ApplicationKind.THIRD_PARTY)
+            .withStartupCondition(
+                StartupCondition(
+                    probe = AppProbeDef(http = HttpProbeDef("/healthz", 6333))
+                )
+            )
+            .withResources(
+                AppResourcesDef(
+                    AppResourcesDef.LimitsDef(props.memoryLimit)
+                )
+            )
+
+        // Unlike ai -> stt-sidecar, this dependency is unconditional: it is NOT guarded by
+        // `!context.detachedApps.contains(AppName.QDRANT)`. AI works without speech recognition,
+        // but rag cannot search or index anything without its vector store -- a "running" rag
+        // with qdrant detached would just be silently broken. Do not add that guard here.
+        ragApp.addEnv("QDRANT_HOST", AppName.QDRANT)
+            .addEnv("QDRANT_GRPC_PORT", props.grpcPort.toString())
+            .addDependsOn(AppName.QDRANT)
+
+        val aiApp = context.applications[AppName.AI]
+        if (aiApp != null && !context.detachedApps.contains(AppName.AI)) {
+            aiApp.addEnv("CITECK_AI_RAG_ENABLED", "true")
         }
     }
 
