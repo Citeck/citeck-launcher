@@ -67,7 +67,7 @@ Qdrant по явному действию пользователя, и заод�
 
 ## Фаза 1 — фундамент 2.x (не зависит от rag)
 
-### Задача 1: единый резолв образа
+### Task 1: единый резолв образа
 
 **Файлы:**
 - Изменить: `internal/namespace/generator_util.go` (рядом с `bundleImageOr`, строка 32)
@@ -249,7 +249,7 @@ git add internal/namespace/generator_util.go internal/namespace/generator_webapp
 git commit -m "fix(namespace): let the bundle win over config when resolving images"
 ```
 
-### Задача 2: конфигурируемый dependsOn у вебаппов
+### Task 2: конфигурируемый dependsOn у вебаппов
 
 **Файлы:**
 - Изменить: `internal/bundle/resolver.go:57-80` (`WebappDefaultProps`)
@@ -493,7 +493,7 @@ git add internal/bundle/resolver.go internal/namespace/config.go \
 git commit -m "feat(namespace): configurable dependsOn for webapps, with cycle detection"
 ```
 
-### Задача 3: остановленная зависимость честно удерживает старт
+### Task 3: остановленная зависимость честно удерживает старт
 
 **Файлы:**
 - Изменить: `internal/namespace/runtime_loop.go:309-331` (`appsDepsSatisfied`), `:201-215` (переход в DEPS_WAITING)
@@ -612,7 +612,7 @@ git add internal/namespace/runtime_loop.go internal/namespace/runtime_deps_waiti
 git commit -m "fix(runtime): a stopped dependency now holds its dependents, and says so"
 ```
 
-### Задача 4: динамический набор gating-приложений
+### Task 4: динамический набор gating-приложений
 
 **Файлы:**
 - Изменить: `internal/namespace/generator.go` (`GenResp.GatingApps`), `internal/namespace/context.go` (`NsGenContext.GatingApps`)
@@ -710,7 +710,7 @@ git commit -m "refactor(daemon): derive the regenerate-on-toggle set from genera
 
 ## Фаза 2 — rag и qdrant в 2.x
 
-### Задача 5: генерация qdrant и обвязка rag/ai
+### Task 5: генерация qdrant и обвязка rag/ai
 
 **Файлы:**
 - Создать: `internal/namespace/generator_qdrant.go`
@@ -964,7 +964,7 @@ git add internal/appdef/appdef.go internal/bundle/resolver.go \
 git commit -m "feat(namespace): generate qdrant for the rag webapp, gated on rag itself"
 ```
 
-### Задача 6: changelog 2.11.0
+### Task 6: changelog 2.11.0
 
 **Файлы:**
 - Создать: `changelog/2.11.0/{en,ru,zh,es,de,fr,pt,ja}.md`
@@ -1005,7 +1005,7 @@ git commit -m "docs(changelog): release notes for 2.11.0 in all 8 locales"
 
 ## Фаза 3 — 1.x
 
-### Задача 7: rag и qdrant в Kotlin-лончере
+### Task 7: rag и qdrant в Kotlin-лончере
 
 **Файлы (ветка `release/1.4.2` от тега `v1.4.1` в том же репозитории):**
 - Изменить: `src/main/kotlin/ru/citeck/launcher/core/namespace/AppName.kt`
@@ -1198,7 +1198,7 @@ git add src/main/kotlin src/test/kotlin
 git commit -m "feat(namespace): optional rag webapp with its qdrant vector store"
 ```
 
-### Задача 8: подготовка релиза 1.4.2
+### Task 8: подготовка релиза 1.4.2
 
 **Файлы:** `build.gradle.kts:18`, `CHANGELOG.md`
 
@@ -1239,7 +1239,7 @@ GitHub Release. Показать пользователю собранный а�
 
 ## Фаза 4 — конфигурация и проверка
 
-### Задача 9: объявить qdrant в enterprise-бандлах
+### Task 9: объявить qdrant в enterprise-бандлах
 
 **Файлы:**
 - Изменить: `launcher-public-workspace/enterprise/2026.2.yaml`,
@@ -1283,7 +1283,7 @@ qdrant:
 git commit -am "Add qdrant image to enterprise bundles"
 ```
 
-### Задача 10: объявить rag в workspace-конфигах
+### Task 10: объявить rag в workspace-конфигах
 
 **Файлы:**
 - Изменить: `launcher-public-workspace/workspace-v1.yml`
@@ -1316,7 +1316,7 @@ git commit -am "Add qdrant image to enterprise bundles"
 Этот шаг выкатывается **последним**, после того как 1.4.2 разойдётся по пользователям (см. §4
 спеки). Подготовить изменение, показать пользователю и дождаться отмашки на коммит и пуш.
 
-### Задача 11: живая проверка
+### Task 11: живая проверка
 
 - [ ] **Шаг 1: собрать 2.x**
 
