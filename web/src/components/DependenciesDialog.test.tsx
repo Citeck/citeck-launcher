@@ -107,6 +107,37 @@ describe('DependenciesDialog', () => {
     expect(screen.getByTestId('dep-rabbitmq').textContent).toMatch(/citeck update/i)
   })
 
+  // The Dependency and Current columns had no horizontal separation of any
+  // kind: the header read "DependencyCurrent" and a long id ran straight into
+  // its own version — "zookeeperzookeeper:3.9.5", "postgrespostgres:18.6".
+  // Tailwind's preflight collapses table borders, which also drops the
+  // browser's border-spacing, so the ONLY thing that can hold two cells apart
+  // is padding inside the cell. A gap that exists merely because the text
+  // happens to be short is not separation, which is why this is asserted on
+  // every cell that has another one to its right rather than on a measurement
+  // jsdom cannot make (it applies no Tailwind stylesheet).
+  it('separates every table column from the one to its right', async () => {
+    mockDeps({
+      items: [{
+        ...items[0], id: 'zookeeper', app: 'zookeeper',
+        currentImage: 'zookeeper:3.9.5', currentVersion: '3.9.5',
+        targetImage: 'zookeeper:3.9.5', targetVersion: '3.9.5', status: 'up-to-date',
+      }],
+    })
+    render(<DependenciesDialog open onClose={() => {}} />)
+    const row = await screen.findByTestId('dep-zookeeper')
+    const heads = Array.from(row.closest('table')!.querySelectorAll('thead th'))
+    const cells = Array.from(row.querySelectorAll('td'))
+    expect(heads).toHaveLength(5)
+    expect(cells).toHaveLength(5)
+    // The last column is the right-aligned actions cell: nothing follows it.
+    for (const el of [...heads.slice(0, -1), ...cells.slice(0, -1)]) {
+      const padded = el.className.split(/\s+/).filter((c) => /^(?:pr|px)-/.test(c))
+      expect(padded, `<${el.tagName.toLowerCase()} class="${el.className}"> has no trailing padding`)
+        .not.toHaveLength(0)
+    }
+  })
+
   it('blocks Start on a failed preflight and on an unconfirmed existing volume', async () => {
     vi.mocked(getDependencyPreflight).mockResolvedValue({ ...okPreflight, ok: false, problems: ['no space'] })
     render(<DependenciesDialog open onClose={() => {}} />)
@@ -307,6 +338,50 @@ describe('DependenciesDialog', () => {
     expect(label).not.toHaveTextContent(/PostgreSQL empty/i)
   })
 
+  // The daemon's `version` field has THREE states, not two (Go:
+  // migrate.ExistingVolume.Version): a real PG_VERSION, the "empty" sentinel,
+  // and "" for a dependency whose data carries no version marker AT ALL —
+  // RabbitMQ, ZooKeeper. A renderer that knows only the first two printed
+  // "PostgreSQL " with a blank version on a RabbitMQ volume holding 244 KB of
+  // real data: the wrong product and a version the data never claimed. The
+  // third arm may not be folded into "empty" either — "no cluster in it" is a
+  // claim about PostgreSQL data, and that volume is not empty. Each arm is
+  // pinned as the WHOLE sentence, so collapsing any two of them fails here.
+  it.each([
+    {
+      what: 'a version the data claims', id: 'postgres', volume: 'postgres3',
+      version: '17', bytes: 1024,
+      text: 'Delete the existing volume postgres3 (1 KB, PostgreSQL 17) and recreate it',
+    },
+    {
+      what: 'the "empty" sentinel', id: 'postgres', volume: 'postgres3',
+      version: 'empty', bytes: 1024,
+      text: 'Delete the existing volume postgres3 (1 KB, no cluster in it) and recreate it',
+    },
+    {
+      what: 'data that carries no version marker', id: 'rabbitmq', volume: 'rabbitmq3',
+      version: '', bytes: 244 * 1024,
+      text: 'Delete the existing volume rabbitmq3 (244 KB) and recreate it',
+    },
+  ])('describes an existing target volume holding $what', async ({ id, volume, version, bytes, text }) => {
+    mockDeps({
+      items: [{
+        ...items[0], id, app: id,
+        currentImage: `${id}:1`, currentVersion: '1',
+        targetImage: `${id}:2`, targetVersion: '2',
+        status: 'upgrade-available', migratable: true,
+      }],
+    })
+    vi.mocked(getDependencyPreflight).mockResolvedValue({
+      ...okPreflight,
+      existingTargetVolume: { name: volume, sizeBytes: bytes, version },
+    })
+    render(<DependenciesDialog open onClose={() => {}} />)
+    fireEvent.click(await screen.findByRole('button', { name: /^upgrade$/i }))
+    const label = await screen.findByText(new RegExp(volume))
+    expect(label.textContent).toBe(text)
+  })
+
   // A step id this launcher has no key for — a newer daemon's plan — must read
   // as the id, never as the bare lookup key.
   it('renders an unknown step id as the id, not as its locale key', async () => {
@@ -337,6 +412,39 @@ describe('DependenciesDialog', () => {
     }))
     expect(await screen.findByTestId('deps-step-dump')).toHaveAttribute('data-state', 'active')
     expect(screen.queryByTestId('deps-preparing')).toBeNull()
+  })
+
+  // ...and it must not reappear as a step once the plan does. "preparing" is a
+  // pseudo-step: it belongs to no plan, and it is the step the store records as
+  // FINISHED the moment the first real one arrives. The unknown-id append then
+  // put it after the last step of the plan, so a running RabbitMQ migration
+  // showed a green-ticked "Preparing (checking the data and free space)" BELOW
+  // "Stopping the new version" — a twelfth, completed step of an eleven-step
+  // plan. The pre-plan state has its own spinner line; it is never a row.
+  it('never renders the preparing pseudo-step in the step list', async () => {
+    render(<DependenciesDialog open onClose={() => {}} />)
+    await screen.findByTestId('dep-postgres')
+    // The real sequence: a start with no plan, the daemon's own "preparing"
+    // progress event, then the plan's first step.
+    act(() => {
+      useDepsStore.getState().onStart('rabbitmq', 0)
+      useDepsStore.getState().onProgress({ appName: 'rabbitmq', phase: 'preparing', current: 0, total: 0, percent: 0, after: '' })
+      useDepsStore.getState().onProgress({ appName: 'rabbitmq', phase: 'stop-new', current: 11, total: 11, percent: 0, after: '' })
+    })
+    await screen.findByTestId('deps-step-stop-new')
+    expect(useDepsStore.getState().migration!.done).toContain('preparing')
+    expect(screen.queryByTestId('deps-step-preparing')).toBeNull()
+    // The list is exactly the plan — nothing appended, nothing dropped.
+    expect(screen.getAllByTestId(/^deps-step-/).map((li) => li.getAttribute('data-testid'))).toEqual([
+      'deps-step-stop-namespace', 'deps-step-pull-image', 'deps-step-create-volume',
+      'deps-step-copy-volume', 'deps-step-start-old', 'deps-step-pre-upgrade',
+      'deps-step-stop-old', 'deps-step-start-new', 'deps-step-post-upgrade',
+      'deps-step-verify', 'deps-step-stop-new',
+    ])
+    // Not by its label either (asserted verbatim: `deps.step.pre-upgrade` is
+    // "Preparing the data for the new version", so /preparing/i is not a test).
+    expect(screen.getByTestId('deps-progress').textContent)
+      .not.toContain('Preparing (checking the data and free space)')
   })
 
   // A migration can vanish WITHOUT a verdict — the daemon died mid-migration

@@ -6,9 +6,9 @@ import {
   getDependencyPreflight, postDependencyMigrate,
   getDependencyRollbackPreflight, postDependencyRollback,
 } from '../lib/api'
-import type { DependencyDto, DependencyRollbackDto, PreflightResult } from '../lib/types'
+import type { DependencyDto, DependencyRollbackDto, ExistingVolume, PreflightResult } from '../lib/types'
 import { useDepsStore, type DepsMigrationView } from '../lib/depsStore'
-import { useTranslation } from '../lib/i18n'
+import { useTranslation, type LocaleKey } from '../lib/i18n'
 import { formatBytes } from '../lib/format'
 import { formatDateTime } from '../lib/datetime'
 import { showError } from '../lib/errorModal'
@@ -79,6 +79,10 @@ const copyPlan = (id: string) => PLAN_STEPS[id] === COPY_STEPS
 const BTN_PRIMARY = 'rounded-md bg-primary text-primary-foreground px-3 py-1.5 text-xs font-medium hover:bg-primary/90 disabled:opacity-50'
 const BTN_SECONDARY = 'rounded-md border border-border px-3 py-1.5 text-xs hover:bg-muted disabled:opacity-50'
 
+/** The step id the daemon publishes while it has no plan yet (Go:
+ *  api.DependencyMigrationStepPreparing). */
+const PREPARING_STEP = 'preparing'
+
 /** The step ids to render: the known plan, plus anything the events mention that it does not cover. */
 function stepIdsFor(migration: DepsMigrationView): string[] {
   // A rollback runs its own three steps whatever dependency it belongs to, so
@@ -87,7 +91,14 @@ function stepIdsFor(migration: DepsMigrationView): string[] {
   const plan = migration.kind === ROLLBACK_KIND ? ROLLBACK_STEPS : PLAN_STEPS[migration.id]
   const ids: string[] = [...(plan ?? [])]
   for (const id of [...migration.done, migration.step]) {
-    if (id && !ids.includes(id)) ids.push(id)
+    // "preparing" is the one id that is never a step. It belongs to no plan —
+    // the daemon publishes it BEFORE it has one, and the store then records it
+    // as finished the moment the first real step arrives — so the append below
+    // put it AFTER the last step of the plan and ticked it green: a twelfth,
+    // completed step of an eleven-step migration. Its own state has a spinner
+    // line (isPreparing); it is never a row. Every OTHER unknown id is still
+    // appended — that is how a daemon newer than this UI shows its steps.
+    if (id && id !== PREPARING_STEP && !ids.includes(id)) ids.push(id)
   }
   return ids
 }
@@ -102,9 +113,27 @@ function isPreparing(migration: DepsMigrationView): boolean {
   return migration.stepCount === 0
 }
 
-/** The step id the daemon publishes while it has no plan yet (Go:
- *  api.DependencyMigrationStepPreparing). */
-const PREPARING_STEP = 'preparing'
+/**
+ * The leftover-target-volume sentence, for each of the three states of
+ * `ExistingVolume.Version` (Go: migrate.ExistingVolume). They are kept apart
+ * here rather than at the call site because two of them are silent about the
+ * third: a real PG_VERSION names the product and the version, the "empty"
+ * sentinel says there is no cluster in the volume, and "" — a dependency whose
+ * data carries NO version marker (RabbitMQ, ZooKeeper) — can say neither. It
+ * is not "empty": the RabbitMQ volume this was reported on held 244 KB of real
+ * data, so claiming "no cluster in it" would be as wrong as the "PostgreSQL "
+ * with a blank version the two-armed original printed. The volume and its size
+ * are all that is known, so they are all it says.
+ */
+function replaceVolumeText(
+  t: (key: LocaleKey, params?: Record<string, string | number>) => string,
+  vol: ExistingVolume,
+): string {
+  const common = { volume: vol.name, size: formatBytes(vol.sizeBytes) }
+  if (vol.version === '') return t('deps.preflight.replaceVolumeNoVersion', common)
+  if (vol.version === 'empty') return t('deps.preflight.replaceVolumeEmpty', common)
+  return t('deps.preflight.replaceVolume', { ...common, version: vol.version })
+}
 
 /** Go: deps.ResultKindRollback. "" is a migration. */
 const ROLLBACK_KIND = 'rollback'
@@ -402,11 +431,20 @@ export function DependenciesDialog({ open, onClose }: Props) {
           {data && data.items.length > 0 && (
             <table className="w-full text-sm">
               <thead>
+                {/* Every cell that has another one to its right carries its
+                    own trailing padding. Tailwind's preflight collapses the
+                    table borders, which also drops the browser's default
+                    border-spacing, so nothing else keeps two columns apart:
+                    the header read "DependencyCurrent" and a long id ran
+                    straight into its own version ("zookeeperzookeeper:3.9.5").
+                    Padding is inside the cell box, so the separation holds at
+                    every id and image length. The last column is the
+                    right-aligned actions cell and has nothing after it. */}
                 <tr className="border-b border-border text-left text-xs text-muted-foreground">
-                  <th className="py-1 font-medium">{t('deps.col.dependency')}</th>
-                  <th className="py-1 font-medium">{t('deps.col.current')}</th>
-                  <th className="py-1 font-medium">{t('deps.col.available')}</th>
-                  <th className="py-1 font-medium">{t('deps.col.status')}</th>
+                  <th className="py-1 pr-4 font-medium">{t('deps.col.dependency')}</th>
+                  <th className="py-1 pr-4 font-medium">{t('deps.col.current')}</th>
+                  <th className="py-1 pr-4 font-medium">{t('deps.col.available')}</th>
+                  <th className="py-1 pr-4 font-medium">{t('deps.col.status')}</th>
                   <th />
                 </tr>
               </thead>
@@ -417,10 +455,10 @@ export function DependenciesDialog({ open, onClose }: Props) {
                         mongodb (app `mongo`), and the banner, the progress
                         panel, the verdict and `citeck deps upgrade <id>` all
                         name it by the id. One thing, one name. */}
-                    <td className="py-1.5">{item.id}</td>
-                    <td className="py-1.5 font-mono text-xs">{item.currentImage}</td>
-                    <td className="py-1.5 font-mono text-xs">{item.targetImage}</td>
-                    <td className="py-1.5 text-xs">
+                    <td className="py-1.5 pr-4">{item.id}</td>
+                    <td className="py-1.5 pr-4 font-mono text-xs">{item.currentImage}</td>
+                    <td className="py-1.5 pr-4 font-mono text-xs">{item.targetImage}</td>
+                    <td className="py-1.5 pr-4 text-xs">
                       <div>{statusLabel(item)}</div>
                       {item.statusDetail && (
                         <div className="mt-0.5 max-w-md text-[11px] text-muted-foreground">{item.statusDetail}</div>
@@ -551,20 +589,18 @@ export function DependenciesDialog({ open, onClose }: Props) {
                     checked={replaceVolume}
                     onChange={(e) => setReplaceVolume(e.target.checked)}
                   />
-                  {/* "empty" is the daemon's sentinel for a volume with no
+                  {/* THREE states, not two (Go: migrate.ExistingVolume.Version).
+                      "empty" is the daemon's sentinel for a volume with no
                       PG_VERSION in it — the common leftover case — and it is
                       not a version, so interpolating it reads as "PostgreSQL
-                      empty" in every locale. */}
-                  <span>{preflight.existingTargetVolume.version === 'empty'
-                    ? t('deps.preflight.replaceVolumeEmpty', {
-                      volume: preflight.existingTargetVolume.name,
-                      size: formatBytes(preflight.existingTargetVolume.sizeBytes),
-                    })
-                    : t('deps.preflight.replaceVolume', {
-                      volume: preflight.existingTargetVolume.name,
-                      size: formatBytes(preflight.existingTargetVolume.sizeBytes),
-                      version: preflight.existingTargetVolume.version,
-                    })}</span>
+                      empty" in every locale. "" is the third: a dependency
+                      whose data carries no version marker at all (RabbitMQ,
+                      ZooKeeper), where the volume and its size are everything
+                      that is known — it is NOT "empty" (the RabbitMQ volume
+                      this was reported on held 244 KB of real data), and it is
+                      not PostgreSQL, which is what the two-armed version of
+                      this printed: "244 KB, PostgreSQL ". */}
+                  <span>{replaceVolumeText(t, preflight.existingTargetVolume)}</span>
                 </label>
               )}
             </>

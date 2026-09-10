@@ -473,6 +473,7 @@ const ru = {
   'deps.preflight.oldKept': 'Текущий том с данными остаётся нетронутым; при любой ошибке выполняется откат на него',
   'deps.preflight.replaceVolume': 'Удалить существующий том {volume} ({size}, PostgreSQL {version}) и создать его заново',
   'deps.preflight.replaceVolumeEmpty': 'Удалить существующий том {volume} ({size}, кластера в нём нет) и создать заново',
+  'deps.preflight.replaceVolumeNoVersion': 'Удалить существующий том {volume} ({size}) и создать его заново',
   'deps.progress.title': 'Миграция {id}',
   'deps.step.preparing': 'Подготовка (проверка данных и свободного места)',
   'deps.step.stop-namespace': 'Остановка namespace',

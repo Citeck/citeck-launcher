@@ -473,6 +473,7 @@ const ja = {
   'deps.preflight.oldKept': '現在のデータボリュームはそのまま保持され、失敗時はそこにロールバックします',
   'deps.preflight.replaceVolume': '既存のボリューム {volume} ({size}、PostgreSQL {version}) を削除して作り直す',
   'deps.preflight.replaceVolumeEmpty': '既存のボリューム {volume}（{size}、クラスタなし）を削除して作り直す',
+  'deps.preflight.replaceVolumeNoVersion': '既存のボリューム {volume}（{size}）を削除して作り直す',
   'deps.progress.title': '{id} を移行中',
   'deps.step.preparing': '準備しています（データと空き容量を確認しています）',
   'deps.step.stop-namespace': 'namespace を停止しています',

@@ -282,7 +282,11 @@ export interface PreflightResult {
 export interface ExistingVolume {
   name: string
   sizeBytes: number
-  /** PG_VERSION content, or "empty". */
+  /** What the data itself says it is: PostgreSQL's PG_VERSION content, or
+   *  "empty" when the volume holds no such file, or "" for a dependency whose
+   *  data carries no version marker at all (RabbitMQ, ZooKeeper). "" is NOT
+   *  "empty" — such a volume can be full of data — and a renderer must tell
+   *  the three apart rather than print a version the data never claimed. */
   version: string
 }
 

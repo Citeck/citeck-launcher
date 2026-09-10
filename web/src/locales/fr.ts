@@ -473,6 +473,7 @@ const fr = {
   'deps.preflight.oldKept': 'Le volume de données actuel reste intact ; toute erreur y revient',
   'deps.preflight.replaceVolume': 'Supprimer le volume existant {volume} ({size}, PostgreSQL {version}) et le recréer',
   'deps.preflight.replaceVolumeEmpty': 'Supprimer le volume existant {volume} ({size}, aucun cluster à l’intérieur) et le recréer',
+  'deps.preflight.replaceVolumeNoVersion': 'Supprimer le volume existant {volume} ({size}) et le recréer',
   'deps.progress.title': 'Migration de {id}',
   'deps.step.preparing': 'Préparation (vérification des données et de l’espace libre)',
   'deps.step.stop-namespace': 'Arrêt du namespace',

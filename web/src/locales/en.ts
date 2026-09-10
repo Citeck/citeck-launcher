@@ -475,6 +475,7 @@ const en = {
   'deps.preflight.oldKept': 'The current data volume is kept untouched; any failure rolls back to it',
   'deps.preflight.replaceVolume': 'Delete the existing volume {volume} ({size}, PostgreSQL {version}) and recreate it',
   'deps.preflight.replaceVolumeEmpty': 'Delete the existing volume {volume} ({size}, no cluster in it) and recreate it',
+  'deps.preflight.replaceVolumeNoVersion': 'Delete the existing volume {volume} ({size}) and recreate it',
   'deps.progress.title': 'Migrating {id}',
   'deps.step.preparing': 'Preparing (checking the data and free space)',
   'deps.step.stop-namespace': 'Stopping the namespace',

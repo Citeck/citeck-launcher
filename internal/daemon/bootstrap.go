@@ -820,14 +820,32 @@ func (d *Daemon) wireShutdownSignals(opts StartOptions) {
 	}
 }
 
-// sweepOrphanDockerResources removes Docker resources for namespaces that no
-// longer exist in storage. Fail-safe: the keep set must be built completely
-// from storage; if any listing fails, it does nothing rather than risk
-// removing a live namespace's resources. The active namespace is always kept.
-func sweepOrphanDockerResources(ctx context.Context, dc *docker.Client, store storage.Store, activeWsID, activeNsID string) {
-	if dc == nil || store == nil {
-		return
-	}
+// orphanKeepLister is the slice of storage.Store the keep set is built from.
+// Narrow on purpose: the keep set is the whole safety argument of the sweep, so
+// it is decided by a function that can be tested without a Docker client.
+type orphanKeepLister interface {
+	ListWorkspaces() ([]storage.WorkspaceDto, error)
+	ListNamespaces(wsID string) ([]storage.NamespaceRow, error)
+}
+
+// orphanKeepSet answers which (namespace, workspace) pairs the sweep must not
+// touch, and whether it may run at all.
+//
+// ok == false means DO NOT SWEEP. There are two such cases and they are not the
+// same shape:
+//
+//   - a listing FAILED, so the keep set would be incomplete. Never purge on doubt.
+//   - the store holds NO WORKSPACE AT ALL and no namespace is active. That is not
+//     an empty keep set, it is a profile that has never created anything — a fresh
+//     CITECK_HOME, a reinstall whose launcher.db was not kept, a second profile
+//     opened for testing. Everything labeled on the host then belongs to somebody
+//     else's launcher, and the sweep would delete every one of their containers,
+//     NAMED VOLUMES and networks. An empty listing that SUCCEEDED still tells us
+//     nothing about the host; the old code read it as "nothing to keep".
+//
+// A workspace with zero namespaces is deliberately NOT one of these: a namespace
+// deleted while its containers kept running is exactly what the sweep exists for.
+func orphanKeepSet(store orphanKeepLister, activeWsID, activeNsID string) (map[string]bool, bool) {
 	keep := map[string]bool{}
 	if activeNsID != "" {
 		keep[docker.OrphanKey(activeNsID, activeWsID)] = true
@@ -835,18 +853,37 @@ func sweepOrphanDockerResources(ctx context.Context, dc *docker.Client, store st
 	wss, err := store.ListWorkspaces()
 	if err != nil {
 		slog.Warn("Orphan-sweep skipped: cannot list workspaces", "err", err)
-		return
+		return nil, false
+	}
+	if len(wss) == 0 && activeNsID == "" {
+		slog.Debug("Orphan-sweep skipped: this profile has no workspaces yet")
+		return nil, false
 	}
 	for _, ws := range wss {
 		nss, nsErr := store.ListNamespaces(ws.ID)
 		if nsErr != nil {
 			// Incomplete keep set → bail out entirely; never purge on doubt.
 			slog.Warn("Orphan-sweep skipped: cannot list namespaces", "ws", ws.ID, "err", nsErr)
-			return
+			return nil, false
 		}
 		for _, ns := range nss {
 			keep[docker.OrphanKey(ns.ID, ws.ID)] = true
 		}
+	}
+	return keep, true
+}
+
+// sweepOrphanDockerResources removes Docker resources for namespaces that no
+// longer exist in storage. Fail-safe: the keep set must be built completely
+// from storage (see orphanKeepSet); if it cannot be, nothing is removed. The
+// active namespace is always kept.
+func sweepOrphanDockerResources(ctx context.Context, dc *docker.Client, store storage.Store, activeWsID, activeNsID string) {
+	if dc == nil || store == nil {
+		return
+	}
+	keep, ok := orphanKeepSet(store, activeWsID, activeNsID)
+	if !ok {
+		return
 	}
 	if purged := dc.SweepOrphans(ctx, keep); len(purged) > 0 {
 		slog.Info("Orphan-sweep removed leftover namespace resources",

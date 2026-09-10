@@ -473,6 +473,7 @@ const zh = {
   'deps.preflight.oldKept': '当前数据卷保持不变；任何失败都会回滚到它',
   'deps.preflight.replaceVolume': '删除已存在的存储卷 {volume}（{size}，PostgreSQL {version}）并重新创建',
   'deps.preflight.replaceVolumeEmpty': '删除现有卷 {volume}（{size}，其中没有集群）并重新创建',
+  'deps.preflight.replaceVolumeNoVersion': '删除已存在的存储卷 {volume}（{size}）并重新创建',
   'deps.progress.title': '正在迁移 {id}',
   'deps.step.preparing': '正在准备（正在检查数据和可用空间）',
   'deps.step.stop-namespace': '正在停止 namespace',
