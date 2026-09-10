@@ -63,6 +63,7 @@ import (
 	"github.com/citeck/citeck-launcher/internal/deps"
 	"github.com/citeck/citeck-launcher/internal/deps/migrate"
 	"github.com/citeck/citeck-launcher/internal/docker"
+	"github.com/citeck/citeck-launcher/internal/msg"
 	"github.com/citeck/citeck-launcher/internal/namespace"
 )
 
@@ -549,7 +550,7 @@ func newStepTimer() *stepTimer {
 	return &stepTimer{elapsed: map[string]time.Duration{}, since: time.Now()}
 }
 
-func (s *stepTimer) progress(step string, _, _ int, _ float64, _ string) {
+func (s *stepTimer) progress(step string, _, _ int, _ float64, _ msg.Message) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if step == s.current {

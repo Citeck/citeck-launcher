@@ -50,7 +50,7 @@ func waitForReady(
 		if time.Now().After(deadline) {
 			return fmt.Errorf("%s in %s did not become ready within %s", what, container, copyReadyTimeout)
 		}
-		p(0, "waiting for "+what+" in "+container)
+		p(0, progressWaiting(what, container))
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("waiting for %s: %w", container, ctx.Err())

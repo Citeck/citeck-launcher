@@ -2,11 +2,12 @@ package migrate
 
 import (
 	"context"
-	"fmt"
 	"strconv"
 	"strings"
 
 	"github.com/citeck/citeck-launcher/internal/deps"
+
+	"github.com/citeck/citeck-launcher/internal/msg"
 )
 
 // The rollback is the ONE action in this launcher that makes a retained volume
@@ -64,12 +65,8 @@ func RollbackStepIDs() []string {
 // It takes no dependency name, unlike its sibling and unlike the two vendor
 // refusals: there is no command to interpolate one into, and the sentence is
 // rendered on the dependency's own row.
-func BundleOlderNotice(from, to string) string {
-	return fmt.Sprintf(
-		"the bundle offers %s, which is older than the %s this namespace's data runs on and cannot "+
-			"read it; the data stays on %s. Going back would need the data as %s wrote it, and this "+
-			"namespace has no volume recorded from that version.",
-		to, from, from, to)
+func BundleOlderNotice(from, to string) msg.Message {
+	return msg.New("deps.msg.rollback.bundleOlder", "from", from, "to", to)
 }
 
 // BundleOlderRollbackNotice is the same state with one difference that changes
@@ -80,13 +77,8 @@ func BundleOlderNotice(from, to string) string {
 // dep is the dependency ID and not a display name, because it is interpolated
 // into a command the operator will type — the same rule VendorPathProblem
 // follows.
-func BundleOlderRollbackNotice(dep, from, to string) string {
-	return fmt.Sprintf(
-		"the bundle offers %s, which is older than the %s this namespace's data runs on and cannot "+
-			"read it; the data stays on %s. This is the version this namespace migrated from, so "+
-			"`citeck deps rollback %s` puts it back on the volume that migration left — everything "+
-			"written since then stays on the newer volume and is not read again.",
-		to, from, from, dep)
+func BundleOlderRollbackNotice(dep, from, to string) msg.Message {
+	return msg.New("deps.msg.rollback.bundleOlderWithRollback", "dep", dep, "from", from, "to", to)
 }
 
 // RetainedVolumeGoneProblem is why a rollback cannot be taken: the volume the
@@ -100,16 +92,8 @@ func BundleOlderRollbackNotice(dep, from, to string) string {
 // word it differently: the preflight below, and the dependency LIST, which
 // judges every rollback offer on every request without building a preflight at
 // all. One sentence, one place to reword it.
-func RetainedVolumeGoneProblem(id deps.ID, volume, image string) string {
-	return fmt.Sprintf("volume %s is gone, so there is no %s data from %s to go back to", volume, id, image)
-}
-
-// VolumeCheckFailedProblem is why a rollback could not be judged at all: the
-// launcher could not ask whether the retained volume is still there. Exported
-// for the same reason as RetainedVolumeGoneProblem, and deliberately distinct
-// from it — "I could not ask" is not "it is gone".
-func VolumeCheckFailedProblem(volume string, err error) string {
-	return fmt.Sprintf("cannot check volume %s: %v", volume, err)
+func RetainedVolumeGoneProblem(id deps.ID, volume, image string) msg.Message {
+	return msg.New("deps.msg.rollback.volumeGone", "volume", volume, "id", string(id), "image", image)
 }
 
 // RollbackPreflight reports everything that would refuse or endanger putting a
@@ -136,18 +120,16 @@ func RollbackPreflight(ctx context.Context, env Env, id deps.ID, prev deps.Depen
 
 	d, registered := deps.Lookup(id)
 	if !registered {
-		res.Problems = append(res.Problems, fmt.Sprintf("%s is not a registered dependency", id))
+		res.Problems = append(res.Problems, NotRegisteredProblem(id))
 		return res
 	}
 	if prev.Image == "" {
-		res.Problems = append(res.Problems, fmt.Sprintf(
-			"%s has no recorded previous version to roll back to", id))
+		res.Problems = append(res.Problems, NoRollbackTargetProblem(id))
 		return res
 	}
 	retained := deps.VolumeName(d, prev.Gen())
 	if retained == "" {
-		res.Problems = append(res.Problems, fmt.Sprintf(
-			"%s has no data volume of its own, so there is no generation to switch back to", id))
+		res.Problems = append(res.Problems, NoOwnVolumeProblem(id))
 		return res
 	}
 	// A target that does not go back a generation is not a rollback at all: the
@@ -157,17 +139,15 @@ func RollbackPreflight(ctx context.Context, env Env, id deps.ID, prev deps.Depen
 	// side of the move, and both are better refused than described confidently
 	// and wrongly.
 	if prev.Gen() >= cur.Gen() {
-		res.Problems = append(res.Problems, fmt.Sprintf(
-			"the recorded rollback target of %s is volume generation %d, which is not older than the "+
-				"generation %d the namespace runs on; there is nothing to switch back to",
-			id, prev.Gen(), cur.Gen()))
+		res.Problems = append(res.Problems, msg.New("deps.msg.rollback.targetNotOlder",
+			"id", string(id), "prev", strconv.Itoa(prev.Gen()), "cur", strconv.Itoa(cur.Gen())))
 		return res
 	}
 
 	exists, err := env.VolumeExists(ctx, retained)
 	switch {
 	case err != nil:
-		res.Problems = append(res.Problems, VolumeCheckFailedProblem(retained, err))
+		res.Problems = append(res.Problems, VolumeCheckProblem(retained, err))
 		return res
 	case !exists:
 		res.Problems = append(res.Problems, RetainedVolumeGoneProblem(id, retained, prev.Image))
@@ -201,17 +181,14 @@ func (res *PreflightResult) checkRetainedDataVersion(
 	}
 	raw, err := env.ReadVolumeFile(ctx, volume, rel)
 	if err != nil {
-		res.Problems = append(res.Problems, fmt.Sprintf(
-			"cannot read %s/%s, so the retained volume does not hold the cluster %s names: %v",
-			volume, rel, prev.Image, err))
+		res.Problems = append(res.Problems, msg.New("deps.msg.rollback.cannotReadRetained",
+			"volume", volume, "path", rel, "image", prev.Image, "error", err.Error()))
 		return
 	}
 	onDisk := strings.TrimSpace(raw)
 	if n, convErr := strconv.Atoi(onDisk); convErr != nil || n != major {
-		res.Problems = append(res.Problems, fmt.Sprintf(
-			"volume %s holds PostgreSQL %q, not the cluster %s names: it was deleted and recreated, "+
-				"and starting the older server on it would not be a rollback",
-			volume, onDisk, prev.Image))
+		res.Problems = append(res.Problems, msg.New("deps.msg.rollback.retainedVersionMismatch",
+			"volume", volume, "onDisk", onDisk, "image", prev.Image))
 	}
 }
 
@@ -262,18 +239,29 @@ func (res *PreflightResult) warnRollbackConsequences(
 	// failure lands after the namespace is already stopped. A heads-up that
 	// costs nothing to ignore.
 	if !env.ImageExists(ctx, to) {
-		res.Warnings = append(res.Warnings, fmt.Sprintf(
-			"image %s is not present locally; the rollback will pull it, and a registry it cannot "+
-				"reach would leave the namespace stopped", to))
+		res.Warnings = append(res.Warnings, msg.New("deps.msg.rollback.imageNotLocal", "image", to))
 	}
 	res.Warnings = append(res.Warnings,
 		// The data is as of the migration.
-		fmt.Sprintf("the namespace will run %s again, on the data in volume %s as it was when the "+
-			"migration to %s finished", to, retained, from),
+		msg.New("deps.msg.rollback.consequenceData", "to", to, "volume", retained, "from", from),
 		// Everything since then lives on a volume that is KEPT and never read.
-		fmt.Sprintf("everything written since then is in volume %s: the launcher keeps it and will "+
-			"not read it again, so that data becomes unreachable", frozen),
+		msg.New("deps.msg.rollback.consequenceFrozen", "volume", frozen),
 		// And it is one-way.
-		fmt.Sprintf("there is no roll-forward: to go back to %s you would migrate again, from the "+
-			"%s data, into a new volume", from, to))
+		msg.New("deps.msg.rollback.consequenceOneWay", "from", from, "to", to))
+}
+
+// NoRollbackTargetProblem and NoOwnVolumeProblem are the two "there is nothing
+// to go back to" refusals, exported because the DAEMON answers both of them
+// too — rollbackTarget before it builds a preflight, and rollbackOffer for
+// every dependency on every list request. One sentence each, one place to
+// reword them.
+func NoRollbackTargetProblem(id deps.ID) msg.Message {
+	return msg.New("deps.msg.rollback.noPrevious", "id", string(id))
+}
+
+// NoOwnVolumeProblem is the refusal for a dependency whose state lives
+// somewhere else entirely (Keycloak keeps its data in the namespace's
+// PostgreSQL database), so there is no generation to switch back to.
+func NoOwnVolumeProblem(id deps.ID) msg.Message {
+	return msg.New("deps.msg.rollback.noOwnVolume", "id", string(id))
 }

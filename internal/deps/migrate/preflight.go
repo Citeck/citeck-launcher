@@ -2,70 +2,67 @@ package migrate
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
+	"github.com/citeck/citeck-launcher/internal/api"
 	"github.com/citeck/citeck-launcher/internal/deps"
 	"github.com/citeck/citeck-launcher/internal/fsutil"
+	"github.com/citeck/citeck-launcher/internal/msg"
 )
 
 // PreflightResult is what the confirm dialog and `citeck deps upgrade` show
 // before anything is touched. Problems block the migration; Warnings need an
 // explicit confirmation (today: an existing target volume).
 //
-// Problems and Warnings are JSON ARRAYS on the wire, never null: the web
-// dialog maps over both without a guard for the ordinary case, and the CLI's
-// `for range` over a nil slice hides the difference. Build every result with
-// NewPreflightResult (or set both fields) rather than with a bare literal.
+// Problems and Warnings are msg.Message, not prose: this package is pure — it
+// has no locale, no request and no business acquiring one — so it names the
+// sentence and leaves the LANGUAGE to the HTTP boundary, which is the only
+// place that knows who is reading. The daemon renders this into
+// api.PreflightResult, whose JSON is byte-identical to what this struct used
+// to marshal, so nothing downstream changed.
+//
+// Build every result with NewPreflightResult (or set both fields) rather than
+// with a bare literal: the rendered arrays must never marshal as null, and
+// i18n.Translator.RenderAll can only preserve a non-nil empty slice if it is
+// given one.
 type PreflightResult struct {
-	OK       bool     `json:"ok"`
-	Problems []string `json:"problems"`
-	Warnings []string `json:"warnings"`
-	From     string   `json:"from"`
-	To       string   `json:"to"`
+	OK       bool
+	Problems []msg.Message
+	Warnings []msg.Message
+	From     string
+	To       string
 	// Sizes in bytes. Host = the filesystem holding the dump; Volume = the
 	// filesystem holding the data volumes (the Docker VM's disk on a
 	// macOS/Windows desktop, which is NOT the host's).
-	DataSizeBytes       int64 `json:"dataSizeBytes"`
-	RequiredHostBytes   int64 `json:"requiredHostBytes"`
-	RequiredVolumeBytes int64 `json:"requiredVolumeBytes"`
-	FreeHostBytes       int64 `json:"freeHostBytes"`
-	FreeVolumeBytes     int64 `json:"freeVolumeBytes"`
+	DataSizeBytes       int64
+	RequiredHostBytes   int64
+	RequiredVolumeBytes int64
+	FreeHostBytes       int64
+	FreeVolumeBytes     int64
 	// SharedFilesystem reports that those two are ONE filesystem — the ordinary
 	// server layout, where the dump directory and the data volumes are both
 	// under the namespace's volumes base. The dump and the new cluster coexist
-	// on it (the scratch directory is removed only after the commit, and the
-	// new cluster is built next to the old data), so what has to fit there is
-	// RequiredTotalBytes and not either half on its own.
-	SharedFilesystem bool `json:"sharedFilesystem"`
+	// on it (the scratch directory is removed only in Finalize, after the
+	// commit, and the new cluster is built next to the old data), so what has
+	// to fit there is RequiredTotalBytes and not either half on its own.
+	SharedFilesystem bool
 	// RequiredTotalBytes is what that one filesystem must have free: the two
 	// halves added up. It is 0 when SharedFilesystem is false, where a sum
 	// across two disks means nothing — SharedFilesystem is the discriminator,
 	// never the zero (the same rule Measured() states for the other sizes).
-	RequiredTotalBytes   int64           `json:"requiredTotalBytes"`
-	ExistingTargetVolume *ExistingVolume `json:"existingTargetVolume,omitempty"`
-	WasRunning           bool            `json:"wasRunning"`
+	RequiredTotalBytes int64
+	// ExistingTargetVolume is api's type rather than one of our own: it holds
+	// no sentence, so there is nothing in it to localize and a second
+	// declaration here would be one wire shape maintained twice.
+	ExistingTargetVolume *api.ExistingVolume
+	WasRunning           bool
 	// SpaceChecked reports that the space checks actually ran. It replaces the
 	// old "RequiredHostBytes > 0" discriminator, which stopped being true the
 	// moment a plan appeared that writes no host file at all: a copy upgrade
 	// legitimately requires zero bytes on the host, and rendering a refused
 	// preflight's zeros verbatim reads as a namespace with no data and a full
 	// disk, printed above the real reason.
-	SpaceChecked bool `json:"spaceChecked"`
-}
-
-// ExistingVolume describes a target volume that is already there — a leftover
-// from an earlier attempt, or somebody else's data. Size and version are what
-// let the user tell those two apart before confirming its deletion.
-type ExistingVolume struct {
-	Name      string `json:"name"`
-	SizeBytes int64  `json:"sizeBytes"`
-	// Version is what the data itself says it is: PostgreSQL's PG_VERSION, or
-	// "empty" when the volume holds no such file. It is "" for a dependency
-	// whose data carries no version marker at all (RabbitMQ, ZooKeeper) —
-	// which is not the same as "empty", and a renderer must tell the two
-	// apart rather than print a version the data never claimed.
-	Version string `json:"version"`
+	SpaceChecked bool
 }
 
 // PlanOptions carries the user's explicit confirmations.
@@ -94,14 +91,14 @@ func (res PreflightResult) Measured() bool { return res.SpaceChecked }
 // gives Problems and Warnings the empty-slice value the wire contract demands
 // (see the type's doc), which a struct literal silently would not.
 func NewPreflightResult(from, to string) PreflightResult {
-	return PreflightResult{From: from, To: to, Problems: []string{}, Warnings: []string{}}
+	return PreflightResult{From: from, To: to, Problems: []msg.Message{}, Warnings: []msg.Message{}}
 }
 
 // RefusedPreflight is a preflight that never ran: a condition the daemon knows
 // about before it touches Docker (an open journal, a busy namespace, another
 // long operation) already refuses the migration, and the confirm screen has to
 // show it as its own input rather than as a 409 after the click.
-func RefusedPreflight(from, to string, problems ...string) PreflightResult {
+func RefusedPreflight(from, to string, problems ...msg.Message) PreflightResult {
 	res := NewPreflightResult(from, to)
 	res.Problems = append(res.Problems, problems...)
 	return res
@@ -118,8 +115,8 @@ func RefusedPreflight(from, to string, problems ...string) PreflightResult {
 // major from 18 up into ONE volume, so until a release adds a layout for 19
 // (an entry in deps' postgresLayouts table) that move is reported here and
 // refused by both routes. The namespace keeps running 18 in the meantime.
-func UnsupportedPairProblem(from, to string) string {
-	return fmt.Sprintf("this launcher cannot migrate %s → %s yet; update the launcher", from, to)
+func UnsupportedPairProblem(from, to string) msg.Message {
+	return msg.New("deps.msg.pair.unsupported", "from", from, "to", to)
 }
 
 // VendorPathProblem is the refusal for a hop the DEPENDENCY'S OWN VENDOR does
@@ -130,23 +127,16 @@ func UnsupportedPairProblem(from, to string) string {
 // is the whole difference from UnsupportedPairProblem. What the operator needs
 // is the intermediate version, how to get the namespace onto it, and what
 // keeps running meanwhile.
-func VendorPathProblem(dep, from, to, via string) string {
-	return fmt.Sprintf(
-		"%s does not support %s → %s in one step: upgrade to %s first. Point the namespace at "+
-			"a %s image (`citeck edit %s`, or a bundle that offers it), migrate, then come back "+
-			"for %s. The namespace goes on running %s meanwhile.",
-		dep, from, to, via, via, dep, to, from)
+func VendorPathProblem(dep, from, to, via string) msg.Message {
+	return msg.New("deps.msg.pair.vendorPath", "dep", dep, "from", from, "to", to, "via", via)
 }
 
 // VendorNoPathProblem is the same refusal with no documented path at all —
 // there is nothing for the operator to do first, so naming an intermediate
 // would be an invention. It still says what keeps running, because that is the
 // question a refusal raises.
-func VendorNoPathProblem(dep, from, to string) string {
-	return fmt.Sprintf(
-		"%s does not support %s → %s, and there is no upgrade path this launcher can take. "+
-			"The namespace goes on running %s.",
-		dep, from, to, from)
+func VendorNoPathProblem(dep, from, to string) msg.Message {
+	return msg.New("deps.msg.pair.vendorNoPath", "dep", dep, "from", from, "to", to)
 }
 
 // pairRefusal is what a preflight prints when a migrator refuses a pair.
@@ -158,8 +148,8 @@ func VendorNoPathProblem(dep, from, to string) string {
 // launcher-update wording is the honest fallback. That fallback is also what
 // keeps UnsupportedPairProblem reachable for the layout-changing major that
 // will need it.
-func pairRefusal(problem, from, to string) string {
-	if problem != "" {
+func pairRefusal(problem msg.Message, from, to string) msg.Message {
+	if !problem.Empty() {
 		return problem
 	}
 	return UnsupportedPairProblem(from, to)
@@ -178,26 +168,42 @@ func pairRefusal(problem, from, to string) string {
 // The wording is deliberately dependency-neutral. "not a major upgrade" was
 // right while PostgreSQL was the only migrator and wrong the moment RabbitMQ
 // arrived, where a MINOR bump is the breaking one.
-func versionProblems(id deps.ID, from, to string) (fromV, toV deps.Version, problems []string) {
+func versionProblems(id deps.ID, from, to string) (fromV, toV deps.Version, problems []msg.Message) {
 	d, registered := deps.Lookup(id)
 	if !registered {
-		return fromV, toV, append(problems, fmt.Sprintf("%s is not a registered dependency", id))
+		return fromV, toV, append(problems, NotRegisteredProblem(id))
 	}
 	fromV, okFrom := d.ParseVersion(from)
 	toV, okTo := d.ParseVersion(to)
 	switch {
 	case !okFrom:
-		problems = append(problems, fmt.Sprintf("cannot read a version out of the current image %q", from))
+		problems = append(problems, msg.New("deps.msg.version.unreadableFrom", "image", from))
 	case !okTo:
-		problems = append(problems, fmt.Sprintf("cannot read a version out of the target image %q", to))
+		problems = append(problems, msg.New("deps.msg.version.unreadableTo", "image", to))
 	case !d.IsBreaking(fromV, toV):
-		problems = append(problems, fmt.Sprintf(
-			"%s → %s does not need a migration; it applies on the next start", from, to))
+		problems = append(problems, msg.New("deps.msg.version.noMigrationNeeded", "from", from, "to", to))
 	case deps.MovesBackwards(fromV, toV):
-		problems = append(problems, fmt.Sprintf(
-			"%s → %s is a downgrade; the launcher does not migrate data backwards", from, to))
+		problems = append(problems, msg.New("deps.msg.version.downgrade", "from", from, "to", to))
 	}
 	return fromV, toV, problems
+}
+
+// NotRegisteredProblem is the "this id is not one of the registered
+// dependencies" refusal. It is exported because four places reach it — the
+// shared version checks, the copy preflight, the rollback preflight and the
+// daemon's rollback offer — and every one of them is defense against a state
+// nobody can currently produce. One sentence, one key, so an unreachable state
+// cannot also be described four ways.
+func NotRegisteredProblem(id deps.ID) msg.Message {
+	return msg.New("deps.msg.version.notRegistered", "id", string(id))
+}
+
+// VolumeCheckProblem is "I could not ask whether this volume is there", which
+// is deliberately NOT the same sentence as "it is gone" (see
+// RetainedVolumeGoneProblem): a socket error must never be reported to the
+// operator as their data having been destroyed.
+func VolumeCheckProblem(volume string, err error) msg.Message {
+	return msg.New("deps.msg.volume.cannotCheck", "volume", volume, "error", err.Error())
 }
 
 // migrationVolumes is where a migration of a dependency READS and where it
@@ -240,7 +246,8 @@ func (res *PreflightResult) checkSpace(ctx context.Context, env Env, volume stri
 	res.SpaceChecked = true
 	size, err := env.VolumeSize(ctx, volume)
 	if err != nil {
-		res.Problems = append(res.Problems, fmt.Sprintf("cannot measure volume %s: %v", volume, err))
+		res.Problems = append(res.Problems,
+			msg.New("deps.msg.space.cannotMeasureVolume", "volume", volume, "error", err.Error()))
 	}
 	res.DataSizeBytes = size
 	res.RequiredHostBytes = size + SpaceMargin
@@ -250,24 +257,24 @@ func (res *PreflightResult) checkSpace(ctx context.Context, env Env, volume stri
 	host, vol := res.measureFree(ctx, env, volume)
 	if !res.SharedFilesystem {
 		if host.short(res.RequiredHostBytes) {
-			res.Problems = append(res.Problems, fmt.Sprintf(
-				"not enough free space on the host for the dump: need %s, free %s",
-				fsutil.FormatBytes(res.RequiredHostBytes), fsutil.FormatBytes(host.bytes)))
+			res.Problems = append(res.Problems, msg.New("deps.msg.space.hostShort",
+				"need", fsutil.FormatBytes(res.RequiredHostBytes),
+				"free", fsutil.FormatBytes(host.bytes)))
 		}
 		if vol.short(res.RequiredVolumeBytes) {
-			res.Problems = append(res.Problems, fmt.Sprintf(
-				"not enough free space on the volume filesystem for the new cluster: need %s, free %s",
-				fsutil.FormatBytes(res.RequiredVolumeBytes), fsutil.FormatBytes(vol.bytes)))
+			res.Problems = append(res.Problems, msg.New("deps.msg.space.volumeShort",
+				"need", fsutil.FormatBytes(res.RequiredVolumeBytes),
+				"free", fsutil.FormatBytes(vol.bytes)))
 		}
 		return
 	}
 	res.RequiredTotalBytes = res.RequiredHostBytes + res.RequiredVolumeBytes
 	if free := smallerFree(host, vol); free.short(res.RequiredTotalBytes) {
-		res.Problems = append(res.Problems, fmt.Sprintf(
-			"not enough free space: the dump (%s) and the new cluster (%s) are written to the same "+
-				"filesystem and exist side by side, so it needs %s free, and has %s",
-			fsutil.FormatBytes(res.RequiredHostBytes), fsutil.FormatBytes(res.RequiredVolumeBytes),
-			fsutil.FormatBytes(res.RequiredTotalBytes), fsutil.FormatBytes(free.bytes)))
+		res.Problems = append(res.Problems, msg.New("deps.msg.space.sharedShort",
+			"dump", fsutil.FormatBytes(res.RequiredHostBytes),
+			"cluster", fsutil.FormatBytes(res.RequiredVolumeBytes),
+			"need", fsutil.FormatBytes(res.RequiredTotalBytes),
+			"free", fsutil.FormatBytes(free.bytes)))
 	}
 }
 
@@ -283,20 +290,21 @@ func (res *PreflightResult) copySpace(ctx context.Context, env Env, volume strin
 	res.SpaceChecked = true
 	size, err := env.VolumeSize(ctx, volume)
 	if err != nil {
-		res.Problems = append(res.Problems, fmt.Sprintf("cannot measure volume %s: %v", volume, err))
+		res.Problems = append(res.Problems,
+			msg.New("deps.msg.space.cannotMeasureVolume", "volume", volume, "error", err.Error()))
 	}
 	res.DataSizeBytes = size
 	res.RequiredVolumeBytes = size + SpaceMargin
 	free, verr := env.VolumeFreeBytes(ctx, volume)
 	if verr != nil {
-		res.Problems = append(res.Problems, "cannot measure free space on the volume filesystem: "+verr.Error())
+		res.Problems = append(res.Problems,
+			msg.New("deps.msg.space.cannotMeasureVolumeFree", "error", verr.Error()))
 		return
 	}
 	res.FreeVolumeBytes = free
 	if free < res.RequiredVolumeBytes {
-		res.Problems = append(res.Problems, fmt.Sprintf(
-			"not enough free space on the volume filesystem for a copy of the data: need %s, free %s",
-			fsutil.FormatBytes(res.RequiredVolumeBytes), fsutil.FormatBytes(free)))
+		res.Problems = append(res.Problems, msg.New("deps.msg.space.copyShort",
+			"need", fsutil.FormatBytes(res.RequiredVolumeBytes), "free", fsutil.FormatBytes(free)))
 	}
 }
 
@@ -312,9 +320,8 @@ func (res *PreflightResult) copySpace(ctx context.Context, env Env, volume strin
 func (res *PreflightResult) dumpSharesTheVolumesFilesystem(ctx context.Context, env Env, volume string) bool {
 	shared, err := env.DumpSharesFilesystemWithVolumes(ctx, volume)
 	if err != nil {
-		res.Warnings = append(res.Warnings, fmt.Sprintf(
-			"cannot tell whether the dump and the data volumes are on the same filesystem (%v); "+
-				"requiring room for both at once", err))
+		res.Warnings = append(res.Warnings,
+			msg.New("deps.msg.space.sharedUnknown", "error", err.Error()))
 		return true
 	}
 	return shared
@@ -352,12 +359,14 @@ func smallerFree(a, b freeSpace) freeSpace {
 // half unknown rather than zero.
 func (res *PreflightResult) measureFree(ctx context.Context, env Env, volume string) (host, vol freeSpace) {
 	if free, err := env.HostFreeBytes(); err != nil {
-		res.Problems = append(res.Problems, "cannot measure free space on the host: "+err.Error())
+		res.Problems = append(res.Problems,
+			msg.New("deps.msg.space.cannotMeasureHostFree", "error", err.Error()))
 	} else {
 		res.FreeHostBytes, host = free, freeSpace{bytes: free, ok: true}
 	}
 	if free, err := env.VolumeFreeBytes(ctx, volume); err != nil {
-		res.Problems = append(res.Problems, "cannot measure free space on the volume filesystem: "+err.Error())
+		res.Problems = append(res.Problems,
+			msg.New("deps.msg.space.cannotMeasureVolumeFree", "error", err.Error()))
 	} else {
 		res.FreeVolumeBytes, vol = free, freeSpace{bytes: free, ok: true}
 	}
@@ -375,13 +384,13 @@ func (res *PreflightResult) measureFree(ctx context.Context, env Env, volume str
 func (res *PreflightResult) checkExistingTarget(ctx context.Context, env Env, volume, versionRel string) {
 	exists, err := env.VolumeExists(ctx, volume)
 	if err != nil {
-		res.Problems = append(res.Problems, fmt.Sprintf("cannot check volume %s: %v", volume, err))
+		res.Problems = append(res.Problems, VolumeCheckProblem(volume, err))
 		return
 	}
 	if !exists {
 		return
 	}
-	ev := ExistingVolume{Name: volume}
+	ev := api.ExistingVolume{Name: volume}
 	ev.SizeBytes, _ = env.VolumeSize(ctx, volume)
 	if versionRel != "" {
 		ev.Version = "empty"

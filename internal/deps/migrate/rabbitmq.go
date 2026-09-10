@@ -6,6 +6,8 @@ import (
 
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/deps"
+
+	"github.com/citeck/citeck-launcher/internal/msg"
 )
 
 // RabbitMigrator moves a namespace's RabbitMQ data onto a new release series
@@ -51,18 +53,18 @@ const (
 // with an EMPTY reason, which is the contract the shared preflight relies on:
 // it has already worded that case accurately, and a second sentence here would
 // overwrite it.
-func (RabbitMigrator) SupportsPair(from, to deps.Version) (ok bool, problem string) {
+func (RabbitMigrator) SupportsPair(from, to deps.Version) (ok bool, problem msg.Message) {
 	d, found := deps.Lookup(deps.RabbitMQ)
 	if !found { // unreachable: RabbitMQ is in the fixed registry
-		return false, ""
+		return false, msg.Message{}
 	}
 	if support := d.UpgradeSupport(from, to); support.Allowed {
-		return true, ""
+		return true, msg.Message{}
 	} else if support.Via != "" {
 		return false, VendorPathProblem(string(deps.RabbitMQ), from.String(), to.String(), support.Via)
 	}
 	if deps.MovesBackwards(from, to) {
-		return false, ""
+		return false, msg.Message{}
 	}
 	return false, VendorNoPathProblem(string(deps.RabbitMQ), from.String(), to.String())
 }
@@ -86,7 +88,7 @@ func (m RabbitMigrator) Plan(ctx context.Context, env Env, from, to string, opts
 	pre := m.Preflight(ctx, env, from, to)
 	d, found := deps.Lookup(deps.RabbitMQ)
 	if !found { // unreachable: RabbitMQ is in the fixed registry
-		return nil, deps.MigrationJournal{}, fmt.Errorf("%s is not a registered dependency", deps.RabbitMQ)
+		return nil, deps.MigrationJournal{}, refusePlan(NotRegisteredProblem(deps.RabbitMQ))
 	}
 	toV, _ := d.ParseVersion(to)
 	return BuildCopyUpgrade(env, rabbitCopySpec(toV), from, to, opts, pre)
@@ -133,7 +135,7 @@ func rabbitCopySpec(toV deps.Version) CopySpec {
 // but it makes the failure look like it did something).
 func rabbitPreUpgrade(ctx context.Context, env Env, container string, toV deps.Version) error {
 	if atLeastSeries(toV, deprecatedRemovedMajor, deprecatedRemovedMinor) {
-		if err := rabbitDeprecatedFeaturesInUse(ctx, env, container, toV); err != nil {
+		if _, err := rabbitDeprecatedFeaturesInUse(ctx, env, container, toV); err != nil {
 			return err
 		}
 	}
@@ -164,19 +166,30 @@ func enableAllFeatureFlags(ctx context.Context, env Env, container string) error
 // rabbitDeprecatedFeaturesInUse asks the broker in container whether it still
 // uses a feature the target series removes. A non-zero exit means it does, and
 // the output names which.
-func rabbitDeprecatedFeaturesInUse(ctx context.Context, env Env, container string, toV deps.Version) error {
-	stdout, stderr, code, err := env.Exec(ctx, container,
+//
+// It answers BOTH audiences from one call, because it serves two callers with
+// different readers: inUse is the OPERATOR's sentence (empty when the broker
+// is clean), and err is what the step path wraps and what ends up in the
+// persisted MigrationResult.Error — English, like every other log and stored
+// verdict. The English in deprecatedInUseFormat is therefore not a second copy
+// of the locale value maintained by hand; it is the log's spelling of a
+// sentence whose operator-facing text lives in the locale files.
+func rabbitDeprecatedFeaturesInUse(ctx context.Context, env Env, container string, toV deps.Version) (inUse msg.Message, err error) {
+	stdout, stderr, code, execErr := env.Exec(ctx, container,
 		[]string{"rabbitmq-diagnostics", "-q", "check_if_any_deprecated_features_are_used"})
-	if err != nil {
-		return fmt.Errorf("check_if_any_deprecated_features_are_used in %s: %w", container, err)
+	if execErr != nil {
+		return msg.Message{}, fmt.Errorf("check_if_any_deprecated_features_are_used in %s: %w", container, execErr)
 	}
 	if code != 0 {
-		return fmt.Errorf(
-			"RabbitMQ still uses deprecated features, and %s removes them: %s",
-			toV.String(), tail(stderr+"\n"+stdout))
+		out := tail(stderr + "\n" + stdout)
+		return msg.New("deps.msg.rabbit.deprecatedInUse", "version", toV.String(), "output", out),
+			fmt.Errorf(deprecatedInUseFormat, toV.String(), out)
 	}
-	return nil
+	return msg.Message{}, nil
 }
+
+// deprecatedInUseFormat is the LOG/verdict spelling of deps.msg.rabbit.deprecatedInUse.
+const deprecatedInUseFormat = "RabbitMQ still uses deprecated features, and %s removes them: %s"
 
 // checkRabbitDeprecatedFeatures is the preflight half of the same question.
 //
@@ -192,17 +205,28 @@ func (res *PreflightResult) checkRabbitDeprecatedFeatures(ctx context.Context, e
 	}
 	running, err := env.ContainerRunning(ctx, appdef.AppRabbitmq)
 	if err != nil || !running {
-		reason := "the namespace is not running"
+		// TWO keys rather than one with a {reason} slot: "the namespace is not
+		// running" is a clause, and a clause interpolated into another
+		// sentence is the shape no translator can reorder. The error arm keeps
+		// its {error} param — that one really is a value, not a phrase.
 		if err != nil {
-			reason = err.Error()
+			res.Warnings = append(res.Warnings,
+				msg.New("deps.msg.rabbit.deprecatedCheckDeferredError", "error", err.Error()))
+		} else {
+			res.Warnings = append(res.Warnings, msg.New("deps.msg.rabbit.deprecatedCheckDeferredStopped"))
 		}
-		res.Warnings = append(res.Warnings, fmt.Sprintf(
-			"cannot check yet whether deprecated features are in use (%s); "+
-				"it is checked on the copy before the upgrade, and a failure there costs only the copy", reason))
 		return
 	}
-	if derr := rabbitDeprecatedFeaturesInUse(ctx, env, appdef.AppRabbitmq, toV); derr != nil {
-		res.Problems = append(res.Problems, derr.Error())
+	inUse, derr := rabbitDeprecatedFeaturesInUse(ctx, env, appdef.AppRabbitmq, toV)
+	switch {
+	case !inUse.Empty():
+		res.Problems = append(res.Problems, inUse)
+	case derr != nil:
+		// The diagnostic itself could not run. That is not "the features are
+		// in use" and must not be worded as it — it is a check that failed,
+		// and the operator needs to know the question was never answered.
+		res.Problems = append(res.Problems,
+			msg.New("deps.msg.rabbit.deprecatedCheckFailed", "error", derr.Error()))
 	}
 }
 

@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 
 	"github.com/citeck/citeck-launcher/internal/api"
@@ -10,6 +9,8 @@ import (
 	"github.com/citeck/citeck-launcher/internal/deps"
 	"github.com/citeck/citeck-launcher/internal/deps/migrate"
 	"github.com/citeck/citeck-launcher/internal/namespace"
+
+	"github.com/citeck/citeck-launcher/internal/msg"
 )
 
 // dependencyEditLocked reports whether an app-config edit would move a
@@ -171,38 +172,48 @@ type dependencyEditRefusal struct {
 // message is what the operator reads. It has four forms, and each is true of
 // exactly one of them.
 //
+// It answers a LIST of sentences rather than one string, and that is the whole
+// difference from the version before it: the two BACKWARDS forms end in a way
+// back, which is a second, independent statement — whether there is a retained
+// volume, and which — established by the CALLER (dependencyEditWayBack). Glued
+// on with an em dash it was one English sentence with a clause of unknown
+// content in the middle, which is the one shape a translator cannot rearrange.
+// Two whole sentences, joined by the renderer, each translatable on its own.
+//
 // The two BACKWARDS forms do not name `citeck deps upgrade`: that command
 // refuses a backwards pair (DEPENDENCY_BACKWARDS), so the message would end a
-// dead end of exactly the class this codebase keeps closing. The one deliberate
-// way back is the rollback onto the volume the migration retained, and rollback
-// names a volume that may or may not still be there — so that half of the
-// sentence is a fact the CALLER establishes (dependencyEditWayBack) and this
-// one only words.
+// dead end of exactly the class this codebase keeps closing.
 //
 // The FLOOR form names no way back at all, deliberately: it is not a direction
 // problem. An unsupported version is unsupported from either side, so offering
 // a rollback onto it — or a migration to it — would be offering the thing that
 // was just refused.
-func (r dependencyEditRefusal) message(rollback *api.DependencyRollbackDto) string {
+func (r dependencyEditRefusal) message(rollback *api.DependencyRollbackDto) []msg.Message {
 	switch {
 	case r.reason == editReasonBelowFloor:
 		offered, _ := r.desc.ParseVersion(r.wanted)
-		return fmt.Sprintf("%s cannot be set to %s: %s is older than %s, the oldest version of %s "+
-			"this launcher supports", r.app, r.wanted, offered, r.desc.SupportFloor(), r.desc.ID())
+		return []msg.Message{msg.New("deps.msg.edit.belowFloor",
+			"app", r.app, "image", r.wanted, "version", offered.String(),
+			"floor", r.desc.SupportFloor().String(), "id", string(r.desc.ID()))}
 	case r.reason == editReasonBackwards && r.breaking:
-		return fmt.Sprintf("%s runs on %s; %s is older and cannot read that data, and editing the "+
-			"image moves no data at all — %s", r.app, r.pinned, r.wanted, r.wayBack(rollback))
+		return []msg.Message{
+			msg.New("deps.msg.edit.backwardsBreaking",
+				"app", r.app, "pinned", r.pinned, "wanted", r.wanted),
+			r.wayBack(rollback),
+		}
 	case r.reason == editReasonBackwards:
 		// NOT "cannot read that data": an older patch of the same series reads
 		// it perfectly well, and a message that says otherwise teaches the
 		// operator something false about their own stand. What is true is the
 		// rule itself.
-		return fmt.Sprintf("%s runs on %s; %s is older, and the launcher does not move a dependency "+
-			"backwards on data that exists — %s", r.app, r.pinned, r.wanted, r.wayBack(rollback))
+		return []msg.Message{
+			msg.New("deps.msg.edit.backwards",
+				"app", r.app, "pinned", r.pinned, "wanted", r.wanted),
+			r.wayBack(rollback),
+		}
 	}
-	return fmt.Sprintf("%s runs on %s; moving its data to %s is a version migration — "+
-		"run `citeck deps upgrade %s` (or use the Dependencies dialog) instead of editing the image",
-		r.app, r.pinned, r.wanted, r.desc.ID())
+	return []msg.Message{msg.New("deps.msg.edit.breakingForward",
+		"app", r.app, "pinned", r.pinned, "wanted", r.wanted, "id", string(r.desc.ID()))}
 }
 
 // wayBack turns the rollback offer into the second half of the backwards
@@ -220,19 +231,22 @@ func (r dependencyEditRefusal) message(rollback *api.DependencyRollbackDto) stri
 // about nothing. Comparing against that constructor rather than re-spelling
 // the sentence is also what keeps the three surfaces that print it — this one,
 // the dependency list and the rollback preflight — from drifting apart.
-func (r dependencyEditRefusal) wayBack(offer *api.DependencyRollbackDto) string {
+func (r dependencyEditRefusal) wayBack(offer *api.DependencyRollbackDto) msg.Message {
 	id := r.desc.ID()
 	switch {
 	case offer == nil:
-		return "this namespace has no retained volume from an older version, so there is nothing to go back to"
+		return msg.New("deps.msg.edit.wayBackNone")
 	case offer.Available:
-		return fmt.Sprintf("the way back is `citeck deps rollback %s`, which puts the namespace on "+
-			"volume %s, the data as it was when the migration finished", id, offer.Volume)
-	case offer.Problem == migrate.RetainedVolumeGoneProblem(id, offer.Volume, offer.ToImage):
-		return offer.Problem
+		return msg.New("deps.msg.edit.wayBackRollback", "id", string(id), "volume", offer.Volume)
+	case offer.ProblemMsg.Key == migrate.RetainedVolumeGoneProblem(id, offer.Volume, offer.ToImage).Key:
+		// The KEY, not the rendered prose: by the time this runs the offer may
+		// already have been rendered in any of eight languages, and comparing
+		// sentences would silently start failing in seven of them. Comparing
+		// against the constructor rather than re-spelling the key is what keeps
+		// the three surfaces that print it from drifting apart.
+		return offer.ProblemMsg
 	default:
-		return fmt.Sprintf("`citeck deps rollback %s` puts the namespace back on the volume its "+
-			"migration retained, if it made one", id)
+		return msg.New("deps.msg.edit.wayBackHedged", "id", string(id))
 	}
 }
 

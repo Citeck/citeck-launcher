@@ -1,6 +1,10 @@
 package deps
 
-import "time"
+import (
+	"time"
+
+	"github.com/citeck/citeck-launcher/internal/msg"
+)
 
 // DependencyState is the per-dependency pin: the image the namespace's data
 // last ran on successfully, and which GENERATION of the data volume that image
@@ -143,8 +147,24 @@ type MigrationResult struct {
 	From       string    `json:"from"`
 	To         string    `json:"to"`
 	FinishedAt time.Time `json:"finishedAt"`
-	// Error is empty on success.
+	// Error is empty on success. It stays ENGLISH, always: it is written into
+	// the namespace's state and read back later — possibly by a different
+	// launcher, in a different release, with a different locale configured —
+	// and it is what the slog lines and OK() are built on.
 	Error string `json:"error,omitempty"`
+	// ErrorMsg is the same verdict as DATA, for the verdicts the launcher
+	// itself words (an interrupted migration, and its rollback). It is what the
+	// dependency list renders in the reader's language; when it is Empty the
+	// renderer falls back to Error, which is what every result persisted by an
+	// older launcher carries and what a raw step failure — a docker error, a
+	// psql stderr — legitimately has instead of a sentence.
+	//
+	// `omitzero`, not `omitempty`: omitempty has no effect on a struct field,
+	// so every result ever persisted would carry `"errorMsg":{"Key":""}` —
+	// noise in a state file a future reader has to learn to ignore. A zero
+	// Message means "no structured verdict", which is exactly what omitzero
+	// exists to leave out.
+	ErrorMsg msg.Message `json:"errorMsg,omitzero"`
 	// OldVolume names the volume the previous data was left in (success only).
 	OldVolume string `json:"oldVolume,omitempty"`
 	// Kind discriminates a rollback from a migration — the two share the ONE

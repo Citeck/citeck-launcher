@@ -4,6 +4,8 @@ import (
 	"context"
 
 	"github.com/citeck/citeck-launcher/internal/deps"
+
+	"github.com/citeck/citeck-launcher/internal/msg"
 )
 
 // Migrator is one dependency's migration plan, as the daemon sees it.
@@ -19,12 +21,12 @@ type Migrator interface {
 	// one version to the other, and — when it cannot — the operator-facing
 	// reason.
 	//
-	// An empty problem with ok == false means "refused for a reason the
+	// A problem that is Empty() with ok == false means "refused for a reason the
 	// PREFLIGHT words better": a downgrade, an unparsable tag. That is not a
 	// nicety. It is what keeps "the launcher does not migrate data backwards"
 	// reachable instead of being overwritten by "update the launcher", which
 	// is the wrong advice for a policy that will never change.
-	SupportsPair(from, to deps.Version) (ok bool, problem string)
+	SupportsPair(from, to deps.Version) (ok bool, problem msg.Message)
 	// Preflight measures and reports everything that would refuse or endanger
 	// the migration, without touching the data.
 	Preflight(ctx context.Context, env Env, from, to string) PreflightResult

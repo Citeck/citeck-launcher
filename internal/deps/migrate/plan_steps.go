@@ -3,6 +3,8 @@ package migrate
 import (
 	"context"
 	"fmt"
+
+	"github.com/citeck/citeck-launcher/internal/msg"
 )
 
 // The steps both migration plans share, in one place.
@@ -31,7 +33,9 @@ func stopNamespaceStep(ctx context.Context, env Env) error {
 // so a registry that cannot be reached costs a stopped namespace and nothing
 // else.
 func pullImageStep(ctx context.Context, env Env, image string, p StepProgress) error {
-	if err := env.PullImage(ctx, image, func(pct float64) { p(pct, "pulling "+image) }); err != nil {
+	if err := env.PullImage(ctx, image, func(pct float64) {
+		p(pct, msg.New("deps.msg.progress.pulling", "image", image))
+	}); err != nil {
 		return fmt.Errorf("pull %s: %w", image, err)
 	}
 	return nil

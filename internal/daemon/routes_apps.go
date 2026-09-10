@@ -221,7 +221,7 @@ func (d *Daemon) handleAppRestart(w http.ResponseWriter, r *http.Request) {
 	// ungated before this feature, and refusing it beside a reload or an update
 	// pass would be a new dead end. Only a snapshot or a migration, which own
 	// the namespace's data, refuse it.
-	release, ok := d.tryLongOp(w, tolerateLifecycleWork)
+	release, ok := d.tryLongOp(w, r, tolerateLifecycleWork)
 	if !ok {
 		return
 	}
@@ -233,7 +233,7 @@ func (d *Daemon) handleAppRestart(w http.ResponseWriter, r *http.Request) {
 	// the app table) would start the namespace's postgres on that same PGDATA.
 	// The long-op lock is gone by then — the failed migration's goroutine has
 	// returned — so the journal is the only thing that still knows.
-	if pending := d.rollbackBlocker(d.active()); pending != "" {
+	if pending := d.rollbackBlocker(d.translatorFor(r), d.active()); pending != "" {
 		writeErrorCode(w, http.StatusConflict, api.ErrCodeDependencyMigrationInProgress, pending)
 		return
 	}
@@ -265,7 +265,7 @@ func (d *Daemon) handleAppStop(w http.ResponseWriter, r *http.Request) {
 	// documented memory-relief recipe — `citeck stop onlyoffice attorneys ecom
 	// …` — would 409 on every app after the first. Only a snapshot or a
 	// migration, which own the namespace's data, refuse a per-app toggle.
-	release, ok := d.tryLongOp(w, tolerateLifecycleWork)
+	release, ok := d.tryLongOp(w, r, tolerateLifecycleWork)
 	if !ok {
 		return
 	}
@@ -309,7 +309,7 @@ func (d *Daemon) handleAppStart(w http.ResponseWriter, r *http.Request) {
 	// documented memory-relief recipe — `citeck stop onlyoffice attorneys ecom
 	// …` — would 409 on every app after the first. Only a snapshot or a
 	// migration, which own the namespace's data, refuse a per-app toggle.
-	release, ok := d.tryLongOp(w, tolerateLifecycleWork)
+	release, ok := d.tryLongOp(w, r, tolerateLifecycleWork)
 	if !ok {
 		return
 	}
@@ -321,7 +321,7 @@ func (d *Daemon) handleAppStart(w http.ResponseWriter, r *http.Request) {
 	// the app table) would start the namespace's postgres on that same PGDATA.
 	// The long-op lock is gone by then — the failed migration's goroutine has
 	// returned — so the journal is the only thing that still knows.
-	if pending := d.rollbackBlocker(d.active()); pending != "" {
+	if pending := d.rollbackBlocker(d.translatorFor(r), d.active()); pending != "" {
 		writeErrorCode(w, http.StatusConflict, api.ErrCodeDependencyMigrationInProgress, pending)
 		return
 	}
@@ -564,7 +564,7 @@ func (d *Daemon) handlePutAppConfig(w http.ResponseWriter, r *http.Request) {
 	if !validateAppName(w, name) {
 		return
 	}
-	release, ok := d.tryLongOp(w, tolerateNothing)
+	release, ok := d.tryLongOp(w, r, tolerateNothing)
 	if !ok {
 		return
 	}
@@ -628,8 +628,11 @@ func (d *Daemon) handlePutAppConfig(w http.ResponseWriter, r *http.Request) {
 			pinMove = d.dependencyEditPinFollows(r.Context(), rt, refusal)
 		}
 		if pinMove == nil {
+			// Two sentences joined by a space, not one built from halves: see
+			// dependencyEditRefusal.message.
 			writeErrorCode(w, http.StatusBadRequest, api.ErrCodeDependencyVersionLocked,
-				refusal.message(d.dependencyEditWayBack(r.Context(), refusal)))
+				strings.Join(d.translatorFor(r).RenderAll(
+					refusal.message(d.dependencyEditWayBack(r.Context(), refusal))), " "))
 			return
 		}
 	}
@@ -706,7 +709,7 @@ func (d *Daemon) handleResetAppConfig(w http.ResponseWriter, r *http.Request) {
 	if !validateAppName(w, name) {
 		return
 	}
-	release, ok := d.tryLongOp(w, tolerateNothing)
+	release, ok := d.tryLongOp(w, r, tolerateNothing)
 	if !ok {
 		return
 	}
@@ -876,7 +879,7 @@ func (d *Daemon) handlePutAppFile(w http.ResponseWriter, r *http.Request) {
 	if !validateAppName(w, name) {
 		return
 	}
-	release, ok := d.tryLongOp(w, tolerateNothing)
+	release, ok := d.tryLongOp(w, r, tolerateNothing)
 	if !ok {
 		return
 	}
@@ -944,7 +947,7 @@ func (d *Daemon) handleResetAppFile(w http.ResponseWriter, r *http.Request) {
 	if !validateAppName(w, name) {
 		return
 	}
-	release, ok := d.tryLongOp(w, tolerateNothing)
+	release, ok := d.tryLongOp(w, r, tolerateNothing)
 	if !ok {
 		return
 	}

@@ -112,7 +112,7 @@ func (d *Daemon) handleExportSnapshot(w http.ResponseWriter, r *http.Request) {
 		// for a snapshot nobody took. Same sentence as every other long-op
 		// refusal, tail included.
 		writeErrorCode(w, http.StatusConflict, api.ErrCodeSnapshotInProgress,
-			d.longOp.Holder().busyMessage()+" — wait for it to finish")
+			d.translatorFor(r).Render(d.longOp.Holder().busyMessage()))
 		return
 	}
 	// Validation + capture from ONE snapshot: the background export keeps
@@ -261,7 +261,7 @@ func (d *Daemon) handleImportSnapshot(w http.ResponseWriter, r *http.Request) {
 		// for a snapshot nobody took. Same sentence as every other long-op
 		// refusal, tail included.
 		writeErrorCode(w, http.StatusConflict, api.ErrCodeSnapshotInProgress,
-			d.longOp.Holder().busyMessage()+" — wait for it to finish")
+			d.translatorFor(r).Render(d.longOp.Holder().busyMessage()))
 		return
 	}
 	// Validation + capture from ONE snapshot: the background import keeps

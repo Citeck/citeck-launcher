@@ -84,6 +84,25 @@ export const useI18nStore = create<I18nState>((set, get) => ({
   },
 }))
 
+/**
+ * The locale this UI is currently showing, for a caller that needs the CODE
+ * rather than a translation.
+ *
+ * There is exactly one such caller family: the two transports (api.ts and
+ * websocket.ts), which tell the daemon which language to word its own
+ * sentences in. The daemon builds an operator-facing sentence as a key plus
+ * arguments and renders it at the request boundary, so a request that states
+ * no locale is answered in the daemon's configured one — which on a desktop is
+ * whatever daemon.yml says, not what the user picked in this window.
+ *
+ * It reads the store imperatively on purpose: a transport is not a component,
+ * it has no render to subscribe to, and it must pick up a language change on
+ * the very next request rather than on the next mount.
+ */
+export function currentLocale(): Locale {
+  return useI18nStore.getState().locale
+}
+
 function translate(translations: Translations, key: LocaleKey, params?: Record<string, string | number>): string {
   // Indexed as a partial record: tDynamic() funnels runtime-assembled keys
   // through here, and those may be absent — fall back to en, then to the

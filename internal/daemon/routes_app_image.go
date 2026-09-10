@@ -151,7 +151,7 @@ func (d *Daemon) handleAppImagePull(w http.ResponseWriter, r *http.Request) {
 func (d *Daemon) reloadAfterImagePull(ref string) {
 	if !d.longOp.TryLock(longOpUpdatePass) {
 		//nolint:gosec // G706: the message is a constant plus busyMessage()'s fixed vocabulary
-		slog.Warn("Reload after image pull skipped: "+d.longOp.Holder().busyMessage()+
+		slog.Warn("Reload after image pull skipped: "+d.longOp.Holder().busyEnglish()+
 			"; the new image is picked up by the next reload or start", "image", ref)
 		return
 	}

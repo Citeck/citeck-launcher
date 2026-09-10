@@ -208,3 +208,23 @@ func AppStop(name string) string {
 func AppStart(name string) string {
 	return fmt.Sprintf("%s/%s/start", Apps, name)
 }
+
+// LocaleHeader is how a client states which language it wants its sentences
+// in, and LocaleQueryParam is the same thing for a transport that cannot carry
+// a header (EventSource has no way to set one, and the SSE stream carries the
+// per-step migration messages).
+//
+// They live HERE rather than beside the daemon's translatorFor because both
+// sides of the wire need the spelling: the daemon reads them, and
+// internal/client writes them. A second literal in the client is exactly how
+// "the CLI stopped being translated" becomes a silent regression — nothing
+// fails when a header nobody recognizes is sent.
+//
+// Deliberately not Accept-Language: the browser sends that one on its own with
+// the OS language, which is NOT the language the operator picked in the
+// launcher (the web UI keeps that in localStorage). Honoring it would answer a
+// question nobody asked, and would do it silently.
+const (
+	LocaleHeader     = "X-Citeck-Locale"
+	LocaleQueryParam = "locale"
+)

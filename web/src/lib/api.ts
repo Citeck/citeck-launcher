@@ -30,10 +30,24 @@ import type {
   PreflightResult,
 } from './types'
 import { notifyAuthRequired } from './authGate'
+import { currentLocale } from './i18n'
 
 export const API_BASE = '/api/v1'
 
 const CSRF_HEADER = { 'X-Citeck-CSRF': '1' }
+
+/**
+ * Tells the daemon which language to word its own sentences in.
+ *
+ * The daemon builds every operator-facing sentence it composes itself (the
+ * migration preflights, the dependency edit gate, the long-operation
+ * refusals) as a locale key plus arguments, and renders it at the request
+ * boundary. Without this header it renders in whatever daemon.yml configured,
+ * which on a desktop is not the language of this window. Deliberately not
+ * Accept-Language: that one carries the OS language, which is not what the
+ * user picked here.
+ */
+const LOCALE_HEADER = 'X-Citeck-Locale'
 
 /**
  * Timeout for the two dependency endpoints that size a Docker volume before
@@ -118,7 +132,7 @@ interface RequestOpts {
  * pick json()/text()/blob().
  */
 async function rawRequest(method: HttpMethod, path: string, opts: RequestOpts = {}): Promise<Response> {
-  const headers: Record<string, string> = {}
+  const headers: Record<string, string> = { [LOCALE_HEADER]: currentLocale() }
   if (method === 'GET') headers.Accept = 'application/json'
   else Object.assign(headers, CSRF_HEADER)
   let body: BodyInit | undefined

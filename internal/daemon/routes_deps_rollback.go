@@ -5,13 +5,15 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/citeck/citeck-launcher/internal/api"
 	"github.com/citeck/citeck-launcher/internal/deps"
 	"github.com/citeck/citeck-launcher/internal/deps/migrate"
 	"github.com/citeck/citeck-launcher/internal/namespace"
+
+	"github.com/citeck/citeck-launcher/internal/i18n"
+	"github.com/citeck/citeck-launcher/internal/msg"
 )
 
 // The dependency ROLLBACK: put one dependency back on the image AND the volume
@@ -52,10 +54,11 @@ import (
 //
 // It reads the RUNTIME rather than the Env: the runtime is the authority on
 // what this namespace runs, and the Env's copy is a view of it.
-func (d *Daemon) rollbackTarget(w http.ResponseWriter, act activeNamespace, id string) (cur, prev deps.DependencyState, ok bool) {
+func (d *Daemon) rollbackTarget(w http.ResponseWriter, t *i18n.Translator, act activeNamespace, id string) (cur, prev deps.DependencyState, ok bool) {
 	desc, found := deps.Lookup(deps.ID(id))
 	if !found {
-		writeErrorCode(w, http.StatusNotFound, api.ErrCodeDependencyUnknown, fmt.Sprintf("unknown dependency %q", id))
+		writeErrorCode(w, http.StatusNotFound, api.ErrCodeDependencyUnknown,
+			t.T("deps.msg.route.unknownDependency", "id", id))
 		return cur, prev, false
 	}
 	if act.runtime == nil {
@@ -69,7 +72,7 @@ func (d *Daemon) rollbackTarget(w http.ResponseWriter, act activeNamespace, id s
 		// every namespace that has already rolled back — a rollback withdraws
 		// its own offer, because there is no roll-forward.
 		writeErrorCode(w, http.StatusConflict, api.ErrCodeDependencyNoRollbackTarget,
-			fmt.Sprintf("%s has no recorded previous version to roll back to", id))
+			t.Render(migrate.NoRollbackTargetProblem(deps.ID(id))))
 		return cur, prev, false
 	}
 	return cur, prev, true
@@ -77,8 +80,9 @@ func (d *Daemon) rollbackTarget(w http.ResponseWriter, act activeNamespace, id s
 
 func (d *Daemon) handleDependencyRollbackPreflight(w http.ResponseWriter, r *http.Request) {
 	act := d.active()
+	t := d.translatorFor(r)
 	id := r.PathValue("id")
-	cur, prev, ok := d.rollbackTarget(w, act, id)
+	cur, prev, ok := d.rollbackTarget(w, t, act, id)
 	if !ok {
 		return
 	}
@@ -88,8 +92,8 @@ func (d *Daemon) handleDependencyRollbackPreflight(w http.ResponseWriter, r *htt
 	// also the three the preflight itself cannot answer — an open journal,
 	// another long operation and a namespace mid-transition are daemon facts,
 	// not Docker ones.
-	if problems := d.preMigrationProblems(act, "rolling it back"); len(problems) > 0 {
-		writeJSON(w, migrate.RefusedPreflight(cur.Image, prev.Image, problems...))
+	if problems := d.preMigrationProblems(t, act, settleBeforeRollingBack); len(problems) > 0 {
+		writeJSON(w, renderPreflight(t, migrate.RefusedPreflight(cur.Image, prev.Image, problems...)))
 		return
 	}
 	if act.dockerClient == nil {
@@ -100,18 +104,19 @@ func (d *Daemon) handleDependencyRollbackPreflight(w http.ResponseWriter, r *htt
 	// on a desktop is a utils container — the same reason the migration
 	// preflight lifts the deadline.
 	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
-	writeJSON(w, migrate.RollbackPreflight(r.Context(), d.depsEnvFor(act), deps.ID(id), prev))
+	writeJSON(w, renderPreflight(t, migrate.RollbackPreflight(r.Context(), d.depsEnvFor(act), deps.ID(id), prev)))
 }
 
 func (d *Daemon) handleDependencyRollback(w http.ResponseWriter, r *http.Request) {
 	act := d.active()
+	t := d.translatorFor(r)
 	id := deps.ID(r.PathValue("id"))
-	cur, prev, ok := d.rollbackTarget(w, act, string(id))
+	cur, prev, ok := d.rollbackTarget(w, t, act, string(id))
 	if !ok {
 		return
 	}
 	nsID := namespaceIDOf(act)
-	if blocked := d.journalBlocker(act); blocked != "" {
+	if blocked := d.journalBlocker(t, act); blocked != "" {
 		writeErrorCode(w, http.StatusConflict, api.ErrCodeDependencyMigrationInProgress, blocked)
 		return
 	}
@@ -120,12 +125,12 @@ func (d *Daemon) handleDependencyRollback(w http.ResponseWriter, r *http.Request
 	// first rather than have the rollback burn its stop timeout.
 	if st := act.runtime.Status(); !migratableNsStatus(st) {
 		writeErrorCode(w, http.StatusConflict, api.ErrCodeDependencyNamespaceBusy,
-			fmt.Sprintf("the namespace is %s — start or stop it before rolling %s back", st, id))
+			t.T("deps.msg.ns.settleBeforeRollingBackDep", "status", string(st), "id", string(id)))
 		return
 	}
 	if !d.longOp.TryLock(longOpDepsRollback) {
 		writeErrorCode(w, http.StatusConflict, api.ErrCodeLongOpInProgress,
-			d.longOp.Holder().busyMessage()+" — wait for it to finish")
+			t.Render(d.longOp.Holder().busyMessage()))
 		return
 	}
 	if act.dockerClient == nil {
@@ -144,7 +149,7 @@ func (d *Daemon) handleDependencyRollback(w http.ResponseWriter, r *http.Request
 		ID: string(id), Step: api.DependencyMigrationStepPreparing,
 	})
 	d.broadcastEvent(depsEvent(api.EventDepsMigrationProgress, nsID, id,
-		api.DependencyMigrationStepPreparing, 0, 0, 0, fmt.Sprintf("%s → %s", cur.Image, prev.Image)))
+		api.DependencyMigrationStepPreparing, 0, 0, 0, versionPairMessage(cur.Image, prev.Image)))
 	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
 	// The preflight runs on the REQUEST's context: it only probes, and a client
 	// that gave up should not leave it running. Everything after the 202 runs
@@ -155,7 +160,7 @@ func (d *Daemon) handleDependencyRollback(w http.ResponseWriter, r *http.Request
 		d.setDepsRollback(nsID, nil)
 		d.longOp.Unlock()
 		writeErrorCode(w, http.StatusConflict, api.ErrCodeDependencyPreflightFailed,
-			strings.Join(pre.Problems, "; "))
+			renderProblems(t, pre.Problems))
 		return
 	}
 	wasRunning := pre.WasRunning
@@ -172,7 +177,7 @@ func (d *Daemon) handleDependencyRollback(w http.ResponseWriter, r *http.Request
 	w.WriteHeader(http.StatusAccepted)
 	_ = json.NewEncoder(w).Encode(api.ActionResultDto{
 		Success: true,
-		Message: fmt.Sprintf("Rollback of %s to %s started", id, prev.Image),
+		Message: t.T("deps.msg.action.rollbackStarted", "id", string(id), "image", prev.Image),
 	})
 }
 
@@ -200,23 +205,25 @@ func (d *Daemon) runRollback(run rollbackRun) {
 	ctx := d.bgCtx
 	steps := migrate.RollbackStepIDs()
 	total := len(steps)
-	progress := func(i int, msg string) {
+	progress := func(i int, m msg.Message) {
 		dto := &api.DependencyMigrationDto{
-			ID: string(run.id), Step: steps[i-1], StepIndex: i, StepCount: total, Message: msg,
+			ID: string(run.id), Step: steps[i-1], StepIndex: i, StepCount: total, MessageMsg: m,
 		}
 		d.setDepsRollback(run.nsID, dto)
 		d.broadcastEvent(depsEvent(api.EventDepsMigrationProgress, run.nsID, run.id,
-			steps[i-1], i, total, 0, msg))
+			steps[i-1], i, total, 0, m))
 	}
 	fail := func(err error) {
 		//nolint:gosec // G706: id came from deps.Lookup (a fixed registry)
 		slog.Error("Dependency rollback failed", "dependency", run.id, "err", err)
-		d.broadcastEvent(depsEvent(api.EventDepsMigrationError, run.nsID, run.id, "", 0, total, 0, err.Error()))
+		// A step's own error, already final text — see deps.msg.passthrough.
+		d.broadcastEvent(depsEvent(api.EventDepsMigrationError, run.nsID, run.id, "", 0, total, 0,
+			msg.New("deps.msg.passthrough", "text", err.Error())))
 	}
 	d.broadcastEvent(depsEvent(api.EventDepsMigrationStart, run.nsID, run.id, "", 0, total, 0,
-		fmt.Sprintf("%s → %s", run.cur.Image, run.prev.Image)))
+		versionPairMessage(run.cur.Image, run.prev.Image)))
 
-	progress(1, "")
+	progress(1, msg.Message{})
 	if err := run.env.StopNamespace(ctx); err != nil {
 		// Nothing has moved, and the namespace is wherever the failed stop left
 		// it — starting it again here would fight whatever refused to stop.
@@ -224,7 +231,7 @@ func (d *Daemon) runRollback(run rollbackRun) {
 		return
 	}
 
-	progress(2, "")
+	progress(2, msg.Message{})
 	res := deps.MigrationResult{
 		ID: run.id, From: run.cur.Image, To: run.prev.Image,
 		FinishedAt: time.Now(), Kind: deps.ResultKindRollback,
@@ -246,7 +253,7 @@ func (d *Daemon) runRollback(run rollbackRun) {
 		return
 	}
 
-	progress(3, "")
+	progress(3, msg.Message{})
 	if err := run.env.ReloadAndStart(ctx, run.wasRunning); err != nil {
 		// The pin HAS moved and the record says so, so this is a completion
 		// with a warning, not a failure to undo: pressing Start is the whole
@@ -255,14 +262,15 @@ func (d *Daemon) runRollback(run rollbackRun) {
 		slog.Warn("Dependency rollback committed but the namespace did not come back up",
 			"dependency", run.id, "err", err)
 		d.broadcastEvent(depsEvent(api.EventDepsMigrationComplete, run.nsID, run.id, "", total, total, 100,
-			fmt.Sprintf("%s rolled back to %s; %v", run.id, run.prev.Image, err)))
+			msg.New("deps.msg.event.rolledBackWithWarning",
+				"id", string(run.id), "image", run.prev.Image, "error", err.Error())))
 		return
 	}
 	//nolint:gosec // G706: id came from deps.Lookup (a fixed registry) and the images come from the pin
 	slog.Info("Dependency rollback finished", "dependency", run.id,
 		"from", run.cur.Image, "to", run.prev.Image)
 	d.broadcastEvent(depsEvent(api.EventDepsMigrationComplete, run.nsID, run.id, "", total, total, 100,
-		fmt.Sprintf("%s rolled back to %s", run.id, run.prev.Image)))
+		msg.New("deps.msg.event.rolledBack", "id", string(run.id), "image", run.prev.Image)))
 }
 
 // frozenVolumeName is the volume the namespace runs on today, "" for a
@@ -287,9 +295,9 @@ func (d *Daemon) setDepsRollback(nsID string, dto *api.DependencyMigrationDto) {
 
 // depsEvent builds one deps_migration_* event. It is shared by the migration
 // and the rollback so the two cannot describe one channel differently.
-func depsEvent(typ, nsID string, id deps.ID, phase string, cur, total int, pct float64, msg string) api.EventDto {
+func depsEvent(typ, nsID string, id deps.ID, phase string, cur, total int, pct float64, m msg.Message) api.EventDto {
 	return api.EventDto{
 		Type: typ, Timestamp: time.Now().UnixMilli(), NamespaceID: nsID,
-		AppName: string(id), Phase: phase, Current: cur, Total: total, Percent: pct, After: msg,
+		AppName: string(id), Phase: phase, Current: cur, Total: total, Percent: pct, AfterMsg: m,
 	}
 }

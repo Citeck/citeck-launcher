@@ -7,6 +7,8 @@ import (
 	"sync/atomic"
 
 	"github.com/citeck/citeck-launcher/internal/api"
+
+	"github.com/citeck/citeck-launcher/internal/msg"
 )
 
 // longOpKind names WHO holds the long-operation lock. It exists because the
@@ -57,26 +59,59 @@ const (
 	longOpRequest longOpKind = "request"
 )
 
-// busyMessage is what the operator is told when this holder refuses them.
-func (k longOpKind) busyMessage() string {
+// busyMessage is what the operator is told when this holder refuses them: the
+// whole refusal, "wait for it to finish" included.
+//
+// The advice is IN the key rather than concatenated by the caller, because
+// every one of the five HTTP refusals appended the same clause and a clause
+// glued onto a sentence in English word order is the one shape a translator
+// cannot rearrange. The two callers that want the holder WITHOUT that advice —
+// the log lines, and the update pass, whose own advice is "retry once it has
+// finished" — use busyEnglish instead; see its doc for why that one is not a
+// key.
+func (k longOpKind) busyMessage() msg.Message {
+	switch k {
+	case longOpSnapshot:
+		return msg.New("deps.msg.busy.snapshot")
+	case longOpMigration:
+		return msg.New("deps.msg.busy.migration")
+	case longOpDepsRollback:
+		// Deliberately NOT "migration": an operator told a migration is running
+		// would go looking for one, and there is none — a rollback opens no
+		// journal and appears nowhere a migration does.
+		return msg.New("deps.msg.busy.rollback")
+	case longOpUpdatePass:
+		return msg.New("deps.msg.busy.updatePass")
+	case longOpRequest:
+		return msg.New("deps.msg.busy.request")
+	default:
+		// longOpNone: the holder released between the failed TryLock and this
+		// read. Rare, and not worth a retry loop — the request is refused
+		// either way, and a vague true sentence beats a precise false one.
+		return msg.New("deps.msg.busy.other")
+	}
+}
+
+// busyEnglish names the holder for a reader who is NOT the operator of this
+// request: three slog lines, and the update pass's stored UpdateError.
+//
+// It is English by the same rule the rest of this codebase logs by, and it is
+// a separate function rather than a rendering of busyMessage because it is a
+// different sentence — a bare noun phrase, with no "wait for it to finish"
+// tail. A log line that told us to wait would be advice to nobody.
+func (k longOpKind) busyEnglish() string {
 	switch k {
 	case longOpSnapshot:
 		return "a snapshot is in progress"
 	case longOpMigration:
 		return "a dependency migration is in progress"
 	case longOpDepsRollback:
-		// Deliberately NOT "migration": an operator told a migration is running
-		// would go looking for one, and there is none — a rollback opens no
-		// journal and appears nowhere a migration does.
 		return "a dependency rollback is running"
 	case longOpUpdatePass:
 		return "an update pass is in progress"
 	case longOpRequest:
 		return "another namespace operation is in progress"
 	default:
-		// longOpNone: the holder released between the failed TryLock and this
-		// read. Rare, and not worth a retry loop — the request is refused
-		// either way, and a vague true sentence beats a precise false one.
 		return "another long operation is in progress"
 	}
 }
@@ -202,7 +237,7 @@ var (
 // handleAppStart/Stop) while still deferring the release for its early returns;
 // without idempotence that pattern is an "unlock of unlocked mutex" panic
 // waiting for the first error path to be added.
-func (d *Daemon) tryLongOp(w http.ResponseWriter, tolerate longOpTolerance) (release func(), ok bool) {
+func (d *Daemon) tryLongOp(w http.ResponseWriter, r *http.Request, tolerate longOpTolerance) (release func(), ok bool) {
 	if d.longOp.TryLock(longOpRequest) {
 		return sync.OnceFunc(d.longOp.Unlock), true
 	}
@@ -213,6 +248,6 @@ func (d *Daemon) tryLongOp(w http.ResponseWriter, tolerate longOpTolerance) (rel
 		return func() {}, true
 	}
 	writeErrorCode(w, http.StatusConflict, api.ErrCodeLongOpInProgress,
-		holder.busyMessage()+" — wait for it to finish")
+		d.translatorFor(r).Render(holder.busyMessage()))
 	return nil, false
 }

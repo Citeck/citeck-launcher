@@ -425,7 +425,7 @@ func TestEveryLocaleKeyTheDepsCommandsNameExists(t *testing.T) {
 // that carries the real requirement.
 func TestSpaceRequirementLines_SkipTheHostHalfWhenNothingIsWrittenThere(t *testing.T) {
 	depsTestSetup(t)
-	pre := migrate.NewPreflightResult("rabbitmq:4.1.8-management", "rabbitmq:4.2.9-management")
+	pre := newPreflightDto("rabbitmq:4.1.8-management", "rabbitmq:4.2.9-management")
 	pre.OK = true
 	pre.SpaceChecked = true
 	pre.DataSizeBytes = 2 << 30
@@ -444,7 +444,7 @@ func TestSpaceRequirementLines_SkipTheHostHalfWhenNothingIsWrittenThere(t *testi
 
 func TestPreflightLines(t *testing.T) {
 	depsTestSetup(t)
-	lines := strings.Join(preflightLines(&migrate.PreflightResult{
+	lines := strings.Join(preflightLines(&api.PreflightResult{
 		OK: true, From: "postgres:17.5", To: "postgres:18",
 		DataSizeBytes: 3 << 30, RequiredHostBytes: 3<<30 + 512<<20, FreeHostBytes: 50 << 30,
 		RequiredVolumeBytes: 4 << 30, FreeVolumeBytes: 40 << 30, WasRunning: true,
@@ -465,13 +465,13 @@ func TestPreflightLines(t *testing.T) {
 	assert.Contains(t, lines, "a warning")
 
 	// A stopped namespace is not told it will be stopped.
-	quiet := strings.Join(preflightLines(&migrate.PreflightResult{OK: true, From: "a", To: "b"}), "\n")
+	quiet := strings.Join(preflightLines(&api.PreflightResult{OK: true, From: "a", To: "b"}), "\n")
 	assert.NotContains(t, quiet, tHelper("deps.preflight.willStop"))
 
 	// Problems and an existing target volume are shown before anything is done.
-	bad := strings.Join(preflightLines(&migrate.PreflightResult{
+	bad := strings.Join(preflightLines(&api.PreflightResult{
 		OK: false, From: "a", To: "b", Problems: []string{"not enough space"},
-		ExistingTargetVolume: &migrate.ExistingVolume{Name: "citeck_pg18", SizeBytes: 1 << 30, Version: "18"},
+		ExistingTargetVolume: &api.ExistingVolume{Name: "citeck_pg18", SizeBytes: 1 << 30, Version: "18"},
 	}), "\n")
 	assert.Contains(t, bad, "not enough space")
 	assert.Contains(t, bad, "citeck_pg18")
@@ -485,7 +485,7 @@ func TestPreflightLines(t *testing.T) {
 // real stand showed ("Data size: 0 B", "Host (dump): need 0 B, free 0 B").
 func TestPreflightLines_UnmeasuredSizesAreNotPrinted(t *testing.T) {
 	depsTestSetup(t)
-	refused := migrate.RefusedPreflight("postgres:17.5", "postgres:18",
+	refused := refusedPreflightDto("postgres:17.5", "postgres:18",
 		"a previous migration of postgres left a rollback pending")
 	joined := strings.Join(preflightLines(&refused), "\n")
 	assert.Contains(t, joined, "rollback pending", "the reason is still the point of the block")
@@ -493,7 +493,7 @@ func TestPreflightLines_UnmeasuredSizesAreNotPrinted(t *testing.T) {
 	assert.NotContains(t, joined, tHelper("deps.preflight.data", "size", "0 B"))
 
 	// A preflight that DID run still reports every number.
-	measured := migrate.NewPreflightResult("postgres:17.5", "postgres:18")
+	measured := newPreflightDto("postgres:17.5", "postgres:18")
 	measured.OK = true
 	measured.DataSizeBytes = 2 << 30
 	measured.RequiredHostBytes = 2<<30 + migrate.SpaceMargin
@@ -733,7 +733,7 @@ func TestConfirmMigration_YesFlagAccepts(t *testing.T) {
 	flagYes = true
 	defer func() { flagYes = prev }()
 
-	assert.True(t, confirmMigration("postgres", &migrate.PreflightResult{From: "postgres:17.5", To: "postgres:18"}))
+	assert.True(t, confirmMigration("postgres", &api.PreflightResult{From: "postgres:17.5", To: "postgres:18"}))
 }
 
 func TestDepsCommandWiring(t *testing.T) {
@@ -780,7 +780,7 @@ func findSubCommand(parent *cobra.Command, name string) *cobra.Command {
 // dialog (DependenciesDialog.tsx).
 func TestPreflightLines_SharedFilesystemIsOneLineWithTheSum(t *testing.T) {
 	depsTestSetup(t)
-	shared := migrate.NewPreflightResult("postgres:17.5", "postgres:18")
+	shared := newPreflightDto("postgres:17.5", "postgres:18")
 	shared.OK = true
 	shared.DataSizeBytes = 3 << 30
 	shared.RequiredHostBytes = 3<<30 + 512<<20   // 3.5 GiB
@@ -805,7 +805,7 @@ func TestPreflightLines_SharedFilesystemIsOneLineWithTheSum(t *testing.T) {
 // that renders a failed probe as a full disk.
 func TestPreflightLines_SharedFreeSkipsAFailedMeasurement(t *testing.T) {
 	depsTestSetup(t)
-	pre := migrate.NewPreflightResult("postgres:17.5", "postgres:18")
+	pre := newPreflightDto("postgres:17.5", "postgres:18")
 	pre.RequiredHostBytes = 1 << 30
 	pre.RequiredTotalBytes = 2 << 30
 	pre.SharedFilesystem = true
@@ -829,7 +829,7 @@ func TestPreflightLines_SharedFreeSkipsAFailedMeasurement(t *testing.T) {
 // the two layouts apart.
 func TestPreflightLines_SeparateFilesystemsKeepTheTwoLines(t *testing.T) {
 	depsTestSetup(t)
-	pre := migrate.NewPreflightResult("postgres:17.5", "postgres:18")
+	pre := newPreflightDto("postgres:17.5", "postgres:18")
 	pre.RequiredHostBytes, pre.FreeHostBytes = 3<<30, 50<<30
 	pre.RequiredVolumeBytes, pre.FreeVolumeBytes = 4<<30, 40<<30
 	pre.SpaceChecked = true
@@ -848,7 +848,7 @@ type fakeDepsDaemon struct {
 	listErr      error
 	listCalls    int
 	onList       func(call int) *api.DependenciesDto
-	pre          *migrate.PreflightResult
+	pre          *api.PreflightResult
 	preErr       error
 	preCalls     int
 	migrateRes   *api.ActionResultDto
@@ -858,7 +858,7 @@ type fakeDepsDaemon struct {
 	// The rollback half is counted separately from the migration half on
 	// purpose: "a rollback is not a migration" is an assertion, and one shared
 	// counter could not make it.
-	rollbackPre      *migrate.PreflightResult
+	rollbackPre      *api.PreflightResult
 	rollbackPreErr   error
 	rollbackPreCalls int
 	rollbackRes      *api.ActionResultDto
@@ -877,7 +877,7 @@ func (f *fakeDepsDaemon) GetDependencies() (*api.DependenciesDto, error) {
 	return f.list, f.listErr
 }
 
-func (f *fakeDepsDaemon) DependencyPreflight(string) (*migrate.PreflightResult, error) {
+func (f *fakeDepsDaemon) DependencyPreflight(string) (*api.PreflightResult, error) {
 	f.preCalls++
 	return f.pre, f.preErr
 }
@@ -891,7 +891,7 @@ func (f *fakeDepsDaemon) MigrateDependency(_ string, replaceExisting bool) (*api
 	return f.migrateRes, f.migrateErr
 }
 
-func (f *fakeDepsDaemon) DependencyRollbackPreflight(string) (*migrate.PreflightResult, error) {
+func (f *fakeDepsDaemon) DependencyRollbackPreflight(string) (*api.PreflightResult, error) {
 	f.rollbackPreCalls++
 	return f.rollbackPre, f.rollbackPreErr
 }
@@ -917,8 +917,8 @@ func (f *fakeDepsDaemon) StreamEvents(context.Context) (<-chan api.EventDto, err
 
 // okPreflight is a preflight that passes, with the two names the report and
 // the confirmation quote.
-func okPreflight() *migrate.PreflightResult {
-	pre := migrate.NewPreflightResult("postgres:17.5", "postgres:18")
+func okPreflight() *api.PreflightResult {
+	pre := newPreflightDto("postgres:17.5", "postgres:18")
 	pre.OK = true
 	pre.DataSizeBytes = 1 << 30
 	pre.RequiredHostBytes = 1<<30 + migrate.SpaceMargin
@@ -934,7 +934,7 @@ func testActionOpts(detach, replaceExisting, confirm bool) depsActionOpts {
 	return depsActionOpts{
 		detach:          detach,
 		replaceExisting: replaceExisting,
-		confirm:         func(string, *migrate.PreflightResult) bool { return confirm },
+		confirm:         func(string, *api.PreflightResult) bool { return confirm },
 		follow:          depsFollow{poll: 5 * time.Millisecond, timeout: 2 * time.Second},
 	}
 }
@@ -965,7 +965,7 @@ func TestDepsUpgrade_PendingRollbackIsRefusedBeforeThePreflight(t *testing.T) {
 
 func TestDepsUpgrade_FailedPreflightStartsNothing(t *testing.T) {
 	depsTestSetup(t)
-	bad := migrate.NewPreflightResult("postgres:17.5", "postgres:18")
+	bad := newPreflightDto("postgres:17.5", "postgres:18")
 	bad.Problems = append(bad.Problems, "not enough free space")
 	f := &fakeDepsDaemon{list: &api.DependenciesDto{}, pre: &bad}
 
@@ -984,7 +984,7 @@ func TestDepsUpgrade_FailedPreflightStartsNothing(t *testing.T) {
 func TestDepsUpgrade_ExistingTargetVolumeNeedsTheFlag(t *testing.T) {
 	depsTestSetup(t)
 	pre := okPreflight()
-	pre.ExistingTargetVolume = &migrate.ExistingVolume{Name: "citeck_pg18", SizeBytes: 1 << 30, Version: "18"}
+	pre.ExistingTargetVolume = &api.ExistingVolume{Name: "citeck_pg18", SizeBytes: 1 << 30, Version: "18"}
 	f := &fakeDepsDaemon{list: &api.DependenciesDto{}, pre: pre}
 
 	rep, err := depsUpgradeSteps(f, "postgres", testActionOpts(false, false, true))
@@ -1238,7 +1238,7 @@ func TestDepsUpgrade_JSONSuppressesThePollVerdictLines(t *testing.T) {
 func TestPreflightLines_ExistingVolumeIsRenderedOnceThroughTheLocaleKey(t *testing.T) {
 	depsTestSetup(t)
 	pre := okPreflight()
-	pre.ExistingTargetVolume = &migrate.ExistingVolume{Name: "citeck_pg18", SizeBytes: 1 << 30, Version: "18"}
+	pre.ExistingTargetVolume = &api.ExistingVolume{Name: "citeck_pg18", SizeBytes: 1 << 30, Version: "18"}
 
 	joined := strings.Join(preflightLines(pre), "\n")
 	assert.Equal(t, 1, strings.Count(joined, "citeck_pg18"), "the volume is named once:\n%s", joined)

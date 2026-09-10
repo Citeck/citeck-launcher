@@ -17,6 +17,12 @@ import (
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/deps"
 	"github.com/citeck/citeck-launcher/internal/deps/migrate/migratetest"
+
+	"github.com/citeck/citeck-launcher/internal/msg"
+
+	"github.com/citeck/citeck-launcher/internal/i18n"
+
+	"github.com/citeck/citeck-launcher/internal/api"
 )
 
 const (
@@ -91,11 +97,23 @@ func TestPreflightHappyPath(t *testing.T) {
 // Problems and Warnings cross the API as arrays: the web dialog maps over both
 // without a nil guard, so a clean preflight marshaling `"problems":null` is
 // the confirm screen crashing in the ORDINARY case.
-func TestPreflightMarshalsEmptyListsNotNull(t *testing.T) {
+//
+// This half pins the PRECONDITION — a clean preflight leaves both lists
+// non-nil — because Translator.RenderAll can only preserve an empty slice it
+// is given one, and a nil here would arrive at the renderer as a nil and leave
+// it as `null`. The other half, that the rendered DTO really marshals `[]`, is
+// pinned where the rendering happens: TestRenderedPreflightMarshalsEmptyListsNotNull.
+func TestPreflightKeepsEmptyListsNonNil(t *testing.T) {
 	env := envWith17Data()
 	res := PostgresMigrator{}.Preflight(context.Background(), env, from17, to18)
 	require.True(t, res.OK, res.Problems)
-	raw, err := json.Marshal(res)
+	assert.NotNil(t, res.Problems)
+	assert.NotNil(t, res.Warnings)
+
+	// And the rendering of them, which is what reaches the wire.
+	raw, err := json.Marshal(map[string]any{
+		"problems": renderEN(res.Problems), "warnings": renderEN(res.Warnings),
+	})
 	require.NoError(t, err)
 	assert.Contains(t, string(raw), `"problems":[]`)
 	assert.Contains(t, string(raw), `"warnings":[]`)
@@ -157,10 +175,10 @@ func TestSameLayoutMajorsMigrateIntoTheNextGeneration(t *testing.T) {
 // layout-changing major needs, and SupportsPair's contract is what keeps it
 // reachable. So it is pinned directly.
 func TestUnsupportedPairProblemNamesTheOnlyLeverTheOperatorHas(t *testing.T) {
-	msg := UnsupportedPairProblem("postgres:18", "postgres:19")
-	assert.Contains(t, msg, "postgres:18")
-	assert.Contains(t, msg, "postgres:19")
-	assert.Contains(t, msg, "update the launcher")
+	sentence := oneEN(UnsupportedPairProblem("postgres:18", "postgres:19"))
+	assert.Contains(t, sentence, "postgres:18")
+	assert.Contains(t, sentence, "postgres:19")
+	assert.Contains(t, sentence, "update the launcher")
 }
 
 // SupportsPair is the migrator's own precondition, and with the generation
@@ -197,40 +215,40 @@ func TestPreflightProblems(t *testing.T) {
 	t.Run("unreadable version", func(t *testing.T) {
 		res := PostgresMigrator{}.Preflight(ctx, envWith17Data(), "postgres:latest", to18)
 		assert.False(t, res.OK)
-		assert.Contains(t, strings.Join(res.Problems, "\n"), "current image")
+		assert.Contains(t, joinEN(res.Problems), "current image")
 	})
 	t.Run("not breaking", func(t *testing.T) {
 		res := PostgresMigrator{}.Preflight(ctx, envWith17Data(), from17, "postgres:17.11")
 		assert.False(t, res.OK)
-		assert.Contains(t, strings.Join(res.Problems, "\n"), "does not need a migration")
+		assert.Contains(t, joinEN(res.Problems), "does not need a migration")
 	})
 	t.Run("downgrade", func(t *testing.T) {
 		env := envWith17Data()
 		env.Volumes[oldVol]["PG_VERSION"] = "18\n"
 		res := PostgresMigrator{}.Preflight(ctx, env, to18, from17)
 		assert.False(t, res.OK)
-		assert.Contains(t, strings.Join(res.Problems, "\n"), "downgrade")
+		assert.Contains(t, joinEN(res.Problems), "downgrade")
 	})
 	t.Run("data major mismatch", func(t *testing.T) {
 		env := envWith17Data()
 		env.Volumes[oldVol]["PG_VERSION"] = "16\n"
 		res := PostgresMigrator{}.Preflight(ctx, env, from17, to18)
 		assert.False(t, res.OK)
-		assert.Contains(t, strings.Join(res.Problems, "\n"), "PG_VERSION")
+		assert.Contains(t, joinEN(res.Problems), "PG_VERSION")
 	})
 	t.Run("unreadable PG_VERSION", func(t *testing.T) {
 		env := envWith17Data()
 		delete(env.Volumes[oldVol], "PG_VERSION")
 		res := PostgresMigrator{}.Preflight(ctx, env, from17, to18)
 		assert.False(t, res.OK)
-		assert.Contains(t, strings.Join(res.Problems, "\n"), "PG_VERSION")
+		assert.Contains(t, joinEN(res.Problems), "PG_VERSION")
 	})
 	t.Run("no space on host", func(t *testing.T) {
 		env := envWith17Data()
 		env.FreeHost = 1 << 30
 		res := PostgresMigrator{}.Preflight(ctx, env, from17, to18)
 		assert.False(t, res.OK)
-		joined := strings.Join(res.Problems, "\n")
+		joined := joinEN(res.Problems)
 		assert.Contains(t, joined, "host")
 		assert.Contains(t, joined, "2.5 GiB", "the message names the requirement in binary units")
 	})
@@ -239,7 +257,7 @@ func TestPreflightProblems(t *testing.T) {
 		env.FreeVolume = 1 << 30
 		res := PostgresMigrator{}.Preflight(ctx, env, from17, to18)
 		assert.False(t, res.OK)
-		assert.Contains(t, strings.Join(res.Problems, "\n"), "volume")
+		assert.Contains(t, joinEN(res.Problems), "volume")
 	})
 	t.Run("existing target volume is a warning with size and version", func(t *testing.T) {
 		env := envWith17Data()
@@ -248,7 +266,7 @@ func TestPreflightProblems(t *testing.T) {
 		res := PostgresMigrator{}.Preflight(ctx, env, from17, to18)
 		assert.True(t, res.OK, "an existing volume is confirmable, not fatal")
 		require.NotNil(t, res.ExistingTargetVolume)
-		assert.Equal(t, ExistingVolume{Name: newVol, SizeBytes: 7 << 20, Version: "18"}, *res.ExistingTargetVolume)
+		assert.Equal(t, api.ExistingVolume{Name: newVol, SizeBytes: 7 << 20, Version: "18"}, *res.ExistingTargetVolume)
 		assert.Empty(t, res.Warnings, "the structured field IS the warning; see TestExistingTargetVolumeIsReportedOnlyAsAStructuredField")
 	})
 	t.Run("existing but empty target volume reports no version", func(t *testing.T) {
@@ -469,7 +487,7 @@ func TestExistingTargetVolumeRequiresConfirmation(t *testing.T) {
 	env := envWith17Data()
 	env.Volumes[newVol] = map[string]string{"18/docker/PG_VERSION": "18\n"}
 	_, _, err := PostgresMigrator{}.Plan(context.Background(), env, from17, to18, PlanOptions{})
-	require.ErrorContains(t, err, "already exists")
+	assert.Contains(t, planProblemsEN(t, err), "already exists")
 
 	st, err := runPlan(t, env, PlanOptions{ReplaceExistingVolume: true})
 	require.NoError(t, err)
@@ -583,7 +601,7 @@ func TestAStartFailureRollsBackTheScratchDirectory(t *testing.T) {
 	assert.NotContains(t, env.Volumes, newVol)
 }
 
-func noProgress(float64, string) {}
+func noProgress(float64, msg.Message) {}
 
 // The official image runs a TEMPORARY server on the Unix socket during
 // first-time init, so pg_isready alone goes true and then false again. The
@@ -632,9 +650,9 @@ func TestDumpProgressFollowsTheGrowingFile(t *testing.T) {
 	path := "/host/deps-migration/postgres/dump.sql"
 	env.Files[path] = 512 << 20
 	reports := make(chan string, 32)
-	report := func(pct float64, msg string) {
+	report := func(pct float64, m msg.Message) {
 		select {
-		case reports <- fmt.Sprintf("%.0f|%s", pct, msg):
+		case reports <- fmt.Sprintf("%.0f|%s", pct, i18n.NewTranslator("en").Render(m)):
 		default:
 		}
 	}
@@ -801,7 +819,7 @@ func TestDumpProgressStopWaitsForTheReporterToReturn(t *testing.T) {
 
 	entered, release := make(chan struct{}), make(chan struct{})
 	var once sync.Once
-	report := func(float64, string) {
+	report := func(float64, msg.Message) {
 		once.Do(func() {
 			close(entered)
 			<-release

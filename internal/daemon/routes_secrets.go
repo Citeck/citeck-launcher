@@ -379,7 +379,7 @@ func (d *Daemon) startNamespaceDeferredForSecrets(why string) {
 	// marked as deferred and the operator's own Start (or the next unlock) can
 	// still act on it once the long operation has finished.
 	if holder := d.longOp.Holder(); holder != longOpNone && !tolerateLifecycleWork.allows(holder) {
-		slog.Warn("Namespace deferred for secrets was not started: "+holder.busyMessage()+
+		slog.Warn("Namespace deferred for secrets was not started: "+holder.busyEnglish()+
 			"; start it once that has finished", "reason", why)
 		return
 	}

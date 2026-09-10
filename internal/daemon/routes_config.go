@@ -16,6 +16,8 @@ import (
 	"github.com/citeck/citeck-launcher/internal/bundle"
 	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/namespace"
+
+	"github.com/citeck/citeck-launcher/internal/i18n"
 )
 
 // uiPrefThemeKey / uiPrefLocaleKey are the launcher-state keys under which the
@@ -221,6 +223,7 @@ func (d *Daemon) handleGetNamespace(w http.ResponseWriter, r *http.Request) {
 	// upgrades come from the last generation (activeNamespace) and the running
 	// migration is a daemon-global, namespace-pinned field — reported here only
 	// for the namespace it belongs to, exactly like Updating.
+	t := d.translatorFor(r)
 	for _, u := range act.dependencyUpgrades {
 		// The same three questions dependencyItems asks, in the same order and
 		// through the same helper, because the banner and the dialog must not
@@ -239,7 +242,7 @@ func (d *Daemon) handleGetNamespace(w http.ResponseWriter, r *http.Request) {
 			// that refusal with an EMPTY reason (its documented "the preflight
 			// words this better" contract), so `problem == ""` alone would
 			// report a downgrade as an upgrade one click away.
-			Migratable: u.Migratable && problem == "" && !u.BundleOlder,
+			Migratable: u.Migratable && problem.Empty() && !u.BundleOlder,
 			// Carried because a backwards hold is INDISTINGUISHABLE from "a
 			// newer launcher is needed" on the two fields above — Migratable
 			// false (no launcher moves data backwards) with no Blocked (a
@@ -249,12 +252,12 @@ func (d *Daemon) handleGetNamespace(w http.ResponseWriter, r *http.Request) {
 			BundleOlder: u.BundleOlder,
 		}
 		if u.VendorBlocked {
-			upgrade.Blocked = problem
+			upgrade.Blocked = t.Render(problem)
 		}
 		dto.DependencyUpgrades = append(dto.DependencyUpgrades, upgrade)
 	}
 	if act.nsConfig != nil {
-		dto.DependencyMigration = d.currentDepsMigration(act.nsConfig.ID)
+		dto.DependencyMigration = renderMigrationDto(t, d.currentDepsMigration(act.nsConfig.ID))
 	}
 	// An interrupted migration whose rollback failed: the load-time recovery
 	// that found it emits no event and no result, so without this the alarm
@@ -262,7 +265,7 @@ func (d *Daemon) handleGetNamespace(w http.ResponseWriter, r *http.Request) {
 	// rollbackBlocker (not journalBlocker) is deliberate — while a migration is
 	// running the journal is simply its record, and DependencyMigration above
 	// already says so.
-	dto.DependencyRollbackPending = d.rollbackBlocker(act)
+	dto.DependencyRollbackPending = d.rollbackBlocker(t, act)
 	// When namespace is stopped, runtime clears the app list. Populate from
 	// the resolved config so the UI always shows the full service catalog.
 	if len(dto.Apps) == 0 && len(appDefs) > 0 {
@@ -301,7 +304,7 @@ func (d *Daemon) handleStartNamespace(w http.ResponseWriter, r *http.Request) {
 	// queue (force OR-ed), which is the documented contract, not be refused at
 	// the HTTP layer — and that holds beside a synchronous reload too. Only a
 	// snapshot or a migration, which own the namespace's data, refuse a Start.
-	release, ok := d.tryLongOp(w, tolerateLifecycleWork)
+	release, ok := d.tryLongOp(w, r, tolerateLifecycleWork)
 	if !ok {
 		return
 	}
@@ -318,7 +321,7 @@ func (d *Daemon) handleStartNamespace(w http.ResponseWriter, r *http.Request) {
 	// returned — so nothing but this refuses a Start that would put a second
 	// postmaster on one PGDATA. The launcher retries the rollback at every
 	// start; until it succeeds the namespace stays down deliberately.
-	if pending := d.rollbackBlocker(act); pending != "" {
+	if pending := d.rollbackBlocker(d.translatorFor(r), act); pending != "" {
 		writeErrorCode(w, http.StatusConflict, api.ErrCodeDependencyMigrationInProgress, pending)
 		return
 	}
@@ -585,7 +588,10 @@ func (d *Daemon) updateAndStartAsync(forceGitPull bool, nsID string) {
 		// pass may have been queued before the rollback failed — and because
 		// HTTP answered 200 long ago, so it has to be reported rather than
 		// returned.
-		if pending := d.rollbackBlocker(act); pending != "" {
+		// englishForLogs, not a request translator: this pass has no request —
+		// it is the queued Update & Start — and what it produces goes into the
+		// stored UpdateError beside its own English advice.
+		if pending := d.rollbackBlocker(englishForLogs, act); pending != "" {
 			slog.Warn("Update and start skipped: a dependency migration rollback is pending")
 			d.recordUpdateFailure(target, pending)
 			return
@@ -611,7 +617,7 @@ func (d *Daemon) updateAndStartAsync(forceGitPull bool, nsID string) {
 		// tolerate: an ordinary start must not 409 the next click (it folds
 		// into the queue) nor the stop that cancels it.
 		if !d.longOp.TryLock(longOpUpdatePass) {
-			reason := d.longOp.Holder().busyMessage()
+			reason := d.longOp.Holder().busyEnglish()
 			slog.Warn("Update and start skipped: " + reason)
 			d.recordUpdateFailure(target, reason+" — retry once it has finished")
 			return
@@ -629,7 +635,7 @@ func (d *Daemon) handleStopNamespace(w http.ResponseWriter, r *http.Request) {
 	// slow git pull or a reload grinding through a 24-app namespace, and
 	// refusing it is worse than the race every release before this one already
 	// allowed (Runtime.Stop only enqueues a command).
-	release, ok := d.tryLongOp(w, tolerateLifecycleWork)
+	release, ok := d.tryLongOp(w, r, tolerateLifecycleWork)
 	if !ok {
 		return
 	}
@@ -644,7 +650,7 @@ func (d *Daemon) handleStopNamespace(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *Daemon) handleReloadNamespace(w http.ResponseWriter, r *http.Request) {
-	release, ok := d.tryLongOp(w, tolerateNothing)
+	release, ok := d.tryLongOp(w, r, tolerateNothing)
 	if !ok {
 		return
 	}
@@ -679,7 +685,7 @@ func (d *Daemon) handleUpgradeNamespace(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	release, ok := d.tryLongOp(w, tolerateNothing)
+	release, ok := d.tryLongOp(w, r, tolerateNothing)
 	if !ok {
 		return
 	}
@@ -808,6 +814,11 @@ func (d *Daemon) handleEvents(w http.ResponseWriter, r *http.Request) {
 	// the longop watchdog path (and by tests) so the client controls replay
 	// regardless of EventSource quirks.
 	lastSeq := parseLastEventID(r)
+	// One translator for the whole stream. EventSource cannot set a header, so
+	// the client states its language in ?locale= (api.LocaleQueryParam) and
+	// translatorFor reads it from either place; a stream that says nothing
+	// follows daemon.yml, like every other unmarked request.
+	t := d.translatorFor(r)
 
 	ch, replayCutoff, ok2 := d.addSubscriber()
 	if !ok2 {
@@ -836,7 +847,7 @@ func (d *Daemon) handleEvents(w http.ResponseWriter, r *http.Request) {
 			if evt.Seq > replayCutoff {
 				continue
 			}
-			writeSSEEvent(w, evt)
+			writeSSEEvent(w, t, evt)
 			wrote = true
 		}
 		if wrote || !ringOK {
@@ -852,7 +863,7 @@ func (d *Daemon) handleEvents(w http.ResponseWriter, r *http.Request) {
 		case <-ctx.Done():
 			return
 		case evt := <-ch:
-			writeSSEEvent(w, evt)
+			writeSSEEvent(w, t, evt)
 			flusher.Flush()
 			ticker.Reset(sseKeepaliveInterval)
 		case <-ticker.C:
@@ -892,7 +903,18 @@ func parseLastEventID(r *http.Request) int64 {
 	return 0
 }
 
-func writeSSEEvent(w io.Writer, evt api.EventDto) {
+// writeSSEEvent renders and writes ONE event to ONE subscriber.
+//
+// The rendering happens here and not at broadcast time because a broadcast
+// fans out to every client at once — a desktop UI in Russian and a
+// `citeck deps upgrade` in German, off the same channel and the same replay
+// ring — so there is no single language the published event could hold. The
+// ring stores the Message; each writer renders its own copy, and evt is a
+// value parameter, so the copy the ring keeps is never touched.
+func writeSSEEvent(w io.Writer, t *i18n.Translator, evt api.EventDto) {
+	if !evt.AfterMsg.Empty() {
+		evt.After = t.Render(evt.AfterMsg)
+	}
 	data, _ := json.Marshal(evt)
 	// Emit `id:` so browser EventSource captures it for Last-Event-ID on
 	// reconnect. Field order (id before data) matches the SSE spec example.

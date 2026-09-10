@@ -12,8 +12,30 @@ import (
 	"strings"
 
 	"github.com/citeck/citeck-launcher/internal/api"
-	"github.com/citeck/citeck-launcher/internal/deps/migrate"
+	"github.com/citeck/citeck-launcher/internal/i18n"
 )
+
+// setLocale tells the daemon which language to word its sentences in.
+//
+// It is the CLI's half of the contract api.LocaleHeader states: the daemon
+// builds an operator-facing sentence as a key plus arguments and renders it at
+// the request boundary, so a request that says nothing is answered in the
+// daemon's own configured language — which on a desktop, where the daemon runs
+// under the UI's locale, is not necessarily the operator's.
+//
+// It is applied in doRequestWith and in StreamEvents, which between them are
+// every request this client makes; the two raw http.NewRequest sites below (log
+// following, and the PUT-with-content-type helper) go through neither, and both
+// carry file bytes rather than sentences.
+//
+// i18n.CurrentLocale is "" until the CLI has called EnsureI18n. That is not a
+// failure mode to guard: a header that is absent means "you decide", which is
+// exactly right for a caller that has not resolved a language yet.
+func setLocale(req *http.Request) {
+	if loc := i18n.CurrentLocale(); loc != "" {
+		req.Header.Set(api.LocaleHeader, loc)
+	}
+}
 
 // DaemonClient communicates with a running Citeck daemon over Unix socket or TCP.
 type DaemonClient struct {
@@ -146,6 +168,7 @@ func (c *DaemonClient) doRequestWith(hc *http.Client, method, path string, body 
 	}
 
 	req.Header.Set("Accept", "application/json")
+	setLocale(req)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -366,8 +389,8 @@ func (c *DaemonClient) GetDependencies() (*api.DependenciesDto, error) {
 // DependencyPreflight runs one dependency's migration pre-checks. It changes
 // nothing — it measures the data, the two filesystems and an existing target
 // volume — so it is safe to call before asking the user to confirm.
-func (c *DaemonClient) DependencyPreflight(id string) (*migrate.PreflightResult, error) {
-	var res migrate.PreflightResult
+func (c *DaemonClient) DependencyPreflight(id string) (*api.PreflightResult, error) {
+	var res api.PreflightResult
 	err := c.getLong(api.DependencyPreflightPath(id), &res)
 	return &res, err
 }
@@ -389,8 +412,8 @@ func (c *DaemonClient) MigrateDependency(id string, replaceExisting bool) (*api.
 // of a data volume, which on a desktop is a utils container, hence the
 // timeout-free client. It changes nothing, so it is safe to call before asking
 // the user to confirm.
-func (c *DaemonClient) DependencyRollbackPreflight(id string) (*migrate.PreflightResult, error) {
-	var res migrate.PreflightResult
+func (c *DaemonClient) DependencyRollbackPreflight(id string) (*api.PreflightResult, error) {
+	var res api.PreflightResult
 	err := c.getLong(api.DependencyRollbackPreflightPath(id), &res)
 	return &res, err
 }
@@ -492,6 +515,7 @@ func (c *DaemonClient) StreamEvents(ctx context.Context) (<-chan api.EventDto, e
 		return nil, fmt.Errorf("create event stream request: %w", err)
 	}
 	req.Header.Set("Accept", "text/event-stream")
+	setLocale(req)
 
 	resp, err := c.streamClient.Do(req)
 	if err != nil {

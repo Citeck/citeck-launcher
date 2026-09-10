@@ -148,8 +148,8 @@ func lookupWorkspaceRepoOpts(store storage.Store, secretSvc secretValueReader, w
 // PullPeriod throttle), re-resolves its config, and triggers a runtime reload so
 // config changes are picked up immediately. Kotlin parity: "Force Update" RMB
 // menu on the Welcome screen (WelcomeScreen.kt).
-func (d *Daemon) handleWorkspaceUpdate(w http.ResponseWriter, _ *http.Request) {
-	release, ok := d.tryLongOp(w, tolerateNothing)
+func (d *Daemon) handleWorkspaceUpdate(w http.ResponseWriter, r *http.Request) {
+	release, ok := d.tryLongOp(w, r, tolerateNothing)
 	if !ok {
 		return
 	}

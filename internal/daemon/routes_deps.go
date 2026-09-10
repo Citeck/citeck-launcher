@@ -13,6 +13,9 @@ import (
 	"github.com/citeck/citeck-launcher/internal/deps"
 	"github.com/citeck/citeck-launcher/internal/deps/migrate"
 	"github.com/citeck/citeck-launcher/internal/namespace"
+
+	"github.com/citeck/citeck-launcher/internal/i18n"
+	"github.com/citeck/citeck-launcher/internal/msg"
 )
 
 // migratorFor answers the migrator for a dependency. found=false means the
@@ -79,7 +82,7 @@ func (d *Daemon) currentDepsMigration(nsID string) *api.DependencyMigrationDto {
 // keycloak with authentication off) is left out entirely — including one that
 // still carries a pin from when it did run, since the pin describes a volume
 // nobody is mounting and the list would show a row with no target.
-func (d *Daemon) dependencyItems(ctx context.Context, act activeNamespace) []api.DependencyDto {
+func (d *Daemon) dependencyItems(ctx context.Context, t *i18n.Translator, act activeNamespace) []api.DependencyDto {
 	states := map[deps.ID]deps.DependencyState{}
 	if act.runtime != nil {
 		states = act.runtime.DependencyStates()
@@ -109,14 +112,14 @@ func (d *Daemon) dependencyItems(ctx context.Context, act activeNamespace) []api
 			ID: string(desc.ID()), App: desc.AppName(), CurrentImage: current,
 			TargetImage: gen.Candidate, Migratable: desc.Migratable(), Status: api.DependencyUpToDate,
 		}
-		item.Rollback = d.rollbackOffer(ctx, act, desc, states[desc.ID()])
+		item.Rollback = renderRollbackOffer(t, d.rollbackOffer(ctx, act, desc, states[desc.ID()]))
 		switch {
 		case held[desc.ID()].To != "":
 			// The offered target is the held-back one, and the VERSION must be
 			// read off it rather than off the candidate: they agree today only
 			// because both come from one generation.
 			item.TargetImage = held[desc.ID()].To
-			item.Status, item.StatusDetail = d.heldUpgradeStatus(desc, held[desc.ID()], item.TargetImage, item.Rollback)
+			item.Status, item.StatusDetail = d.heldUpgradeStatus(t, desc, held[desc.ID()], item.TargetImage, item.Rollback)
 		case pin != "" && gen.Effective != "" && pin != gen.Effective:
 			// Non-breaking: the generator already emits the new image and the
 			// pin follows it once the container runs.
@@ -161,21 +164,21 @@ func (d *Daemon) dependencyItems(ctx context.Context, act activeNamespace) []api
 // an ordinary upgrade: that is the migrator contract's "the preflight words
 // this better" (a downgrade, an unparsable tag), and the refusal then happens
 // where the accurate sentence lives instead of being overwritten here.
-func (d *Daemon) heldUpgradeStatus(desc deps.Descriptor, held namespace.DependencyUpgrade,
+func (d *Daemon) heldUpgradeStatus(t *i18n.Translator, desc deps.Descriptor, held namespace.DependencyUpgrade,
 	target string, rollback *api.DependencyRollbackDto,
 ) (status, detail string) {
 	if held.BundleOlder {
-		return api.DependencyBundleOlder, bundleOlderDetail(desc, held.From, target, rollback)
+		return api.DependencyBundleOlder, t.Render(bundleOlderDetail(desc, held.From, target, rollback))
 	}
 	if !desc.Migratable() {
 		return api.DependencyRequiresLauncherUpdate, ""
 	}
 	problem := d.pairProblem(desc.ID(), held.From, target)
 	switch {
-	case problem == "":
+	case problem.Empty():
 		return api.DependencyUpgradeAvailable, ""
 	case held.VendorBlocked:
-		return api.DependencyUpgradeBlocked, problem
+		return api.DependencyUpgradeBlocked, t.Render(problem)
 	default:
 		// StatusDetail stays empty: "requires-launcher-update" is a complete
 		// answer on its own, and the label is what the table renders.
@@ -195,7 +198,7 @@ func (d *Daemon) heldUpgradeStatus(desc deps.Descriptor, held namespace.Dependen
 // pointing at `citeck deps rollback` when the retained volume is gone would
 // send the operator after a volume the launcher itself told them they could
 // delete.
-func bundleOlderDetail(desc deps.Descriptor, from, target string, rollback *api.DependencyRollbackDto) string {
+func bundleOlderDetail(desc deps.Descriptor, from, target string, rollback *api.DependencyRollbackDto) msg.Message {
 	if rollback != nil && rollback.Available && !deps.Breaking(desc, rollback.ToImage, target) {
 		return migrate.BundleOlderRollbackNotice(string(desc.ID()), from, target)
 	}
@@ -234,17 +237,17 @@ func (d *Daemon) rollbackOffer(ctx context.Context, act activeNamespace,
 		// the one with no volume of its own, and nothing migrates it), but a
 		// silent Available=true here would offer a switch to a generation that
 		// does not physically exist.
-		offer.Problem = fmt.Sprintf("%s has no data volume of its own, so there is no generation to switch back to", desc.ID())
+		offer.ProblemMsg = migrate.NoOwnVolumeProblem(desc.ID())
 		return offer
 	}
 	exists, err := d.depsEnvFor(act).VolumeExists(ctx, retained)
 	switch {
 	case err != nil:
-		offer.Problem = migrate.VolumeCheckFailedProblem(retained, err)
+		offer.ProblemMsg = migrate.VolumeCheckProblem(retained, err)
 	case !exists:
 		// Same sentence migrate.RollbackPreflight gives once the user clicks
 		// through — from the same function, so the two cannot drift.
-		offer.Problem = migrate.RetainedVolumeGoneProblem(desc.ID(), retained, prev.Image)
+		offer.ProblemMsg = migrate.RetainedVolumeGoneProblem(desc.ID(), retained, prev.Image)
 	default:
 		offer.Available = true
 	}
@@ -286,38 +289,27 @@ func migrationFinishedAt(rt *namespace.Runtime, id deps.ID) int64 {
 //     contract (see migrate.Migrator): a downgrade is a POLICY, not a missing
 //     feature, and routing it here would tell the operator to go and update a
 //     launcher that will never grow the ability.
-func (d *Daemon) pairProblem(id deps.ID, from, to string) string {
+func (d *Daemon) pairProblem(id deps.ID, from, to string) msg.Message {
 	desc, found := deps.Lookup(id)
 	if !found {
-		return ""
+		return msg.Message{}
 	}
 	fromV, okFrom := desc.ParseVersion(from)
 	toV, okTo := desc.ParseVersion(to)
 	if !okFrom || !okTo {
-		return ""
+		return msg.Message{}
 	}
 	m, wired := d.migratorFor(id)
 	if !wired {
 		// The descriptor claims no migrator, or claims one that is not wired.
 		// Both are answered by the caller's Migratable() arm; saying anything
 		// about the pair here would add a second, weaker account of it.
-		return ""
+		return msg.Message{}
 	}
 	if ok, problem := m.SupportsPair(fromV, toV); !ok {
 		return problem
 	}
-	return ""
-}
-
-// resultDto renders the last migration verdict for the wire.
-func resultDto(r *deps.MigrationResult) *api.DependencyMigrationResultDto {
-	if r == nil {
-		return nil
-	}
-	return &api.DependencyMigrationResultDto{
-		ID: string(r.ID), From: r.From, To: r.To, FinishedAt: r.FinishedAt.UnixMilli(),
-		Success: r.OK(), Error: r.Error, OldVolume: r.OldVolume, Kind: r.Kind,
-	}
+	return msg.Message{}
 }
 
 // rollbackPendingMessage describes an OPEN journal that no running migration
@@ -326,16 +318,32 @@ func resultDto(r *deps.MigrationResult) *api.DependencyMigrationResultDto {
 // — the leftovers it names are still on the host, the launcher retries the
 // rollback at every start, and until then the dependency's pin cannot move
 // (syncDependencyPinsUnderLock stands aside while a journal exists).
-func rollbackPendingMessage(j *deps.MigrationJournal, last *deps.MigrationResult) string {
+func rollbackPendingMessage(t *i18n.Translator, j *deps.MigrationJournal, last *deps.MigrationResult) string {
 	if j == nil {
 		return ""
 	}
-	msg := fmt.Sprintf("a previous migration of %s (%s → %s) left a rollback pending "+
-		"(retried at every launcher start); until it succeeds the version is frozen", j.ID, j.From, j.To)
-	if last != nil && last.Error != "" && last.ID == j.ID {
-		msg += ": " + last.Error
+	// TWO keys rather than one sentence with the verdict glued on: the detail
+	// is a clause of its own (often a whole English error), and a translator
+	// handed "…the version is frozen" plus ": {detail}" cannot decide where
+	// the colon belongs in their language. The one that carries it says so.
+	if last != nil && last.ID == j.ID {
+		if detail := lastFailureText(t, last); detail != "" {
+			return t.T("deps.msg.journal.rollbackPendingDetail",
+				"id", string(j.ID), "from", j.From, "to", j.To, "detail", detail)
+		}
 	}
-	return msg
+	return t.T("deps.msg.journal.rollbackPending", "id", string(j.ID), "from", j.From, "to", j.To)
+}
+
+// lastFailureText is the verdict a pending rollback quotes: the structured
+// sentence when the launcher worded it, the persisted English otherwise. Same
+// preference, and same reason, as resultDto — a result written by an older
+// launcher has only the string.
+func lastFailureText(t *i18n.Translator, last *deps.MigrationResult) string {
+	if !last.ErrorMsg.Empty() {
+		return t.Render(last.ErrorMsg)
+	}
+	return last.Error
 }
 
 // journalBlocker is the ONE place that reads an open migration journal and
@@ -344,7 +352,7 @@ func rollbackPendingMessage(j *deps.MigrationJournal, last *deps.MigrationResult
 // interrupted one whose rollback is still pending. Both refuse a new
 // migration; only the second is something the operator has to act on.
 // "" means the journal is clear.
-func (d *Daemon) journalBlocker(act activeNamespace) string {
+func (d *Daemon) journalBlocker(t *i18n.Translator, act activeNamespace) string {
 	rt := act.runtime
 	if rt == nil {
 		return ""
@@ -354,9 +362,9 @@ func (d *Daemon) journalBlocker(act activeNamespace) string {
 		return ""
 	}
 	if d.currentDepsMigration(namespaceIDOf(act)) != nil {
-		return fmt.Sprintf("a migration of %s is already running", j.ID)
+		return t.T("deps.msg.journal.running", "id", string(j.ID))
 	}
-	return rollbackPendingMessage(j, rt.LastDependencyMigration())
+	return rollbackPendingMessage(t, j, rt.LastDependencyMigration())
 }
 
 // rollbackBlocker is journalBlocker's second arm on its own: an open journal
@@ -373,11 +381,11 @@ func (d *Daemon) journalBlocker(act activeNamespace) string {
 //
 // A migration running right now is deliberately NOT reported: it holds the
 // long-op lock, which refuses those paths already and with a better message.
-func (d *Daemon) rollbackBlocker(act activeNamespace) string {
+func (d *Daemon) rollbackBlocker(t *i18n.Translator, act activeNamespace) string {
 	if d.currentDepsMigration(namespaceIDOf(act)) != nil {
 		return ""
 	}
-	return d.journalBlocker(act)
+	return d.journalBlocker(t, act)
 }
 
 func (d *Daemon) handleListDependencies(w http.ResponseWriter, r *http.Request) {
@@ -390,27 +398,30 @@ func (d *Daemon) handleListDependencies(w http.ResponseWriter, r *http.Request) 
 	if act.nsConfig != nil {
 		nsID = act.nsConfig.ID
 	}
+	t := d.translatorFor(r)
 	dto := api.DependenciesDto{
-		Items:      d.dependencyItems(r.Context(), act),
-		Migration:  d.currentDepsMigration(nsID),
-		LastResult: resultDto(act.runtime.LastDependencyMigration()),
+		Items:      d.dependencyItems(r.Context(), t, act),
+		Migration:  renderMigrationDto(t, d.currentDepsMigration(nsID)),
+		LastResult: resultDto(t, act.runtime.LastDependencyMigration()),
 	}
 	// A journal that belongs to the migration reported above is not "pending";
 	// it is simply the record of what is happening right now, and Migration
 	// already says so — journalBlocker returns the rollback wording precisely
 	// when there is no running migration to attribute the journal to.
 	if dto.Migration == nil {
-		dto.RollbackPending = d.journalBlocker(act)
+		dto.RollbackPending = d.journalBlocker(t, act)
 	}
 	writeJSON(w, dto)
 }
 
 // resolveMigration validates the {id} path segment and answers the pending
 // (from → to) pair. Every refusal has already been written when ok is false.
-func (d *Daemon) resolveMigration(ctx context.Context, w http.ResponseWriter, act activeNamespace, id string) (from, to string, ok bool) {
+func (d *Daemon) resolveMigration(ctx context.Context, w http.ResponseWriter, r *http.Request, act activeNamespace, id string) (from, to string, ok bool) {
+	t := d.translatorFor(r)
 	desc, found := deps.Lookup(deps.ID(id))
 	if !found {
-		writeErrorCode(w, http.StatusNotFound, api.ErrCodeDependencyUnknown, fmt.Sprintf("unknown dependency %q", id))
+		writeErrorCode(w, http.StatusNotFound, api.ErrCodeDependencyUnknown,
+			t.T("deps.msg.route.unknownDependency", "id", id))
 		return "", "", false
 	}
 	if act.runtime == nil {
@@ -429,7 +440,7 @@ func (d *Daemon) resolveMigration(ctx context.Context, w http.ResponseWriter, ac
 	}
 	if upgrade == nil {
 		writeErrorCode(w, http.StatusConflict, api.ErrCodeDependencyUpToDate,
-			fmt.Sprintf("%s has no pending upgrade", id))
+			t.T("deps.msg.route.noPendingUpgrade", "id", id))
 		return "", "", false
 	}
 	// A BACKWARDS candidate is still a held-back "upgrade" and would otherwise
@@ -441,13 +452,13 @@ func (d *Daemon) resolveMigration(ctx context.Context, w http.ResponseWriter, ac
 	// nobody asked — a backwards move never reaches vendorVerdict at all.
 	if upgrade.BundleOlder {
 		writeErrorCode(w, http.StatusConflict, api.ErrCodeDependencyBackwards,
-			bundleOlderDetail(desc, upgrade.From, upgrade.To,
-				d.rollbackOffer(ctx, act, desc, act.runtime.DependencyStates()[desc.ID()])))
+			t.Render(bundleOlderDetail(desc, upgrade.From, upgrade.To,
+				d.rollbackOffer(ctx, act, desc, act.runtime.DependencyStates()[desc.ID()]))))
 		return "", "", false
 	}
 	if !desc.Migratable() {
 		writeErrorCode(w, http.StatusConflict, api.ErrCodeDependencyNotMigratable,
-			fmt.Sprintf("this launcher cannot migrate %s — update the launcher", id))
+			t.T("deps.msg.route.notMigratable", "id", id))
 		return "", "", false
 	}
 	// The dependency is migratable but this PAIR is refused. WHICH refusal it
@@ -458,12 +469,12 @@ func (d *Daemon) resolveMigration(ctx context.Context, w http.ResponseWriter, ac
 	// carry out keeps the old code and the old answer — update the launcher —
 	// with a message that names the versions, because "postgres cannot be
 	// migrated" would contradict the 17 → 18 the same launcher performs.
-	if problem := d.pairProblem(desc.ID(), upgrade.From, upgrade.To); problem != "" {
+	if problem := d.pairProblem(desc.ID(), upgrade.From, upgrade.To); !problem.Empty() {
 		code := api.ErrCodeDependencyNotMigratable
 		if upgrade.VendorBlocked {
 			code = api.ErrCodeDependencyPairUnsupported
 		}
-		writeErrorCode(w, http.StatusConflict, code, problem)
+		writeErrorCode(w, http.StatusConflict, code, t.Render(problem))
 		return "", "", false
 	}
 	return upgrade.From, upgrade.To, true
@@ -484,11 +495,14 @@ func (d *Daemon) resolveMigration(ctx context.Context, w http.ResponseWriter, ac
 // same defect the long-op holder's own busyMessage exists to prevent. The other
 // two arms need no such split — the journal really is a migration's, and the
 // holder names itself.
-func (d *Daemon) preMigrationProblems(act activeNamespace, action string) []string {
-	var problems []string
-	blocked := d.journalBlocker(act)
+func (d *Daemon) preMigrationProblems(t *i18n.Translator, act activeNamespace, settleKey string) []msg.Message {
+	var problems []msg.Message
+	blocked := d.journalBlocker(t, act)
 	if blocked != "" {
-		problems = append(problems, blocked)
+		// journalBlocker composes two keys of its own, so what comes back is
+		// already a sentence. passthrough is how an already-final string
+		// re-enters the message pipeline, and it says so at the call site.
+		problems = append(problems, msg.New("deps.msg.passthrough", "text", blocked))
 	}
 	// A read, not a claim: this route mutates nothing, and the migrate route
 	// does its own TryLock. The window between them is the same check-then-act
@@ -501,26 +515,36 @@ func (d *Daemon) preMigrationProblems(act activeNamespace, action string) []stri
 	// confirm screen that lists the same fact twice reads as two problems.
 	// The journal's wording wins: it names the dependency.
 	if holder := d.longOp.Holder(); holder != longOpNone && blocked == "" {
-		problems = append(problems, holder.busyMessage()+" — wait for it to finish")
+		problems = append(problems, holder.busyMessage())
 	}
 	if act.runtime != nil {
 		if st := act.runtime.Status(); !migratableNsStatus(st) {
-			problems = append(problems, fmt.Sprintf(
-				"the namespace is %s — start or stop it before %s", st, action))
+			problems = append(problems, msg.New(settleKey, "status", string(st)))
 		}
 	}
 	return problems
 }
 
+// The two "settle the namespace first" sentences preMigrationProblems chooses
+// between. They are two whole keys rather than one with a {action} slot: the
+// gerund is a CLAUSE, and a clause dropped into another sentence in English
+// word order is the shape no translator can rearrange — Russian wants a
+// different case for it, German a different position.
+const (
+	settleBeforeMigrating   = "deps.msg.ns.settleBeforeMigrating"
+	settleBeforeRollingBack = "deps.msg.ns.settleBeforeRollingBack"
+)
+
 func (d *Daemon) handleDependencyPreflight(w http.ResponseWriter, r *http.Request) {
 	act := d.active()
+	t := d.translatorFor(r)
 	id := r.PathValue("id")
-	from, to, ok := d.resolveMigration(r.Context(), w, act, id)
+	from, to, ok := d.resolveMigration(r.Context(), w, r, act, id)
 	if !ok {
 		return
 	}
-	if problems := d.preMigrationProblems(act, "migrating"); len(problems) > 0 {
-		writeJSON(w, migrate.RefusedPreflight(from, to, problems...))
+	if problems := d.preMigrationProblems(t, act, settleBeforeMigrating); len(problems) > 0 {
+		writeJSON(w, renderPreflight(t, migrate.RefusedPreflight(from, to, problems...)))
 		return
 	}
 	if act.dockerClient == nil {
@@ -537,7 +561,7 @@ func (d *Daemon) handleDependencyPreflight(w http.ResponseWriter, r *http.Reques
 	// Docker VM), which on a real cluster outlives the socket server's 120s
 	// write deadline — and the result is the only thing the confirm dialog has.
 	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
-	writeJSON(w, m.Preflight(r.Context(), env, from, to))
+	writeJSON(w, renderPreflight(t, m.Preflight(r.Context(), env, from, to)))
 }
 
 // namespaceIDOf is the id a namespace-scoped daemon field is pinned to.
@@ -565,19 +589,20 @@ func (d *Daemon) handleDependencyMigrate(w http.ResponseWriter, r *http.Request)
 		}
 	}
 	act := d.active()
+	t := d.translatorFor(r)
 	id := deps.ID(r.PathValue("id"))
-	from, to, ok := d.resolveMigration(r.Context(), w, act, string(id))
+	from, to, ok := d.resolveMigration(r.Context(), w, r, act, string(id))
 	if !ok {
 		return
 	}
 	nsID := namespaceIDOf(act)
-	if blocked := d.journalBlocker(act); blocked != "" {
+	if blocked := d.journalBlocker(t, act); blocked != "" {
 		writeErrorCode(w, http.StatusConflict, api.ErrCodeDependencyMigrationInProgress, blocked)
 		return
 	}
 	if st := act.runtime.Status(); !migratableNsStatus(st) {
 		writeErrorCode(w, http.StatusConflict, api.ErrCodeDependencyNamespaceBusy,
-			fmt.Sprintf("the namespace is %s — start or stop it before migrating %s", st, id))
+			t.T("deps.msg.ns.settleBeforeMigratingDep", "status", string(st), "id", string(id)))
 		return
 	}
 	// Claimed as longOpMigration, NEVER through tryLongOp: that helper labels
@@ -587,7 +612,7 @@ func (d *Daemon) handleDependencyMigrate(w http.ResponseWriter, r *http.Request)
 	// trap on longOpMigration. Ownership transfers into the goroutine below.
 	if !d.longOp.TryLock(longOpMigration) {
 		writeErrorCode(w, http.StatusConflict, api.ErrCodeLongOpInProgress,
-			d.longOp.Holder().busyMessage()+" — wait for it to finish")
+			t.Render(d.longOp.Holder().busyMessage()))
 		return
 	}
 	if act.dockerClient == nil {
@@ -602,8 +627,8 @@ func (d *Daemon) handleDependencyMigrate(w http.ResponseWriter, r *http.Request)
 		writeInternalError(w, fmt.Errorf("no migrator wired for dependency %q", id))
 		return
 	}
-	evt := func(typ, phase string, cur, total int, pct float64, msg string) api.EventDto {
-		return depsEvent(typ, nsID, id, phase, cur, total, pct, msg)
+	evt := func(typ, phase string, cur, total int, pct float64, m msg.Message) api.EventDto {
+		return depsEvent(typ, nsID, id, phase, cur, total, pct, m)
 	}
 	// Building the plan runs the whole preflight — including a `du` of the data
 	// volume, which on a real cluster is minutes — and it happens AFTER the
@@ -616,7 +641,7 @@ func (d *Daemon) handleDependencyMigrate(w http.ResponseWriter, r *http.Request)
 		ID: string(id), Step: api.DependencyMigrationStepPreparing,
 	})
 	d.broadcastEvent(evt(api.EventDepsMigrationProgress, api.DependencyMigrationStepPreparing,
-		0, 0, 0, fmt.Sprintf("%s → %s", from, to)))
+		0, 0, 0, versionPairMessage(from, to)))
 	// The plan is built on the REQUEST's context on purpose: it only probes
 	// (preflight), it changes nothing, and a client that gave up should not
 	// leave it running. Everything after the 202 runs on the daemon's
@@ -633,7 +658,7 @@ func (d *Daemon) handleDependencyMigrate(w http.ResponseWriter, r *http.Request)
 		// not happening to every client until the next one starts.
 		d.setDepsMigration(nsID, nil)
 		d.longOp.Unlock()
-		writeErrorCode(w, http.StatusConflict, api.ErrCodeDependencyPreflightFailed, err.Error())
+		writeErrorCode(w, http.StatusConflict, api.ErrCodeDependencyPreflightFailed, renderPlanError(t, err))
 		return
 	}
 	steps := len(plan.Steps)
@@ -653,12 +678,12 @@ func (d *Daemon) handleDependencyMigrate(w http.ResponseWriter, r *http.Request)
 	d.bgWg.Go(func() {
 		defer d.longOp.Unlock()
 		defer d.setDepsMigration(nsID, nil)
-		d.broadcastEvent(evt(api.EventDepsMigrationStart, "", 0, steps, 0, fmt.Sprintf("%s → %s", from, to)))
-		progress := func(step string, i, n int, pct float64, msg string) {
+		d.broadcastEvent(evt(api.EventDepsMigrationStart, "", 0, steps, 0, versionPairMessage(from, to)))
+		progress := func(step string, i, n int, pct float64, m msg.Message) {
 			d.setDepsMigration(nsID, &api.DependencyMigrationDto{
-				ID: string(id), Step: step, StepIndex: i, StepCount: n, Percent: pct, Message: msg,
+				ID: string(id), Step: step, StepIndex: i, StepCount: n, Percent: pct, MessageMsg: m,
 			})
-			d.broadcastEvent(evt(api.EventDepsMigrationProgress, step, i, n, pct, msg))
+			d.broadcastEvent(evt(api.EventDepsMigrationProgress, step, i, n, pct, m))
 		}
 		runErr := migrate.Run(d.bgCtx, rt, journal, plan, progress)
 		var fe *migrate.FinalizeError
@@ -667,24 +692,37 @@ func (d *Daemon) handleDependencyMigrate(w http.ResponseWriter, r *http.Request)
 			//nolint:gosec // G706: id passed deps.Lookup (a fixed registry) and the images come from the resolved bundle/pins
 			slog.Info("Dependency migration finished", "dependency", id, "from", from, "to", to)
 			d.broadcastEvent(evt(api.EventDepsMigrationComplete, "", steps, steps, 100,
-				fmt.Sprintf("%s migrated to %s", id, to)))
+				msg.New("deps.msg.event.migrated", "id", string(id), "image", to)))
 		case errors.As(runErr, &fe):
 			// The data has moved and the pin says so; only the tidy-up or the
 			// restart failed, so this is a completion with a warning.
 			//nolint:gosec // G706: id passed deps.Lookup (a fixed registry)
 			slog.Warn("Dependency migration committed with a finalize failure", "dependency", id, "err", fe.Err)
 			d.broadcastEvent(evt(api.EventDepsMigrationComplete, "", steps, steps, 100,
-				fmt.Sprintf("%s migrated to %s; %v", id, to, fe.Err)))
+				msg.New("deps.msg.event.migratedWithWarning",
+					"id", string(id), "image", to, "error", fe.Err.Error())))
 		default:
 			//nolint:gosec // G706: id passed deps.Lookup (a fixed registry)
 			slog.Error("Dependency migration failed", "dependency", id, "err", runErr)
-			d.broadcastEvent(evt(api.EventDepsMigrationError, "", 0, steps, 0, runErr.Error()))
+			// The failure is a step's own error — a docker refusal, a psql
+			// stderr, a wrapped cancellation — and it is already final text.
+			d.broadcastEvent(evt(api.EventDepsMigrationError, "", 0, steps, 0,
+				msg.New("deps.msg.passthrough", "text", runErr.Error())))
 		}
 	})
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	_ = json.NewEncoder(w).Encode(api.ActionResultDto{
 		Success: true,
-		Message: fmt.Sprintf("Migration of %s to %s started", id, to),
+		Message: t.T("deps.msg.action.migrationStarted", "id", string(id), "image", to),
 	})
+}
+
+// versionPairMessage is the "17.5 → 18.6" line the start and preparing events
+// carry. It has no words in it — two image references and an arrow — so it
+// gets one key with both as parameters rather than being assembled from
+// pieces: the arrow is punctuation a locale may legitimately want to change
+// (and a right-to-left one certainly does).
+func versionPairMessage(from, to string) msg.Message {
+	return msg.New("deps.msg.event.versionPair", "from", from, "to", to)
 }

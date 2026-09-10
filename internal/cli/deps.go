@@ -13,7 +13,6 @@ import (
 	"github.com/citeck/citeck-launcher/internal/api"
 	"github.com/citeck/citeck-launcher/internal/client"
 	"github.com/citeck/citeck-launcher/internal/deps"
-	"github.com/citeck/citeck-launcher/internal/deps/migrate"
 	"github.com/citeck/citeck-launcher/internal/fsutil"
 	"github.com/citeck/citeck-launcher/internal/i18n"
 	"github.com/citeck/citeck-launcher/internal/output"
@@ -432,9 +431,9 @@ func newDepsUpgradeCmd() *cobra.Command {
 // exit code are — could only be exercised against a live daemon, i.e. never.
 type depsAPI interface {
 	GetDependencies() (*api.DependenciesDto, error)
-	DependencyPreflight(id string) (*migrate.PreflightResult, error)
+	DependencyPreflight(id string) (*api.PreflightResult, error)
 	MigrateDependency(id string, replaceExisting bool) (*api.ActionResultDto, error)
-	DependencyRollbackPreflight(id string) (*migrate.PreflightResult, error)
+	DependencyRollbackPreflight(id string) (*api.PreflightResult, error)
 	RollbackDependency(id string) (*api.ActionResultDto, error)
 	StreamEvents(ctx context.Context) (<-chan api.EventDto, error)
 }
@@ -490,11 +489,11 @@ type depsFollow struct {
 type depsActionOpts struct {
 	detach          bool
 	replaceExisting bool
-	confirm         func(id string, pre *migrate.PreflightResult) bool
+	confirm         func(id string, pre *api.PreflightResult) bool
 	follow          depsFollow
 }
 
-func defaultDepsActionOpts(detach, replaceExisting bool, confirm func(string, *migrate.PreflightResult) bool) depsActionOpts {
+func defaultDepsActionOpts(detach, replaceExisting bool, confirm func(string, *api.PreflightResult) bool) depsActionOpts {
 	return depsActionOpts{
 		detach:          detach,
 		replaceExisting: replaceExisting,
@@ -532,13 +531,13 @@ const (
 // path could fill belongs here — a shape that changes with the route taken is
 // not a machine contract.
 type depsActionReport struct {
-	ID        string                   `json:"id"`
-	From      string                   `json:"from,omitempty"`
-	To        string                   `json:"to,omitempty"`
-	Outcome   string                   `json:"outcome"`
-	Error     string                   `json:"error,omitempty"`
-	Message   string                   `json:"message,omitempty"`
-	Preflight *migrate.PreflightResult `json:"preflight,omitempty"`
+	ID        string               `json:"id"`
+	From      string               `json:"from,omitempty"`
+	To        string               `json:"to,omitempty"`
+	Outcome   string               `json:"outcome"`
+	Error     string               `json:"error,omitempty"`
+	Message   string               `json:"message,omitempty"`
+	Preflight *api.PreflightResult `json:"preflight,omitempty"`
 }
 
 func runDepsUpgrade(id string, detach, replaceExisting bool) error {
@@ -741,7 +740,7 @@ func rollbackOfferFor(list *api.DependenciesDto, id string) *api.DependencyRollb
 // reason confirmMigration's is: under the global --yes promptConfirm returns
 // its default without asking, and a "no" default would turn the scripted
 // spelling of "do not ask me" into a silent cancellation.
-func confirmRollback(id string, pre *migrate.PreflightResult) bool {
+func confirmRollback(id string, pre *api.PreflightResult) bool {
 	return promptConfirm(t("deps.rollback.confirm", "id", id, "to", pre.To), true)
 }
 
@@ -760,7 +759,7 @@ func sayProgress(line string) {
 // global --yes promptConfirm returns its default without asking: a "no" default
 // would turn `citeck deps upgrade postgres --yes` — the scripted spelling of
 // "do not ask me" — into a silent cancellation.
-func confirmMigration(id string, pre *migrate.PreflightResult) bool {
+func confirmMigration(id string, pre *api.PreflightResult) bool {
 	return promptConfirm(t("deps.confirm", "id", id, "from", pre.From, "to", pre.To), true)
 }
 
@@ -768,7 +767,7 @@ func confirmMigration(id string, pre *migrate.PreflightResult) bool {
 // filesystems it needs room on, and every warning and problem it found. It is
 // printed whether or not the checks passed — a refusal the user cannot see the
 // reason for is worse than no check at all.
-func preflightLines(pre *migrate.PreflightResult) []string {
+func preflightLines(pre *api.PreflightResult) []string {
 	return preflightLinesTitled(t("deps.preflight.title", "from", pre.From, "to", pre.To), pre)
 }
 
@@ -779,8 +778,8 @@ func preflightLines(pre *migrate.PreflightResult) []string {
 // The three consequences the confirmation exists for (the data is as of the
 // migration, everything since then is on a volume that is kept and never read
 // again, and there is no roll-forward) are NOT built here: the daemon's
-// preflight already carries them as warnings, in the same English every other
-// migration sentence is written in, and the block above prints every warning.
+// preflight already carries them as warnings, rendered in the language this
+// CLI stated on the request, and the block above prints every warning.
 // Rendering them a second time from locale keys would state each fact twice —
 // the defect TestPreflightLines_ExistingVolumeIsRenderedOnceThroughTheLocaleKey
 // pins from the other direction.
@@ -790,7 +789,7 @@ func preflightLines(pre *migrate.PreflightResult) []string {
 // operator through the offer. offer may be nil (the preflight is about to
 // refuse) and its MigratedAt may be 0 (the namespace's one result slot has
 // moved on) — both render as nothing, never as 1970.
-func rollbackPreflightLines(pre *migrate.PreflightResult, offer *api.DependencyRollbackDto) []string {
+func rollbackPreflightLines(pre *api.PreflightResult, offer *api.DependencyRollbackDto) []string {
 	lines := []string{t("deps.rollback.title", "from", pre.From, "to", pre.To)}
 	if offer != nil {
 		if at := formatEpochMillis(offer.MigratedAt); at != "" {
@@ -803,7 +802,7 @@ func rollbackPreflightLines(pre *migrate.PreflightResult, offer *api.DependencyR
 // preflightLinesTitled is the body both renderings share. An empty title emits
 // no title line, so a caller that has already written its own header does not
 // get a blank one.
-func preflightLinesTitled(title string, pre *migrate.PreflightResult) []string {
+func preflightLinesTitled(title string, pre *api.PreflightResult) []string {
 	var lines []string
 	if title != "" {
 		lines = append(lines, title)
@@ -842,7 +841,7 @@ func preflightLinesTitled(title string, pre *migrate.PreflightResult) []string {
 // a third number in the refusal. The shared case is therefore ONE line
 // INSTEAD of the pair, not one more line beside it. Same rule as the web
 // dialog (web/src/components/DependenciesDialog.tsx).
-func spaceRequirementLines(pre *migrate.PreflightResult) []string {
+func spaceRequirementLines(pre *api.PreflightResult) []string {
 	if pre.SharedFilesystem {
 		return []string{"  " + t("deps.preflight.shared",
 			"need", fsutil.FormatBytes(pre.RequiredTotalBytes),
@@ -867,7 +866,7 @@ func spaceRequirementLines(pre *migrate.PreflightResult) []string {
 // the two measurements, SKIPPING a zero. A zero is not "no space left" — it is
 // a measurement that FAILED, which has already produced its own problem line;
 // taking it as the minimum would render a failed probe as a full disk.
-func smallerFreeBytes(pre *migrate.PreflightResult) int64 {
+func smallerFreeBytes(pre *api.PreflightResult) int64 {
 	smallest := int64(0)
 	for _, free := range []int64{pre.FreeHostBytes, pre.FreeVolumeBytes} {
 		if free > 0 && (smallest == 0 || free < smallest) {

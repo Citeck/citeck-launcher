@@ -11,6 +11,8 @@ import (
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/deps"
 	"github.com/citeck/citeck-launcher/internal/fsutil"
+
+	"github.com/citeck/citeck-launcher/internal/msg"
 )
 
 // The copy-upgrade plan upgrades a COPY of the data volume.
@@ -120,7 +122,7 @@ func CopyStepIDs() []string {
 // append its own problems and warnings and then set res.OK itself.
 func CopyPreflight(
 	ctx context.Context, env Env, id deps.ID, from, to string,
-	supportsPair func(from, to deps.Version) (ok bool, problem string),
+	supportsPair func(from, to deps.Version) (ok bool, problem msg.Message),
 ) (PreflightResult, CopyVolumes, bool) {
 	res := NewPreflightResult(from, to)
 	res.WasRunning = env.IsRunning()
@@ -135,7 +137,7 @@ func CopyPreflight(
 	}
 	d, ok := deps.Lookup(id)
 	if !ok { // unreachable: versionProblems just looked it up
-		res.Problems = append(res.Problems, fmt.Sprintf("%s is not a registered dependency", id))
+		res.Problems = append(res.Problems, NotRegisteredProblem(id))
 		return res, CopyVolumes{}, false
 	}
 	src, dst, toGen := migrationVolumes(d, env.DependencyState(id))
@@ -148,11 +150,11 @@ func CopyPreflight(
 	exists, err := env.VolumeExists(ctx, src)
 	switch {
 	case err != nil:
-		res.Problems = append(res.Problems, fmt.Sprintf("cannot check volume %s: %v", src, err))
+		res.Problems = append(res.Problems, VolumeCheckProblem(src, err))
 		return res, vols, false
 	case !exists:
-		res.Problems = append(res.Problems, fmt.Sprintf(
-			"volume %s does not exist, so there is no %s data to upgrade", src, id))
+		res.Problems = append(res.Problems,
+			msg.New("deps.msg.volume.sourceMissing", "volume", src, "id", string(id)))
 		return res, vols, false
 	}
 	res.copySpace(ctx, env, src)
@@ -194,15 +196,14 @@ func BuildCopyUpgrade(env Env, spec CopySpec, from, to string, opts PlanOptions,
 		return nil, deps.MigrationJournal{}, err
 	}
 	if !pre.OK {
-		return nil, deps.MigrationJournal{}, fmt.Errorf("preflight failed: %s", strings.Join(pre.Problems, "; "))
+		return nil, deps.MigrationJournal{}, refusePlan(pre.Problems...)
 	}
 	if pre.ExistingTargetVolume != nil && !opts.ReplaceExistingVolume {
-		return nil, deps.MigrationJournal{}, fmt.Errorf(
-			"volume %s already exists; confirm replacing it to continue", pre.ExistingTargetVolume.Name)
+		return nil, deps.MigrationJournal{}, refusePlan(existingVolumeRefusal(pre.ExistingTargetVolume.Name))
 	}
 	d, ok := deps.Lookup(spec.ID)
 	if !ok {
-		return nil, deps.MigrationJournal{}, fmt.Errorf("%s is not a registered dependency", spec.ID)
+		return nil, deps.MigrationJournal{}, refusePlan(NotRegisteredProblem(spec.ID))
 	}
 	// The pin is read ONCE, and the journal carries what was derived from it,
 	// so nothing later has to re-derive a generation from a world the
@@ -285,7 +286,7 @@ func (r *copyRun) createVolume(ctx context.Context, j *Journal, _ StepProgress) 
 // size for a percentage would spawn one helper container per sample on a
 // desktop, and both renderers already draw percent 0 as indeterminate.
 func (r *copyRun) copyVolume(ctx context.Context, _ *Journal, p StepProgress) error {
-	p(0, "copying "+fsutil.FormatBytes(r.dataSize))
+	p(0, msg.New("deps.msg.progress.copying", "size", fsutil.FormatBytes(r.dataSize)))
 	if err := r.env.CopyVolume(ctx, r.srcVolume, r.dstVolume); err != nil {
 		return fmt.Errorf("copy %s to %s: %w", r.srcVolume, r.dstVolume, err)
 	}
@@ -396,7 +397,12 @@ func (r *copyRun) verify(ctx context.Context, _ *Journal, p StepProgress) error 
 	}
 	if len(notes) > 0 {
 		slog.Info("Dependency migration verify notes", "dependency", r.spec.ID, "notes", strings.Join(notes, "; "))
-		p(100, strings.Join(notes, "; "))
+		// The notes are the dependency's own inventory diff — ZooKeeper's
+		// expired ephemeral nodes, RabbitMQ's per-queue counts — assembled by
+		// Inventory.Diff, which has no locale keys and would need one per
+		// dependency-specific difference. They pass through untranslated, and
+		// passthrough is where that decision is written down.
+		p(100, passthrough(strings.Join(notes, "; ")))
 	}
 	return nil
 }

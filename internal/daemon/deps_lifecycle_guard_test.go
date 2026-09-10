@@ -136,12 +136,12 @@ func TestRollbackBlockerIgnoresARunningMigration(t *testing.T) {
 	d, _ := newGateTestDaemon(t)
 	act := d.active()
 	require.NoError(t, act.runtime.SetMigrationJournal(openJournal()))
-	require.NotEmpty(t, d.rollbackBlocker(act))
+	require.NotEmpty(t, d.rollbackBlocker(englishForLogs, act))
 
 	d.setDepsMigration("ns1", &api.DependencyMigrationDto{ID: "postgres", Step: "dump"})
 	t.Cleanup(func() { d.setDepsMigration("ns1", nil) })
-	assert.Empty(t, d.rollbackBlocker(act))
-	assert.Contains(t, d.journalBlocker(act), "already running")
+	assert.Empty(t, d.rollbackBlocker(englishForLogs, act))
+	assert.Contains(t, d.journalBlocker(englishForLogs, act), "already running")
 }
 
 // The vault unlock starts the namespace WITHOUT going through

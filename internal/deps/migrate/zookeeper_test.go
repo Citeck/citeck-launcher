@@ -2,7 +2,6 @@ package migrate
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -11,6 +10,8 @@ import (
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/deps"
 	"github.com/citeck/citeck-launcher/internal/deps/migrate/migratetest"
+
+	"github.com/citeck/citeck-launcher/internal/msg"
 )
 
 const (
@@ -58,7 +59,7 @@ func TestZkSupportsPairRefusesDataOlderThan35(t *testing.T) {
 	t.Run("3.8 → 3.9", func(t *testing.T) {
 		ok, problem := (ZookeeperMigrator{}).SupportsPair(v(3, 8, 6), v(3, 9, 5))
 		assert.True(t, ok)
-		assert.Empty(t, problem)
+		assert.True(t, problem.Empty())
 	})
 	t.Run("3.5 is the floor and is allowed", func(t *testing.T) {
 		ok, _ := (ZookeeperMigrator{}).SupportsPair(v(3, 5, 0), v(3, 9, 5))
@@ -67,15 +68,15 @@ func TestZkSupportsPairRefusesDataOlderThan35(t *testing.T) {
 	t.Run("3.4 is refused and says why", func(t *testing.T) {
 		ok, problem := (ZookeeperMigrator{}).SupportsPair(v(3, 4, 14), v(3, 9, 5))
 		require.False(t, ok)
-		assert.Contains(t, problem, "snapshot.trust.empty")
-		assert.NotContains(t, problem, "update the launcher", "a newer launcher would refuse it too")
+		assert.Contains(t, oneEN(problem), "snapshot.trust.empty")
+		assert.NotContains(t, oneEN(problem), "update the launcher", "a newer launcher would refuse it too")
 	})
 	// The shared version checks word a downgrade, so this refuses it with no
 	// reason of its own rather than overwriting the accurate message.
 	t.Run("a downgrade is left to the shared checks", func(t *testing.T) {
 		ok, problem := (ZookeeperMigrator{}).SupportsPair(v(3, 9, 5), v(3, 8, 6))
 		require.False(t, ok)
-		assert.Empty(t, problem)
+		assert.True(t, problem.Empty())
 	})
 }
 
@@ -89,7 +90,7 @@ func TestZkPreflightDoesNotRequireASnapshot(t *testing.T) {
 	res := (ZookeeperMigrator{}).Preflight(context.Background(), env, zkFrom, zkTo)
 	require.True(t, res.OK, res.Problems)
 	assert.Empty(t, res.Problems)
-	joined := strings.Join(append(res.Problems, res.Warnings...), "\n")
+	joined := joinEN(append(res.Problems, res.Warnings...))
 	assert.NotContains(t, joined, "snapshot",
 		"nothing in the preflight may depend on a snapshot file existing")
 	assert.True(t, res.Measured())
@@ -104,7 +105,7 @@ func TestZkPreflightRefusesAMissingSourceVolume(t *testing.T) {
 	delete(env.Volumes, deps.VolumeName(zookeeperDescriptor(t), 1))
 	res := (ZookeeperMigrator{}).Preflight(context.Background(), env, zkFrom, zkTo)
 	require.False(t, res.OK)
-	assert.Contains(t, strings.Join(res.Problems, "\n"), "zookeeper2")
+	assert.Contains(t, joinEN(res.Problems), "zookeeper2")
 }
 
 // A temp container runs the container and nothing around it — no init
@@ -155,7 +156,7 @@ func TestZkReadinessGivesUpAndFailsTheStep(t *testing.T) {
 	require.NoError(t, err)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // the wait honors the context instead of polling for minutes
-	err = zkCopySpec().WaitReady(ctx, env, SrcContainer, func(float64, string) {})
+	err = zkCopySpec().WaitReady(ctx, env, SrcContainer, func(float64, msg.Message) {})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), SrcContainer)
 }

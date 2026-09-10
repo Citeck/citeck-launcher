@@ -212,7 +212,7 @@ func TestSnapshotRoutesKeepTheirOwnCodeOnTheSharedLock(t *testing.T) {
 					assert.Contains(t, rec.Body.String(), api.ErrCodeSnapshotInProgress,
 						"the snapshot dialog keys on this code; it must not change")
 					assert.NotContains(t, rec.Body.String(), api.ErrCodeLongOpInProgress)
-					assert.Contains(t, rec.Body.String(), holder.busyMessage()+" — wait for it to finish",
+					assert.Contains(t, rec.Body.String(), englishForLogs.Render(holder.busyMessage()),
 						"the text must name the real holder, not assume a snapshot — "+
 							"and say what to do about it, exactly like every other long-op refusal")
 				})
@@ -229,11 +229,11 @@ func TestSnapshotRoutesKeepTheirOwnCodeOnTheSharedLock(t *testing.T) {
 func TestTryLongOpIsExclusiveAndReleases(t *testing.T) {
 	d := &Daemon{}
 
-	release, ok := d.tryLongOp(httptest.NewRecorder(), tolerateNothing)
+	release, ok := d.tryLongOp(httptest.NewRecorder(), nil, tolerateNothing)
 	require.True(t, ok)
 
 	rec := httptest.NewRecorder()
-	blocked, ok2 := d.tryLongOp(rec, tolerateNothing)
+	blocked, ok2 := d.tryLongOp(rec, nil, tolerateNothing)
 	require.False(t, ok2, "the lock must not be handed out twice")
 	assert.Nil(t, blocked, "a refused claim must not return a release func")
 	assert.Equal(t, http.StatusConflict, rec.Code)
@@ -241,7 +241,7 @@ func TestTryLongOpIsExclusiveAndReleases(t *testing.T) {
 
 	release()
 
-	release2, ok3 := d.tryLongOp(httptest.NewRecorder(), tolerateNothing)
+	release2, ok3 := d.tryLongOp(httptest.NewRecorder(), nil, tolerateNothing)
 	require.True(t, ok3, "the lock must be claimable again after release")
 	release2()
 }
@@ -324,10 +324,11 @@ func TestUpdateAndStartPassRefusesWhileALongOperationHoldsTheLock(t *testing.T) 
 	}, 5*time.Second, 5*time.Millisecond, "the refused pass must report why it did not run")
 
 	msg, _ := d.updateFailureFor(&namespace.Config{ID: "ns1"})
-	// The recorded reason is the HOLDER's own wording (busyMessage), not a
+	// The recorded reason is the HOLDER's own wording (busyEnglish), not a
 	// generic "busy": a refusal that named a snapshot nobody took is what that
-	// message exists to prevent.
-	assert.Contains(t, msg, longOpMigration.busyMessage())
+	// message exists to prevent. English, because this one is stored rather
+	// than answered to a request — see busyEnglish.
+	assert.Contains(t, msg, longOpMigration.busyEnglish())
 	assert.Contains(t, msg, "a dependency migration is in progress")
 
 	select {
@@ -407,7 +408,7 @@ func TestGatedRoutesRefuseLifecycleWorkExceptTheLifecycleRoutes(t *testing.T) {
 					}
 					require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
 					assert.Contains(t, rec.Body.String(), api.ErrCodeLongOpInProgress)
-					assert.Contains(t, rec.Body.String(), holder.busyMessage(),
+					assert.Contains(t, rec.Body.String(), englishForLogs.Render(holder.busyMessage()),
 						"the refusal must name the real holder, not an imaginary snapshot")
 				})
 				if rtc.tolerantOfLifecycle {
@@ -438,7 +439,7 @@ func TestLifecycleRoutesAreStillRefusedByASnapshot(t *testing.T) {
 				rec := doGatedRequest(t, mux, rtc)
 				require.Equal(t, http.StatusConflict, rec.Code, "%s: %s", rtc.handler, rec.Body.String())
 				assert.Contains(t, rec.Body.String(), api.ErrCodeLongOpInProgress)
-				assert.Contains(t, rec.Body.String(), holder.busyMessage())
+				assert.Contains(t, rec.Body.String(), englishForLogs.Render(holder.busyMessage()))
 			}
 			assert.False(t, d.updatePending.Load(), "a refused Start must not queue a pass")
 		})

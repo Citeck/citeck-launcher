@@ -11,7 +11,6 @@ import (
 
 	"github.com/citeck/citeck-launcher/internal/api"
 	"github.com/citeck/citeck-launcher/internal/deps"
-	"github.com/citeck/citeck-launcher/internal/deps/migrate"
 	"github.com/citeck/citeck-launcher/internal/output"
 )
 
@@ -21,8 +20,8 @@ import (
 // consequence sentences the confirm screen exists for, as WARNINGS — built by
 // migrate.warnRollbackConsequences, in English, exactly like every other
 // preflight sentence.
-func okRollbackPreflight() *migrate.PreflightResult {
-	pre := migrate.NewPreflightResult("postgres:18.6", "postgres:17.5")
+func okRollbackPreflight() *api.PreflightResult {
+	pre := newPreflightDto("postgres:18.6", "postgres:17.5")
 	pre.OK = true
 	pre.WasRunning = true
 	pre.Warnings = append(pre.Warnings,
@@ -123,7 +122,7 @@ func TestDepsRollback_PendingRollbackIsRefusedBeforeThePreflight(t *testing.T) {
 
 func TestDepsRollback_AFailedPreflightStartsNothing(t *testing.T) {
 	depsTestSetup(t)
-	bad := migrate.NewPreflightResult("postgres:18.6", "postgres:17.5")
+	bad := newPreflightDto("postgres:18.6", "postgres:17.5")
 	bad.Problems = append(bad.Problems,
 		"volume citeck_postgres2_default is gone, so there is no postgres data from postgres:17.5 to go back to")
 	f := &fakeDepsDaemon{list: rollbackListDto(0), rollbackPre: &bad}

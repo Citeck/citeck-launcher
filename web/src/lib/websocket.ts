@@ -1,4 +1,5 @@
 import type { EventDto } from './types'
+import { currentLocale } from './i18n'
 
 export type EventHandler = (event: EventDto) => void
 export type ResyncHandler = () => void
@@ -16,8 +17,14 @@ export function connectEvents(
   lastSeq = 0,
   onPing?: () => void,
 ): { close: () => void } {
-  const url = lastSeq > 0 ? `/api/v1/events?lastSeq=${lastSeq}` : `/api/v1/events`
-  const es = new EventSource(url)
+  // The locale rides in the QUERY STRING and not in a header for the same
+  // reason lastSeq does: EventSource cannot set one. The daemon accepts both
+  // spellings (api.LocaleHeader / api.LocaleQueryParam) and this stream is the
+  // reason the second exists — it carries the per-step messages of a
+  // dependency migration, which the daemon renders per subscriber.
+  const params = new URLSearchParams({ locale: currentLocale() })
+  if (lastSeq > 0) params.set('lastSeq', String(lastSeq))
+  const es = new EventSource(`/api/v1/events?${params.toString()}`)
 
   es.onopen = () => {
     onOpen?.()

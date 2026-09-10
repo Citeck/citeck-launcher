@@ -2,9 +2,10 @@ package migrate
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/citeck/citeck-launcher/internal/deps"
+
+	"github.com/citeck/citeck-launcher/internal/msg"
 )
 
 // ZookeeperMigrator moves a namespace's ZooKeeper data onto a new minor by
@@ -44,16 +45,16 @@ const (
 // it may predate zookeeper.snapshot.trust.empty, where a newer server can take
 // an empty snapshot for valid state. A downgrade is refused with an EMPTY
 // reason, which the shared preflight has already worded better.
-func (ZookeeperMigrator) SupportsPair(from, to deps.Version) (ok bool, problem string) {
+func (ZookeeperMigrator) SupportsPair(from, to deps.Version) (ok bool, problem msg.Message) {
 	d, found := deps.Lookup(deps.Zookeeper)
 	if !found { // unreachable: ZooKeeper is in the fixed registry
-		return false, ""
+		return false, msg.Message{}
 	}
 	if d.UpgradeSupport(from, to).Allowed {
-		return true, ""
+		return true, msg.Message{}
 	}
 	if deps.MovesBackwards(from, to) {
-		return false, ""
+		return false, msg.Message{}
 	}
 	// The registry owns the floor, so it is asked rather than restated here:
 	// a move from this version to ITSELF isolates the "the data is too old"
@@ -73,14 +74,8 @@ func (ZookeeperMigrator) SupportsPair(from, to deps.Version) (ok bool, problem s
 // "zookeeper.snapshot.trust.empty" is what leads to the vendor's own
 // explanation — and it must not suggest updating the launcher, which would
 // refuse it just the same.
-func zkDataTooOldProblem(from deps.Version) string {
-	return fmt.Sprintf(
-		"ZooKeeper data written by %s may predate zookeeper.snapshot.trust.empty, where a newer "+
-			"server can read an empty snapshot as valid state; the launcher will not move it. "+
-			"ZooKeeper holds the per-webapp patch-result markers and eproc's permanent "+
-			"mongo-disabled marker, so an empty tree that looks healthy is the worst outcome "+
-			"available. The namespace goes on running %s.",
-		from.String(), from.String())
+func zkDataTooOldProblem(from deps.Version) msg.Message {
+	return msg.New("deps.msg.zk.dataTooOld", "from", from.String())
 }
 
 // Preflight runs the shared copy-upgrade checks, and nothing else.

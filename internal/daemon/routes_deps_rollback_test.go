@@ -341,7 +341,9 @@ func TestTheRollbackHoldsItsOwnLongOpKind(t *testing.T) {
 	d.bgWg.Wait()
 
 	assert.Equal(t, longOpDepsRollback, holder)
-	assert.Equal(t, "a dependency rollback is running", longOpDepsRollback.busyMessage())
+	assert.Equal(t, "a dependency rollback is running", longOpDepsRollback.busyEnglish())
+	assert.Contains(t, englishForLogs.Render(longOpDepsRollback.busyMessage()),
+		"a dependency rollback is running")
 	assert.False(t, tolerateLifecycleWork.allows(longOpDepsRollback),
 		"a start between the stop and the pin write is exactly what this refuses")
 	assert.False(t, tolerateNothing.allows(longOpDepsRollback))
@@ -482,7 +484,11 @@ func TestTheListAndThePreflightNameAMissingRetainedVolumeIdentically(t *testing.
 	require.False(t, pre.OK)
 	require.Len(t, pre.Problems, 1)
 
-	want := migrate.RetainedVolumeGoneProblem(deps.Postgres, "postgres2", "postgres:17.5")
+	// Both surfaces are compared as RENDERED sentences, because that is what
+	// each one actually sends: the list's Problem and the preflight's
+	// Problems[0] are strings on the wire, and the point of the test is that
+	// they are the SAME sentence.
+	want := englishForLogs.Render(migrate.RetainedVolumeGoneProblem(deps.Postgres, "postgres2", "postgres:17.5"))
 	assert.Equal(t, want, item.Rollback.Problem)
 	assert.Equal(t, want, pre.Problems[0])
 }

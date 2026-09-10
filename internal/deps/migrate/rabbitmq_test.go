@@ -10,6 +10,8 @@ import (
 
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/deps"
+
+	"github.com/citeck/citeck-launcher/internal/msg"
 )
 
 const rabbit43 = "rabbitmq:4.3.5-management"
@@ -92,20 +94,20 @@ func TestRabbitSupportsPairFollowsTheVendorMatrix(t *testing.T) {
 	t.Run("a hop with an intermediate names it", func(t *testing.T) {
 		ok, problem := (RabbitMigrator{}).SupportsPair(v(4, 1, 2), v(4, 3, 5))
 		require.False(t, ok)
-		assert.Contains(t, problem, "upgrade to 4.2 first")
-		assert.Contains(t, problem, "citeck edit rabbitmq")
-		assert.NotContains(t, problem, "update the launcher")
+		assert.Contains(t, oneEN(problem), "upgrade to 4.2 first")
+		assert.Contains(t, oneEN(problem), "citeck edit rabbitmq")
+		assert.NotContains(t, oneEN(problem), "update the launcher")
 	})
 	t.Run("an old series is routed through 3.13", func(t *testing.T) {
 		ok, problem := (RabbitMigrator{}).SupportsPair(v(3, 12, 12), v(4, 2, 9))
 		require.False(t, ok)
-		assert.Contains(t, problem, "upgrade to 3.13 first")
+		assert.Contains(t, oneEN(problem), "upgrade to 3.13 first")
 	})
 	t.Run("a series with no path says so and invents nothing", func(t *testing.T) {
 		ok, problem := (RabbitMigrator{}).SupportsPair(v(4, 2, 9), v(9, 0, 0))
 		require.False(t, ok)
-		assert.Contains(t, problem, "no upgrade path")
-		assert.NotContains(t, problem, "first")
+		assert.Contains(t, oneEN(problem), "no upgrade path")
+		assert.NotContains(t, oneEN(problem), "first")
 	})
 	// A downgrade is refused with an EMPTY reason on purpose: the shared
 	// version checks word it ("the launcher does not migrate data backwards")
@@ -113,7 +115,7 @@ func TestRabbitSupportsPairFollowsTheVendorMatrix(t *testing.T) {
 	t.Run("a downgrade is left to the shared checks", func(t *testing.T) {
 		ok, problem := (RabbitMigrator{}).SupportsPair(v(4, 2, 9), v(4, 1, 2))
 		require.False(t, ok)
-		assert.Empty(t, problem)
+		assert.True(t, problem.Empty())
 	})
 }
 
@@ -214,7 +216,7 @@ func TestRabbitReadinessGivesUpAndFailsTheStep(t *testing.T) {
 	require.NoError(t, err)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // the wait must honor the context rather than poll for minutes
-	err = spec.WaitReady(ctx, env, SrcContainer, func(float64, string) {})
+	err = spec.WaitReady(ctx, env, SrcContainer, func(float64, msg.Message) {})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), SrcContainer)
 }
@@ -233,14 +235,14 @@ func TestRabbitPreflightChecksDeprecatedFeaturesForA43Target(t *testing.T) {
 		env.States[deps.RabbitMQ] = deps.DependencyState{Image: rabbitTo}
 		res := (RabbitMigrator{}).Preflight(context.Background(), env, rabbitTo, rabbit43)
 		require.False(t, res.OK)
-		assert.Contains(t, strings.Join(res.Problems, "\n"), "classic_queue_mirroring")
+		assert.Contains(t, joinEN(res.Problems), "classic_queue_mirroring")
 	})
 	t.Run("a stopped namespace is a warning, not a refusal", func(t *testing.T) {
 		env := rabbitPlanEnv(t, &execScript{})
 		env.States[deps.RabbitMQ] = deps.DependencyState{Image: rabbitTo}
 		res := (RabbitMigrator{}).Preflight(context.Background(), env, rabbitTo, rabbit43)
 		require.True(t, res.OK, res.Problems)
-		assert.Contains(t, strings.Join(res.Warnings, "\n"), "deprecated features")
+		assert.Contains(t, joinEN(res.Warnings), "deprecated features")
 	})
 	t.Run("a target below 4.3 is not asked at all", func(t *testing.T) {
 		s := &execScript{}
@@ -335,7 +337,7 @@ func TestRabbitReadinessRunsNoErlangToolWhileTheCookieIsMissing(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // one poll iteration, then the wait honors the context
 	err = rabbitCopySpec(deps.Version{Major: 4, Minor: 2, Patch: 9}).
-		WaitReady(ctx, env, SrcContainer, func(float64, string) {})
+		WaitReady(ctx, env, SrcContainer, func(float64, msg.Message) {})
 	require.Error(t, err)
 	joined := strings.Join(s.calledIn(SrcContainer), "\n")
 	require.NotEmpty(t, joined, "the wait must at least have asked about the cookie")

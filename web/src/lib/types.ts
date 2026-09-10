@@ -134,9 +134,12 @@ export interface DependencyDto {
   status: string
   /** Explains a status a fixed label cannot: today, why a vendor-forbidden
    *  pair is blocked and which intermediate version to take. Empty for every
-   *  other status, so it can be rendered unconditionally. English only, like
-   *  every other sentence built in internal/deps/migrate — the short status
-   *  LABEL is the localized half. */
+   *  other status, so it can be rendered unconditionally.
+   *
+   *  It arrives already translated into the locale this client sends on every
+   *  request (X-Citeck-Locale): the daemon builds it as a locale key and
+   *  renders it at the boundary, so the status LABEL and the sentence behind
+   *  it are in the same language. Do NOT try to translate it here. */
   statusDetail?: string
   /** Whether THIS launcher ships a migration plan for the dependency at all. */
   migratable: boolean
@@ -239,7 +242,7 @@ export interface DependencyMigrateRequestDto {
   replaceExistingVolume: boolean
 }
 
-/** Result of GET …/dependencies/{id}/preflight (Go: migrate.PreflightResult).
+/** Result of GET …/dependencies/{id}/preflight (Go: api.PreflightResult).
  *  Problems block the migration; warnings need an explicit confirmation. */
 export interface PreflightResult {
   ok: boolean

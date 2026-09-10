@@ -3,7 +3,6 @@ package migrate
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -75,7 +74,7 @@ func TestRollbackPreflightRefusesWithNoTarget(t *testing.T) {
 	res := RollbackPreflight(context.Background(), env, deps.Postgres, deps.DependencyState{})
 	assert.False(t, res.OK)
 	require.Len(t, res.Problems, 1)
-	assert.Contains(t, res.Problems[0], "no recorded previous version")
+	assert.Contains(t, renderEN(res.Problems)[0], "no recorded previous version")
 	assert.Empty(t, res.Warnings, "nothing to warn about when there is nothing to do")
 }
 
@@ -90,8 +89,8 @@ func TestRollbackPreflightNamesTheMissingRetainedVolume(t *testing.T) {
 	res := RollbackPreflight(context.Background(), env, deps.Postgres, prev)
 	assert.False(t, res.OK)
 	require.Len(t, res.Problems, 1)
-	assert.Contains(t, res.Problems[0], "postgres2")
-	assert.Contains(t, res.Problems[0], "postgres:17.5")
+	assert.Contains(t, renderEN(res.Problems)[0], "postgres2")
+	assert.Contains(t, renderEN(res.Problems)[0], "postgres:17.5")
 	// The consequence warnings describe a rollback that is going to happen.
 	assert.Empty(t, res.Warnings)
 }
@@ -103,8 +102,8 @@ func TestRollbackPreflightReportsAVolumeItCannotCheck(t *testing.T) {
 	res := RollbackPreflight(context.Background(), env, deps.Postgres, prev)
 	assert.False(t, res.OK)
 	require.Len(t, res.Problems, 1)
-	assert.Contains(t, res.Problems[0], "postgres2")
-	assert.Contains(t, res.Problems[0], "docker is away")
+	assert.Contains(t, renderEN(res.Problems)[0], "postgres2")
+	assert.Contains(t, renderEN(res.Problems)[0], "docker is away")
 }
 
 // PG_VERSION is what the data itself says it is; the target says what the
@@ -117,9 +116,9 @@ func TestRollbackPreflightRefusesDataThatDisagreesWithTheTarget(t *testing.T) {
 	res := RollbackPreflight(context.Background(), env, deps.Postgres, prev)
 	assert.False(t, res.OK)
 	require.Len(t, res.Problems, 1)
-	assert.Contains(t, res.Problems[0], "postgres2")
-	assert.Contains(t, res.Problems[0], `"16"`)
-	assert.Contains(t, res.Problems[0], "postgres:17.5")
+	assert.Contains(t, renderEN(res.Problems)[0], "postgres2")
+	assert.Contains(t, renderEN(res.Problems)[0], `"16"`)
+	assert.Contains(t, renderEN(res.Problems)[0], "postgres:17.5")
 
 	// A marker that is not there at all is the same verdict: the volume exists
 	// but holds no cluster the target could describe.
@@ -128,7 +127,7 @@ func TestRollbackPreflightRefusesDataThatDisagreesWithTheTarget(t *testing.T) {
 	res = RollbackPreflight(context.Background(), env, deps.Postgres, prev)
 	assert.False(t, res.OK)
 	require.Len(t, res.Problems, 1)
-	assert.Contains(t, res.Problems[0], "PG_VERSION")
+	assert.Contains(t, renderEN(res.Problems)[0], "PG_VERSION")
 }
 
 // RabbitMQ and ZooKeeper write no version marker into their data. The check is
@@ -186,7 +185,7 @@ func TestRollbackPreflightWarnsAboutTheFrozenVolumeAndTheOneWayTrip(t *testing.T
 	res := RollbackPreflight(context.Background(), env, deps.Postgres, prev)
 	require.True(t, res.OK, "problems: %v", res.Problems)
 
-	all := strings.Join(res.Warnings, "\n")
+	all := joinEN(res.Warnings)
 	assert.Contains(t, all, "postgres3", "the frozen volume must be named")
 	assert.Contains(t, all, "unreachable", "the newer data becomes unreachable")
 	assert.Contains(t, all, "keeps it")
@@ -210,14 +209,14 @@ func TestRollbackPreflightWarnsWhenThePreviousImageIsNotLocal(t *testing.T) {
 	assert.True(t, res.OK, "a missing image must never refuse: %v", res.Problems)
 	assert.Empty(t, res.Problems)
 
-	all := strings.Join(res.Warnings, "\n")
+	all := joinEN(res.Warnings)
 	assert.Contains(t, all, "postgres:17.5")
 	assert.Contains(t, all, "not present locally")
 
 	// And it is silent when the image IS there.
 	env, prev = rolledBackPostgres(t)
 	res = RollbackPreflight(context.Background(), env, deps.Postgres, prev)
-	assert.NotContains(t, strings.Join(res.Warnings, "\n"), "not present locally")
+	assert.NotContains(t, joinEN(res.Warnings), "not present locally")
 }
 
 // A target that does not go back a generation is not a rollback: the volume it
@@ -236,7 +235,7 @@ func TestRollbackPreflightRefusesATargetThatIsNotOlderThanTheCurrentGeneration(t
 	res := RollbackPreflight(context.Background(), env, deps.Postgres, prev)
 	assert.False(t, res.OK)
 	require.Len(t, res.Problems, 1)
-	assert.Contains(t, res.Problems[0], "generation")
+	assert.Contains(t, renderEN(res.Problems)[0], "generation")
 }
 
 func TestRollbackPreflightRefusesAnUnregisteredDependency(t *testing.T) {
@@ -245,7 +244,7 @@ func TestRollbackPreflightRefusesAnUnregisteredDependency(t *testing.T) {
 		deps.DependencyState{Image: "redis:7", VolumeGen: 1})
 	assert.False(t, res.OK)
 	require.Len(t, res.Problems, 1)
-	assert.Contains(t, res.Problems[0], "not a registered dependency")
+	assert.Contains(t, renderEN(res.Problems)[0], "not a registered dependency")
 }
 
 // Keycloak's state lives in the PostgreSQL database and it has no volume of its
@@ -262,7 +261,7 @@ func TestRollbackPreflightRefusesADependencyWithNoDataVolume(t *testing.T) {
 	res := RollbackPreflight(context.Background(), env, deps.Keycloak, prev)
 	assert.False(t, res.OK)
 	require.Len(t, res.Problems, 1)
-	assert.Contains(t, res.Problems[0], "no data volume")
+	assert.Contains(t, renderEN(res.Problems)[0], "no data volume")
 }
 
 // The rollback reuses the migration's progress channel, so its steps need ids
@@ -280,7 +279,7 @@ func TestRollbackStepIDs(t *testing.T) {
 // pure and must not carry operator prose, internal/namespace may not import
 // this package, and the daemon renders what it is given.
 func TestBundleOlderNotices(t *testing.T) {
-	plain := BundleOlderNotice("postgres:18.6", "postgres:17.5")
+	plain := oneEN(BundleOlderNotice("postgres:18.6", "postgres:17.5"))
 	assert.Contains(t, plain, "postgres:17.5")
 	assert.Contains(t, plain, "postgres:18.6")
 	assert.Contains(t, plain, "older")
@@ -288,7 +287,7 @@ func TestBundleOlderNotices(t *testing.T) {
 	assert.NotContains(t, plain, "citeck deps upgrade")
 	assert.NotContains(t, plain, "citeck deps rollback")
 
-	withRollback := BundleOlderRollbackNotice("postgres", "postgres:18.6", "postgres:17.5")
+	withRollback := oneEN(BundleOlderRollbackNotice("postgres", "postgres:18.6", "postgres:17.5"))
 	assert.Contains(t, withRollback, "postgres:17.5")
 	assert.Contains(t, withRollback, "postgres:18.6")
 	assert.Contains(t, withRollback, "citeck deps rollback postgres")
@@ -297,8 +296,8 @@ func TestBundleOlderNotices(t *testing.T) {
 	// The dependency ID is what is interpolated into the command, so it must be
 	// spelled the way the CLI accepts it — the same rule VendorPathProblem
 	// follows.
-	assert.Contains(t, BundleOlderRollbackNotice("rabbitmq",
-		"rabbitmq:4.2.9-management", "rabbitmq:4.1.8-management"), "citeck deps rollback rabbitmq")
+	assert.Contains(t, oneEN(BundleOlderRollbackNotice("rabbitmq",
+		"rabbitmq:4.2.9-management", "rabbitmq:4.1.8-management")), "citeck deps rollback rabbitmq")
 }
 
 func mustLookup(t *testing.T, id deps.ID) deps.Descriptor {

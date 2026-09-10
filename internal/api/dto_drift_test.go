@@ -42,14 +42,14 @@ var knownFieldGaps = map[string]string{
 }
 
 // goSources are the Go files holding the DTO structs the web UI consumes.
-// preflight.go is not in this package: migrate.PreflightResult and
-// migrate.ExistingVolume are served verbatim by GET …/dependencies/{id}/preflight
-// and rendered by the confirm dialog, so they are as much a wire contract as
-// anything in dto.go — they were simply defined next to the migrator that
-// fills them. The gate follows the types rather than moving them.
+//
+// PreflightResult and ExistingVolume used to be pulled in from
+// internal/deps/migrate, which served them verbatim. They live here now: the
+// migrator's own PreflightResult carries its sentences as msg.Message and is
+// no longer a wire type at all, so what the confirm dialog decodes is the
+// rendered DTO in this package like every other one.
 var goSources = []string{
 	"dto.go",
-	filepath.Join("..", "deps", "migrate", "preflight.go"),
 }
 
 func TestWebTypesMatchGoDTOs(t *testing.T) {

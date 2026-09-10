@@ -13,6 +13,8 @@ import (
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/deps"
 	"github.com/citeck/citeck-launcher/internal/deps/migrate/migratetest"
+
+	"github.com/citeck/citeck-launcher/internal/msg"
 )
 
 const (
@@ -167,7 +169,7 @@ func rabbitEnv(t *testing.T) *guardEnv {
 func buildCopyPlan(t *testing.T, env Env, spec CopySpec) (*Plan, deps.MigrationJournal) {
 	t.Helper()
 	pre, _, ok := CopyPreflight(context.Background(), env, deps.RabbitMQ, rabbitFrom, rabbitTo,
-		func(deps.Version, deps.Version) (bool, string) { return true, "" })
+		func(deps.Version, deps.Version) (bool, msg.Message) { return true, msg.Message{} })
 	require.True(t, ok, pre.Problems)
 	pre.OK = len(pre.Problems) == 0
 	plan, j, err := BuildCopyUpgrade(env, spec, rabbitFrom, rabbitTo, PlanOptions{}, pre)
@@ -389,7 +391,7 @@ func TestCopyUpgradeTempContainersCarryTheNodeIdentity(t *testing.T) {
 func TestCopyPreflightMeasuresOnlyTheVolumeFilesystem(t *testing.T) {
 	env := rabbitEnv(t)
 	res, vols, ok := CopyPreflight(context.Background(), env, deps.RabbitMQ, rabbitFrom, rabbitTo,
-		func(deps.Version, deps.Version) (bool, string) { return true, "" })
+		func(deps.Version, deps.Version) (bool, msg.Message) { return true, msg.Message{} })
 	require.True(t, ok, res.Problems)
 	assert.Empty(t, res.Problems)
 	assert.True(t, res.Measured(), "the space checks ran")
@@ -402,9 +404,9 @@ func TestCopyPreflightMeasuresOnlyTheVolumeFilesystem(t *testing.T) {
 
 	env.FreeVolume = 1 << 20
 	res, _, ok = CopyPreflight(context.Background(), env, deps.RabbitMQ, rabbitFrom, rabbitTo,
-		func(deps.Version, deps.Version) (bool, string) { return true, "" })
+		func(deps.Version, deps.Version) (bool, msg.Message) { return true, msg.Message{} })
 	require.True(t, ok)
-	assert.Contains(t, strings.Join(res.Problems, "\n"), "not enough free space")
+	assert.Contains(t, joinEN(res.Problems), "not enough free space")
 }
 
 // A source volume that is not there means the pin describes data that does not
@@ -414,9 +416,9 @@ func TestCopyPreflightRefusesAMissingSourceVolume(t *testing.T) {
 	env := rabbitEnv(t)
 	delete(env.Volumes, rabbitGen1)
 	res, _, ok := CopyPreflight(context.Background(), env, deps.RabbitMQ, rabbitFrom, rabbitTo,
-		func(deps.Version, deps.Version) (bool, string) { return true, "" })
+		func(deps.Version, deps.Version) (bool, msg.Message) { return true, msg.Message{} })
 	require.False(t, ok)
-	assert.Contains(t, strings.Join(res.Problems, "\n"), rabbitGen1)
+	assert.Contains(t, joinEN(res.Problems), rabbitGen1)
 }
 
 // A pair the migrator refuses is reported with the migrator's own words, and
@@ -424,20 +426,20 @@ func TestCopyPreflightRefusesAMissingSourceVolume(t *testing.T) {
 // for a downgrade and for an unreadable tag.
 func TestCopyPreflightReportsTheMigratorsRefusal(t *testing.T) {
 	env := rabbitEnv(t)
-	refuse := func(deps.Version, deps.Version) (bool, string) {
+	refuse := func(deps.Version, deps.Version) (bool, msg.Message) {
 		return false, VendorPathProblem("RabbitMQ", "4.1", "4.3", "4.2")
 	}
 	res, _, ok := CopyPreflight(context.Background(), env, deps.RabbitMQ, rabbitFrom, "rabbitmq:4.3.5-management", refuse)
 	require.False(t, ok)
-	joined := strings.Join(res.Problems, "\n")
+	joined := joinEN(res.Problems)
 	assert.Contains(t, joined, "upgrade to 4.2 first")
 	assert.NotContains(t, joined, "update the launcher", "updating the launcher would not help")
 
 	// A downgrade never reaches the migrator: the shared checks word it.
 	res, _, ok = CopyPreflight(context.Background(), env, deps.RabbitMQ, rabbitTo, rabbitFrom,
-		func(deps.Version, deps.Version) (bool, string) { return true, "" })
+		func(deps.Version, deps.Version) (bool, msg.Message) { return true, msg.Message{} })
 	require.False(t, ok)
-	assert.Contains(t, strings.Join(res.Problems, "\n"), "downgrade")
+	assert.Contains(t, joinEN(res.Problems), "downgrade")
 }
 
 // An existing target volume is a confirmation, not a refusal — but building
@@ -448,7 +450,7 @@ func TestBuildCopyUpgradeNeedsTheExistingVolumeConfirmed(t *testing.T) {
 	env.Volumes[rabbitGen2] = map[string]string{}
 	env.VolSize[rabbitGen2] = 1 << 20
 	pre, _, ok := CopyPreflight(context.Background(), env, deps.RabbitMQ, rabbitFrom, rabbitTo,
-		func(deps.Version, deps.Version) (bool, string) { return true, "" })
+		func(deps.Version, deps.Version) (bool, msg.Message) { return true, msg.Message{} })
 	require.True(t, ok, pre.Problems)
 	pre.OK = len(pre.Problems) == 0
 	require.NotNil(t, pre.ExistingTargetVolume)
@@ -457,7 +459,7 @@ func TestBuildCopyUpgradeNeedsTheExistingVolumeConfirmed(t *testing.T) {
 		"a dependency whose data carries no version marker must not claim one")
 
 	_, _, err := BuildCopyUpgrade(env, testSpec(&copyCalls{}, nil), rabbitFrom, rabbitTo, PlanOptions{}, pre)
-	require.ErrorContains(t, err, "already exists")
+	assert.Contains(t, planProblemsEN(t, err), "already exists")
 
 	plan, j, err := BuildCopyUpgrade(env, testSpec(&copyCalls{}, nil), rabbitFrom, rabbitTo,
 		PlanOptions{ReplaceExistingVolume: true}, pre)
@@ -472,7 +474,7 @@ func TestBuildCopyUpgradeNeedsTheExistingVolumeConfirmed(t *testing.T) {
 func TestBuildCopyUpgradeRefusesAFailedPreflight(t *testing.T) {
 	env := rabbitEnv(t)
 	pre := NewPreflightResult(rabbitFrom, rabbitTo)
-	pre.Problems = append(pre.Problems, "nope")
+	pre.Problems = append(pre.Problems, msg.New("nope"))
 	_, _, err := BuildCopyUpgrade(env, testSpec(&copyCalls{}, nil), rabbitFrom, rabbitTo, PlanOptions{}, pre)
 	require.ErrorContains(t, err, "nope")
 }

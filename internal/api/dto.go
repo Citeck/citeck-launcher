@@ -1,5 +1,7 @@
 package api
 
+import "github.com/citeck/citeck-launcher/internal/msg"
+
 // ActionResultDto is the response for simple action endpoints.
 type ActionResultDto struct {
 	Success bool   `json:"success"`
@@ -266,10 +268,11 @@ type DependencyDto struct {
 	// vendor-forbidden pair is blocked and which intermediate version to take.
 	// Empty for every other status, so a renderer may print it unconditionally.
 	//
-	// It is ENGLISH, like every other sentence built in internal/deps/migrate:
-	// the short status LABEL is a locale key, this is the explanation behind
-	// it. That is a pre-existing property of the migration messages and is
-	// named here so the omission reads as a decision.
+	// It arrives RENDERED, in the language the request asked for: the builders
+	// in internal/deps/migrate answer a msg.Message and the daemon renders it
+	// at the boundary, so the short status LABEL and the sentence behind it are
+	// now in the same language. (They were not: the label was a locale key and
+	// this was English in all eight.)
 	StatusDetail string `json:"statusDetail,omitempty"`
 	// Migratable reports whether this LAUNCHER has a migration plan for the
 	// dependency at all — independent of whether one is pending.
@@ -311,8 +314,16 @@ type DependencyRollbackDto struct {
 	MigratedAt int64 `json:"migratedAt,omitempty"`
 	Available  bool  `json:"available"`
 	// Problem says why an existing target cannot be used. Empty when
-	// Available.
+	// Available. It is the RENDERED sentence; ProblemMsg beside it is the same
+	// sentence as data.
 	Problem string `json:"problem,omitempty"`
+	// ProblemMsg is Problem before the locale is applied, and it never reaches
+	// the wire. It exists because one caller does not want to READ the
+	// sentence, it wants to know WHICH sentence it is: the dependency edit
+	// gate's wayBack tells "the retained volume is gone" from every other
+	// unavailable offer, and comparing rendered prose would break the moment
+	// the offer is rendered in Russian. Compare ProblemMsg.Key.
+	ProblemMsg msg.Message `json:"-"`
 }
 
 // DependencyMigrationDto is the live progress of the running migration.
@@ -326,6 +337,11 @@ type DependencyMigrationDto struct {
 	StepCount int     `json:"stepCount"`
 	Percent   float64 `json:"percent,omitempty"`
 	Message   string  `json:"message,omitempty"`
+	// MessageMsg is Message before the locale is applied. It never reaches the
+	// wire: the running migration is published once, daemon-globally, and read
+	// back by every client in its own language, so the sentence has to survive
+	// as data until the request that renders it.
+	MessageMsg msg.Message `json:"-"`
 	// Kind discriminates a ROLLBACK from a migration: "" is a migration,
 	// "rollback" is one. The two share this channel on purpose — a rollback is
 	// three steps on the same progress events, so the CLI's renderer and the
@@ -406,6 +422,78 @@ type DependencyMigrateRequestDto struct {
 	ReplaceExistingVolume bool `json:"replaceExistingVolume"`
 }
 
+// PreflightResult is the RENDERED result of GET …/dependencies/{id}/preflight
+// (and its rollback sibling): what the confirm dialog and `citeck deps
+// upgrade` show before anything is touched. Problems block the operation;
+// Warnings need an explicit confirmation (today: an existing target volume).
+//
+// It is the wire half of migrate.PreflightResult, which carries the same
+// facts with its sentences still as msg.Message — the locale is applied at the
+// HTTP boundary, where the reader is known, and what leaves the daemon is a
+// plain string in the same JSON fields. So neither the web UI nor the CLI has
+// to learn a rendering path, and the sentence lives in exactly one place
+// (internal/i18n/locales/*.json) instead of being maintained twice.
+//
+// Problems and Warnings are JSON ARRAYS on the wire, never null: the web
+// dialog maps over both without a guard for the ordinary case, and the CLI's
+// `for range` over a nil slice hides the difference. The renderer builds them
+// with i18n.Translator.RenderAll, which returns a non-nil empty slice for the
+// same reason.
+type PreflightResult struct {
+	OK       bool     `json:"ok"`
+	Problems []string `json:"problems"`
+	Warnings []string `json:"warnings"`
+	From     string   `json:"from"`
+	To       string   `json:"to"`
+	// Sizes in bytes. Host = the filesystem holding the dump; Volume = the
+	// filesystem holding the data volumes (the Docker VM's disk on a
+	// macOS/Windows desktop, which is NOT the host's).
+	DataSizeBytes       int64 `json:"dataSizeBytes"`
+	RequiredHostBytes   int64 `json:"requiredHostBytes"`
+	RequiredVolumeBytes int64 `json:"requiredVolumeBytes"`
+	FreeHostBytes       int64 `json:"freeHostBytes"`
+	FreeVolumeBytes     int64 `json:"freeVolumeBytes"`
+	// SharedFilesystem reports that those two are ONE filesystem — the
+	// ordinary server layout. The dump and the new cluster coexist on it, so
+	// what has to fit there is RequiredTotalBytes and not either half alone.
+	SharedFilesystem bool `json:"sharedFilesystem"`
+	// RequiredTotalBytes is what that one filesystem must have free: the two
+	// halves added up. It is 0 when SharedFilesystem is false, where a sum
+	// across two disks means nothing — SharedFilesystem is the discriminator,
+	// never the zero.
+	RequiredTotalBytes   int64           `json:"requiredTotalBytes"`
+	ExistingTargetVolume *ExistingVolume `json:"existingTargetVolume,omitempty"`
+	WasRunning           bool            `json:"wasRunning"`
+	// SpaceChecked reports that the space checks actually ran. It replaces the
+	// old "RequiredHostBytes > 0" discriminator, which stopped being true the
+	// moment a plan appeared that writes no host file at all: a copy upgrade
+	// legitimately requires zero bytes on the host, and rendering a refused
+	// preflight's zeros verbatim reads as a namespace with no data and a full
+	// disk, printed above the real reason.
+	SpaceChecked bool `json:"spaceChecked"`
+}
+
+// Measured reports whether the space checks actually ran. A refused preflight
+// never probed anything, so every size on it is a zero that means "not
+// measured" — and rendered verbatim that reads as a namespace with no data and
+// a full disk ("Data size: 0 B", "Host (dump): need 0 B, free 0 B") printed
+// above the real reason.
+func (res PreflightResult) Measured() bool { return res.SpaceChecked }
+
+// ExistingVolume describes a target volume that is already there — a leftover
+// from an earlier attempt, or somebody else's data. Size and version are what
+// let the user tell those two apart before confirming its deletion.
+type ExistingVolume struct {
+	Name      string `json:"name"`
+	SizeBytes int64  `json:"sizeBytes"`
+	// Version is what the data itself says it is: PostgreSQL's PG_VERSION, or
+	// "empty" when the volume holds no such file. It is "" for a dependency
+	// whose data carries no version marker at all (RabbitMQ, ZooKeeper) —
+	// which is not the same as "empty", and a renderer must tell the two
+	// apart rather than print a version the data never claimed.
+	Version string `json:"version"`
+}
+
 // LinkDto represents a named URL link associated with a namespace.
 type LinkDto struct {
 	Name           string  `json:"name"`
@@ -466,17 +554,24 @@ type LinkDto struct {
 // broadcasts them and the CLI selects on them. The web store cannot import Go,
 // so it keeps its own literals with a comment naming these.
 type EventDto struct {
-	Type        string  `json:"type"`
-	Seq         int64   `json:"seq"`
-	Timestamp   int64   `json:"timestamp"`
-	NamespaceID string  `json:"namespaceId"`
-	AppName     string  `json:"appName"`
-	Before      string  `json:"before"`
-	After       string  `json:"after"`
-	Percent     float64 `json:"percent,omitempty"`
-	Phase       string  `json:"phase,omitempty"`
-	Current     int     `json:"current,omitempty"`
-	Total       int     `json:"total,omitempty"`
+	Type        string `json:"type"`
+	Seq         int64  `json:"seq"`
+	Timestamp   int64  `json:"timestamp"`
+	NamespaceID string `json:"namespaceId"`
+	AppName     string `json:"appName"`
+	Before      string `json:"before"`
+	After       string `json:"after"`
+	// AfterMsg is After before the locale is applied, for the events that
+	// carry an operator-facing sentence there (the dependency migration and
+	// rollback progress). It never reaches the wire — writeSSEEvent renders it
+	// into After for the ONE subscriber it is writing to, because a broadcast
+	// fans out to a desktop UI in Russian and a CLI in German at the same
+	// moment and there is no single language the replay ring could hold.
+	AfterMsg msg.Message `json:"-"`
+	Percent  float64     `json:"percent,omitempty"`
+	Phase    string      `json:"phase,omitempty"`
+	Current  int         `json:"current,omitempty"`
+	Total    int         `json:"total,omitempty"`
 	// Path / FreeBytes / ThresholdBytes are present on "disk_low" / "disk_ok"
 	// events only (omitempty keeps every other event unchanged on the wire).
 	Path           string `json:"path,omitempty"`

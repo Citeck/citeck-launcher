@@ -111,7 +111,7 @@ func (d *Daemon) handleDeleteVolume(w http.ResponseWriter, r *http.Request) {
 	if !validateAppName(w, name) {
 		return
 	}
-	release, ok := d.tryLongOp(w, tolerateNothing)
+	release, ok := d.tryLongOp(w, r, tolerateNothing)
 	if !ok {
 		return
 	}

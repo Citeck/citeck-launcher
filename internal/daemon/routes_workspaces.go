@@ -380,7 +380,7 @@ func (d *Daemon) handleUpdateWorkspace(w http.ResponseWriter, r *http.Request) {
 func (d *Daemon) handleDeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 	// Before requireDesktop: the lock says "the daemon is busy", which is true
 	// regardless of mode.
-	release, ok := d.tryLongOp(w, tolerateNothing)
+	release, ok := d.tryLongOp(w, r, tolerateNothing)
 	if !ok {
 		return
 	}
@@ -672,7 +672,7 @@ func (d *Daemon) resolveWorkspaceConfigForSwitch(ws storage.WorkspaceDto) (*bund
 
 func (d *Daemon) handleActivateWorkspace(w http.ResponseWriter, r *http.Request) {
 	// Before requireDesktop, for the same reason as handleDeleteWorkspace.
-	release, ok := d.tryLongOp(w, tolerateNothing)
+	release, ok := d.tryLongOp(w, r, tolerateNothing)
 	if !ok {
 		return
 	}

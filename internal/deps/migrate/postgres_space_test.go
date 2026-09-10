@@ -3,7 +3,6 @@ package migrate
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -33,7 +32,7 @@ func TestASharedFilesystemMustHoldTheDumpAndTheNewClusterAtOnce(t *testing.T) {
 		assert.False(t, res.OK, "3 GiB holds either the dump or the new cluster, not both")
 		assert.True(t, res.SharedFilesystem)
 		assert.Equal(t, res.RequiredHostBytes+res.RequiredVolumeBytes, res.RequiredTotalBytes)
-		joined := strings.Join(res.Problems, "\n")
+		joined := joinEN(res.Problems)
 		assert.Contains(t, joined, "dump", "the message names what needs the space")
 		assert.Contains(t, joined, "new cluster")
 		assert.Contains(t, joined, "5.0 GiB", "the sum, not either half")
@@ -62,7 +61,7 @@ func TestASharedFilesystemMustHoldTheDumpAndTheNewClusterAtOnce(t *testing.T) {
 		res := PostgresMigrator{}.Preflight(ctx, env, from17, to18)
 
 		assert.False(t, res.OK)
-		assert.Contains(t, strings.Join(res.Problems, "\n"), "4.0 GiB")
+		assert.Contains(t, joinEN(res.Problems), "4.0 GiB")
 	})
 }
 
@@ -91,7 +90,7 @@ func TestSeparateFilesystemsKeepThePerFilesystemCheck(t *testing.T) {
 		res := PostgresMigrator{}.Preflight(ctx, env, from17, to18)
 
 		assert.False(t, res.OK)
-		joined := strings.Join(res.Problems, "\n")
+		joined := joinEN(res.Problems)
 		assert.Contains(t, joined, "host")
 		assert.NotContains(t, joined, "share one filesystem")
 	})
@@ -115,7 +114,7 @@ func TestAnUnanswerableFilesystemIdentityRequiresTheSumAndSaysSo(t *testing.T) {
 	require.False(t, res.OK)
 	assert.True(t, res.SharedFilesystem, "the safe direction")
 	assert.Equal(t, int64(5<<30), res.RequiredTotalBytes)
-	warned := strings.Join(res.Warnings, "\n")
+	warned := joinEN(res.Warnings)
 	assert.Contains(t, warned, "no such file or directory", "the reason it could not tell")
-	assert.Contains(t, strings.Join(res.Problems, "\n"), "5.0 GiB")
+	assert.Contains(t, joinEN(res.Problems), "5.0 GiB")
 }

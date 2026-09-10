@@ -20,6 +20,7 @@ import (
 	"github.com/citeck/citeck-launcher/internal/deps/migrate"
 	"github.com/citeck/citeck-launcher/internal/deps/migrate/migratetest"
 	"github.com/citeck/citeck-launcher/internal/docker"
+	"github.com/citeck/citeck-launcher/internal/msg"
 	"github.com/citeck/citeck-launcher/internal/namespace"
 )
 
@@ -392,7 +393,7 @@ func TestPreflightReportsAPendingRollbackAsAProblem(t *testing.T) {
 
 	rec := depsGet(mux, api.DependencyPreflightPath("postgres"))
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	var pre migrate.PreflightResult
+	var pre api.PreflightResult
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &pre))
 	assert.False(t, pre.OK)
 	require.Len(t, pre.Problems, 1)
@@ -422,7 +423,7 @@ func TestAPairTheLauncherCannotCarryIsReportedAsALauncherUpdate(t *testing.T) {
 		Effective: "postgres:18", Candidate: "postgres:99",
 	}
 	d.depsMigratorFn = func(deps.ID) migrate.Migrator {
-		return fakeMigrator{supports: func(from, to deps.Version) (bool, string) {
+		return fakeMigrator{supports: func(from, to deps.Version) (bool, msg.Message) {
 			return false, migrate.UnsupportedPairProblem(from.String(), to.String())
 		}}
 	}
@@ -464,9 +465,9 @@ func TestNamespaceDtoMarksAnUnsupportedPairAsNotMigratable(t *testing.T) {
 	// this release happens not to handle.
 	refuse := true
 	d.depsMigratorFn = func(deps.ID) migrate.Migrator {
-		return fakeMigrator{supports: func(from, to deps.Version) (bool, string) {
+		return fakeMigrator{supports: func(from, to deps.Version) (bool, msg.Message) {
 			if !refuse {
-				return true, ""
+				return true, msg.Message{}
 			}
 			return false, migrate.UnsupportedPairProblem(from.String(), to.String())
 		}}
@@ -504,7 +505,7 @@ func TestADowngradeGetsItsOwnMessageNotALauncherUpdate(t *testing.T) {
 	d.activeNs.dependencies[deps.Postgres] = namespace.DependencyGen{
 		Effective: "postgres:18", Candidate: "postgres:17",
 	}
-	assert.Empty(t, d.pairProblem(deps.Postgres, "postgres:18", "postgres:17"),
+	assert.True(t, d.pairProblem(deps.Postgres, "postgres:18", "postgres:17").Empty(),
 		"a downgrade is not a launcher problem: the migrator refuses it with an EMPTY reason, "+
 			"which is the contract that leaves the preflight's accurate wording reachable")
 
@@ -523,7 +524,7 @@ func TestADowngradeGetsItsOwnMessageNotALauncherUpdate(t *testing.T) {
 	env.Volumes[postgresVolume(2)] = map[string]string{"18/docker/PG_VERSION": "18\n"}
 	pre := migrate.PostgresMigrator{}.Preflight(context.Background(), env, "postgres:18", "postgres:17")
 	assert.False(t, pre.OK)
-	assert.Contains(t, strings.Join(pre.Problems, "\n"), "does not migrate data backwards")
+	assert.Contains(t, renderProblems(englishForLogs, pre.Problems), "does not migrate data backwards")
 }
 
 // The pair the launcher WAS built for stays offered — the guard above must not
@@ -606,10 +607,10 @@ func TestARefusedPreflightReportsItMeasuredNothing(t *testing.T) {
 	assert.Zero(t, pre.RequiredHostBytes)
 }
 
-func decodePreflight(t *testing.T, rec *httptest.ResponseRecorder) migrate.PreflightResult {
+func decodePreflight(t *testing.T, rec *httptest.ResponseRecorder) api.PreflightResult {
 	t.Helper()
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	var pre migrate.PreflightResult
+	var pre api.PreflightResult
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &pre))
 	return pre
 }
@@ -621,13 +622,13 @@ type fakeMigrator struct {
 	onPlan func(from, to string, opts migrate.PlanOptions)
 	// supports stands in for the real migrator's pair verdict. Nil means "any
 	// pair", which is what every test that is not about the verdict wants.
-	supports func(from, to deps.Version) (bool, string)
+	supports func(from, to deps.Version) (bool, msg.Message)
 	onProbe  func()
 }
 
-func (f fakeMigrator) SupportsPair(from, to deps.Version) (ok bool, problem string) {
+func (f fakeMigrator) SupportsPair(from, to deps.Version) (ok bool, problem msg.Message) {
 	if f.supports == nil {
-		return true, ""
+		return true, msg.Message{}
 	}
 	return f.supports(from, to)
 }
@@ -674,7 +675,7 @@ func TestMigrateAcceptsRunsAndBroadcasts(t *testing.T) {
 			plan: &migrate.Plan{
 				Steps: []migrate.Step{{ID: "only", Run: func(_ context.Context, _ *migrate.Journal, p migrate.StepProgress) error {
 					holderDuringStep = d.longOp.Holder()
-					p(50, "half")
+					p(50, msg.New("deps.msg.progress.analyzing"))
 					progressSeen = d.currentDepsMigration("ns1")
 					return nil
 				}}},
@@ -730,7 +731,9 @@ func TestMigrateAcceptsRunsAndBroadcasts(t *testing.T) {
 	assert.Equal(t, 1, prog.Total)
 	assert.Equal(t, "ns1", prog.NamespaceID)
 	assert.InDelta(t, 50.0, prog.Percent, 0.001)
-	assert.Equal(t, "half", prog.After)
+	// The broadcast event carries the MESSAGE; After is filled in per
+	// subscriber by writeSSEEvent, in that subscriber's language.
+	assert.Equal(t, "analyzing", englishForLogs.Render(prog.AfterMsg))
 
 	assert.Nil(t, d.currentDepsMigration("ns1"), "progress state is cleared when the pass ends")
 }
@@ -874,7 +877,7 @@ func TestPreflightDuringARunningMigrationDoesNotProbe(t *testing.T) {
 
 	rec := depsGet(mux, api.DependencyPreflightPath("postgres"))
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	var pre migrate.PreflightResult
+	var pre api.PreflightResult
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &pre))
 	assert.False(t, pre.OK)
 	require.Len(t, pre.Problems, 1)
@@ -1011,11 +1014,11 @@ func TestZookeeperDataTooOldIsBlockedNotALauncherProblem(t *testing.T) {
 func TestPairProblemIsTheOneVerdictEverySurfaceAsksFor(t *testing.T) {
 	d, _, _ := newDepsRoutesDaemon(t)
 
-	assert.Empty(t, d.pairProblem(deps.RabbitMQ, "rabbitmq:4.1.8-management", "rabbitmq:4.2.9-management"),
+	assert.True(t, d.pairProblem(deps.RabbitMQ, "rabbitmq:4.1.8-management", "rabbitmq:4.2.9-management").Empty(),
 		"a hop the vendor allows and this launcher ships a plan for")
-	assert.Contains(t, d.pairProblem(deps.RabbitMQ, "rabbitmq:4.1.8-management", "rabbitmq:4.3.5-management"), "4.2")
-	assert.Empty(t, d.pairProblem(deps.Postgres, "postgres:latest", "postgres:18"),
+	assert.Contains(t, englishForLogs.Render(d.pairProblem(deps.RabbitMQ, "rabbitmq:4.1.8-management", "rabbitmq:4.3.5-management")), "4.2")
+	assert.True(t, d.pairProblem(deps.Postgres, "postgres:latest", "postgres:18").Empty(),
 		"an unreadable tag is the preflight's to explain, and its message names the tag")
-	assert.Empty(t, d.pairProblem(deps.MongoDB, "mongo:4.0", "mongo:7.0"),
+	assert.True(t, d.pairProblem(deps.MongoDB, "mongo:4.0", "mongo:7.0").Empty(),
 		"a dependency with no migrator is answered by the Migratable() arm, not by a second account of the pair")
 }

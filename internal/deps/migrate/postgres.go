@@ -12,6 +12,8 @@ import (
 
 	"github.com/citeck/citeck-launcher/internal/deps"
 	"github.com/citeck/citeck-launcher/internal/fsutil"
+
+	"github.com/citeck/citeck-launcher/internal/msg"
 )
 
 // Temp container names and the in-container mount of the scratch directory.
@@ -93,8 +95,8 @@ func (m PostgresMigrator) Preflight(ctx context.Context, env Env, from, to strin
 // have ALREADY worded better (a downgrade, a same-major move that needs no
 // migration at all), and returning a second sentence here would overwrite the
 // accurate one with a generic "update the launcher".
-func (PostgresMigrator) SupportsPair(from, to deps.Version) (ok bool, problem string) {
-	return to.Major > from.Major, ""
+func (PostgresMigrator) SupportsPair(from, to deps.Version) (ok bool, problem msg.Message) {
+	return to.Major > from.Major, msg.Message{}
 }
 
 // checkDataVersion reads PG_VERSION out of the data volume. The pin says what
@@ -104,14 +106,14 @@ func (PostgresMigrator) SupportsPair(from, to deps.Version) (ok bool, problem st
 func (res *PreflightResult) checkDataVersion(ctx context.Context, env Env, layout deps.PostgresLayout, volume string, major int, from string) {
 	raw, err := env.ReadVolumeFile(ctx, volume, layout.PGVersionRel)
 	if err != nil {
-		res.Problems = append(res.Problems, fmt.Sprintf("cannot read %s/%s: %v", volume, layout.PGVersionRel, err))
+		res.Problems = append(res.Problems, msg.New("deps.msg.postgres.cannotReadVersionFile",
+			"volume", volume, "path", layout.PGVersionRel, "error", err.Error()))
 		return
 	}
 	onDisk, convErr := strconv.Atoi(strings.TrimSpace(raw))
 	if convErr != nil || onDisk != major {
-		res.Problems = append(res.Problems, fmt.Sprintf(
-			"PG_VERSION in volume %s is %q but the namespace is pinned to %s",
-			volume, strings.TrimSpace(raw), from))
+		res.Problems = append(res.Problems, msg.New("deps.msg.postgres.dataVersionMismatch",
+			"volume", volume, "onDisk", strings.TrimSpace(raw), "image", from))
 	}
 }
 
@@ -142,15 +144,14 @@ type pgRun struct {
 func (m PostgresMigrator) Plan(ctx context.Context, env Env, from, to string, opts PlanOptions) (*Plan, deps.MigrationJournal, error) {
 	pre := m.Preflight(ctx, env, from, to)
 	if !pre.OK {
-		return nil, deps.MigrationJournal{}, fmt.Errorf("preflight failed: %s", strings.Join(pre.Problems, "; "))
+		return nil, deps.MigrationJournal{}, refusePlan(pre.Problems...)
 	}
 	if pre.ExistingTargetVolume != nil && !opts.ReplaceExistingVolume {
-		return nil, deps.MigrationJournal{}, fmt.Errorf(
-			"volume %s already exists; confirm replacing it to continue", pre.ExistingTargetVolume.Name)
+		return nil, deps.MigrationJournal{}, refusePlan(existingVolumeRefusal(pre.ExistingTargetVolume.Name))
 	}
 	d, ok := deps.Lookup(deps.Postgres)
 	if !ok {
-		return nil, deps.MigrationJournal{}, errors.New("PostgreSQL is not a registered dependency")
+		return nil, deps.MigrationJournal{}, refusePlan(NotRegisteredProblem(deps.Postgres))
 	}
 	// The pin is read ONCE, here, and both volume names and the generation the
 	// commit will move to are derived from that one reading — the journal then
@@ -296,7 +297,7 @@ func (r *pgRun) createVolume(ctx context.Context, j *Journal, _ StepProgress) er
 // line (could not connect, unreadable file) is a failure too.
 func (r *pgRun) restore(ctx context.Context, _ *Journal, p StepProgress) error {
 	size, _ := r.env.FileSize(r.dumpHostPath)
-	p(0, "restoring a "+fsutil.FormatBytes(size)+" dump")
+	p(0, msg.New("deps.msg.progress.restoring", "size", fsutil.FormatBytes(size)))
 	_, stderr, code, err := r.env.Exec(ctx, DstContainer,
 		append(RestoreCommandPrefix(), "-f", r.dumpInContainer))
 	if err != nil {
@@ -323,7 +324,7 @@ func (r *pgRun) verify(ctx context.Context, _ *Journal, p StepProgress) error {
 	if d := r.source.diff(target); len(d) > 0 {
 		return errors.New(strings.Join(d, "; "))
 	}
-	p(50, "analyzing")
+	p(50, msg.New("deps.msg.progress.analyzing"))
 	_, stderr, code, err := r.env.Exec(ctx, DstContainer,
 		[]string{"vacuumdb", "-h", "127.0.0.1", "-U", "postgres", "--all", "--analyze", "-q"})
 	if err != nil {
@@ -437,7 +438,7 @@ func waitReady(ctx context.Context, env Env, container string, timeout, poll tim
 		if time.Now().After(deadline) {
 			return fmt.Errorf("container %s did not become ready within %s", container, timeout)
 		}
-		p(0, "waiting for PostgreSQL in "+container)
+		p(0, progressWaiting("PostgreSQL", container))
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("waiting for %s: %w", container, ctx.Err())
@@ -483,7 +484,7 @@ func watchFileGrowth(ctx context.Context, env Env, file string, expected int64, 
 					// but it does not have to be — never report past 99%.
 					pct = min(99, float64(size)/float64(expected)*100)
 				}
-				p(pct, "dumped "+fsutil.FormatBytes(size))
+				p(pct, msg.New("deps.msg.progress.dumped", "size", fsutil.FormatBytes(size)))
 			}
 		}
 	}()

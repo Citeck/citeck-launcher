@@ -34,6 +34,8 @@ import (
 	"time"
 
 	"github.com/citeck/citeck-launcher/internal/deps"
+
+	"github.com/citeck/citeck-launcher/internal/msg"
 )
 
 // RollbackTimeout bounds a rollback that runs after the triggering context
@@ -78,11 +80,18 @@ type JournalStore interface {
 
 // StepProgress reports sub-progress of the running step (percent 0..100, or
 // 0 for indeterminate) with a human message.
-type StepProgress func(percent float64, message string)
+//
+// The message is a msg.Message and not a string for the same reason the
+// preflight's problems are: this package has no locale, and the progress line
+// is read by whoever is watching — a desktop UI in one language and a
+// `citeck deps upgrade` in another, at the same time, off ONE broadcast. The
+// zero Message means "no sub-message", which is what the engine itself sends
+// when a step starts.
+type StepProgress func(percent float64, message msg.Message)
 
 // Progress reports engine-level progress: which step (1-based index of total)
 // and the step's latest sub-progress.
-type Progress func(stepID string, index, total int, percent float64, message string)
+type Progress func(stepID string, index, total int, percent float64, message msg.Message)
 
 // Step is one reversible unit of work. Run may mutate the journal; the engine
 // persists it after Run returns. A step that must persist BEFORE acting calls
@@ -153,7 +162,7 @@ func Run(ctx context.Context, store JournalStore, j deps.MigrationJournal, plan 
 		return err
 	}
 	if progress == nil {
-		progress = func(string, int, int, float64, string) {}
+		progress = func(string, int, int, float64, msg.Message) {}
 	}
 	// The store is handed a COPY (rec is a value parameter), so it can never
 	// alias the journal the steps keep mutating.
@@ -169,8 +178,8 @@ func Run(ctx context.Context, store JournalStore, j deps.MigrationJournal, plan 
 		if err := ctx.Err(); err != nil {
 			return failAndRollback(ctx, store, plan, jj, fmt.Errorf("canceled before step %s: %w", st.ID, err))
 		}
-		progress(st.ID, i+1, total, 0, "")
-		sub := func(pct float64, msg string) { progress(st.ID, i+1, total, pct, msg) }
+		progress(st.ID, i+1, total, 0, msg.Message{})
+		sub := func(pct float64, m msg.Message) { progress(st.ID, i+1, total, pct, m) }
 		slog.Info("Dependency migration step", "dependency", jj.ID, "step", st.ID, "index", i+1, "total", total)
 		if err := st.Run(ctx, jj, sub); err != nil {
 			return failAndRollback(ctx, store, plan, jj, fmt.Errorf("step %s: %w", st.ID, err))
@@ -284,9 +293,11 @@ func RollbackInterrupted(ctx context.Context, store JournalStore, rollback func(
 		// Do not claim it was rolled back when it was not: the journal stays,
 		// and the verdict has to say why.
 		res.Error = "migration interrupted by a launcher restart; rollback failed: " + rbErr.Error()
+		res.ErrorMsg = msg.New("deps.msg.result.interruptedRollbackFailed", "error", rbErr.Error())
 		rbErr = fmt.Errorf("rollback failed: %w", rbErr)
 	} else {
 		res.Error = "migration interrupted by a launcher restart; rolled back"
+		res.ErrorMsg = msg.New("deps.msg.result.interruptedRolledBack")
 	}
 	if err := recordVerdict(store, res, rbErr); err != nil {
 		return true, errors.Join(rbErr, err)

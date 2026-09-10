@@ -245,7 +245,7 @@ func TestABackwardsEditSaysTheRetainedVolumeIsGoneWhenItIs(t *testing.T) {
 	rec := putAppConfig(mux, "postgres", "name: postgres\nimage: postgres:17.5\n")
 	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 	assert.Contains(t, rec.Body.String(),
-		migrate.RetainedVolumeGoneProblem(deps.Postgres, "postgres2", "postgres:17.5"))
+		englishForLogs.Render(migrate.RetainedVolumeGoneProblem(deps.Postgres, "postgres2", "postgres:17.5")))
 	assert.NotContains(t, rec.Body.String(), "citeck deps rollback",
 		"a rollback whose volume is gone cannot be taken, so it must not be offered")
 }

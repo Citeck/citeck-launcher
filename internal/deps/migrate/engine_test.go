@@ -12,6 +12,10 @@ import (
 
 	"github.com/citeck/citeck-launcher/internal/deps"
 	"github.com/citeck/citeck-launcher/internal/deps/migrate/migratetest"
+
+	"github.com/citeck/citeck-launcher/internal/msg"
+
+	"github.com/citeck/citeck-launcher/internal/i18n"
 )
 
 // The shared fake Env lives in migratetest so the plan tests, the daemon
@@ -131,7 +135,7 @@ func TestRunJournalsEveryStepThenCommitsOnce(t *testing.T) {
 		Finalize: func(context.Context, *deps.MigrationJournal) error { order = append(order, "finalize"); return nil },
 	}
 	var progress []string
-	err := Run(context.Background(), st, baseJournal(), plan, func(id string, _, _ int, _ float64, _ string) {
+	err := Run(context.Background(), st, baseJournal(), plan, func(id string, _, _ int, _ float64, _ msg.Message) {
 		progress = append(progress, id)
 	})
 	require.NoError(t, err)
@@ -194,8 +198,8 @@ func TestProgressNumbersEveryStepAndForwardsItsSubProgress(t *testing.T) {
 		Steps: []Step{
 			step("first", func(*deps.MigrationJournal) error { return nil }),
 			{ID: "second", Run: func(_ context.Context, _ *Journal, p StepProgress) error {
-				p(41.5, "dumped 512.0 MiB")
-				p(99, "dumped 1.2 GiB")
+				p(41.5, msg.New("deps.msg.progress.dumped", "size", "512.0 MiB"))
+				p(99, msg.New("deps.msg.progress.dumped", "size", "1.2 GiB"))
 				return nil
 			}},
 			step("third", func(*deps.MigrationJournal) error { return nil }),
@@ -205,8 +209,11 @@ func TestProgressNumbersEveryStepAndForwardsItsSubProgress(t *testing.T) {
 	}
 	var got []report
 	require.NoError(t, Run(context.Background(), st, baseJournal(), plan,
-		func(id string, index, total int, pct float64, msg string) {
-			got = append(got, report{id, index, total, pct, msg})
+		func(id string, index, total int, pct float64, m msg.Message) {
+			// Rendered here, exactly as the daemon renders it for one SSE
+			// subscriber: what the engine hands on is the MESSAGE, and the
+			// sentence is what the operator ends up reading.
+			got = append(got, report{id, index, total, pct, i18n.NewTranslator("en").Render(m)})
 		}))
 	assert.Equal(t, []report{
 		{"first", 1, 3, 0, ""},
@@ -223,7 +230,7 @@ func TestAStepMayReportProgressWithoutAProgressCallback(t *testing.T) {
 	st := &fakeStore{}
 	plan := &Plan{
 		Steps: []Step{{ID: "dump", Run: func(_ context.Context, _ *Journal, p StepProgress) error {
-			p(50, "halfway")
+			p(50, msg.New("deps.msg.progress.analyzing"))
 			return nil
 		}}},
 		Rollback: func(context.Context, *deps.MigrationJournal) error { return nil },
@@ -498,6 +505,40 @@ func TestRollbackInterruptedReportsARollbackFailure(t *testing.T) {
 	assert.Empty(t, st.failures)
 	require.NotNil(t, st.journal, "the journal survives so the next start retries the rollback")
 	assert.Equal(t, "postgres3", st.journal.CreatedVolume)
+}
+
+// The verdict of an interrupted migration is a sentence the LAUNCHER wrote,
+// not a step's own error, so it is recorded in both shapes: English on
+// MigrationResult.Error, where it is persisted, logged and read back by a
+// launcher that may be a different release, and as a msg.Message beside it so
+// the dependency list can render it in the reader's language.
+//
+// Dropping the structured half is silent: Error is still there, the list still
+// shows a sentence, and it is simply always English.
+func TestAnInterruptedMigrationRecordsItsVerdictInBothShapes(t *testing.T) {
+	rolledBack := &fakeStore{}
+	j := baseJournal()
+	require.NoError(t, rolledBack.SetMigrationJournal(&j))
+	_, err := RollbackInterrupted(context.Background(), rolledBack,
+		func(context.Context, *deps.MigrationJournal) error { return nil })
+	require.NoError(t, err)
+	require.Len(t, rolledBack.failures, 1)
+	assert.Equal(t, "deps.msg.result.interruptedRolledBack", rolledBack.failures[0].ErrorMsg.Key)
+	assert.NotEmpty(t, rolledBack.failures[0].Error, "the English half is what the state file keeps")
+
+	failed := &fakeStore{}
+	j2 := baseJournal()
+	require.NoError(t, failed.SetMigrationJournal(&j2))
+	_, err = RollbackInterrupted(context.Background(), failed,
+		func(context.Context, *deps.MigrationJournal) error { return errors.New("rm volume: busy") })
+	require.Error(t, err)
+	require.Len(t, failed.rbFails, 1)
+	assert.Equal(t, "deps.msg.result.interruptedRollbackFailed", failed.rbFails[0].ErrorMsg.Key)
+	// The step's own error is an ARGUMENT of the sentence, never glued onto
+	// the end of it: that is what lets a translator put it where their
+	// language wants it.
+	assert.Equal(t, []string{"error", "rm volume: busy"}, failed.rbFails[0].ErrorMsg.Args)
+	assert.Contains(t, oneEN(failed.rbFails[0].ErrorMsg), "rm volume: busy")
 }
 
 func TestRollbackInterruptedRunsOnAnUncancelledContext(t *testing.T) {

@@ -33,6 +33,7 @@ var SupportedLocales = []LocaleInfo{
 var (
 	cliTranslations map[string]string
 	cliFallback     map[string]string
+	cliLocale       string
 )
 
 // InitI18n loads the CLI translations for the given locale.
@@ -40,7 +41,23 @@ var (
 func InitI18n(locale string) {
 	cliFallback = LoadLocale("en")
 	cliTranslations = LoadLocale(locale)
+	cliLocale = NormalizeLocale(locale)
 }
+
+// CurrentLocale is the locale the CLI resolved for itself, or "" before
+// EnsureI18n has run.
+//
+// It exists so the DAEMON CLIENT can state that language on every request
+// (api.LocaleHeader). The daemon builds its operator-facing sentences as keys
+// and renders them at the request boundary, so without this the CLI would be
+// answered in whatever language daemon.yml configured — right on a server the
+// operator set up, wrong on a desktop whose daemon follows the UI.
+//
+// The empty answer is meaningful and must stay: it says "this process has not
+// chosen a language", which the client passes on as no header at all, i.e.
+// "you decide". Defaulting it to "en" here would silently override a
+// server-mode daemon.yml locale for every unauthenticated internal call.
+func CurrentLocale() string { return cliLocale }
 
 // LoadLocale reads and parses a locale JSON file from the embedded FS.
 func LoadLocale(locale string) map[string]string {
@@ -109,4 +126,5 @@ var LocaleFS = localeFS
 func ResetForTest() {
 	cliTranslations = nil
 	cliFallback = nil
+	cliLocale = ""
 }
