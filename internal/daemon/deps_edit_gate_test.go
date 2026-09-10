@@ -12,6 +12,8 @@ import (
 	"github.com/citeck/citeck-launcher/internal/api"
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/deps"
+	"github.com/citeck/citeck-launcher/internal/deps/migrate"
+	"github.com/citeck/citeck-launcher/internal/deps/migrate/migratetest"
 	"github.com/citeck/citeck-launcher/internal/namespace"
 )
 
@@ -158,22 +160,90 @@ func TestTheEditGateAnswersBeforeTheReloadLock(t *testing.T) {
 	assert.Nil(t, rt.AppPatch("postgres"))
 }
 
+// newBackwardsEditGateDaemon is the namespace that HAS migrated: postgres runs
+// on 18.6 out of volume postgres3, and the migration retained postgres2 on
+// 17.5. The fake Env is returned so a test can take that retained volume away,
+// or make Docker refuse to answer about it — the two facts that decide which
+// way back the refusal is allowed to name.
+func newBackwardsEditGateDaemon(t *testing.T) (*http.ServeMux, *namespace.Runtime, *migratetest.FakeEnv) {
+	t.Helper()
+	d, mux, rt := newEditGateDaemon(t, map[deps.ID]deps.DependencyState{
+		deps.Postgres: {Image: "postgres:18.6", VolumeGen: 2, PrevImage: "postgres:17.5", PrevVolumeGen: 1},
+	})
+	env := migratetest.New()
+	env.Volumes["postgres2"] = map[string]string{"PG_VERSION": "17\n"}
+	d.depsEnvFn = func(activeNamespace) migrate.Env { return env }
+	return mux, rt, env
+}
+
 // A BACKWARDS breaking edit is refused like any other — the older binary
 // cannot read the newer data — but the advice has to change with it. Sending
 // the operator to `citeck deps upgrade` is sending them nowhere: that command
 // refuses a backwards pair (DEPENDENCY_BACKWARDS), so the message would end a
 // dead end of exactly the class this codebase keeps closing. The one deliberate
-// way back is the rollback onto the volume the migration retained.
+// way back is the rollback onto the volume the migration retained — and when
+// that volume is really there, the message names it rather than hedging about
+// whether it exists.
 func TestABackwardsImageEditIsRefusedTowardsTheRollbackNotTheUpgrade(t *testing.T) {
-	_, mux, rt := newEditGateDaemon(t, map[deps.ID]deps.DependencyState{
-		deps.Postgres: {Image: "postgres:18.6", VolumeGen: 2, PrevImage: "postgres:17.5", PrevVolumeGen: 1},
-	})
+	mux, rt, _ := newBackwardsEditGateDaemon(t)
 	rec := putAppConfig(mux, "postgres", "name: postgres\nimage: postgres:17.5\n")
 	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 	assert.Contains(t, rec.Body.String(), `"DEPENDENCY_VERSION_LOCKED"`)
 	assert.Contains(t, rec.Body.String(), "citeck deps rollback postgres")
+	assert.Contains(t, rec.Body.String(), "volume postgres2",
+		"the way back is only actionable if it names the volume it goes back to")
+	assert.NotContains(t, rec.Body.String(), "if it made one",
+		"the daemon asked and got an answer; hedging here is a worse message than the fact")
 	assert.NotContains(t, rec.Body.String(), "citeck deps upgrade")
 	assert.Nil(t, rt.AppPatch("postgres"), "a refused edit must not be persisted")
+}
+
+// The launcher itself tells the operator they may reclaim the retained volume
+// once they trust the new version, so a rollback offer whose volume is gone is
+// a state it actively creates. Naming `citeck deps rollback` there would send
+// them after a volume the launcher told them to delete — and the sentence that
+// says so is migrate.RetainedVolumeGoneProblem, the same one the dependency
+// list and the rollback preflight print, because three spellings of one fact
+// drift the first time any of them is reworded.
+func TestABackwardsEditSaysTheRetainedVolumeIsGoneWhenItIs(t *testing.T) {
+	mux, _, env := newBackwardsEditGateDaemon(t)
+	delete(env.Volumes, "postgres2")
+	rec := putAppConfig(mux, "postgres", "name: postgres\nimage: postgres:17.5\n")
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(),
+		migrate.RetainedVolumeGoneProblem(deps.Postgres, "postgres2", "postgres:17.5"))
+	assert.NotContains(t, rec.Body.String(), "citeck deps rollback",
+		"a rollback whose volume is gone cannot be taken, so it must not be offered")
+}
+
+// A namespace that never migrated has no previous state at all, which is
+// knowable without asking Docker anything. It gets the plain fact rather than a
+// command that would refuse it (DEPENDENCY_NO_PREVIOUS) at the end of the trip.
+func TestABackwardsEditWithNothingToGoBackToSaysSo(t *testing.T) {
+	_, mux, _ := newEditGateDaemon(t, map[deps.ID]deps.DependencyState{
+		deps.Postgres: {Image: "postgres:18.6", VolumeGen: 2},
+	})
+	rec := putAppConfig(mux, "postgres", "name: postgres\nimage: postgres:17.5\n")
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "nothing to go back to")
+	assert.NotContains(t, rec.Body.String(), "citeck deps rollback",
+		"there is no retained volume, so there is no rollback to name")
+}
+
+// …and when the launcher could not ask at all — a Docker daemon that will not
+// talk, which this very path can hit — it must degrade to the hedged wording,
+// never to "the volume is gone". "I could not ask" is not "it is not there",
+// and printing the second would tell the operator their data is destroyed on
+// the strength of a socket error.
+func TestABackwardsEditHedgesWhenDockerCannotAnswer(t *testing.T) {
+	mux, _, env := newBackwardsEditGateDaemon(t)
+	env.FailOn["volexists:postgres2"] = assert.AnError
+	rec := putAppConfig(mux, "postgres", "name: postgres\nimage: postgres:17.5\n")
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "citeck deps rollback postgres")
+	assert.Contains(t, rec.Body.String(), "if it made one",
+		"an unanswered question is reported as one, not as a fact")
+	assert.NotContains(t, rec.Body.String(), "is gone")
 }
 
 // …and the FORWARD refusal keeps its own words, so the split cannot collapse

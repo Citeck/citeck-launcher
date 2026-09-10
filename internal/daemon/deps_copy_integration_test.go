@@ -402,18 +402,6 @@ func TestIntegration_Rabbit41To42(t *testing.T) {
 	pre := migrate.RabbitMigrator{}.Preflight(ctx, e.env, itRabbitFrom, itRabbitTo)
 	require.True(t, pre.OK, "preflight problems: %v", pre.Problems)
 	t.Logf("preflight: data %d B, free volume %d B, warnings %v", pre.DataSizeBytes, pre.FreeVolumeBytes, pre.Warnings)
-	// Ruling 2: the Khepri transition is announced as a WARNING and not as a
-	// checkbox, because it happens on the copy — and the sentence has to say
-	// which volume is left alone, or "irreversible" reads as "you cannot go
-	// back".
-	assert.Condition(t, func() bool {
-		for _, w := range pre.Warnings {
-			if strings.Contains(w, "Khepri") && strings.Contains(w, src) {
-				return true
-			}
-		}
-		return false
-	}, "the Khepri notice must name the source volume; warnings: %v", pre.Warnings)
 
 	plan, journal, err := migrate.RabbitMigrator{}.Plan(ctx, e.env, itRabbitFrom, itRabbitTo, migrate.PlanOptions{})
 	require.NoError(t, err)

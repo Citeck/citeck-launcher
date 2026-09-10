@@ -36,11 +36,6 @@ const (
 	// tool reads it, and CREATES it when it is absent — see waitForRabbit.
 	rabbitCookiePath = "/var/lib/rabbitmq/.erlang.cookie"
 
-	// khepriMajor/khepriMinor is the series whose `enable_feature_flag all`
-	// starts the irreversible Mnesia → Khepri migration. On 4.1 the same
-	// command leaves khepri_db disabled (it is experimental there); on 4.2 it
-	// enables it, which is what the upgrade was done for.
-	khepriMajor, khepriMinor = 4, 2
 	// deprecatedRemovedMajor/Minor is the series that REMOVES the features
 	// 4.2 only deprecates, so a stand still using one comes up broken after
 	// the upgrade rather than during it.
@@ -72,18 +67,16 @@ func (RabbitMigrator) SupportsPair(from, to deps.Version) (ok bool, problem stri
 	return false, VendorNoPathProblem(string(deps.RabbitMQ), from.String(), to.String())
 }
 
-// Preflight runs the shared copy-upgrade checks and then RabbitMQ's two own
-// concerns: the deprecated features a 4.3 target removes, and the Khepri
-// transition a 4.2 target starts. It never mutates.
+// Preflight runs the shared copy-upgrade checks and then RabbitMQ's own
+// concern: the deprecated features a 4.3 target removes. It never mutates.
 func (m RabbitMigrator) Preflight(ctx context.Context, env Env, from, to string) PreflightResult {
-	res, vols, ok := CopyPreflight(ctx, env, deps.RabbitMQ, from, to, m.SupportsPair)
+	res, _, ok := CopyPreflight(ctx, env, deps.RabbitMQ, from, to, m.SupportsPair)
 	if !ok {
 		return res
 	}
 	d, _ := deps.Lookup(deps.RabbitMQ) // registered: CopyPreflight just looked it up
 	toV, _ := d.ParseVersion(to)       // parseable: CopyPreflight refuses a tag it cannot read
 	res.checkRabbitDeprecatedFeatures(ctx, env, toV)
-	res.rabbitKhepriNotice(toV, from, vols.Source)
 	res.OK = len(res.Problems) == 0
 	return res
 }
@@ -211,24 +204,6 @@ func (res *PreflightResult) checkRabbitDeprecatedFeatures(ctx context.Context, e
 	if derr := rabbitDeprecatedFeaturesInUse(ctx, env, appdef.AppRabbitmq, toV); derr != nil {
 		res.Problems = append(res.Problems, derr.Error())
 	}
-}
-
-// rabbitKhepriNotice warns that a 4.2+ target starts the irreversible
-// Mnesia → Khepri migration (ruling 2).
-//
-// It is a warning and not a checkbox because of WHERE it happens: on the copy.
-// The namespace's own volume is left exactly as it is, so the operator's way
-// back is to pin the old image again — which is what the message says, since
-// "irreversible" without that sentence reads as "you cannot go back".
-func (res *PreflightResult) rabbitKhepriNotice(toV deps.Version, from, sourceVolume string) {
-	if !atLeastSeries(toV, khepriMajor, khepriMinor) {
-		return
-	}
-	res.Warnings = append(res.Warnings, fmt.Sprintf(
-		"RabbitMQ %d.%d enables the Khepri metadata store, and that change cannot be undone on the data "+
-			"it is applied to. It is applied to the COPY: volume %s is left exactly as it is, so the "+
-			"namespace can be put back on %s by pinning it (`citeck edit %s`) — see `citeck deps`.",
-		khepriMajor, khepriMinor, sourceVolume, from, appdef.AppRabbitmq))
 }
 
 // waitForRabbit blocks until the node in container is really up.

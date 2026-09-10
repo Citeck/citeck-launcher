@@ -219,28 +219,6 @@ func TestRabbitReadinessGivesUpAndFailsTheStep(t *testing.T) {
 	assert.Contains(t, err.Error(), SrcContainer)
 }
 
-// The Khepri transition is irreversible ON THE DATA IT IS APPLIED TO, and it
-// is applied to the COPY — so it is a WARNING that names the volume the
-// operator still has, not a checkbox and not a refusal.
-func TestRabbitPreflightNamesTheKhepriTransitionForA42Target(t *testing.T) {
-	env := rabbitPlanEnv(t, &execScript{})
-	res := (RabbitMigrator{}).Preflight(context.Background(), env, rabbitFrom, rabbitTo)
-	require.True(t, res.OK, res.Problems)
-	joined := strings.Join(res.Warnings, "\n")
-	assert.Contains(t, joined, "Khepri")
-	assert.Contains(t, joined, rabbitGen1, "the warning names the volume that is left untouched")
-	assert.Contains(t, joined, rabbitFrom, "and the image the namespace can be put back on")
-
-	t.Run("and says nothing for a target below 4.2", func(t *testing.T) {
-		env := rabbitPlanEnv(t, &execScript{})
-		env.States[deps.RabbitMQ] = deps.DependencyState{Image: "rabbitmq:4.0.9-management"}
-		res := (RabbitMigrator{}).Preflight(context.Background(), env,
-			"rabbitmq:4.0.9-management", "rabbitmq:4.1.2-management")
-		require.True(t, res.OK, res.Problems)
-		assert.NotContains(t, strings.Join(res.Warnings, "\n"), "Khepri")
-	})
-}
-
 // 4.3 removes the deprecated features, so a stand still using one would come
 // up broken. The check needs a RUNNING broker, which the preflight may not
 // have — so it asks the namespace's own container when that is running, and

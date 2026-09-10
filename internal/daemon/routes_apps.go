@@ -618,7 +618,8 @@ func (d *Daemon) handlePutAppConfig(w http.ResponseWriter, r *http.Request) {
 	// tail of Generate, after the infra generators have already resolved the
 	// pinned image. Refuse here instead, before anything is persisted.
 	if refusal, locked := dependencyEditLocked(rt, name, newDef); locked {
-		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeDependencyVersionLocked, refusal.message())
+		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeDependencyVersionLocked,
+			refusal.message(d.dependencyEditWayBack(r.Context(), refusal)))
 		return
 	}
 

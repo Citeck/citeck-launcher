@@ -43,8 +43,8 @@ var rabbitUpgradePaths = map[Version][]Version{
 //
 // Not modeled, deliberately: 3.13-with-Khepri → any 4.x, which the vendor
 // answers with blue-green only. It is a property of the DATA and not of the
-// versions, and 3.13 is not a series this launcher's bundles ship; the
-// preflight's Khepri notice is where it is named.
+// versions, so a matrix keyed on versions alone cannot express it — and 3.13
+// is not a series this launcher's bundles ship, so nothing reaches that pair.
 func (rabbitDescriptor) UpgradeSupport(from, to Version) VendorSupport {
 	return seriesSupport(rabbitUpgradePaths, from, to)
 }

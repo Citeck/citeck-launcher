@@ -612,9 +612,10 @@ export function DependenciesDialog({ open, onClose }: Props) {
         <div className="space-y-2 text-sm" data-testid="deps-rollback-confirm">
           {/* FIELDS, not prose. What this operation DOES is said once, by the
               daemon, as the preflight warnings below — the same channel that
-              already carries the existing-volume warning, the Khepri notice
-              and the image-not-local heads-up, and whose Go builder documents
-              why those sentences are warnings rather than dialog body text.
+              already carries the existing-volume warning, the deferred
+              deprecated-features check and the image-not-local heads-up, and
+              whose Go builder documents why those sentences are warnings
+              rather than dialog body text.
               Restating them here in the user's language would have made the
               dialog correct only while the Go function emitted exactly three
               of them in exactly that position: a cross-language contract with

@@ -733,10 +733,10 @@ describe('DependenciesDialog', () => {
 
   // The daemon is the single source for what a rollback DOES, and it says it
   // through the preflight's warnings — the same channel that already carries
-  // the existing-volume warning, the Khepri notice and this one. Every warning
-  // is rendered, verbatim: dropping any of them by position would make the
-  // dialog correct only for as long as the Go builder emitted exactly the
-  // warnings it emits today.
+  // the existing-volume warning, the deferred deprecated-features check and
+  // this one. Every warning is rendered, verbatim: dropping any of them by
+  // position would make the dialog correct only for as long as the Go builder
+  // emitted exactly the warnings it emits today.
   it('renders every rollback preflight warning verbatim', async () => {
     mockDeps({ items: [migratedPostgres] })
     vi.mocked(getDependencyRollbackPreflight).mockResolvedValue({
