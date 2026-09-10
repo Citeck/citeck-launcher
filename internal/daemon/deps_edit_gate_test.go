@@ -467,6 +467,71 @@ func TestRestatingThePinnedImageIsNotAChoiceOfVersion(t *testing.T) {
 		"an edit the gate never had to refuse is not evidence about the data")
 }
 
+// …and neither does re-homing that same version to another registry. The
+// version is the only thing this gate asks about, and `postgres:15.6` →
+// `myreg/postgres:15.6` moves it nowhere: the data keeps running on 15.6, from
+// a different place. The pin here is BELOW the floor deliberately — that is
+// the stand where it matters, because the floor is the one rule that would
+// otherwise refuse an edit that chose no version at all, leaving an operator
+// on an air-gapped or private-registry stand unable to point their dependency
+// at the registry they actually have (user ruling, 2026-09-10: "do not compare
+// images byte for byte, only the version in the tags").
+func TestRehomingThePinnedVersionToAnotherRegistryIsNotAChoiceOfVersion(t *testing.T) {
+	_, mux, rt, _ := newEditGateDaemon(t, map[deps.ID]deps.DependencyState{
+		deps.Postgres: {Image: "postgres:15.6"},
+	})
+
+	rec := putAppConfig(mux, "postgres", "name: postgres\nimage: myreg/postgres:15.6\n")
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.NotNil(t, rt.AppPatch("postgres"))
+	assert.Equal(t, "postgres:15.6", rt.DependencyPins()[deps.Postgres],
+		"an edit the gate never had to refuse is not evidence about the data")
+}
+
+// The same rule, and its consequence stated plainly: two tags name the same
+// version when the VERSION components they parse to are equal, so dropping
+// RabbitMQ's `-management` suffix passes the gate even though it really does
+// change which image runs (a different variant, without the management
+// plugin). That is deliberate and not an oversight — the gate refuses version
+// moves onto data that cannot take them, and this move is not one — but it is
+// the one edit where "same version" and "same image" genuinely part company.
+//
+// The pin is below RabbitMQ's floor (4.1) so the edit is refused TODAY by the
+// floor. Above the floor such a pair was already accepted for an unrelated
+// reason: a patch-level pair inside one minor is not breaking.
+func TestASameVersionEditWithADifferentTagSpellingIsNotAChoiceOfVersion(t *testing.T) {
+	_, mux, rt, _ := newEditGateDaemon(t, map[deps.ID]deps.DependencyState{
+		deps.RabbitMQ: {Image: "rabbitmq:3.13.7-management"},
+	})
+
+	rec := putAppConfig(mux, "rabbitmq", "name: rabbitmq\nimage: rabbitmq:3.13.7\n")
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.NotNil(t, rt.AppPatch("rabbitmq"))
+	assert.Equal(t, "rabbitmq:3.13.7-management", rt.DependencyPins()[deps.RabbitMQ],
+		"an edit the gate never had to refuse is not evidence about the data")
+}
+
+// When NEITHER tag parses there is no version to compare, so the same-version
+// short-circuit cannot fire and the edit falls through to the rules — where
+// deps.Breaking holds an unparsable tag on either side, exactly as before.
+// Byte identity remains the only thing that can be said about such a pair, and
+// these two references are not identical.
+func TestARehomedUnparsableTagIsStillHeldByTheBreakingRule(t *testing.T) {
+	_, mux, rt, _ := newEditGateDaemon(t, map[deps.ID]deps.DependencyState{
+		deps.Postgres: {Image: "postgres:latest"},
+	})
+
+	rec := putAppConfig(mux, "postgres", "name: postgres\nimage: myreg/postgres:latest\n")
+
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), `"DEPENDENCY_VERSION_LOCKED"`)
+	assert.Contains(t, rec.Body.String(), "citeck deps upgrade postgres")
+	assert.Nil(t, rt.AppPatch("postgres"), "a refused edit must not be persisted")
+	assert.Equal(t, "postgres:latest", rt.DependencyPins()[deps.Postgres])
+}
+
 // --- the volume the pin protects -------------------------------------------
 
 // The gate refuses a breaking edit so a version cannot land on a data

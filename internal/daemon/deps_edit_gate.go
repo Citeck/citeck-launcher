@@ -39,19 +39,19 @@ import (
 // at pull time. That is a malformed def, not a version move onto data it does
 // not fit, and refusing it here would answer the wrong question with the wrong
 // message.) With no pin there is no recorded version to refuse against. And an
-// edit that RE-STATES the pinned reference moves nothing — the same first rule
-// deps.Breaking applies — which matters for the floor alone, the one rule that
-// does not otherwise compare the two sides: the editor round-trips the whole
-// def, so every save of a memory limit on a stand seeded below the floor
-// carries that image with it, and refusing those would leave the operator
-// unable to touch the namespace at all.
+// edit that names the SAME VERSION as the pin chooses no version at all — see
+// editKeepsVersion — which matters for the floor alone, the one rule that does
+// not otherwise compare the two sides: the editor round-trips the whole def,
+// so every save of a memory limit on a stand seeded below the floor carries
+// that image with it, and refusing those would leave the operator unable to
+// touch the namespace at all.
 func dependencyEditLocked(rt *namespace.Runtime, name string, newDef appdef.ApplicationDef) (dependencyEditRefusal, bool) {
 	d, ok := deps.ByApp(name)
 	if !ok || newDef.Image == "" {
 		return dependencyEditRefusal{}, false
 	}
 	pinned, has := rt.DependencyPins()[d.ID()]
-	if !has || pinned == "" || pinned == newDef.Image {
+	if !has || pinned == "" || editKeepsVersion(d, pinned, newDef.Image) {
 		return dependencyEditRefusal{}, false
 	}
 	r := dependencyEditRefusal{desc: d, app: name, pinned: pinned, wanted: newDef.Image}
@@ -83,6 +83,39 @@ func dependencyEditLocked(rt *namespace.Runtime, name string, newDef appdef.Appl
 		return dependencyEditRefusal{}, false
 	}
 	return r, true
+}
+
+// editKeepsVersion reports that an edit chooses no version: the pinned and the
+// edited reference name the SAME version, so nothing this gate rules on has
+// moved and no rule of it may fire (user ruling, 2026-09-10: "do not compare
+// images byte for byte, only the version in the tags").
+//
+// Byte identity is kept as one arm of it, and it is the only thing that can be
+// said when neither tag parses — but on its own it is too narrow for the job.
+// It would refuse `postgres:15.6` → `myreg/postgres:15.6` on a stand seeded
+// below the support floor, i.e. refuse an operator on a private-registry or
+// air-gapped stand the one edit that keeps their dependency running exactly
+// the version it already runs.
+//
+// deps.Version is deliberately NOT compared with ==: it carries Raw, the whole
+// tag, so "4.2.9-management" and "4.2.9" would compare unequal on a difference
+// of spelling rather than of version. Neither-older-than-the-other reuses the
+// ordering deps itself defines, so this cannot drift from the direction rule
+// below. The consequence is real and accepted: dropping RabbitMQ's
+// `-management` suffix changes which image runs and still passes, because it
+// moves no version — the thing this gate exists to hold.
+//
+// An unparsable tag on either side is NOT the same version as anything,
+// including another unparsable tag: "latest" names no version, so claiming two
+// of them agree would be an invention. Such a pair falls through to
+// deps.Breaking, which holds it and says so in a message about the tag.
+func editKeepsVersion(d deps.Descriptor, pinned, wanted string) bool {
+	if pinned == wanted {
+		return true
+	}
+	from, okFrom := d.ParseVersion(pinned)
+	to, okTo := d.ParseVersion(wanted)
+	return okFrom && okTo && !deps.MovesBackwards(from, to) && !deps.MovesBackwards(to, from)
 }
 
 // editMovesBackwards asks the DIRECTION question of two image references,
