@@ -31,6 +31,19 @@ dist/bin/citeck-server start --foreground   # Run daemon in foreground
 ./dist/bin/citeck-launcher            # Run desktop app (Wails webview)
 ```
 
+**Checking the desktop UI needs `make build-desktop`, not `make build`.** The wrapper
+supervises the daemon as a child process chosen by `desktop.SelectDaemonBinary`, whose
+fallback is `os.Executable()` — so by default the wrapper runs ITSELF as the daemon and
+therefore serves the web UI **embedded in `dist/bin/citeck-launcher`**, not the one in
+`dist/bin/citeck-server`. `make build` refreshes only the latter. Cost of forgetting it,
+measured: a UI fix verified in Chromium was "reproduced as still broken" in the real
+window for two hours, because the window was rendering a bundle from before the fix
+(caught by the asset hash — the wrapper served `index-TotlBsyf.css` while the fresh bundle
+was `index-DnlRVarJ.css`).
+
+```bash
+```
+
 ### Desktop installers
 
 Packaging configs live in `packaging/` (nfpm → deb/rpm, WiX → msi, macOS scripts → dmg).

@@ -138,6 +138,61 @@ describe('DependenciesDialog', () => {
     }
   })
 
+  // The gutter above is padding INSIDE the cell, so it only separates two
+  // columns while the text stays inside its own content box — and in an auto
+  // table nothing guarantees that. Measured on the running stand (Chromium 141
+  // and the desktop app's real WebKitGTK 2.52.3 agree to within 1px): a
+  // namespace whose keycloak image is registry-qualified
+  // (`keycloak/keycloak:26.4.5`) needs 189px in EACH image column, so the
+  // table's own min-content is 647px inside a 606px dialog body — the table is
+  // pushed out of the modal and the actions column ends up behind a horizontal
+  // scrollbar. Squeeze it further and the unbreakable strings paint straight
+  // over the padding into the next column: forcing the first column to 40px
+  // put "Зависимость" 48.4px (Chromium) / 48.3px (WebKitGTK) outside its box.
+  //
+  // Two different wrap rules fix that, and the difference between them is the
+  // whole design, so the test names which column gets which:
+  //   * the DATA of the image columns wraps `anywhere`, which is the only one
+  //     of the two that lowers the cell's min-content — that is what lets the
+  //     table shrink to whatever the dialog gives it instead of overflowing;
+  //   * everything else (the four headers, the id, the status prose) wraps
+  //     `break-word`, which does NOT change intrinsic sizing, so the everyday
+  //     layout is untouched and the wrap happens only when a column ends up
+  //     narrower than the word it holds. It is on the HEADERS that this pair
+  //     sets the columns' floor: a column is never narrower than its own
+  //     label, and even that floor cannot produce a collision.
+  // jsdom applies no stylesheet, so a width assertion is impossible here; the
+  // real evidence is the two engines' measurements. This pins the structure.
+  it('lets a long image wrap instead of pushing the table out of the dialog', async () => {
+    mockDeps({
+      items: [{
+        ...items[0], id: 'keycloak', app: 'keycloak',
+        currentImage: 'keycloak/keycloak:26.4.5', currentVersion: '26.4.5',
+        targetImage: 'keycloak/keycloak:27.0.1', targetVersion: '27.0.1',
+      }],
+    })
+    render(<DependenciesDialog open onClose={() => {}} />)
+    const row = await screen.findByTestId('dep-keycloak')
+    const heads = Array.from(row.closest('table')!.querySelectorAll('thead th'))
+    const cells = Array.from(row.querySelectorAll('td'))
+    const has = (el: Element, cls: string) => el.className.split(/\s+/).includes(cls)
+
+    // The two image columns — and only those — may break mid-token, and both
+    // carry the floor that keeps the ordinary images off it: lowering a
+    // column's min-content also lowers its share of the surplus, which in the
+    // desktop webview left it 3px short of `zookeeper:3.9.5` and wrapped that
+    // string's last character onto a line of its own.
+    for (const i of [1, 2]) {
+      expect(has(cells[i], 'wrap-anywhere'), `image cell ${i}: "${cells[i].className}"`).toBe(true)
+      expect(has(cells[i], 'min-w-[calc(15ch_+_1rem)]'), `image cell ${i}: "${cells[i].className}"`).toBe(true)
+    }
+    // Everything else keeps its intrinsic width and merely refuses to overflow.
+    for (const el of [...heads.slice(0, -1), cells[0], cells[3]]) {
+      expect(has(el, 'break-words'), `<${el.tagName.toLowerCase()}> "${el.className}"`).toBe(true)
+      expect(has(el, 'wrap-anywhere'), `<${el.tagName.toLowerCase()}> "${el.className}"`).toBe(false)
+    }
+  })
+
   it('blocks Start on a failed preflight and on an unconfirmed existing volume', async () => {
     vi.mocked(getDependencyPreflight).mockResolvedValue({ ...okPreflight, ok: false, problems: ['no space'] })
     render(<DependenciesDialog open onClose={() => {}} />)

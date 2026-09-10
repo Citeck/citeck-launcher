@@ -439,12 +439,28 @@ export function DependenciesDialog({ open, onClose }: Props) {
                     straight into its own version ("zookeeperzookeeper:3.9.5").
                     Padding is inside the cell box, so the separation holds at
                     every id and image length. The last column is the
-                    right-aligned actions cell and has nothing after it. */}
+                    right-aligned actions cell and has nothing after it.
+
+                    That padding only separates two columns while the text
+                    stays inside its own content box, and an auto table
+                    guarantees no such thing — which is why every cell also
+                    carries a wrap rule. `break-words` (here, and on the id and
+                    the status prose) does NOT change intrinsic sizing, so the
+                    layout is exactly what it was; it only refuses to paint
+                    outside the box if the column ends up narrower than the
+                    word. That distinction is load-bearing for the first
+                    column in particular: an auto table hands surplus width out
+                    in proportion to (max-content − min-content), and for a
+                    one-word header that difference is zero, so the column is
+                    exactly its own label plus the padding with nothing to
+                    spare — measured at 88.4px for "Зависимость" in Chromium
+                    and 88.3px in the desktop app's WebKitGTK. A rule that
+                    lowered its min-content would take even that away. */}
                 <tr className="border-b border-border text-left text-xs text-muted-foreground">
-                  <th className="py-1 pr-4 font-medium">{t('deps.col.dependency')}</th>
-                  <th className="py-1 pr-4 font-medium">{t('deps.col.current')}</th>
-                  <th className="py-1 pr-4 font-medium">{t('deps.col.available')}</th>
-                  <th className="py-1 pr-4 font-medium">{t('deps.col.status')}</th>
+                  <th className="py-1 pr-4 font-medium break-words">{t('deps.col.dependency')}</th>
+                  <th className="py-1 pr-4 font-medium break-words">{t('deps.col.current')}</th>
+                  <th className="py-1 pr-4 font-medium break-words">{t('deps.col.available')}</th>
+                  <th className="py-1 pr-4 font-medium break-words">{t('deps.col.status')}</th>
                   <th />
                 </tr>
               </thead>
@@ -455,10 +471,40 @@ export function DependenciesDialog({ open, onClose }: Props) {
                         mongodb (app `mongo`), and the banner, the progress
                         panel, the verdict and `citeck deps upgrade <id>` all
                         name it by the id. One thing, one name. */}
-                    <td className="py-1.5 pr-4">{item.id}</td>
-                    <td className="py-1.5 pr-4 font-mono text-xs">{item.currentImage}</td>
-                    <td className="py-1.5 pr-4 font-mono text-xs">{item.targetImage}</td>
-                    <td className="py-1.5 pr-4 text-xs">
+                    <td className="py-1.5 pr-4 break-words">{item.id}</td>
+                    {/* `wrap-anywhere`, not `break-words`, on these two alone:
+                        it is the one of the pair that lowers the cell's
+                        min-content, and that is what lets the TABLE shrink to
+                        whatever the dialog gives it. Measured on the stand in
+                        both engines: a registry-qualified `keycloak/keycloak:
+                        26.4.5` wants 189px per image column, which put the
+                        table's min-content at 647px inside a 606px dialog body
+                        — the table was pushed out of the modal and the actions
+                        column ended up behind a horizontal scrollbar. The
+                        image is the one value here that is a single long
+                        machine token with no wrap opportunity of its own, and
+                        it is the one value a mid-token break costs nothing to
+                        read: it is mono, so a continued line reads as one
+                        string.
+
+                        The floor is what keeps that from happening to the
+                        ORDINARY images too. Lowering the min-content also
+                        lowers what the column is handed when there IS room —
+                        an auto table shares surplus in proportion to
+                        (max-content − min-content) — and measured in the
+                        desktop webview that left the column at 118.7px, three
+                        pixels short of `zookeeper:3.9.5`, which then wrapped
+                        with its last character alone on the second line. 15ch
+                        is the longest unbreakable segment the built-in
+                        dependency images produce (`zookeeper:3.9.5`, and
+                        `rabbitmq:4.2.9-` of `rabbitmq:4.2.9-management`), plus
+                        the 1rem gutter. It is in `ch` rather than px because
+                        that is the rule itself — fifteen characters OF THE
+                        FONT THIS CELL USES — so it survives a monospace
+                        fallback the launcher never chose. */}
+                    <td className="py-1.5 pr-4 font-mono text-xs wrap-anywhere min-w-[calc(15ch_+_1rem)]">{item.currentImage}</td>
+                    <td className="py-1.5 pr-4 font-mono text-xs wrap-anywhere min-w-[calc(15ch_+_1rem)]">{item.targetImage}</td>
+                    <td className="py-1.5 pr-4 text-xs break-words">
                       <div>{statusLabel(item)}</div>
                       {item.statusDetail && (
                         <div className="mt-0.5 max-w-md text-[11px] text-muted-foreground">{item.statusDetail}</div>
