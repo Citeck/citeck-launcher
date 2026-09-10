@@ -53,6 +53,11 @@ type Descriptor interface {
 	// LegacyImage is what every launcher before the pin existed ran, used to
 	// seed a pin when nothing better (container, data file) is available.
 	LegacyImage() string
+	// SupportFloor is the oldest version of this dependency the platform has
+	// been tested on — the floor below which an operator may not set the
+	// image by hand. See support_floor.go for the table and for the rule that
+	// it binds the EDIT gate only, never seeding or the bundle path.
+	SupportFloor() Version
 }
 
 // registry is fixed and ordered: the order is the display order everywhere.

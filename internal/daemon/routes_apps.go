@@ -617,11 +617,16 @@ func (d *Daemon) handlePutAppConfig(w http.ResponseWriter, r *http.Request) {
 	// The generator's pin gate cannot see this edit: patches are applied at the
 	// tail of Generate, after the infra generators have already resolved the
 	// pinned image. Refuse here instead, before anything is persisted — unless
-	// there is provably no data for that pin to protect, in which case the edit
-	// IS the new pin and carries the write below.
+	// the refusal is one that stands only while there is data to protect and
+	// there provably is none, in which case the edit IS the new pin and carries
+	// the write below. A version below the support floor is refused whatever is
+	// on disk, so it never reaches Docker: that refusal has to hold with the
+	// daemon down too.
 	var pinMove *dependencyPinMove
 	if refusal, locked := dependencyEditLocked(rt, name, newDef); locked {
-		pinMove = d.dependencyEditPinFollows(r.Context(), rt, refusal)
+		if refusal.reason.dataDependent() {
+			pinMove = d.dependencyEditPinFollows(r.Context(), rt, refusal)
+		}
 		if pinMove == nil {
 			writeErrorCode(w, http.StatusBadRequest, api.ErrCodeDependencyVersionLocked,
 				refusal.message(d.dependencyEditWayBack(r.Context(), refusal)))
@@ -631,11 +636,26 @@ func (d *Daemon) handlePutAppConfig(w http.ResponseWriter, r *http.Request) {
 
 	// Running edits apply immediately via a full reload (Generate re-runs →
 	// conf re-derives + files rewrite + reconcile). Stopped edits just persist
-	// and apply on next start. Take reloadMu BEFORE mutating so a TryLock
-	// failure (409) never leaves a persisted patch behind a reload that never
-	// ran (mirrors handleResetAppFile).
+	// and apply on next start — EXCEPT when the edit moved a dependency pin,
+	// which is a verdict the daemon has already cached: the whole dependency
+	// surface (`citeck deps`, the Dependencies dialog, the migration route's
+	// preflight) is computed from the generator's answer in
+	// act.dependencyUpgrades / act.dependencies, so without a regenerate it
+	// keeps describing the pre-edit world. Measured on a live stand: right
+	// after a pin-moving edit `citeck deps` reported current == available and
+	// still advised `citeck deps upgrade`, which then died in a preflight about
+	// the volume the operator had deleted. A stopped namespace is the normal
+	// case for that edit — the volume has to be gone, which means stopping
+	// first — so it is exactly the window in which the operator checks whether
+	// their edit took. A reload on a stopped namespace does not wait for a
+	// runtime loop that is not running (measured: 9 ms).
+	//
+	// Take reloadMu BEFORE mutating so a TryLock failure (409) never leaves a
+	// persisted patch — or a moved pin — behind a reload that never ran
+	// (mirrors handleResetAppFile).
 	running := rt.Status() != namespace.NsStatusStopped
-	if running {
+	reload := running || pinMove != nil
+	if reload {
 		if !d.reloadMu.TryLock() {
 			writeErrorCode(w, http.StatusConflict, api.ErrCodeReloadInProgress, "reload already in progress")
 			return
@@ -653,8 +673,7 @@ func (d *Daemon) handlePutAppConfig(w http.ResponseWriter, r *http.Request) {
 		// this request just accepted.
 		pinMove.apply(rt)
 	}
-	msg := fmt.Sprintf("App %s config saved; applies on next start", name)
-	if running {
+	if reload {
 		// Behavior shift from the pre-refactor editor: a running config-edit used
 		// to call rt.RestartApp(name) unconditionally, so every save — even a
 		// probe/StopTimeout tweak with no effect on the container spec — paid for
@@ -666,6 +685,14 @@ func (d *Daemon) handlePutAppConfig(w http.ResponseWriter, r *http.Request) {
 			writeInternalError(w, err)
 			return
 		}
+	}
+	// The MESSAGE stays keyed on the namespace status, not on whether a reload
+	// ran: a stopped namespace's containers really do only change on the next
+	// start, and the stopped reload above refreshes the daemon's verdict about
+	// the dependency rather than applying anything to a container. Saying
+	// "updated and applied" there would replace one lie with another.
+	msg := fmt.Sprintf("App %s config saved; applies on next start", name)
+	if running {
 		msg = fmt.Sprintf("App %s config updated and applied", name)
 	}
 	writeJSON(w, api.ActionResultDto{Success: true, Message: msg})

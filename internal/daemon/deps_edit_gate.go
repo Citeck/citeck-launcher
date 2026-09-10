@@ -13,64 +13,159 @@ import (
 )
 
 // dependencyEditLocked reports whether an app-config edit would move a
-// registered infra dependency to a breaking image version, returning the
-// dependency id and the image its data is pinned to.
+// registered infra dependency to a version the launcher refuses to put on it,
+// returning the dependency, the image its data is pinned to, and WHICH rule
+// refused.
 //
 // The generator's pin gate (resolveDependencyImage) runs BEFORE
 // EditedAppPatches are applied — they land at the tail of Generate — so a
-// patch is the one door a breaking image could still walk through: a
+// patch is the one door such an image could still walk through: a
 // `citeck edit postgres` (or the gear editor) setting `image: postgres:18`
 // would put PostgreSQL 18 onto a 17 data directory with no migration.
 //
-// Two shapes pass. An edit with no image names no VERSION, which is the only
-// question this gate asks. (It is NOT the same as "the image is unchanged":
-// handlePutAppConfig unmarshals the whole submitted YAML into a def, and
-// ApplicationDef.Image has no `omitempty`, so DiffAppDef records `image: ""`
-// and the merged def ends up with a BLANK image that fails at pull time. That
-// is a malformed def, not a version move onto data it does not fit, and
-// refusing it here would answer the wrong question with the wrong message.)
-// And with no pin there is no recorded version to refuse against.
+// It decides on VERSION FACTS ALONE — a pin, an image, and the registry — so
+// it is a pure question a test can drive with nothing but a Runtime. Two of
+// the three rules it can fire are about DATA that may or may not be there, and
+// resolving that half needs Docker; the reason says which, and the caller
+// (dependencyEditPinFollows) answers it. The floor deliberately does not need
+// the caller at all, which is what makes a floor refusal work with Docker
+// down.
+//
+// Three shapes pass before any rule is asked. An edit with no image names no
+// VERSION, which is the only question this gate asks. (It is NOT the same as
+// "the image is unchanged": handlePutAppConfig unmarshals the whole submitted
+// YAML into a def, and ApplicationDef.Image has no `omitempty`, so DiffAppDef
+// records `image: ""` and the merged def ends up with a BLANK image that fails
+// at pull time. That is a malformed def, not a version move onto data it does
+// not fit, and refusing it here would answer the wrong question with the wrong
+// message.) With no pin there is no recorded version to refuse against. And an
+// edit that RE-STATES the pinned reference moves nothing — the same first rule
+// deps.Breaking applies — which matters for the floor alone, the one rule that
+// does not otherwise compare the two sides: the editor round-trips the whole
+// def, so every save of a memory limit on a stand seeded below the floor
+// carries that image with it, and refusing those would leave the operator
+// unable to touch the namespace at all.
 func dependencyEditLocked(rt *namespace.Runtime, name string, newDef appdef.ApplicationDef) (dependencyEditRefusal, bool) {
 	d, ok := deps.ByApp(name)
 	if !ok || newDef.Image == "" {
 		return dependencyEditRefusal{}, false
 	}
 	pinned, has := rt.DependencyPins()[d.ID()]
-	if !has || pinned == "" || !deps.Breaking(d, pinned, newDef.Image) {
+	if !has || pinned == "" || pinned == newDef.Image {
 		return dependencyEditRefusal{}, false
 	}
-	return dependencyEditRefusal{
-		desc: d, app: name, pinned: pinned, wanted: newDef.Image,
-		// The rule is unchanged — the FORMAT question, deps.Breaking, exactly
-		// as before (a same-format backwards edit, i.e. a reverted patch bump,
-		// still passes, because the generator applies such a bundle silently
-		// and a gate stricter than the generator forbids by hand what the
-		// bundle does on its own). Direction changes nothing about WHETHER the
-		// edit is refused; it changes what the operator is told to do instead.
-		backwards: deps.BundleOlder(d, pinned, newDef.Image),
-	}, true
+	r := dependencyEditRefusal{desc: d, app: name, pinned: pinned, wanted: newDef.Image}
+	switch {
+	case deps.BelowSupportFloor(d, newDef.Image):
+		// FIRST, and answered without the caller: a version below the floor is
+		// one the platform has not been tested on, which is a fact about the
+		// version and not about this namespace's disk.
+		r.reason = editReasonBelowFloor
+	case editMovesBackwards(d, pinned, newDef.Image):
+		// A backwards move on data that exists is refused whatever the
+		// components say, patch reverts included (user ruling, 2026-09-10). A
+		// patch downgrade is usually harmless and nowhere guaranteed:
+		// PostgreSQL documents only the forward direction and some minors need
+		// a REINDEX, and a RabbitMQ patch that enabled a feature flag the older
+		// release does not know refuses to start on that data. Whether it is
+		// ALSO breaking changes nothing about the refusal and everything about
+		// what the operator is told.
+		//
+		// This is the EDIT gate only. The generator's rule is unchanged: a
+		// bundle offering an older patch still applies silently, because a gate
+		// stricter than the generator forbids by hand what the bundle does on
+		// its own.
+		r.reason = editReasonBackwards
+		r.breaking = deps.Breaking(d, pinned, newDef.Image)
+	case deps.Breaking(d, pinned, newDef.Image):
+		r.reason = editReasonBreakingForward
+	default:
+		return dependencyEditRefusal{}, false
+	}
+	return r, true
 }
 
-// dependencyEditRefusal is a refused image edit and the two facts the message
-// needs: which dependency, and which way the move goes.
+// editMovesBackwards asks the DIRECTION question of two image references,
+// which deps.MovesBackwards asks of two parsed versions.
+//
+// An unparsable tag on either side has no direction — nothing orders "latest"
+// — so it is not backwards. Such a pair is held by deps.Breaking instead, and
+// its message is about the tag, which is the one the operator can act on.
+func editMovesBackwards(d deps.Descriptor, pinned, wanted string) bool {
+	from, okFrom := d.ParseVersion(pinned)
+	to, okTo := d.ParseVersion(wanted)
+	return okFrom && okTo && deps.MovesBackwards(from, to)
+}
+
+// dependencyEditReason names WHICH rule refused an image edit.
+//
+// It exists because the rules do not all ask the same kind of question: the
+// support floor is decided by versions alone, while "backwards" and "breaking"
+// only matter while there is DATA for the version to land on. Reporting the
+// reason is what lets dependencyEditLocked stay Docker-free and the caller
+// resolve the data-dependent half.
+type dependencyEditReason int
+
+const (
+	// editReasonBelowFloor: the edit names a version older than the oldest one
+	// the platform is tested on (deps.Descriptor.SupportFloor).
+	editReasonBelowFloor dependencyEditReason = iota + 1
+	// editReasonBackwards: the edit names an OLDER version than the pin.
+	editReasonBackwards
+	// editReasonBreakingForward: the edit names a newer version whose data
+	// format differs (deps.Breaking).
+	editReasonBreakingForward
+)
+
+// dataDependent reports whether the refusal stands only while the dependency's
+// data volume is there. The floor is the one rule that does not: an untested
+// version is untested whether or not this namespace has anything on disk.
+func (r dependencyEditReason) dataDependent() bool { return r != editReasonBelowFloor }
+
+// dependencyEditRefusal is a refused image edit and the facts its message
+// needs: which dependency, which way the move goes, and which rule fired.
 type dependencyEditRefusal struct {
 	desc           deps.Descriptor
 	app            string
 	pinned, wanted string
-	backwards      bool
+	reason         dependencyEditReason
+	// breaking is meaningful for editReasonBackwards only: whether the older
+	// version ALSO cannot read the data. It decides between two true sentences,
+	// never whether the edit is refused.
+	breaking bool
 }
 
-// message is what the operator reads. It has two forms because
-// `citeck deps upgrade` will never move data backwards: pointing a backwards
-// edit at it would refuse the operator (DEPENDENCY_BACKWARDS) at the end of a
-// trip this message sent them on. The one deliberate way back is the rollback
-// onto the volume the migration retained, and rollback names a volume that may
-// or may not still be there — so that half of the sentence is a fact the
-// CALLER establishes (dependencyEditWayBack) and this one only words.
+// message is what the operator reads. It has four forms, and each is true of
+// exactly one of them.
+//
+// The two BACKWARDS forms do not name `citeck deps upgrade`: that command
+// refuses a backwards pair (DEPENDENCY_BACKWARDS), so the message would end a
+// dead end of exactly the class this codebase keeps closing. The one deliberate
+// way back is the rollback onto the volume the migration retained, and rollback
+// names a volume that may or may not still be there — so that half of the
+// sentence is a fact the CALLER establishes (dependencyEditWayBack) and this
+// one only words.
+//
+// The FLOOR form names no way back at all, deliberately: it is not a direction
+// problem. An unsupported version is unsupported from either side, so offering
+// a rollback onto it — or a migration to it — would be offering the thing that
+// was just refused.
 func (r dependencyEditRefusal) message(rollback *api.DependencyRollbackDto) string {
-	if r.backwards {
+	switch {
+	case r.reason == editReasonBelowFloor:
+		offered, _ := r.desc.ParseVersion(r.wanted)
+		return fmt.Sprintf("%s cannot be set to %s: %s is older than %s, the oldest version of %s "+
+			"this launcher supports", r.app, r.wanted, offered, r.desc.SupportFloor(), r.desc.ID())
+	case r.reason == editReasonBackwards && r.breaking:
 		return fmt.Sprintf("%s runs on %s; %s is older and cannot read that data, and editing the "+
 			"image moves no data at all — %s", r.app, r.pinned, r.wanted, r.wayBack(rollback))
+	case r.reason == editReasonBackwards:
+		// NOT "cannot read that data": an older patch of the same series reads
+		// it perfectly well, and a message that says otherwise teaches the
+		// operator something false about their own stand. What is true is the
+		// rule itself.
+		return fmt.Sprintf("%s runs on %s; %s is older, and the launcher does not move a dependency "+
+			"backwards on data that exists — %s", r.app, r.pinned, r.wanted, r.wayBack(rollback))
 	}
 	return fmt.Sprintf("%s runs on %s; moving its data to %s is a version migration — "+
 		"run `citeck deps upgrade %s` (or use the Dependencies dialog) instead of editing the image",
@@ -114,11 +209,12 @@ func (r dependencyEditRefusal) wayBack(offer *api.DependencyRollbackDto) string 
 //
 // It is separate from dependencyEditLocked, and lives on the Daemon, because
 // rollbackOffer reaches Docker (VolumeExists) while the gate that decides
-// WHETHER an edit is breaking must stay a pure question a test can drive with
-// nothing but a Runtime. A FORWARD refusal never asks this one: it names the
-// migration and nothing else.
+// WHETHER an edit is refused must stay a pure question a test can drive with
+// nothing but a Runtime. The other two refusals never ask this one: a FORWARD
+// refusal names the migration and nothing else, and a FLOOR refusal must not
+// touch Docker at all — it is the refusal that has to work with Docker down.
 func (d *Daemon) dependencyEditWayBack(ctx context.Context, r dependencyEditRefusal) *api.DependencyRollbackDto {
-	if !r.backwards {
+	if r.reason != editReasonBackwards {
 		return nil
 	}
 	act := d.active()
@@ -132,8 +228,8 @@ func (d *Daemon) dependencyEditWayBack(ctx context.Context, r dependencyEditRefu
 	return d.rollbackOffer(ctx, act, r.desc, act.runtime.DependencyStates()[r.desc.ID()])
 }
 
-// dependencyPinMove is the pin write a breaking edit owes once it is applied:
-// the dependency, the state to store, and what it moved away from.
+// dependencyPinMove is the pin write a no-longer-refused edit owes once it is
+// applied: the dependency, the state to store, and what it moved away from.
 //
 // It is a VALUE the caller runs at a chosen moment rather than a write the
 // decision makes for itself, because the two must not happen at the same
@@ -163,11 +259,15 @@ func (m dependencyPinMove) apply(rt *namespace.Runtime) {
 		"dependency", m.id, "volume", m.volume, "from", m.from, "to", m.state.Image)
 }
 
-// dependencyEditPinFollows is the caller's half of the gate's OTHER question:
-// the refusal exists to stop a version landing on a data directory it cannot
-// read, so when the launcher can PROVE there is no such data directory, there
-// is nothing left to refuse. It answers the pin write that edit owes, or nil
-// to leave the refusal standing.
+// dependencyEditPinFollows resolves the DATA half of a refusal whose reason is
+// data-dependent (backwards, or breaking forward): both exist to stop a version
+// landing on a data directory it must not land on, so when the launcher can
+// PROVE there is no such data directory, there is nothing left to refuse. It
+// answers the pin write that edit owes, or nil to leave the refusal standing.
+//
+// It is never asked about a floor refusal — an untested version is untested
+// whether or not this namespace has anything on disk, and asking would make
+// that refusal depend on a reachable Docker.
 //
 // This is the state the user described: a volume deleted from the Volumes page
 // because it held nothing worth keeping (with RabbitMQ that is routine), a pin

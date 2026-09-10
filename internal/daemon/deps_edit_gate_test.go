@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -51,6 +52,12 @@ func newEditGateDaemon(t *testing.T, pins map[deps.ID]deps.DependencyState) (*Da
 		}
 	}
 	d.depsEnvFn = func(activeNamespace) migrate.Env { return env }
+	// A pin-moving edit reloads even on a stopped namespace (it refreshes the
+	// generator verdict the dependency surface is computed from), so the
+	// fixture needs the reload seam or every such test would drive the real
+	// doReload against a Daemon with no store. Tests that care about the reload
+	// replace this with their own observer.
+	d.reloadFn = func() error { return nil }
 	mux := http.NewServeMux()
 	d.registerRoutes(mux)
 	return d, mux, rt, env
@@ -283,20 +290,181 @@ func TestAForwardBreakingEditStillNamesTheUpgrade(t *testing.T) {
 	assert.NotContains(t, rec.Body.String(), "citeck deps rollback")
 }
 
-// A same-format backwards edit — a patch downgrade — is ACCEPTED, and that is
-// a decision rather than a gap (user ruling, 2026-09-09: "патчи не надо
-// откатывать. В патчах как правило все ок с совместимостью. Только «переломы»
-// откатываем"). deps.Breaking keeps exactly its format semantics, so the
-// generator applies such a bundle silently and the gate must not be stricter
-// than the generator: refusing here would forbid by hand what the bundle does
-// on its own.
-func TestASameFormatPatchDowngradeEditIsAccepted(t *testing.T) {
+// A backwards move on data that EXISTS is refused whatever the version
+// components say — a patch revert included (user ruling, 2026-09-10: "As for
+// rolling patch versions back — is that actually safe? I thought we forbade
+// any downgrade on live volumes"). A patch downgrade is usually harmless and
+// nowhere guaranteed: PostgreSQL documents only the forward direction and some
+// minors need a REINDEX, and a RabbitMQ patch that enabled a feature flag the
+// older release does not know refuses to start on that data.
+//
+// This is a different surface from the GENERATOR's rule, which is unchanged: a
+// bundle offering an older patch still applies silently. What is refused here
+// is an operator CHOOSING to move a live volume backwards by hand.
+func TestAPatchRevertOnLiveDataIsRefused(t *testing.T) {
 	_, mux, rt, _ := newEditGateDaemon(t, map[deps.ID]deps.DependencyState{
 		deps.RabbitMQ: {Image: "rabbitmq:4.2.9-management"},
 	})
+
 	rec := putAppConfig(mux, "rabbitmq", "name: rabbitmq\nimage: rabbitmq:4.2.3-management\n")
+
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), `"DEPENDENCY_VERSION_LOCKED"`)
+	assert.Contains(t, rec.Body.String(), "does not move a dependency backwards on data that exists")
+	// The refusal must not borrow the BREAKING sentence: an older patch of the
+	// same series reads that data perfectly well, and a message that says
+	// otherwise teaches the operator something false about their own stand.
+	assert.NotContains(t, rec.Body.String(), "cannot read that data")
+	// It is still a backwards move, so the way back — a rollback, never
+	// `citeck deps upgrade` — is the right thing to name.
+	assert.NotContains(t, rec.Body.String(), "citeck deps upgrade")
+	assert.Contains(t, rec.Body.String(), "nothing to go back to")
+	assert.Nil(t, rt.AppPatch("rabbitmq"), "a refused edit must not be persisted")
+	assert.Equal(t, "rabbitmq:4.2.9-management", rt.DependencyPins()[deps.RabbitMQ])
+}
+
+// …and with the data gone the backwards rule has nothing to protect, exactly
+// like the breaking one: the volume was deleted, the pin still names a version
+// that is not there, and the edit is the only way to say which version the
+// next start should bring up.
+func TestAPatchRevertIsAllowedWhenTheDataVolumeIsGone(t *testing.T) {
+	_, mux, rt, env := newEditGateDaemon(t, map[deps.ID]deps.DependencyState{
+		deps.RabbitMQ: {Image: "rabbitmq:4.2.9-management"},
+	})
+	delete(env.Volumes, "rabbitmq2")
+
+	rec := putAppConfig(mux, "rabbitmq", "name: rabbitmq\nimage: rabbitmq:4.2.3-management\n")
+
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.NotNil(t, rt.AppPatch("rabbitmq"))
+	assert.Equal(t, "rabbitmq:4.2.3-management", rt.DependencyPins()[deps.RabbitMQ],
+		"the pin must follow the edit, or the generator keeps holding the edited image back")
+}
+
+// --- the support floor ------------------------------------------------------
+
+// volumeWatchingEnv counts the data-volume questions the gate asks. A floor
+// refusal must ask NONE: it is a fact about versions alone, so it has to hold
+// with Docker down — and the only way to show that is to watch the seam rather
+// than the verdict, since a failed volume check refuses the edit too (it fails
+// closed).
+type volumeWatchingEnv struct {
+	*migratetest.FakeEnv
+	checks *int
+}
+
+func (e volumeWatchingEnv) VolumeExists(ctx context.Context, v string) (bool, error) {
+	*e.checks++
+	return e.FakeEnv.VolumeExists(ctx, v) //nolint:wrapcheck // decorator must return the fake's error verbatim
+}
+
+// The floor is the version below which the platform is not tested and cannot
+// be guaranteed, so it does not depend on what is on disk. The state the user
+// described — the operator deletes the data volume and then hand-sets an
+// ancient version — is precisely the one every other rule here waves through:
+// with no data to protect the breaking rule steps aside, and direction is not
+// the point either, since a FORWARD move from an ancient pin can still land
+// below what we support.
+func TestAnEditBelowTheSupportFloorIsRefusedWhateverTheDataSays(t *testing.T) {
+	worlds := map[string]func(env *migratetest.FakeEnv){
+		"the data volume is there":    func(*migratetest.FakeEnv) {},
+		"the data volume was deleted": func(env *migratetest.FakeEnv) { delete(env.Volumes, "postgres2") },
+		"docker will not answer at all": func(env *migratetest.FakeEnv) {
+			env.FailOn["volexists:postgres2"] = assert.AnError
+		},
+	}
+	for name, arrange := range worlds {
+		t.Run(name, func(t *testing.T) {
+			d, mux, rt, env := newPinnedEditGateDaemon(t)
+			arrange(env)
+			checks := 0
+			d.depsEnvFn = func(activeNamespace) migrate.Env {
+				return volumeWatchingEnv{FakeEnv: env, checks: &checks}
+			}
+
+			rec := putAppConfig(mux, "postgres", "name: postgres\nimage: postgres:1.1.1\n")
+
+			require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+			assert.Contains(t, rec.Body.String(), `"DEPENDENCY_VERSION_LOCKED"`)
+			assert.Contains(t, rec.Body.String(), "1.1.1 is older than 17")
+			assert.Contains(t, rec.Body.String(), "the oldest version of postgres this launcher supports")
+			// Neither other message belongs here. `citeck deps upgrade` would
+			// refuse the pair, and a way-back clause answers a direction
+			// question this refusal is not asking: an unsupported version is
+			// unsupported in both directions.
+			assert.NotContains(t, rec.Body.String(), "citeck deps upgrade")
+			assert.NotContains(t, rec.Body.String(), "citeck deps rollback")
+			assert.NotContains(t, rec.Body.String(), "nothing to go back to")
+			assert.Zero(t, checks, "a floor refusal must be decided without asking Docker anything")
+			assert.Nil(t, rt.AppPatch("postgres"), "a refused edit must not be persisted")
+			assert.Equal(t, "postgres:17.5", rt.DependencyPins()[deps.Postgres])
+		})
+	}
+}
+
+// The floor itself is supported — it is the oldest version we HAVE tested, not
+// the oldest we refuse — so an edit landing exactly on it passes. The data
+// volume is deleted here because that is the only state in which a backwards
+// edit is allowed at all: without it rule 3 would refuse this edit for a
+// reason that has nothing to do with the floor, and the boundary would go
+// untested.
+func TestAnEditAtTheSupportFloorIsAllowedAndJustBelowItIsNot(t *testing.T) {
+	_, mux, rt, env := newPinnedEditGateDaemon(t)
+	delete(env.Volumes, "postgres2")
+
+	rec := putAppConfig(mux, "postgres", "name: postgres\nimage: postgres:17.0\n")
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, "postgres:17.0", rt.DependencyPins()[deps.Postgres])
+
+	_, mux2, rt2, env2 := newPinnedEditGateDaemon(t)
+	delete(env2.Volumes, "postgres2")
+
+	rec2 := putAppConfig(mux2, "postgres", "name: postgres\nimage: postgres:16.9\n")
+
+	require.Equal(t, http.StatusBadRequest, rec2.Code, rec2.Body.String())
+	assert.Contains(t, rec2.Body.String(), "16.9 is older than 17")
+	assert.Nil(t, rt2.AppPatch("postgres"))
+}
+
+// An unparsable tag names no version, so there is nothing to compare with the
+// floor and the floor must stay out of it: the pair is held back by the
+// BREAKING rule, which says so in a message about the migration, and is
+// allowed when there is provably no data — both exactly as before.
+func TestAnUnparsableTagIsNotAFloorQuestion(t *testing.T) {
+	pins := map[deps.ID]deps.DependencyState{deps.RabbitMQ: {Image: "rabbitmq:4.1.2-management"}}
+
+	_, mux, _, _ := newEditGateDaemon(t, pins)
+	rec := putAppConfig(mux, "rabbitmq", "name: rabbitmq\nimage: rabbitmq:latest\n")
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "citeck deps upgrade rabbitmq")
+	assert.NotContains(t, rec.Body.String(), "this launcher supports")
+
+	_, mux2, rt2, env2 := newEditGateDaemon(t, pins)
+	delete(env2.Volumes, "rabbitmq2")
+	rec2 := putAppConfig(mux2, "rabbitmq", "name: rabbitmq\nimage: rabbitmq:latest\n")
+	require.Equal(t, http.StatusOK, rec2.Code, rec2.Body.String())
+	assert.Equal(t, "rabbitmq:latest", rt2.DependencyPins()[deps.RabbitMQ])
+}
+
+// Re-stating the image the data ALREADY runs on chooses no version, so the
+// floor has no say in it. Without this the gate would freeze a stand seeded
+// below the floor — the editor round-trips the whole def, so every save of a
+// memory limit or a probe carries the pinned image with it — which is the
+// "unable to touch the stand at all" failure the floor is deliberately kept
+// out of seeding to avoid.
+func TestRestatingThePinnedImageIsNotAChoiceOfVersion(t *testing.T) {
+	_, mux, rt, _ := newEditGateDaemon(t, map[deps.ID]deps.DependencyState{
+		deps.Postgres: {Image: "postgres:15.6"},
+	})
+
+	rec := putAppConfig(mux, "postgres",
+		"name: postgres\nimage: postgres:15.6\nresources:\n  limits:\n    memory: 2g\n")
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.NotNil(t, rt.AppPatch("postgres"))
+	assert.Equal(t, "postgres:15.6", rt.DependencyPins()[deps.Postgres],
+		"an edit the gate never had to refuse is not evidence about the data")
 }
 
 // --- the volume the pin protects -------------------------------------------
@@ -419,4 +587,111 @@ func TestTheEditPinIsWrittenBeforeTheReload(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.Equal(t, "rabbitmq:4.2.9-management", pinAtReload,
 		"the reload regenerates from the pin, so a pin written after it would hold the edited image back")
+}
+
+// --- the reload a pin move owes --------------------------------------------
+
+// handlePutAppConfig reloads only when the namespace is RUNNING; a stopped
+// edit just persists and applies on the next start. That was harmless while
+// the pin never moved. Now it does, and the whole dependency surface — `citeck
+// deps`, the Dependencies dialog, the migration route's preflight — is
+// computed from the generator's cached verdict (act.dependencyUpgrades /
+// act.dependencies), which keeps describing the PRE-EDIT world until something
+// regenerates. Measured on a live stand: right after a pin-moving edit,
+// `citeck deps` printed current 4.2.9, available 4.2.9 and STILL "upgrade
+// available: citeck deps upgrade rabbitmq", and following that advice hit the
+// stale verdict and died in the preflight on a volume that does not exist.
+//
+// A stopped namespace is the NORMAL case here, because the exception this edit
+// rides on requires deleting the volume, which requires stopping first — so
+// the window is exactly when the operator checks whether their edit took. A
+// reload on a stopped namespace does not wait for a runtime loop that is not
+// running (measured: 9 ms), so the pin move takes one.
+func TestAPinMovingEditReloadsEvenWhenTheNamespaceIsStopped(t *testing.T) {
+	d, mux, rt, env := newEditGateDaemon(t, map[deps.ID]deps.DependencyState{
+		deps.RabbitMQ: {Image: "rabbitmq:4.1.2-management"},
+	})
+	delete(env.Volumes, "rabbitmq2")
+	require.Equal(t, namespace.NsStatusStopped, rt.Status(), "the fixture must be the stopped case")
+	reloads := 0
+	pinAtReload := ""
+	d.reloadFn = func() error {
+		reloads++
+		pinAtReload = rt.DependencyPins()[deps.RabbitMQ]
+		assert.False(t, d.reloadMu.TryLock(), "reloadMu must be held while the reload runs")
+		return nil
+	}
+
+	rec := putAppConfig(mux, "rabbitmq", "name: rabbitmq\nimage: rabbitmq:4.2.9-management\n")
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, 1, reloads,
+		"without the reload the dependency surface keeps reporting the version the pin just left")
+	assert.Equal(t, "rabbitmq:4.2.9-management", pinAtReload,
+		"the pin must already have moved when the regenerate reads it")
+	require.True(t, d.reloadMu.TryLock(), "the handler must release reloadMu")
+	d.reloadMu.Unlock()
+}
+
+// …and ONLY a pin move buys that. Everything else keeps the contract it always
+// had: a stopped edit persists and applies on the next start, with no reload
+// and no regenerate — the pin-move case is the exception, because it is the
+// one edit that also changed a verdict the daemon has already cached.
+func TestAnOrdinaryStoppedEditStillDoesNotReload(t *testing.T) {
+	d, mux, rt, _ := newPinnedEditGateDaemon(t)
+	reloads := 0
+	d.reloadFn = func() error { reloads++; return nil }
+
+	rec := putAppConfig(mux, "postgres", "name: postgres\nimage: postgres:17.11\n")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.NotNil(t, rt.AppPatch("postgres"))
+	assert.Zero(t, reloads, "a non-breaking dependency edit moves no pin, so it reloads nothing")
+
+	rec2 := putAppConfig(mux, "gateway", "name: gateway\nimage: gw:2\n")
+	require.Equal(t, http.StatusOK, rec2.Code, rec2.Body.String())
+	assert.Zero(t, reloads, "an ordinary app edit on a stopped namespace reloads nothing either")
+}
+
+// The reload refreshes the daemon's VERDICT about the dependency; it does not
+// start a container. So the message stays keyed on the namespace status: a
+// stopped namespace's containers really do only change on the next start, and
+// "updated and applied" there would replace one lie with another.
+func TestAPinMovingStoppedEditStillSaysItAppliesOnTheNextStart(t *testing.T) {
+	d, mux, _, env := newEditGateDaemon(t, map[deps.ID]deps.DependencyState{
+		deps.RabbitMQ: {Image: "rabbitmq:4.1.2-management"},
+	})
+	delete(env.Volumes, "rabbitmq2")
+	d.reloadFn = func() error { return nil }
+
+	rec := putAppConfig(mux, "rabbitmq", "name: rabbitmq\nimage: rabbitmq:4.2.9-management\n")
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "applies on next start")
+	assert.NotContains(t, rec.Body.String(), "updated and applied",
+		"nothing was applied to a container: the namespace is stopped")
+}
+
+// The ordering contract the running path already had now covers this one:
+// reloadMu is claimed BEFORE anything is mutated, so a reload already in
+// flight leaves neither a persisted patch nor a moved pin behind a reload that
+// never ran. Without it the stopped pin move would be the one edit that
+// persists a new pin and then silently skips the refresh it exists to trigger.
+func TestAPinMovingStoppedEditPersistsNothingWhileAReloadIsInFlight(t *testing.T) {
+	d, mux, rt, env := newEditGateDaemon(t, map[deps.ID]deps.DependencyState{
+		deps.RabbitMQ: {Image: "rabbitmq:4.1.2-management"},
+	})
+	delete(env.Volumes, "rabbitmq2")
+	reloads := 0
+	d.reloadFn = func() error { reloads++; return nil }
+	d.reloadMu.Lock()
+	t.Cleanup(d.reloadMu.Unlock)
+
+	rec := putAppConfig(mux, "rabbitmq", "name: rabbitmq\nimage: rabbitmq:4.2.9-management\n")
+
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), api.ErrCodeReloadInProgress)
+	assert.Zero(t, reloads)
+	assert.Nil(t, rt.AppPatch("rabbitmq"), "a refused edit must not be persisted")
+	assert.Equal(t, "rabbitmq:4.1.2-management", rt.DependencyPins()[deps.RabbitMQ],
+		"…and must not move the pin either")
 }
