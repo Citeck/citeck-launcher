@@ -143,6 +143,8 @@
   "cli.stateWrite.actionWarning": "Avertissement : l'action a été appliquée, mais le lanceur n'a pas pu l'enregistrer : {err}",
   "cli.stateWrite.actionHint": "Elle est déjà effective et le lanceur continue de réessayer l'écriture, mais si le démon redémarre avant, le changement sera perdu (les applications détachées se rattachent, les modifications de configuration reviennent en arrière). Vérifiez l'espace disque libre et les droits sur le répertoire de données du lanceur.",
   "cli.stateWrite.detachWarning": "Avertissement : le démon s'est détaché, mais sa dernière écriture d'état a échoué : {err}",
+  "cli.edit.kept": "Votre modification a été conservée dans {path}",
+  "cli.edit.keptReapply": "Réappliquez-la avec : {cmd}",
   "cli.license.community": "community",
   "cli.license.enterprise": "enterprise ({tenant}), valide jusqu'au {date}",
   "cli.license.expiresSoon": "(expire dans {days} jours)",

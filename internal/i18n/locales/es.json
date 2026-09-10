@@ -143,6 +143,8 @@
   "cli.stateWrite.actionWarning": "Aviso: la acción se aplicó, pero el lanzador no pudo guardarla: {err}",
   "cli.stateWrite.actionHint": "Ya está en vigor y el lanzador sigue reintentando la escritura, pero si el demonio se reinicia antes el cambio se perderá (las aplicaciones desacopladas se volverán a acoplar, las ediciones de configuración se revertirán). Compruebe el espacio libre en disco y los permisos del directorio de datos del lanzador.",
   "cli.stateWrite.detachWarning": "Aviso: el demonio se desacopló, pero su última escritura de estado falló: {err}",
+  "cli.edit.kept": "Tu edición se conservó en {path}",
+  "cli.edit.keptReapply": "Vuelve a aplicarla con: {cmd}",
   "cli.license.community": "community",
   "cli.license.enterprise": "enterprise ({tenant}), válida hasta {date}",
   "cli.license.expiresSoon": "(caduca en {days} días)",

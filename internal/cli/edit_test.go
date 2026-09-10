@@ -68,7 +68,7 @@ func TestRunEdit_NoChangeCancels(t *testing.T) {
 	f := &fakeConfigClient{getDTO: &api.AppConfigDto{Content: "name: rabbitmq\n"}}
 	o := editOptions{
 		app: "rabbitmq", isTTY: true, cl: f,
-		edit: func(b []byte) ([]byte, bool, error) { return b, false, nil },
+		edit: func(b []byte) ([]byte, bool, string, error) { return b, false, "", nil },
 	}
 	if _, err := runEdit(o); !errors.Is(err, errNoChanges) {
 		t.Fatalf("expected errNoChanges, got %v", err)
@@ -86,10 +86,10 @@ func TestRunEdit_ReeditOn400ThenSucceeds(t *testing.T) {
 	calls := 0
 	o := editOptions{
 		app: "rabbitmq", isTTY: true, cl: f,
-		edit: func(b []byte) ([]byte, bool, error) {
+		edit: func(b []byte) ([]byte, bool, string, error) {
 			calls++
 			// Always "change" the buffer so both rounds attempt a PUT.
-			return append([]byte("edited"), b...), true, nil
+			return append([]byte("edited"), b...), true, "", nil
 		},
 	}
 	res, err := runEdit(o)

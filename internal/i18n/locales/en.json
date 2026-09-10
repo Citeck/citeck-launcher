@@ -143,6 +143,8 @@
   "cli.stateWrite.actionWarning": "Warning: the action was applied, but the launcher could not save it: {err}",
   "cli.stateWrite.actionHint": "It is in effect now and the launcher keeps retrying the write, but if the daemon restarts first the change is lost (detached apps re-attach, config edits revert). Check free disk space and the permissions on the launcher data directory.",
   "cli.stateWrite.detachWarning": "Warning: the daemon detached, but its final state write failed: {err}",
+  "cli.edit.kept": "Your edit was kept at {path}",
+  "cli.edit.keptReapply": "Re-apply with: {cmd}",
   "cli.license.community": "community",
   "cli.license.enterprise": "enterprise ({tenant}), valid until {date}",
   "cli.license.expiresSoon": "(expires in {days} days)",

@@ -143,6 +143,8 @@
   "cli.stateWrite.actionWarning": "Warnung: die Aktion wurde ausgeführt, aber der Launcher konnte sie nicht speichern: {err}",
   "cli.stateWrite.actionHint": "Sie ist bereits wirksam und der Launcher wiederholt den Schreibvorgang weiter; startet der Daemon jedoch vorher neu, geht die Änderung verloren (abgekoppelte Anwendungen koppeln sich wieder an, Konfigurationsänderungen werden zurückgesetzt). Prüfen Sie den freien Speicherplatz und die Rechte am Datenverzeichnis des Launchers.",
   "cli.stateWrite.detachWarning": "Warnung: der Daemon hat sich abgekoppelt, aber sein letzter Zustandsschreibvorgang ist fehlgeschlagen: {err}",
+  "cli.edit.kept": "Ihre Änderung wurde unter {path} aufbewahrt",
+  "cli.edit.keptReapply": "Erneut anwenden mit: {cmd}",
   "cli.license.community": "community",
   "cli.license.enterprise": "enterprise ({tenant}), gültig bis {date}",
   "cli.license.expiresSoon": "(läuft in {days} Tagen ab)",

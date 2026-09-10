@@ -143,6 +143,8 @@
   "cli.stateWrite.actionWarning": "警告：操作已执行，但启动器无法保存它：{err}",
   "cli.stateWrite.actionHint": "该更改现已生效，启动器会持续重试写入；但如果守护进程先行重启，更改就会丢失（已分离的应用会重新接入，配置修改会回退）。请检查磁盘剩余空间以及启动器数据目录的权限。",
   "cli.stateWrite.detachWarning": "警告：守护进程已分离，但它最后一次状态写入失败：{err}",
+  "cli.edit.kept": "您的修改已保留在 {path}",
+  "cli.edit.keptReapply": "重新应用：{cmd}",
   "cli.license.community": "community（社区版）",
   "cli.license.enterprise": "enterprise（{tenant}），有效期至 {date}",
   "cli.license.expiresSoon": "（{days} 天后到期）",

@@ -16,6 +16,7 @@ type fakeFileClient struct {
 	putErrs    []error // consumed per PutAppFile call
 	resetPath  string
 	reloadHits int
+	reloadErr  error
 	listDTO    []api.AppFileDto
 }
 
@@ -38,6 +39,9 @@ func (f *fakeFileClient) ResetAppFile(_, path string) (*api.ActionResultDto, err
 	return &api.ActionResultDto{Success: true, Message: "reset"}, nil
 }
 func (f *fakeFileClient) ReloadNamespace() (*api.ActionResultDto, error) {
+	if f.reloadErr != nil {
+		return nil, f.reloadErr
+	}
 	f.reloadHits++
 	return &api.ActionResultDto{Success: true, Message: "reloaded"}, nil
 }
@@ -102,7 +106,7 @@ func TestRunEditFile_NoChangeCancels(t *testing.T) {
 	f := &fakeFileClient{getDTO: &api.AppFileContentDto{Content: "a: 1\n"}}
 	o := editFileOptions{
 		app: "uiserv", path: "p.yml", isTTY: true, cl: f,
-		edit: func(b []byte) ([]byte, bool, error) { return b, false, nil },
+		edit: func(b []byte) ([]byte, bool, string, error) { return b, false, "", nil },
 	}
 	if _, err := runEditFile(o); !errors.Is(err, errNoChanges) {
 		t.Fatalf("expected errNoChanges, got %v", err)
@@ -120,9 +124,9 @@ func TestRunEditFile_ReeditOn400ThenSucceeds(t *testing.T) {
 	calls := 0
 	o := editFileOptions{
 		app: "uiserv", path: "p.yml", apply: true, isTTY: true, cl: f,
-		edit: func(b []byte) ([]byte, bool, error) {
+		edit: func(b []byte) ([]byte, bool, string, error) {
 			calls++
-			return append([]byte("edited"), b...), true, nil
+			return append([]byte("edited"), b...), true, "", nil
 		},
 	}
 	res, err := runEditFile(o)

@@ -143,6 +143,8 @@
   "cli.stateWrite.actionWarning": "Aviso: a ação foi aplicada, mas o lançador não conseguiu guardá-la: {err}",
   "cli.stateWrite.actionHint": "Já está em vigor e o lançador continua a repetir a gravação, mas se o daemon reiniciar antes disso a alteração perde-se (as aplicações desanexadas voltam a anexar-se, as edições de configuração revertem). Verifique o espaço livre em disco e as permissões da pasta de dados do lançador.",
   "cli.stateWrite.detachWarning": "Aviso: o daemon desanexou-se, mas a sua última gravação de estado falhou: {err}",
+  "cli.edit.kept": "Sua edição foi mantida em {path}",
+  "cli.edit.keptReapply": "Reaplique com: {cmd}",
   "cli.license.community": "community",
   "cli.license.enterprise": "enterprise ({tenant}), válida até {date}",
   "cli.license.expiresSoon": "(expira em {days} dias)",

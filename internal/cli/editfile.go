@@ -56,7 +56,7 @@ type editFileOptions struct {
 	file  io.Reader // non-nil ⇒ non-interactive: read all, then PUT
 	isTTY bool
 	cl    appFileClient
-	edit  func(initial []byte) (edited []byte, changed bool, err error)
+	edit  func(initial []byte) (edited []byte, changed bool, tmp string, err error)
 }
 
 // runEditFile edits a single mounted file (e.g. application-launcher.yml).
@@ -88,16 +88,33 @@ func runEditFile(o editFileOptions) (*api.ActionResultDto, error) {
 		return nil, fmt.Errorf("get file %q of %q: %w", o.path, o.app, err)
 	}
 	buf := []byte(cfg.Content)
+	// Same ownership rules as the ApplicationDef editor (edit_recovery.go): tmp
+	// is the round's temp file, operatorText says whether it holds their text.
+	var (
+		tmp          string
+		operatorText bool
+	)
 	for {
-		edited, changed, editErr := o.edit(buf)
+		edited, changed, next, editErr := o.edit(buf)
+		if next != tmp {
+			discardTempEdit(tmp)
+			tmp = next
+		}
 		if editErr != nil {
+			if operatorText {
+				return nil, keepEdit(fmt.Errorf("edit %q: %w", o.path, editErr), tmp, o.reapplyCmd(tmp))
+			}
+			discardTempEdit(tmp)
 			return nil, fmt.Errorf("edit %q: %w", o.path, editErr)
 		}
 		if !changed {
+			discardTempEdit(tmp)
 			return nil, errNoChanges
 		}
+		operatorText = true
 		res, putErr := o.putAndApply(edited)
 		if putErr == nil {
+			discardTempEdit(tmp)
 			return res, nil
 		}
 		var apiErr *client.APIError
@@ -109,7 +126,13 @@ func runEditFile(o editFileOptions) (*api.ActionResultDto, error) {
 			buf = edited
 			continue
 		}
-		return nil, putErr
+		if editWasSaved(putErr) {
+			// The daemon has the content; only the reload failed. Nothing of
+			// theirs is at risk, and the error already names `citeck reload`.
+			discardTempEdit(tmp)
+			return nil, putErr
+		}
+		return nil, keepEdit(putErr, tmp, o.reapplyCmd(tmp))
 	}
 }
 
@@ -124,7 +147,10 @@ func (o editFileOptions) putAndApply(body []byte) (*api.ActionResultDto, error) 
 	}
 	if o.apply {
 		if _, rerr := o.cl.ReloadNamespace(); rerr != nil {
-			return nil, fmt.Errorf("file %s saved but reload failed (run `citeck reload`): %w", o.path, rerr)
+			// Wrapped as a SAVED edit: the content is on the daemon, so the
+			// interactive editor must not offer the temp copy back as if it
+			// had been lost.
+			return nil, &savedEditError{err: fmt.Errorf("file %s saved but reload failed (run `citeck reload`): %w", o.path, rerr)}
 		}
 		res.Message = fmt.Sprintf("File %s saved and applied", o.path)
 		return res, nil

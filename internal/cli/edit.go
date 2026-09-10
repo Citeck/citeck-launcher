@@ -28,7 +28,7 @@ type editOptions struct {
 	file  io.Reader // non-nil ⇒ non-interactive: read all, then PUT
 	isTTY bool
 	cl    appConfigClient
-	edit  func(initial []byte) (edited []byte, changed bool, err error)
+	edit  func(initial []byte) (edited []byte, changed bool, tmp string, err error)
 }
 
 func runEdit(o editOptions) (*api.ActionResultDto, error) {
@@ -61,16 +61,39 @@ func runEdit(o editOptions) (*api.ActionResultDto, error) {
 		return nil, fmt.Errorf("get config for %q: %w", o.app, err)
 	}
 	buf := []byte(editHeader(o.app) + cfg.Content)
+	// tmp is the temp file of the round in flight — ours to remove, and the
+	// only copy of the operator's text (see edit_recovery.go). operatorText
+	// records whether that text is theirs yet: on the first round the buffer is
+	// the daemon's own config, from the first accepted edit onwards it is not.
+	var (
+		tmp          string
+		operatorText bool
+	)
 	for {
-		edited, changed, err := o.edit(buf)
+		edited, changed, next, err := o.edit(buf)
+		if next != tmp {
+			// The previous round's copy is superseded by this one: the 400 loop
+			// must end with one file, not one per attempt.
+			discardTempEdit(tmp)
+			tmp = next
+		}
 		if err != nil {
+			if operatorText {
+				// A retry round: the launcher seeded this file with their text,
+				// so it holds it even though the editor never came back.
+				return nil, keepEdit(fmt.Errorf("edit %q: %w", o.app, err), tmp, reapplyAppConfigCmd(o.app, tmp))
+			}
+			discardTempEdit(tmp)
 			return nil, fmt.Errorf("edit %q: %w", o.app, err)
 		}
 		if !changed {
+			discardTempEdit(tmp)
 			return nil, errNoChanges
 		}
+		operatorText = true
 		res, err := o.cl.PutAppConfig(o.app, edited)
 		if err == nil {
+			discardTempEdit(tmp)
 			return res, nil
 		}
 		var apiErr *client.APIError
@@ -78,7 +101,7 @@ func runEdit(o editOptions) (*api.ActionResultDto, error) {
 			buf = []byte(editErrorHeader(apiErr.Message) + string(stripLeadingComments(edited)))
 			continue
 		}
-		return nil, fmt.Errorf("apply %q: %w", o.app, err)
+		return nil, keepEdit(fmt.Errorf("apply %q: %w", o.app, err), tmp, reapplyAppConfigCmd(o.app, tmp))
 	}
 }
 
@@ -167,7 +190,9 @@ func newEditCmd() *cobra.Command {
 					apply: !noApply,
 					isTTY: output.IsTTY(),
 					cl:    c,
-					edit:  func(initial []byte) ([]byte, bool, error) { return openInEditor(initial, editorSuffixFor(mountedFile)) },
+					edit: func(initial []byte) ([]byte, bool, string, error) {
+						return openInEditor(initial, editorSuffixFor(mountedFile))
+					},
 				}
 				if from != "" {
 					r, closeFn, ferr := openFileInput(from, cmd.InOrStdin())
@@ -189,7 +214,7 @@ func newEditCmd() *cobra.Command {
 				reset: reset,
 				isTTY: output.IsTTY(),
 				cl:    c,
-				edit:  func(initial []byte) ([]byte, bool, error) { return openInEditor(initial, ".yaml") },
+				edit:  func(initial []byte) ([]byte, bool, string, error) { return openInEditor(initial, ".yaml") },
 			}
 			if from != "" {
 				r, closeFn, ferr := openFileInput(from, cmd.InOrStdin())
@@ -227,6 +252,9 @@ func finishEdit(c stateWriteChecker, res *api.ActionResultDto, err error) error 
 			output.PrintText("No changes, edit canceled.")
 			return nil
 		}
+		// An edit the daemon never took: say where the text is and how to send
+		// it again, before cobra prints the failure itself.
+		reportKeptEdit(err)
 		return err
 	}
 	output.PrintResult(res, func() { output.PrintText(res.Message) })

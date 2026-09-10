@@ -143,6 +143,8 @@
   "cli.stateWrite.actionWarning": "警告: 操作は実行されましたが、ランチャーはそれを保存できませんでした: {err}",
   "cli.stateWrite.actionHint": "変更はすでに有効で、ランチャーは書き込みを再試行し続けますが、その前にデーモンが再起動すると変更は失われます（切り離したアプリは再び接続され、設定の変更は元に戻ります）。ディスクの空き容量と、ランチャーのデータディレクトリの権限を確認してください。",
   "cli.stateWrite.detachWarning": "警告: デーモンは切り離されましたが、最後の状態の書き込みに失敗しました: {err}",
+  "cli.edit.kept": "編集内容は {path} に保存されました",
+  "cli.edit.keptReapply": "再適用するには: {cmd}",
   "cli.license.community": "community",
   "cli.license.enterprise": "enterprise（{tenant}）、{date} まで有効",
   "cli.license.expiresSoon": "（あと {days} 日で期限切れ）",
