@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/citeck/citeck-launcher/internal/api"
 	"github.com/citeck/citeck-launcher/internal/appdef"
@@ -113,9 +114,9 @@ func (r dependencyEditRefusal) wayBack(offer *api.DependencyRollbackDto) string 
 //
 // It is separate from dependencyEditLocked, and lives on the Daemon, because
 // rollbackOffer reaches Docker (VolumeExists) while the gate that decides
-// WHETHER to refuse must stay a pure question a test can drive with nothing but
-// a Runtime. A forward refusal never asks: it names the migration and nothing
-// else, so a plain image edit on a stopped namespace still costs no container.
+// WHETHER an edit is breaking must stay a pure question a test can drive with
+// nothing but a Runtime. A FORWARD refusal never asks this one: it names the
+// migration and nothing else.
 func (d *Daemon) dependencyEditWayBack(ctx context.Context, r dependencyEditRefusal) *api.DependencyRollbackDto {
 	if !r.backwards {
 		return nil
@@ -129,4 +130,92 @@ func (d *Daemon) dependencyEditWayBack(ctx context.Context, r dependencyEditRefu
 		return &api.DependencyRollbackDto{}
 	}
 	return d.rollbackOffer(ctx, act, r.desc, act.runtime.DependencyStates()[r.desc.ID()])
+}
+
+// dependencyPinMove is the pin write a breaking edit owes once it is applied:
+// the dependency, the state to store, and what it moved away from.
+//
+// It is a VALUE the caller runs at a chosen moment rather than a write the
+// decision makes for itself, because the two must not happen at the same
+// point: the decision belongs before anything is persisted (an edit that is
+// refused must leave no trace), and the write belongs after the edit itself
+// landed and before the reload that reads it.
+type dependencyPinMove struct {
+	id     deps.ID
+	state  deps.DependencyState
+	from   string
+	volume string
+}
+
+// apply records the pin and says so.
+//
+// SetDependencyState persists inline and reports nothing back: a refused write
+// stays OWED (persistUnderLock keeps r.dirty set, the loop retries it, and
+// Runtime.StateWriteError tells the operator the change was applied but not
+// saved). That is what every other durable edit on this path does —
+// UpdateAppDef, two lines earlier in the same handler, is one — and turning
+// this one into a request failure would be a third behavior: the edit really
+// was applied, and the store is not something the caller can do anything
+// about.
+func (m dependencyPinMove) apply(rt *namespace.Runtime) {
+	rt.SetDependencyState(m.id, m.state)
+	slog.Info("Dependency image edited by hand with no data to protect; the pin follows it",
+		"dependency", m.id, "volume", m.volume, "from", m.from, "to", m.state.Image)
+}
+
+// dependencyEditPinFollows is the caller's half of the gate's OTHER question:
+// the refusal exists to stop a version landing on a data directory it cannot
+// read, so when the launcher can PROVE there is no such data directory, there
+// is nothing left to refuse. It answers the pin write that edit owes, or nil
+// to leave the refusal standing.
+//
+// This is the state the user described: a volume deleted from the Volumes page
+// because it held nothing worth keeping (with RabbitMQ that is routine), a pin
+// still naming the version it was seeded from, and an operator with no way to
+// say which version the next start should bring up — `citeck deps upgrade`
+// would migrate data that is not there, and the edit was refused in its
+// favor. (A namespace that has never run has no pin at all and never reaches
+// the gate; that path is untouched.)
+//
+// Three rules, each of which is the difference between this and a hole in the
+// gate:
+//
+//   - PROOF means a definite answer. Any error fails CLOSED — an unreachable
+//     Docker is "I could not ask", never "there is nothing there", the same
+//     asymmetry seeding draws between seedUnknown and seedNoData and the
+//     rollback offer between VolumeCheckFailedProblem and
+//     RetainedVolumeGoneProblem;
+//   - a volume that EXISTS is data, even if it is empty. The Env seam has no
+//     directory listing (which is why the migration preflight's "empty source
+//     volume" warning was left unimplemented), so "it is probably empty" would
+//     be a guess whose cost is a version started on a cluster it cannot read.
+//     Deleting the volume is the operator's unambiguous way to say there is
+//     nothing in it;
+//   - a dependency with NO volume of its own keeps the refusal. Keycloak's
+//     VolumeBase is "" because its state lives in the namespace's PostgreSQL
+//     database, so "there is no volume" there means the data is somewhere
+//     else, not that there is none.
+func (d *Daemon) dependencyEditPinFollows(ctx context.Context, rt *namespace.Runtime, r dependencyEditRefusal) *dependencyPinMove {
+	st := rt.DependencyStates()[r.desc.ID()]
+	volume := deps.VolumeName(r.desc, st.Gen())
+	if volume == "" {
+		return nil
+	}
+	exists, err := d.depsEnvFor(d.active()).VolumeExists(ctx, volume)
+	if err != nil {
+		slog.Warn("Dependency image edit: could not check whether the data volume is there; keeping the version locked",
+			"dependency", r.desc.ID(), "volume", volume, "err", err)
+		return nil
+	}
+	if exists {
+		return nil
+	}
+	// Only the IMAGE follows the edit. The generation names the volume the
+	// next start mounts and PrevImage/PrevVolumeGen name a retained volume
+	// that may still be on disk; an image edit is evidence about neither. Same
+	// rule syncDependencyPinsUnderLock follows when a running container
+	// settles a non-breaking bump.
+	moved := st
+	moved.Image = r.wanted
+	return &dependencyPinMove{id: r.desc.ID(), state: moved, from: r.pinned, volume: volume}
 }

@@ -21,23 +21,42 @@ import (
 // dependency (postgres, on 17.5) and one ordinary app. The namespace is
 // STOPPED — the default for a fresh Runtime — so an accepted edit persists the
 // patch without routing through a reload.
-func newEditGateDaemon(t *testing.T, pins map[deps.ID]deps.DependencyState) (*Daemon, *http.ServeMux, *namespace.Runtime) {
+//
+// Every pin gets its CURRENT data volume in the fake Env, because that is what
+// a pin means: it was seeded from evidence that this namespace has run. The
+// gate asks about that volume on every breaking edit (the edit is allowed when
+// there is provably no data to protect), so a fixture with no volumes would
+// describe a namespace whose data has been deleted — the exception — and every
+// refusal test would silently become a test of the exception.
+func newEditGateDaemon(t *testing.T, pins map[deps.ID]deps.DependencyState) (*Daemon, *http.ServeMux, *namespace.Runtime, *migratetest.FakeEnv) {
 	t.Helper()
 	rt := namespace.NewRuntime(&namespace.Config{ID: "ns1"}, planStubDocker{}, t.TempDir())
 	t.Cleanup(rt.Shutdown)
 	rt.SetGeneratedDefs([]appdef.ApplicationDef{
 		{Name: "postgres", Image: "postgres:17.5"},
 		{Name: "rabbitmq", Image: "rabbitmq:4.1.2-management"},
+		{Name: "keycloak", Image: "keycloak/keycloak:26.4"},
 		{Name: "gateway", Image: "gw:1"},
 	})
 	rt.RestoreDependencyState(pins, nil, nil)
 	d := &Daemon{activeNs: &activeNamespace{runtime: rt, nsConfig: &namespace.Config{ID: "ns1"}}}
+	env := migratetest.New()
+	for id, st := range pins {
+		desc, ok := deps.Lookup(id)
+		if !ok {
+			continue
+		}
+		if vol := deps.VolumeName(desc, st.Gen()); vol != "" {
+			env.Volumes[vol] = map[string]string{"marker": "x"}
+		}
+	}
+	d.depsEnvFn = func(activeNamespace) migrate.Env { return env }
 	mux := http.NewServeMux()
 	d.registerRoutes(mux)
-	return d, mux, rt
+	return d, mux, rt, env
 }
 
-func newPinnedEditGateDaemon(t *testing.T) (*Daemon, *http.ServeMux, *namespace.Runtime) {
+func newPinnedEditGateDaemon(t *testing.T) (*Daemon, *http.ServeMux, *namespace.Runtime, *migratetest.FakeEnv) {
 	t.Helper()
 	return newEditGateDaemon(t, map[deps.ID]deps.DependencyState{deps.Postgres: {Image: "postgres:17.5"}})
 }
@@ -51,23 +70,29 @@ func putAppConfig(mux *http.ServeMux, app, yamlBody string) *httptest.ResponseRe
 }
 
 func TestBreakingImageEditOnADependencyIsRefused(t *testing.T) {
-	_, mux, rt := newPinnedEditGateDaemon(t)
+	_, mux, rt, _ := newPinnedEditGateDaemon(t)
 	rec := putAppConfig(mux, "postgres", "name: postgres\nimage: postgres:18\n")
 	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 	assert.Contains(t, rec.Body.String(), `"DEPENDENCY_VERSION_LOCKED"`)
 	assert.Contains(t, rec.Body.String(), "citeck deps upgrade postgres")
 	assert.Nil(t, rt.AppPatch("postgres"), "a refused edit must not be persisted")
+	assert.Equal(t, "postgres:17.5", rt.DependencyPins()[deps.Postgres],
+		"a refused edit must not move the pin either")
 }
 
 func TestNonBreakingImageEditOnADependencyIsAccepted(t *testing.T) {
-	_, mux, rt := newPinnedEditGateDaemon(t)
+	_, mux, rt, _ := newPinnedEditGateDaemon(t)
 	rec := putAppConfig(mux, "postgres", "name: postgres\nimage: postgres:17.11\n")
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.NotNil(t, rt.AppPatch("postgres"))
+	// An edit the gate never had to refuse is not evidence about the DATA, so
+	// it does not move the pin: what the data runs on is settled by the
+	// container that comes up on it (syncDependencyPinsUnderLock).
+	assert.Equal(t, "postgres:17.5", rt.DependencyPins()[deps.Postgres])
 }
 
 func TestImageEditOnANonDependencyIsNotGated(t *testing.T) {
-	_, mux, _ := newPinnedEditGateDaemon(t)
+	_, mux, _, _ := newPinnedEditGateDaemon(t)
 	rec := putAppConfig(mux, "gateway", "name: gateway\nimage: gw:2\n")
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 }
@@ -76,10 +101,12 @@ func TestImageEditOnANonDependencyIsNotGated(t *testing.T) {
 // nothing to refuse against: the gate must stay out of the way (this is the
 // pre-pin namespace, before the first start seeds a pin).
 func TestBreakingImageEditWithoutAPinIsNotGated(t *testing.T) {
-	_, mux, rt := newEditGateDaemon(t, nil)
+	_, mux, rt, _ := newEditGateDaemon(t, nil)
 	rec := putAppConfig(mux, "postgres", "name: postgres\nimage: postgres:18\n")
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.NotNil(t, rt.AppPatch("postgres"))
+	assert.Empty(t, rt.DependencyPins()[deps.Postgres],
+		"an edit the gate never examined must not invent a pin: seeding decides what the data runs on")
 }
 
 // An edit that leaves the image out entirely says nothing about the VERSION,
@@ -90,7 +117,7 @@ func TestBreakingImageEditWithoutAPinIsNotGated(t *testing.T) {
 // `image: ""` and the app ends up with a blank image — malformed, and caught
 // at pull time, not silently started on data it does not fit.
 func TestNonImageEditOnAPinnedDependencyIsNotGated(t *testing.T) {
-	_, mux, rt := newPinnedEditGateDaemon(t)
+	_, mux, rt, _ := newPinnedEditGateDaemon(t)
 	rec := putAppConfig(mux, "postgres", "name: postgres\nresources:\n  limits:\n    memory: 2g\n")
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.NotNil(t, rt.AppPatch("postgres"))
@@ -105,14 +132,14 @@ func TestNonImageEditOnAPinnedDependencyIsNotGated(t *testing.T) {
 func TestBreakingMinorImageEditOnADependencyIsRefused(t *testing.T) {
 	pins := map[deps.ID]deps.DependencyState{deps.RabbitMQ: {Image: "rabbitmq:4.1.2-management"}}
 
-	_, mux, rt := newEditGateDaemon(t, pins)
+	_, mux, rt, _ := newEditGateDaemon(t, pins)
 	rec := putAppConfig(mux, "rabbitmq", "name: rabbitmq\nimage: rabbitmq:4.2.9-management\n")
 	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 	assert.Contains(t, rec.Body.String(), `"DEPENDENCY_VERSION_LOCKED"`)
 	assert.Contains(t, rec.Body.String(), "citeck deps upgrade rabbitmq")
 	assert.Nil(t, rt.AppPatch("rabbitmq"), "a refused edit must not be persisted")
 
-	_, mux2, rt2 := newEditGateDaemon(t, pins)
+	_, mux2, rt2, _ := newEditGateDaemon(t, pins)
 	rec2 := putAppConfig(mux2, "rabbitmq", "name: rabbitmq\nimage: rabbitmq:4.1.9-management\n")
 	require.Equal(t, http.StatusOK, rec2.Code, rec2.Body.String())
 	assert.NotNil(t, rt2.AppPatch("rabbitmq"), "a same-minor bump is not a data migration")
@@ -124,7 +151,7 @@ func TestBreakingMinorImageEditOnADependencyIsRefused(t *testing.T) {
 // containers from the very image the gate exists to refuse. So the refusal has
 // to hold there too — nothing persisted, nothing reloaded, reloadMu left free.
 func TestTheEditGateRefusesOnARunningNamespace(t *testing.T) {
-	d, mux, rt := newPinnedEditGateDaemon(t)
+	d, mux, rt, _ := newPinnedEditGateDaemon(t)
 	rt.SetStatusForTest(namespace.NsStatusRunning)
 	reloads := 0
 	d.reloadFn = func() error { reloads++; return nil }
@@ -145,7 +172,7 @@ func TestTheEditGateRefusesOnARunningNamespace(t *testing.T) {
 // edit that will never be accepted, and that hides the one message telling the
 // operator to run the migration instead.
 func TestTheEditGateAnswersBeforeTheReloadLock(t *testing.T) {
-	d, mux, rt := newPinnedEditGateDaemon(t)
+	d, mux, rt, _ := newPinnedEditGateDaemon(t)
 	rt.SetStatusForTest(namespace.NsStatusRunning)
 	d.reloadFn = func() error { return nil }
 	d.reloadMu.Lock()
@@ -167,12 +194,12 @@ func TestTheEditGateAnswersBeforeTheReloadLock(t *testing.T) {
 // way back the refusal is allowed to name.
 func newBackwardsEditGateDaemon(t *testing.T) (*http.ServeMux, *namespace.Runtime, *migratetest.FakeEnv) {
 	t.Helper()
-	d, mux, rt := newEditGateDaemon(t, map[deps.ID]deps.DependencyState{
+	_, mux, rt, env := newEditGateDaemon(t, map[deps.ID]deps.DependencyState{
 		deps.Postgres: {Image: "postgres:18.6", VolumeGen: 2, PrevImage: "postgres:17.5", PrevVolumeGen: 1},
 	})
-	env := migratetest.New()
+	// The fixture has already put the CURRENT generation (postgres3) there;
+	// this is the one the migration RETAINED.
 	env.Volumes["postgres2"] = map[string]string{"PG_VERSION": "17\n"}
-	d.depsEnvFn = func(activeNamespace) migrate.Env { return env }
 	return mux, rt, env
 }
 
@@ -220,7 +247,7 @@ func TestABackwardsEditSaysTheRetainedVolumeIsGoneWhenItIs(t *testing.T) {
 // knowable without asking Docker anything. It gets the plain fact rather than a
 // command that would refuse it (DEPENDENCY_NO_PREVIOUS) at the end of the trip.
 func TestABackwardsEditWithNothingToGoBackToSaysSo(t *testing.T) {
-	_, mux, _ := newEditGateDaemon(t, map[deps.ID]deps.DependencyState{
+	_, mux, _, _ := newEditGateDaemon(t, map[deps.ID]deps.DependencyState{
 		deps.Postgres: {Image: "postgres:18.6", VolumeGen: 2},
 	})
 	rec := putAppConfig(mux, "postgres", "name: postgres\nimage: postgres:17.5\n")
@@ -249,7 +276,7 @@ func TestABackwardsEditHedgesWhenDockerCannotAnswer(t *testing.T) {
 // …and the FORWARD refusal keeps its own words, so the split cannot collapse
 // into one sentence that is wrong half the time.
 func TestAForwardBreakingEditStillNamesTheUpgrade(t *testing.T) {
-	_, mux, _ := newPinnedEditGateDaemon(t)
+	_, mux, _, _ := newPinnedEditGateDaemon(t)
 	rec := putAppConfig(mux, "postgres", "name: postgres\nimage: postgres:18.6\n")
 	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 	assert.Contains(t, rec.Body.String(), "citeck deps upgrade postgres")
@@ -264,10 +291,132 @@ func TestAForwardBreakingEditStillNamesTheUpgrade(t *testing.T) {
 // than the generator: refusing here would forbid by hand what the bundle does
 // on its own.
 func TestASameFormatPatchDowngradeEditIsAccepted(t *testing.T) {
-	_, mux, rt := newEditGateDaemon(t, map[deps.ID]deps.DependencyState{
+	_, mux, rt, _ := newEditGateDaemon(t, map[deps.ID]deps.DependencyState{
 		deps.RabbitMQ: {Image: "rabbitmq:4.2.9-management"},
 	})
 	rec := putAppConfig(mux, "rabbitmq", "name: rabbitmq\nimage: rabbitmq:4.2.3-management\n")
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.NotNil(t, rt.AppPatch("rabbitmq"))
+}
+
+// --- the volume the pin protects -------------------------------------------
+
+// The gate refuses a breaking edit so a version cannot land on a data
+// directory it cannot read. When that data directory is not there, the whole
+// reason for the refusal is missing: the operator is sent to a migration that
+// would have nothing to migrate. Deleting the volume is how an operator says
+// "there was nothing important in here" — with RabbitMQ that is routine — and
+// the edit is then the only way to say which version the next start should
+// bring up.
+func TestABreakingEditIsAllowedWhenTheDataVolumeIsGone(t *testing.T) {
+	_, mux, rt, env := newEditGateDaemon(t, map[deps.ID]deps.DependencyState{
+		deps.RabbitMQ: {Image: "rabbitmq:4.1.2-management"},
+	})
+	delete(env.Volumes, "rabbitmq2")
+
+	rec := putAppConfig(mux, "rabbitmq", "name: rabbitmq\nimage: rabbitmq:4.2.9-management\n")
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.NotNil(t, rt.AppPatch("rabbitmq"))
+	assert.Equal(t, "rabbitmq:4.2.9-management", rt.DependencyPins()[deps.RabbitMQ],
+		"the pin must follow the edit, or `citeck deps` keeps reporting the version that is gone "+
+			"and the generator keeps holding the edited image back")
+}
+
+// …and the pin moves the IMAGE and nothing else. The generation names the
+// volume the next start will mount and the rollback target names a volume that
+// is still on disk; neither is what an image edit says anything about (the
+// same rule syncDependencyPinsUnderLock follows when a running container
+// settles a non-breaking bump).
+func TestAnEditPinKeepsTheGenerationAndTheRollbackTarget(t *testing.T) {
+	_, mux, rt, env := newEditGateDaemon(t, map[deps.ID]deps.DependencyState{
+		deps.Postgres: {Image: "postgres:18.6", VolumeGen: 2, PrevImage: "postgres:17.5", PrevVolumeGen: 1},
+	})
+	delete(env.Volumes, "postgres3")
+
+	rec := putAppConfig(mux, "postgres", "name: postgres\nimage: postgres:19.1\n")
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, deps.DependencyState{
+		Image: "postgres:19.1", VolumeGen: 2, PrevImage: "postgres:17.5", PrevVolumeGen: 1,
+	}, rt.DependencyStates()[deps.Postgres])
+}
+
+// "There is no data" has to be PROVEN, and a Docker that will not answer
+// proves nothing. Reading an error as "the volume is not there" is how a
+// socket hiccup would wave a breaking version onto a live cluster — the same
+// asymmetry the seeding probe draws between seedUnknown and seedNoData.
+func TestABreakingEditIsStillRefusedWhenDockerCannotSayWhetherTheVolumeIsThere(t *testing.T) {
+	_, mux, rt, env := newEditGateDaemon(t, map[deps.ID]deps.DependencyState{
+		deps.RabbitMQ: {Image: "rabbitmq:4.1.2-management"},
+	})
+	delete(env.Volumes, "rabbitmq2")
+	env.FailOn["volexists:rabbitmq2"] = assert.AnError
+
+	rec := putAppConfig(mux, "rabbitmq", "name: rabbitmq\nimage: rabbitmq:4.2.9-management\n")
+
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), `"DEPENDENCY_VERSION_LOCKED"`)
+	assert.Nil(t, rt.AppPatch("rabbitmq"), "a refused edit must not be persisted")
+	assert.Equal(t, "rabbitmq:4.1.2-management", rt.DependencyPins()[deps.RabbitMQ],
+		"a refused edit must not move the pin either")
+}
+
+// A volume that EXISTS is data. The Env seam has no directory listing (the
+// same limitation that left the migration preflight's "empty source volume"
+// warning unimplemented), so "it is there but I think it is empty" would be a
+// guess — and the cost of guessing wrong is a version started on a cluster it
+// cannot read. Deleting the volume is the unambiguous way to say there is
+// nothing in it.
+func TestAVolumeThatExistsIsDataEvenWhenItHoldsNothing(t *testing.T) {
+	_, mux, rt, env := newEditGateDaemon(t, map[deps.ID]deps.DependencyState{
+		deps.RabbitMQ: {Image: "rabbitmq:4.1.2-management"},
+	})
+	env.Volumes["rabbitmq2"] = map[string]string{}
+
+	rec := putAppConfig(mux, "rabbitmq", "name: rabbitmq\nimage: rabbitmq:4.2.9-management\n")
+
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), `"DEPENDENCY_VERSION_LOCKED"`)
+	assert.Nil(t, rt.AppPatch("rabbitmq"))
+}
+
+// Keycloak has NO volume of its own — its state lives in the namespace's
+// PostgreSQL database — so "this dependency's data volume does not exist" is
+// trivially true for it and means the exact opposite of what this rule reads
+// it as: the data is somewhere else, not absent. The refusal stands.
+func TestADependencyWithNoVolumeOfItsOwnKeepsTheRefusal(t *testing.T) {
+	_, mux, rt, _ := newEditGateDaemon(t, map[deps.ID]deps.DependencyState{
+		deps.Keycloak: {Image: "keycloak/keycloak:26.4"},
+	})
+
+	rec := putAppConfig(mux, "keycloak", "name: keycloak\nimage: keycloak/keycloak:27.0\n")
+
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), `"DEPENDENCY_VERSION_LOCKED"`)
+	assert.Nil(t, rt.AppPatch("keycloak"))
+	assert.Equal(t, "keycloak/keycloak:26.4", rt.DependencyPins()[deps.Keycloak])
+}
+
+// The pin write has to land BEFORE the reload the handler then runs: the
+// regenerate reads the pin (resolveDependencyImage) and would hold the very
+// image the edit just accepted, emitting the old version into the container
+// the edit was about.
+func TestTheEditPinIsWrittenBeforeTheReload(t *testing.T) {
+	d, mux, rt, env := newEditGateDaemon(t, map[deps.ID]deps.DependencyState{
+		deps.RabbitMQ: {Image: "rabbitmq:4.1.2-management"},
+	})
+	delete(env.Volumes, "rabbitmq2")
+	rt.SetStatusForTest(namespace.NsStatusRunning)
+	pinAtReload := ""
+	d.reloadFn = func() error {
+		pinAtReload = rt.DependencyPins()[deps.RabbitMQ]
+		return nil
+	}
+
+	rec := putAppConfig(mux, "rabbitmq", "name: rabbitmq\nimage: rabbitmq:4.2.9-management\n")
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, "rabbitmq:4.2.9-management", pinAtReload,
+		"the reload regenerates from the pin, so a pin written after it would hold the edited image back")
 }

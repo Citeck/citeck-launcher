@@ -616,11 +616,17 @@ func (d *Daemon) handlePutAppConfig(w http.ResponseWriter, r *http.Request) {
 
 	// The generator's pin gate cannot see this edit: patches are applied at the
 	// tail of Generate, after the infra generators have already resolved the
-	// pinned image. Refuse here instead, before anything is persisted.
+	// pinned image. Refuse here instead, before anything is persisted — unless
+	// there is provably no data for that pin to protect, in which case the edit
+	// IS the new pin and carries the write below.
+	var pinMove *dependencyPinMove
 	if refusal, locked := dependencyEditLocked(rt, name, newDef); locked {
-		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeDependencyVersionLocked,
-			refusal.message(d.dependencyEditWayBack(r.Context(), refusal)))
-		return
+		pinMove = d.dependencyEditPinFollows(r.Context(), rt, refusal)
+		if pinMove == nil {
+			writeErrorCode(w, http.StatusBadRequest, api.ErrCodeDependencyVersionLocked,
+				refusal.message(d.dependencyEditWayBack(r.Context(), refusal)))
+			return
+		}
 	}
 
 	// Running edits apply immediately via a full reload (Generate re-runs →
@@ -639,6 +645,13 @@ func (d *Daemon) handlePutAppConfig(w http.ResponseWriter, r *http.Request) {
 	if err := rt.UpdateAppDef(name, newDef, true); err != nil {
 		writeInternalError(w, err)
 		return
+	}
+	if pinMove != nil {
+		// After the edit landed — an edit that failed to apply must not move
+		// the pin — and BEFORE the reload below, whose regenerate reads the pin
+		// (resolveDependencyImage) and would otherwise hold back the very image
+		// this request just accepted.
+		pinMove.apply(rt)
 	}
 	msg := fmt.Sprintf("App %s config saved; applies on next start", name)
 	if running {
