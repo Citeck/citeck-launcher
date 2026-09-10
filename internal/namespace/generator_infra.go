@@ -124,16 +124,21 @@ func generatePgAdmin(ctx *NsGenContext) {
 }
 
 func generatePostgres(ctx *NsGenContext) {
+	// The launcher's OWN default does not move; a version bump comes from a
+	// BUNDLE ("давай наверное всё-таки дефолт оставим на старой версии, а
+	// повышать будем через бандлы"). A stand whose bundle names no postgres at
+	// all is not asking for a new major, and offering it one turns the
+	// dependency banner into an upgrade the operator never requested — from a
+	// candidate that exists nowhere but in this line. `community-rc` already
+	// declares 17.11, which is how a stand gets a newer PostgreSQL, and a
+	// bundle that declares 18 gets the whole held-back-plus-migration flow.
+	//
 	// Concrete down to the patch, like every other default this launcher has
-	// ever shipped. "postgres:18" was the one floating tag in its history: it
-	// arrived with the dependency-pin feature itself, and a floating default
-	// lets the launcher's own choice move without a release. That matters most
-	// where it is guaranteed to be re-resolved — the migration engine's
-	// pull-image step pulls unconditionally, so a floating tag would resolve
-	// afresh at the exact moment the data is being moved. 18.6 is the digest
-	// "postgres:18" already points at (probed 2026-09-09), so this is a rename
-	// today and a guard from the day 18.7 is pushed. See TestInfraImageDefaults.
-	fallback := "postgres:18.6"
+	// ever shipped: a floating tag would let even this frozen default resolve
+	// afresh at the worst possible moment — the migration engine's pull-image
+	// step pulls unconditionally, i.e. while the data is being moved.
+	// See TestInfraImageDefaults.
+	fallback := "postgres:17.5"
 	if ctx.WorkspaceConfig != nil && ctx.WorkspaceConfig.Postgres.Image != "" {
 		fallback = ctx.WorkspaceConfig.Postgres.Image
 	}

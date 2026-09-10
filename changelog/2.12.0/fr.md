@@ -7,7 +7,7 @@
 - Si un volume cible subsiste d'une tentative précédente, le launcher affiche sa taille et sa version et ne le supprime qu'après votre confirmation.
 
 ## Modifications
-- Les nouveaux namespaces sont créés avec PostgreSQL 18 ; les namespaces existants restent en PostgreSQL 17 jusqu'à leur migration.
+- La version que le launcher choisit de lui-même ne bouge pas : les nouveaux namespaces sont toujours créés avec PostgreSQL 17, comme auparavant. PostgreSQL 18 vient du **bundle** — lorsqu'un bundle le propose, le launcher laisse vos données existantes en 17, signale que la 18 est disponible et vous laisse lancer la migration quand vous le souhaitez.
 - Les mises à jour de Keycloak et MongoDB sont signalées mais pas encore appliquées : elles attendent une version du launcher capable de les migrer.
 - Toutes les mises à niveau ne se font pas en une seule étape. RabbitMQ suit la matrice de mise à niveau de son éditeur (4.1 → 4.3, par exemple, n'est pas autorisé directement) : le launcher le dit et nomme la version par laquelle il faut passer d'abord, au lieu de laisser croire qu'un launcher plus récent y changerait quelque chose. Les données ZooKeeper antérieures à la 3.5 sont refusées pour une raison du même ordre.
 - Lorsque le bundle propose une version **plus ancienne** que celle sur laquelle tournent vos données, le launcher le dit désormais tel quel au lieu de l'annoncer comme une mise à niveau disponible ; et si votre namespace a précisément migré depuis cette version, le message vous oriente vers l'annulation.
@@ -15,4 +15,3 @@
 - Le démarrage, le rechargement et la suppression d'un namespace sont refusés pendant un instantané ou une migration de dépendance ; le message précise laquelle.
 - `citeck edit` ne perd plus votre travail : si le daemon ne peut pas appliquer la modification — un autre rechargement est en cours, Docker est indisponible, le daemon a redémarré — votre texte est conservé et la commande pour le réappliquer est affichée.
 - Correction : un launcher démarré sur un profil neuf — une nouvelle installation, ou une installation dont la base locale n'a pas été conservée — ne supprime plus les conteneurs et les volumes de données des namespaces qu'il ne connaît pas.
-- L'image PostgreSQL choisie par défaut par le launcher est désormais une version exacte (`postgres:18.6` au lieu d'un `postgres:18` flottant), de même que la version de Keycloak qu'il suppose pour un namespace existant. Pour les namespaces qui utilisent cette valeur par défaut, le conteneur PostgreSQL est recréé une fois au premier démarrage suivant la mise à jour du launcher ; aucune donnée n'est touchée.

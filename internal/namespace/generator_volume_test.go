@@ -65,11 +65,18 @@ func TestGenerationOneIsTodaysVolumeNames(t *testing.T) {
 // A namespace with NO pin at all has never migrated either, so it is
 // generation 1 as well — the volume the launcher creates for it is the one a
 // later migration will move away from.
+//
+// PostgreSQL is asked about at its LEGACY mount path here, and that is the
+// point rather than an accident: with no pin and no bundle entry the launcher
+// runs its own default, which is 17 (TestInfraImageDefaults), and the layout
+// follows the major of the image that will run. An unpinned namespace lands on
+// exactly the volume AND the path a namespace that predates dependency pins
+// already has.
 func TestAnUnpinnedNamespaceIsGenerationOne(t *testing.T) {
 	cfg := depsTestConfig()
 	cfg.MongoDB = MongoDbProps{Image: "mongo:4.0.2"}
 	resp := generateCfgWithStates(t, cfg, nil, nil)
-	assert.Equal(t, "postgres2", volumeOf(t, appByName(t, resp, appdef.AppPostgres), "/var/lib/postgresql"))
+	assert.Equal(t, "postgres2", volumeOf(t, appByName(t, resp, appdef.AppPostgres), "/var/lib/postgresql/data"))
 	assert.Equal(t, "rabbitmq2", volumeOf(t, appByName(t, resp, appdef.AppRabbitmq), "/var/lib/rabbitmq"))
 	assert.Equal(t, "zookeeper2", volumeOf(t, appByName(t, resp, appdef.AppZookeeper), "/citeck/zookeeper"))
 	assert.Equal(t, "mongo2", volumeOf(t, appByName(t, resp, appdef.AppMongodb), "/data/db"))
@@ -85,13 +92,18 @@ func TestAMigratedNamespaceMountsTheNextGeneration(t *testing.T) {
 	// back: this test is about the volume alone, and a fixture whose candidate
 	// disagreed with its pin would additionally exercise the image gate.
 	bun := &bundle.Def{Applications: map[string]bundle.AppDef{
-		appdef.AppRabbitmq: {Image: "rabbitmq:4.2.9-management"}}}
+		appdef.AppRabbitmq: {Image: "rabbitmq:4.2.9-management"},
+		// The bundle has to name postgres:18 too, or the candidate is the
+		// launcher's own 17 default and this fixture would quietly become a
+		// bundle-older HOLD — a second rule on top of the one being tested.
+		appdef.AppPostgres: {Image: "postgres:18"}}}
 	resp := generateCfgWithStates(t, cfg, bun, map[deps.ID]deps.DependencyState{
 		deps.Postgres:  {Image: "postgres:18", VolumeGen: 2},
 		deps.RabbitMQ:  {Image: "rabbitmq:4.2.9-management", VolumeGen: 2},
 		deps.Zookeeper: {Image: "zookeeper:3.9.5", VolumeGen: 2},
 		deps.MongoDB:   {Image: "mongo:4.0.2", VolumeGen: 2},
 	})
+	assert.Empty(t, resp.DependencyUpgrades, "the premise: this fixture holds nothing back")
 	// PostgreSQL 18 also moves the MOUNT PATH; the two rules are independent
 	// and this is the one pair where both apply at once.
 	assert.Equal(t, "postgres3", volumeOf(t, appByName(t, resp, appdef.AppPostgres), "/var/lib/postgresql"))

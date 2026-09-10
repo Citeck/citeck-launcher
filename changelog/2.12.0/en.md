@@ -7,7 +7,7 @@
 - If a target volume left over from an earlier attempt is still there, the launcher shows its size and version and deletes it only after you confirm.
 
 ## Changes
-- New namespaces are created with PostgreSQL 18; existing ones stay on PostgreSQL 17 until you migrate them.
+- The version the launcher picks on its own does not move: new namespaces are still created with PostgreSQL 17, exactly as before. PostgreSQL 18 comes from the **bundle** — when a bundle offers it, the launcher keeps your existing data on 17, tells you 18 is available and lets you run the migration when you are ready.
 - Upgrades of Keycloak and MongoDB are reported but not performed yet — they wait for a launcher release that can migrate them.
 - Not every upgrade can be done in one step. RabbitMQ follows the vendor's own upgrade matrix (4.1 → 4.3, for instance, is not allowed directly): the launcher says so and names the version to go through first, instead of suggesting that a newer launcher would help. ZooKeeper data older than 3.5 is refused for the same kind of reason.
 - When the bundle offers an **older** version than your data runs on, the launcher now says exactly that instead of reporting it as an available upgrade — and if your namespace migrated away from that very version, the message points you at the rollback.
@@ -15,4 +15,3 @@
 - Starting, reloading or deleting a namespace is refused while a snapshot or a dependency migration is running, and the message says which one.
 - `citeck edit` no longer loses your work: if the daemon cannot apply the edit — something else is reloading, Docker is down, the daemon restarted — your text is kept and the command to re-apply it is printed.
 - Fixed: a launcher started on a fresh profile — a new install, or one whose local database was not kept — no longer deletes the containers and data volumes of namespaces it does not know about.
-- The PostgreSQL image the launcher picks by default is now an exact version (`postgres:18.6` instead of a floating `postgres:18`), and so is the Keycloak version it assumes for an existing namespace. For namespaces running that default, the PostgreSQL container is recreated once on the next start after the upgrade; no data is touched.

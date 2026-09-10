@@ -72,15 +72,18 @@ const (
 	// migrated to. Both are ordinary registry tags: the plan's pull step is a
 	// real pull.
 	//
-	// itToImage must be the image the GENERATOR would emit for that major, not
-	// merely an image of it. GenerateDefFor refuses a def whose image is not
-	// the one it was asked for, and the pin gate only emits a requested version
-	// verbatim while the move is BREAKING — asking for "postgres:18" against a
-	// generator whose fallback is "postgres:18.6" is not breaking (same major),
-	// so the gate answers the bundle's candidate and every temp container is
-	// refused. It is a floating-vs-concrete tag question, and R3 made the
-	// generator concrete: keep this equal to generator_infra.go's postgres
-	// fallback.
+	// itFromImage must be the image the GENERATOR would emit, not merely an
+	// image of that version. GenerateDefFor refuses a def whose image is not the
+	// one it was asked for, and the pin gate only emits a requested version
+	// verbatim while the move is BREAKING — so for the SOURCE container, whose
+	// pin is the version the bundle already offers, the gate answers the
+	// candidate and a mismatch gets every temp container refused. Keep it equal
+	// to generator_infra.go's postgres fallback.
+	//
+	// itToImage is under no such rule: 17 → 18 is breaking by definition, which
+	// is why there is a migration at all, so the pin gate emits it verbatim
+	// whatever the bundle offers. It is the same asymmetry RabbitMQ has, from
+	// the other side (see TestIntegration_TargetImagesAreWhatTheGeneratorOffers).
 	itFromImage = "postgres:17.5"
 	itToImage   = "postgres:18.6"
 	// itBadImage pulls but cannot serve PostgreSQL — the sabotage that makes

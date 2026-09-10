@@ -7,7 +7,7 @@
 - Liegt noch ein Ziel-Volume aus einem früheren Versuch vor, zeigt der Launcher dessen Größe und Version an und löscht es erst nach Ihrer Bestätigung.
 
 ## Änderungen
-- Neue Namespaces werden mit PostgreSQL 18 angelegt; bestehende bleiben bis zur Migration auf PostgreSQL 17.
+- Die Version, die der Launcher von sich aus wählt, bewegt sich nicht: Neue Namespaces werden weiterhin mit PostgreSQL 17 angelegt, genau wie bisher. PostgreSQL 18 kommt aus dem **Bundle** — bietet ein Bundle es an, belässt der Launcher die vorhandenen Daten auf 17, meldet die verfügbare 18 und überlässt Ihnen den Zeitpunkt der Migration.
 - Aktualisierungen von Keycloak und MongoDB werden gemeldet, aber noch nicht ausgeführt — sie warten auf eine Launcher-Version, die sie migrieren kann.
 - Nicht jede Aktualisierung ist in einem Schritt möglich. RabbitMQ folgt der Upgrade-Matrix des Herstellers (4.1 → 4.3 etwa ist direkt nicht erlaubt): Der Launcher sagt das und nennt die Version, über die der Weg zuerst führt, statt eine neuere Launcher-Version in Aussicht zu stellen. ZooKeeper-Daten, die älter als 3.5 sind, werden aus einem ähnlichen Grund abgelehnt.
 - Bietet das Bundle eine **ältere** Version an als die, auf der Ihre Daten laufen, sagt der Launcher das jetzt genau so, statt es als verfügbare Aktualisierung zu melden — und wenn Ihr Namespace von genau dieser Version weg migriert wurde, verweist die Meldung auf den Rollback.
@@ -15,4 +15,3 @@
 - Starten, Neuladen und Löschen eines Namespace werden abgelehnt, während ein Snapshot oder eine Abhängigkeits-Migration läuft; die Meldung nennt den Grund.
 - `citeck edit` verliert Ihre Arbeit nicht mehr: Kann der Daemon die Änderung nicht anwenden — es läuft gerade ein anderer Reload, Docker ist nicht erreichbar, der Daemon wurde neu gestartet —, bleibt Ihr Text erhalten und der Befehl zum erneuten Anwenden wird ausgegeben.
 - Behoben: Ein Launcher, der auf einem frischen Profil startet — eine Neuinstallation oder eine, deren lokale Datenbank nicht übernommen wurde —, löscht nicht mehr die Container und Daten-Volumes von Namespaces, die er nicht kennt.
-- Das PostgreSQL-Image, das der Launcher standardmäßig wählt, ist jetzt eine exakte Version (`postgres:18.6` statt eines gleitenden `postgres:18`), ebenso die Keycloak-Version, die er für einen bestehenden Namespace annimmt. Bei Namespaces, die diesen Standard verwenden, wird der PostgreSQL-Container beim nächsten Start nach dem Launcher-Update einmalig neu erstellt; die Daten bleiben unberührt.

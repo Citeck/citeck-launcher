@@ -105,17 +105,21 @@ func itRabbitTempOpts(name string) deps.TempContainerOpts {
 //
 // GenerateDefFor refuses a def whose image is not the one it was asked for, and
 // the pin gate emits a requested version verbatim only while the move is
-// BREAKING. So a migration TARGET inside the bundle's own series — postgres
-// 18.6, zookeeper 3.9.5 — must be exactly the image the generator offers: ask
-// for "postgres:18" against a generator whose fallback is "postgres:18.6" and
-// the gate answers 18.6 (same major, not breaking), which the guard rejects and
-// every temp container with it. That is a real failure and it took a
+// BREAKING. So any image in this build tag that sits inside the bundle's own
+// series — i.e. one the gate would resolve to the candidate rather than emit as
+// asked — must be exactly the image the generator offers, or the guard rejects
+// it and every temp container with it. That is a real failure and it took a
 // five-minute Docker run to see; here it is a millisecond, and the message
 // names the string to change.
 //
-// RabbitMQ is deliberately NOT in the target list: 4.1 → 4.2 IS breaking, so
-// the pin is emitted verbatim and the target owes the bundle nothing. Its
-// SOURCE is checked instead, for the same reason from the other side.
+// Which END of a pair that is follows from where the launcher's own default
+// sits, not from habit: the resolvable end is the one whose version is NOT a
+// format break away from the default. PostgreSQL's SOURCE is the checked one —
+// 17.5 IS the default, while its target 18.6 is a different major and is
+// therefore emitted verbatim. RabbitMQ has the same shape (4.1.2 is the
+// default; 4.1 → 4.2 is a format break, so the target owes the bundle nothing).
+// ZooKeeper is the mirror image: its TARGET 3.9.5 is the default and its source
+// 3.8.6 is a minor break away, so there it is the target that has to match.
 func TestIntegration_TargetImagesAreWhatTheGeneratorOffers(t *testing.T) {
 	genResp, err := namespace.Generate(
 		&namespace.Config{ID: "imgcheck"},
@@ -130,7 +134,7 @@ func TestIntegration_TargetImagesAreWhatTheGeneratorOffers(t *testing.T) {
 		image    string
 		constant string
 	}{
-		{deps.Postgres, itToImage, "itToImage"},
+		{deps.Postgres, itFromImage, "itFromImage"},
 		{deps.Zookeeper, itZkTo, "itZkTo"},
 		{deps.RabbitMQ, itRabbitFrom, "itRabbitFrom"},
 	} {

@@ -192,18 +192,55 @@ func TestPinLetsANonBreakingCandidateThrough(t *testing.T) {
 	assert.Empty(t, resp.DependencyUpgrades)
 }
 
-func TestNoPinAppliesCandidateAndDefaultIs18(t *testing.T) {
+// A namespace with no pin runs the candidate, and with no bundle entry either
+// the candidate is the launcher's own default — which is PostgreSQL 17, the
+// version every stand already runs. A fresh install is a 17 install.
+func TestNoPinAppliesCandidateAndTheDefaultIs17(t *testing.T) {
 	resp := generateWithPins(t, nil, nil)
 	pg := appByName(t, resp, appdef.AppPostgres)
-	assert.Equal(t, "postgres:18.6", pg.Image)
+	assert.Equal(t, "postgres:17.5", pg.Image)
 	// postgres2, not postgres3: the volume follows the pin's GENERATION, and a
-	// namespace with no pin has never migrated. The 18 MOUNT PATH is what the
-	// image dictates, and that does follow the version.
+	// namespace with no pin has never migrated. The MOUNT PATH is what the
+	// image dictates, and that does follow the version — 17 keeps the legacy
+	// layout, PGDATA and all.
+	assert.Contains(t, pg.Volumes, "postgres2:/var/lib/postgresql/data")
+	pgData, hasPGData := pg.Environments.Get("PGDATA")
+	assert.True(t, hasPGData, "the 17 layout names PGDATA explicitly")
+	assert.Equal(t, "/var/lib/postgresql/data", pgData)
+	assert.Empty(t, resp.DependencyUpgrades)
+	assert.Equal(t, DependencyGen{Effective: "postgres:17.5", Candidate: "postgres:17.5"}, resp.Dependencies[deps.Postgres])
+}
+
+// PostgreSQL 18 still arrives — from a BUNDLE that asks for it. On an unpinned
+// namespace there is no data to protect, so it applies straight away, with the
+// 18 layout: the parent mount and no PGDATA (the image defaults it to
+// /var/lib/postgresql/<major>/docker). This is the half of the old
+// "…AndDefaultIs18" test that is still true, said about the one thing that can
+// still choose 18.
+func TestABundleAsksForPostgres18AndAnUnpinnedNamespaceGetsIt(t *testing.T) {
+	bun := &bundle.Def{Applications: map[string]bundle.AppDef{appdef.AppPostgres: {Image: "postgres:18.6"}}}
+	resp := generateWithPins(t, bun, nil)
+	pg := appByName(t, resp, appdef.AppPostgres)
+	assert.Equal(t, "postgres:18.6", pg.Image)
 	assert.Contains(t, pg.Volumes, "postgres2:/var/lib/postgresql")
 	_, hasPGData := pg.Environments.Get("PGDATA")
 	assert.False(t, hasPGData, "18 layout must leave PGDATA to the image default")
-	assert.Empty(t, resp.DependencyUpgrades)
+	assert.Empty(t, resp.DependencyUpgrades, "there is no pin, so nothing is being held back")
 	assert.Equal(t, DependencyGen{Effective: "postgres:18.6", Candidate: "postgres:18.6"}, resp.Dependencies[deps.Postgres])
+}
+
+// A bundle that asks for 18 on a namespace whose data is on 17 is the whole
+// point of the ruling: the launcher does not move the data by itself, it holds
+// 17 and OFFERS the migration. Nothing about 18 was removed with the default.
+func TestABundleAskingForPostgres18IsHeldAndOffered(t *testing.T) {
+	bun := &bundle.Def{Applications: map[string]bundle.AppDef{appdef.AppPostgres: {Image: "postgres:18.6"}}}
+	resp := generateWithPins(t, bun, map[deps.ID]string{deps.Postgres: "postgres:17.5"})
+	assert.Equal(t, "postgres:17.5", appByName(t, resp, appdef.AppPostgres).Image)
+	up := upgradeFor(t, resp, deps.Postgres)
+	require.NotNil(t, up)
+	assert.Equal(t, "postgres:18.6", up.To)
+	assert.True(t, up.Migratable, "and this launcher still ships the 17 → 18 migration")
+	assert.False(t, up.BundleOlder)
 }
 
 // RabbitMQ's minor bumps are held back AND this launcher ships a plan for
@@ -351,19 +388,21 @@ func TestPinSurvivesAWorkspaceConfigWithNoWebapps(t *testing.T) {
 // exactly while the data is being moved (the runtime never re-pulls a
 // KindThirdParty image that already exists locally).
 //
-// Evidence for postgres:18.6 (Docker Hub v2, probed 2026-09-09):
-// library/postgres:18 and library/postgres:18.6 are the SAME digest
-// (sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280,
-// pushed 2026-08-26), so naming the patch is a rename today and a guard from
-// the day 18.7 is pushed. postgres:18 was the first and only floating default
-// in the launcher's history — Kotlin v1.3.9 shipped postgres:17.5,
-// rabbitmq:4.1.2-management, zookeeper:3.9.4 and mongo:4.0.2, all concrete.
+// None of them MOVES, either: a version bump is a bundle's decision, not the
+// launcher's ("давай наверное всё-таки дефолт оставим на старой версии, а
+// повышать будем через бандлы"). postgres:18 was proposed as a default on this
+// branch and withdrawn before release — a bundle that names no postgres is not
+// asking for a new major, and it was the one thing that could put an upgrade
+// banner on a stand with nothing behind it. Every value here is what Kotlin
+// v1.3.9 shipped, or the smallest step from it: postgres:17.5,
+// rabbitmq:4.1.2-management, mongo:4.0.2 verbatim, zookeeper 3.9.4 → 3.9.5 and
+// keycloak 26.4.x.
 func TestInfraImageDefaults(t *testing.T) {
 	cfg := depsTestConfig()
 	cfg.Authentication = AuthenticationProps{Type: AuthKeycloak, Users: []string{"admin"}}
 	resp := generateCfgWithStates(t, cfg, nil, nil)
 	for _, tc := range []struct{ app, want string }{
-		{appdef.AppPostgres, "postgres:18.6"},
+		{appdef.AppPostgres, "postgres:17.5"},
 		{appdef.AppRabbitmq, "rabbitmq:4.1.2-management"},
 		{appdef.AppZookeeper, "zookeeper:3.9.5"},
 		{appdef.AppMongodb, "mongo:4.0.2"},
@@ -375,26 +414,52 @@ func TestInfraImageDefaults(t *testing.T) {
 	}
 }
 
-// TestPostgres18DefaultDefIsByteStable is the tripwire for the fallback above.
-// image= and imageDigest= are both in GetHashInput, so moving the default
-// recreates the postgres container of every namespace whose EFFECTIVE image is
-// the fallback — a fresh install, and a namespace this feature migrated to 18.
-// Unlike its 17 sibling this golden proves nothing historical; it exists so
-// that the next person to bump the default has to write the recreate down.
-func TestPostgres18DefaultDefIsByteStable(t *testing.T) {
+// TestPostgresDefaultDefIsTheDefAPinned17NamespaceAlreadyRuns is the tripwire
+// for the fallback above, and it deliberately shares postgres17.hashinput.golden
+// with TestPostgres17PinnedDefIsByteStable instead of carrying a golden of its
+// own. image= is part of GetHashInput, so moving the default recreates the
+// postgres container of every namespace whose EFFECTIVE image is the fallback —
+// and the two goldens being byte-identical is exactly the claim worth pinning:
+// the launcher's unprompted default IS what a 17-pinned namespace already runs,
+// so a fresh install and a namespace that predates dependency pins converge on
+// one container. A second file holding the same bytes could only drift.
+//
+// The two generations differ in every input a reader would expect to matter —
+// this one has NO pin at all, its sibling is pinned at postgres:17.5 — so the
+// identity is a property of the generator, not of one fixture.
+func TestPostgresDefaultDefIsTheDefAPinned17NamespaceAlreadyRuns(t *testing.T) {
 	assertGoldenHashInput(t, appByName(t, generateWithStates(t, nil, nil), appdef.AppPostgres),
-		"postgres18.hashinput.golden")
+		"postgres17.hashinput.golden")
 }
 
-// The fallback bump must not reach a namespace the pin holds back: a 17 pin
-// against the new 18.6 candidate still emits 17, which is what leaves
-// postgres17.hashinput.golden untouched by this change.
-func TestTheDefaultBumpCannotReachAPinnedNamespace(t *testing.T) {
-	resp := generateWithPins(t, nil, map[deps.ID]string{deps.Postgres: deps.PostgresLegacyImage})
-	assert.Equal(t, "postgres:17", appByName(t, resp, appdef.AppPostgres).Image)
-	up := upgradeFor(t, resp, deps.Postgres)
-	require.NotNil(t, up)
-	assert.Equal(t, "postgres:18.6", up.To, "the candidate it was held back FROM is the new default")
+// TestABundleThatNamesNoPostgresOffersNothing is the regression the whole
+// ruling came from: on the user's own stand, a bundle repo declaring no
+// postgres image at all still raised "Доступно обновление зависимости: postgres
+// postgres:17.5 → postgres:18.6", because the 18.6 was the launcher's own
+// fallback and nothing else in the world had asked for it. With the default
+// back at 17.5 there is no candidate to hold anything back from, so the
+// generator reports no upgrade and the dependency list reads up-to-date
+// (TestABundleThatNamesNoPostgresListsUpToDate, internal/daemon).
+//
+// deps.PostgresLegacyImage ("postgres:17") is the second half: it is what
+// seeding derives for a namespace whose pin was read out of PG_VERSION, so it
+// is what a MIGRATED-FROM-1.x stand carries. 17 → 17.5 is the same major, so it
+// applies silently — the pin follows the container once it runs — and it must
+// not be announced either.
+func TestABundleThatNamesNoPostgresOffersNothing(t *testing.T) {
+	for _, pin := range []string{"postgres:17.5", deps.PostgresLegacyImage} {
+		t.Run(pin, func(t *testing.T) {
+			resp := generateWithPins(t, nil, map[deps.ID]string{deps.Postgres: pin})
+			assert.Nil(t, upgradeFor(t, resp, deps.Postgres),
+				"a bundle that names no postgres asks for nothing, so nothing may be offered")
+			assert.Empty(t, resp.DependencyUpgrades)
+			assert.Equal(t, "postgres:17.5", resp.Dependencies[deps.Postgres].Candidate,
+				"the candidate is the launcher's own default, and it stays on 17")
+			pg := appByName(t, resp, appdef.AppPostgres)
+			assert.Contains(t, pg.Volumes, "postgres2:/var/lib/postgresql/data",
+				"and the data keeps the layout it has always had")
+		})
+	}
 }
 
 // A bundle that goes BACKWARDS across a data format is held back — that half

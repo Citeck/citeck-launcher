@@ -1022,3 +1022,68 @@ func TestPairProblemIsTheOneVerdictEverySurfaceAsksFor(t *testing.T) {
 	assert.True(t, d.pairProblem(deps.MongoDB, "mongo:4.0", "mongo:7.0").Empty(),
 		"a dependency with no migrator is answered by the Migratable() arm, not by a second account of the pair")
 }
+
+// TestABundleThatNamesNoPostgresListsUpToDate is the user's own stand, driven
+// end to end through the REAL generator rather than a hand-written fixture.
+//
+// Their bundle repo declares no postgres image anywhere, and the launcher still
+// raised "Доступно обновление зависимости: postgres postgres:17.5 →
+// postgres:18.6" on the dashboard: the 18.6 was generatePostgres' own fallback,
+// so the only thing in the world asking for a new major was the launcher, and
+// the offer named an upgrade nobody had chosen. With the default back on 17 the
+// candidate equals the pin, nothing is held back, and every surface has to say
+// so — the dependency list, and the banner the namespace DTO feeds.
+//
+// It is deliberately not written against `dependencies`/`dependencyUpgrades`
+// literals: those two fields ARE the generator's verdict (namespace_loader.go
+// copies them straight out of GenResp), so a fixture would restate the answer
+// the bug was in and could not fail if the fallback moved again.
+func TestABundleThatNamesNoPostgresListsUpToDate(t *testing.T) {
+	nsCfg := &namespace.Config{
+		ID:             "ns1",
+		Authentication: namespace.AuthenticationProps{Type: namespace.AuthBasic, Users: []string{"admin"}},
+		Proxy:          namespace.ProxyProps{Port: 80},
+	}
+	pins := map[deps.ID]deps.DependencyState{deps.Postgres: {Image: "postgres:17.5"}}
+	// A bundle with a gateway and nothing else: the proxy hard-depends on the
+	// gateway, and postgres is deliberately absent — that absence is the case.
+	genResp, err := namespace.Generate(nsCfg,
+		&bundle.Def{Applications: map[string]bundle.AppDef{appdef.AppGateway: {Image: "citeck/gateway:1.0.0"}}},
+		&bundle.WorkspaceConfig{Webapps: []bundle.WebappConfig{{ID: appdef.AppGateway}}},
+		namespace.SystemSecrets{JWT: "j", OIDC: "o"},
+		namespace.GenerateOpts{DependencyStates: pins})
+	require.NoError(t, err)
+	// assert, not require: the point of the test is what the ROUTES say, and a
+	// hard stop here would leave every assertion below unexercised by the one
+	// mutation that matters (putting the 18 fallback back).
+	assert.Empty(t, genResp.DependencyUpgrades,
+		"a bundle that names no postgres asks for nothing, so the generator may hold nothing back")
+
+	rt := namespace.NewRuntime(nsCfg, planStubDocker{}, t.TempDir())
+	t.Cleanup(rt.Shutdown)
+	rt.RestoreDependencyState(pins, nil, nil)
+	d := &Daemon{activeNs: &activeNamespace{
+		runtime: rt, nsConfig: nsCfg, volumesBase: t.TempDir(),
+		dependencies:       genResp.Dependencies,
+		dependencyUpgrades: genResp.DependencyUpgrades,
+	}}
+	mux := http.NewServeMux()
+	d.registerRoutes(mux)
+
+	var pg api.DependencyDto
+	for _, it := range decodeDependencies(t, depsGet(mux, api.Dependencies)).Items {
+		if it.ID == string(deps.Postgres) {
+			pg = it
+		}
+	}
+	require.Equal(t, string(deps.Postgres), pg.ID, "postgres must be listed at all")
+	assert.Equal(t, api.DependencyUpToDate, pg.Status)
+	assert.Empty(t, pg.StatusDetail, "nothing is held back, so there is nothing to explain")
+	assert.Equal(t, "postgres:17.5", pg.CurrentImage)
+	assert.Equal(t, "postgres:17.5", pg.TargetImage, "the target is what the namespace already runs")
+	assert.Equal(t, "17.5", pg.CurrentVersion)
+	assert.Equal(t, "17.5", pg.TargetVersion)
+
+	assert.Empty(t, decodeNamespace(t, depsGet(mux, "/api/v1/namespace")).DependencyUpgrades,
+		"and the dashboard banner the user actually saw stays down")
+}
