@@ -699,6 +699,10 @@ const zh = {
   'update.installing': '正在更新…',
   'update.restartRequired': '更新已下载，但窗口未刷新。请重启启动器以完成安装。',
   'update.failed': '更新失败：{error}',
+  'update.rolledBackTitle': '更新到 {version} 未能安装',
+  'update.rolledBackHint': '已回滚，启动器仍在运行 {current}。可以再试一次。',
+  'update.tryAgain': '重试',
+  'update.stalledRolledBack': '更新未能安装并已回滚。没有任何改动，可以再试一次。',
   'update.manualNotice': '此版本无法自动安装更新。要获取最新功能，请从 GitHub 手动下载新版本——只需几分钟。',
   'update.openReleases': '打开发布页面',
 

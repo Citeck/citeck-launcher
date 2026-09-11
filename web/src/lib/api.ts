@@ -925,6 +925,16 @@ export async function getUpdateChangelog(locale: string): Promise<ReleaseNoteDto
   return request('GET', `/desktop/update/changelog?locale=${enc(locale)}`)
 }
 
-export async function applyUpdate(): Promise<{ applying: boolean; version: string }> {
-  return request('POST', '/desktop/update/apply', { timeout: 120_000 })
+/**
+ * Stage the latest payload and hand it to the wrapper for the health-gated swap.
+ *
+ * `retry` is the user pressing "Try again" on a release that already failed its
+ * health gate. The daemon blacklists such a release so nothing can loop on it —
+ * download, apply, roll back, repeat — and that rule is for the MACHINE: a gate
+ * failure is as often environmental (Docker down that afternoon) as it is the
+ * release. So the person may ask for it, once, explicitly, and the query
+ * parameter is that asking. Never set it from a background refresh.
+ */
+export async function applyUpdate(retry = false): Promise<{ applying: boolean; version: string }> {
+  return request('POST', `/desktop/update/apply${retry ? '?retry=true' : ''}`, { timeout: 120_000 })
 }

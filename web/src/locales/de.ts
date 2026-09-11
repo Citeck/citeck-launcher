@@ -699,6 +699,10 @@ const de = {
   'update.installing': 'Wird aktualisiert…',
   'update.restartRequired': 'Das Update wurde heruntergeladen, aber das Fenster wurde nicht aktualisiert. Starten Sie den Launcher neu, um die Installation abzuschließen.',
   'update.failed': 'Aktualisierung fehlgeschlagen: {error}',
+  'update.rolledBackTitle': 'Update auf {version} wurde nicht installiert',
+  'update.rolledBackHint': 'Es wurde zurückgesetzt, der Launcher läuft weiterhin mit {current}. Sie können es erneut versuchen.',
+  'update.tryAgain': 'Erneut versuchen',
+  'update.stalledRolledBack': 'Das Update wurde nicht installiert und wurde zurückgesetzt. Es wurde nichts geändert – Sie können es erneut versuchen.',
   'update.manualNotice': 'Diese Version kann Updates nicht automatisch installieren. Um die neuesten Funktionen zu erhalten, laden Sie die neue Version einfach manuell von GitHub herunter — das dauert nur ein paar Minuten.',
   'update.openReleases': 'Release-Seite öffnen',
 

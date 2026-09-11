@@ -699,6 +699,10 @@ const es = {
   'update.installing': 'Actualizando…',
   'update.restartRequired': 'La actualización se ha descargado, pero la ventana no se actualizó. Reinicie el lanzador para terminar de instalarla.',
   'update.failed': 'Error al actualizar: {error}',
+  'update.rolledBackTitle': 'La actualización a {version} no se instaló',
+  'update.rolledBackHint': 'Se revirtió, así que el lanzador sigue ejecutando {current}. Puede volver a intentarlo.',
+  'update.tryAgain': 'Intentar de nuevo',
+  'update.stalledRolledBack': 'La actualización no se instaló y se revirtió. No se cambió nada: puede volver a intentarlo.',
   'update.manualNotice': 'Esta versión no puede instalar actualizaciones automáticamente. Para obtener las últimas funciones, descargue la nueva versión manualmente desde GitHub: solo le llevará un par de minutos.',
   'update.openReleases': 'Abrir la página de versiones',
 

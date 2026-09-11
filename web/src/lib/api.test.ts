@@ -8,6 +8,7 @@ import {
   putAppFile,
   postGitSkipPull,
   postImportSnapshot,
+  applyUpdate,
   deleteSecret,
   type NamespaceEditDto,
 } from './api'
@@ -194,5 +195,19 @@ describe('api request core (rawRequest/request via public helpers)', () => {
     expect(init.method).toBe('PUT')
     expect(init.body).toBe(JSON.stringify(dto))
     expect((init.headers as Record<string, string>)['X-Citeck-CSRF']).toBe('1')
+  })
+
+  // The daemon refuses to re-stage a release that failed its health gate unless
+  // the request says the user asked for it. That opt-in is one query parameter,
+  // and it must be absent by default — a background refresh or an ordinary
+  // Install that carried it would hand the loop guard's key to the machine.
+  it('the update apply route carries ?retry=true only for an explicit user retry', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ applying: true, version: '2.11.7' }))
+    await applyUpdate()
+    expect(lastUrl()).toBe('/api/v1/desktop/update/apply')
+
+    fetchMock.mockResolvedValueOnce(jsonResponse({ applying: true, version: '2.11.7' }))
+    await applyUpdate(true)
+    expect(lastUrl()).toBe('/api/v1/desktop/update/apply?retry=true')
   })
 })

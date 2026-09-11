@@ -99,6 +99,35 @@ func WithSigningPublicKeyHex(pubHex string) Option {
 	return func(s *Service) { s.signingPubKeyHex = pubHex }
 }
 
+// stageOpts is the per-call configuration of Stage (as opposed to Option, which
+// configures the Service for its whole life).
+type stageOpts struct {
+	// userRetry is set only by a person clicking "Try again" in the UI. See
+	// UserRetry.
+	userRetry bool
+}
+
+// StageOption modifies ONE Stage call.
+type StageOption func(*stageOpts)
+
+// UserRetry marks a Stage call as an explicit, user-initiated retry of a release
+// that already failed its health-gate, and is the only thing that lets Stage past
+// that blacklist.
+//
+// The blacklist exists because an automatic re-apply of a broken release is an
+// infinite download → apply → roll back loop, and that reasoning holds for the
+// machine only: a health-gate failure is just as often environmental (Docker not
+// answering that afternoon, a boot that was merely slow) as it is a property of
+// the release. Without this the user could never take that version again, by any
+// means. So: the machine may not retry, the person may — never from RunPeriodic,
+// never from the badge, never implicitly, and never for any other refusal (an
+// unsafe version string, "no update available", a checksum or signature failure
+// are all unchanged). Status.Available deliberately stays false for a failed
+// version, so the offer rides on Status.ApplyError instead of re-lighting the badge.
+func UserRetry() StageOption {
+	return func(o *stageOpts) { o.userRetry = true }
+}
+
 // NewService builds a Service for the given running version and updates dir.
 func NewService(current, updatesDir string, opts ...Option) *Service {
 	s := &Service{
@@ -228,7 +257,15 @@ func (s *Service) Changelog(ctx context.Context, locale string) ([]ReleaseNote, 
 // updates/<ver>/citeck, and records it pending in the manifest. Returns the
 // staged version. The full download+verify completes BEFORE any swap so a
 // failure never disturbs the running daemon.
-func (s *Service) Stage(ctx context.Context) (string, error) {
+//
+// Pass UserRetry() to stage a release that previously failed its health-gate;
+// without it such a release is refused (see UserRetry for why the distinction
+// is between the machine and the person, not between kinds of failure).
+func (s *Service) Stage(ctx context.Context, opts ...StageOption) (string, error) {
+	var o stageOpts
+	for _, opt := range opts {
+		opt(&o)
+	}
 	if !s.applying.CompareAndSwap(false, true) {
 		return "", errors.New("update already in progress")
 	}
@@ -248,9 +285,19 @@ func (s *Service) Stage(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("refusing unsafe version string %q", latest.Version)
 	}
 	// Don't re-apply a release that already failed its health-gate; wait for a
-	// newer one (prevents an infinite download→apply→rollback loop).
+	// newer one (prevents an infinite download→apply→rollback loop). A person
+	// asking for it explicitly is the one exception, and they get a clean slate:
+	// the previous attempt's payload and manifest entry are dropped, so this
+	// attempt downloads, checksums, verifies and extracts from scratch and can
+	// never swap in the leftover of a run we already know ended badly.
 	if IsVersionFailed(s.updatesDir, latest.Version) {
-		return "", fmt.Errorf("version %s previously failed to apply; awaiting a newer release", latest.Version)
+		if !o.userRetry {
+			return "", fmt.Errorf("version %s previously failed to apply; awaiting a newer release", latest.Version)
+		}
+		if err := PurgeVersion(s.updatesDir, latest.Version); err != nil {
+			return "", err
+		}
+		slog.Info("Retrying a previously failed update at the user's request", "version", latest.Version)
 	}
 
 	c := s.dataClient()

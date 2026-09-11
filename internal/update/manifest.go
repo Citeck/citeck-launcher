@@ -91,6 +91,44 @@ func AddStaged(updatesDir string, e Entry) error {
 	return Save(updatesDir, m)
 }
 
+// PurgeVersion forgets a staged version completely: its payload directory is
+// deleted and its manifest entry dropped. Save is called even when no entry
+// matched, so the on-disk record can never outlive the payload.
+//
+// It exists for exactly one caller — an explicit user retry of a release that
+// failed its health-gate (Service.Stage with UserRetry). Every other transition
+// in this file moves an entry ALONG the lifecycle (staged → pending → good |
+// failed) and `failed` is deliberately terminal: nothing may quietly walk an
+// entry back out of it, or the loop guard that `failed` exists to be would be
+// worth nothing. Removing the record together with the bytes is a different act
+// — after it there IS no attempt any more, and the retry that follows stages a
+// freshly downloaded, freshly verified payload that enters the lifecycle at the
+// top like any other. That is also why the directory goes: the leftover is from
+// a run we already know ended badly, and a retry must never be able to swap it in.
+//
+// The version is validated before it is joined into a path (the same
+// defense-in-depth Stage applies to a version read off a GitHub redirect).
+func PurgeVersion(updatesDir, version string) error {
+	if !IsValidVersion(version) {
+		return fmt.Errorf("refusing to purge unsafe version string %q", version)
+	}
+	if err := os.RemoveAll(filepath.Join(updatesDir, version)); err != nil {
+		return fmt.Errorf("remove staged payload: %w", err)
+	}
+	m, err := Load(updatesDir)
+	if err != nil {
+		return err
+	}
+	out := m.Entries[:0:0]
+	for _, e := range m.Entries {
+		if e.Version != version {
+			out = append(out, e)
+		}
+	}
+	m.Entries = out
+	return Save(updatesDir, m)
+}
+
 // MarkState transitions the entry for version to the given state.
 func MarkState(updatesDir, version string, state State) error {
 	m, err := Load(updatesDir)

@@ -699,6 +699,10 @@ const fr = {
   'update.installing': 'Mise à jour…',
   'update.restartRequired': 'La mise à jour a été téléchargée, mais la fenêtre ne s\'est pas actualisée. Redémarrez le lanceur pour terminer l\'installation.',
   'update.failed': 'Échec de la mise à jour : {error}',
+  'update.rolledBackTitle': 'La mise à jour vers {version} n\'a pas été installée',
+  'update.rolledBackHint': 'Elle a été annulée : le lanceur fonctionne toujours en {current}. Vous pouvez réessayer.',
+  'update.tryAgain': 'Réessayer',
+  'update.stalledRolledBack': 'La mise à jour n\'a pas été installée et a été annulée. Rien n\'a été modifié — vous pouvez réessayer.',
   'update.manualNotice': 'Cette version ne peut pas installer les mises à jour automatiquement. Pour profiter des dernières fonctionnalités, téléchargez la nouvelle version manuellement depuis GitHub — cela ne prend que quelques minutes.',
   'update.openReleases': 'Ouvrir la page des versions',
 

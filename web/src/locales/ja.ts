@@ -699,6 +699,10 @@ const ja = {
   'update.installing': '更新中…',
   'update.restartRequired': '更新はダウンロードされましたが、ウィンドウが再読み込みされませんでした。インストールを完了するにはランチャーを再起動してください。',
   'update.failed': '更新に失敗しました: {error}',
+  'update.rolledBackTitle': '{version} への更新はインストールされませんでした',
+  'update.rolledBackHint': 'ロールバックされたため、ランチャーは引き続き {current} で動作しています。もう一度お試しください。',
+  'update.tryAgain': 'もう一度試す',
+  'update.stalledRolledBack': '更新はインストールされずロールバックされました。何も変更されていません。もう一度お試しください。',
   'update.manualNotice': 'このバージョンでは更新を自動的にインストールできません。最新の機能を利用するには、GitHub から新しいバージョンを手動でダウンロードしてください。数分で完了します。',
   'update.openReleases': 'リリースページを開く',
 

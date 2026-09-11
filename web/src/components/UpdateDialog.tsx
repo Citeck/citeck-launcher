@@ -43,6 +43,20 @@ export function UpdateDialog({ open, onClose }: UpdateDialogProps) {
   const status = useUpdateStore((s) => s.status)
   const check = useUpdateStore((s) => s.check)
   const refresh = useUpdateStore((s) => s.refresh)
+  const setStatus = useUpdateStore((s) => s.setStatus)
+  const available = !!status?.available
+  /**
+   * The update was staged and applied, the health gate failed, and the wrapper
+   * rolled the daemon back. Same spelling as UpdateNotification's dot, on
+   * purpose: the two must not drift, and branching on `available` ALONE is what
+   * produced the field report — a dialog headlined "You are on the latest
+   * version (2.11.5)" with "Update failed: 2.11.7" printed underneath it.
+   *
+   * `available` stays false here because the daemon blacklists a failed release
+   * (so the badge cannot nag), which is exactly why this state needs its own
+   * headline and its own explicit retry rather than the Install button.
+   */
+  const rolledBack = !available && !!status?.applyError
   // Signature classification (e.g. signing-key rotation): auto-install would
   // keep failing, so the dialog swaps the Install button for a calm
   // manual-download notice. The changelog stays visible.
@@ -97,6 +111,11 @@ export function UpdateDialog({ open, onClose }: UpdateDialogProps) {
       if (done) return
       getUpdateStatus()
         .then((s) => {
+          // Keep every answer, not just the one that ends the wait. The poll
+          // used to DISCARD a status whose currentVersion was unchanged, so a
+          // rollback that happened 10s in stayed invisible and the header went
+          // on describing the world as it was at click time for the full 150s.
+          setStatus(s)
           if (s.currentVersion && s.currentVersion !== versionBefore) {
             finish(() => window.location.reload())
           }
@@ -109,17 +128,27 @@ export function UpdateDialog({ open, onClose }: UpdateDialogProps) {
 
     swapTimers.current.push(setTimeout(poll, SWAP_POLL_INTERVAL_MS))
     swapTimers.current.push(setTimeout(() => {
-      finish(() => { setApplying(false); setSwapStalled(true) })
+      finish(() => {
+        setApplying(false)
+        setSwapStalled(true)
+        // Ask the daemon once more before the banner picks its sentence: "still
+        // staged" and "rolled back" look identical from here, and only one of
+        // them can be fixed by restarting. refresh() never throws (the store
+        // swallows it), so this needs no catch and stays a best-effort refresh.
+        void refresh()
+      })
     }, SWAP_WATCHDOG_MS))
-  }, [clearSwapTimers])
+  }, [clearSwapTimers, refresh, setStatus])
 
-  const onInstall = async () => {
+  const onInstall = async (retry = false) => {
     const versionBefore = status?.currentVersion ?? ''
     setApplying(true)
     setSwapStalled(false)
     setError(null)
     try {
-      await applyUpdate()
+      // `retry` is only ever true because the user pressed "Try again" on a
+      // release the daemon has blacklisted; nothing schedules it.
+      await applyUpdate(retry)
       // The payload is staged; the wrapper is now swapping the daemon under
       // us. Watch for the daemon that comes back rather than trusting the
       // wrapper to reload us — see SWAP_POLL_INTERVAL_MS above.
@@ -145,16 +174,23 @@ export function UpdateDialog({ open, onClose }: UpdateDialogProps) {
     >
       <div className="flex max-h-[80vh] flex-col p-6">
         <h2 className="text-lg font-semibold">
-          {status?.available
+          {available
             ? t('update.title', { version: status?.latestVersion ?? '' })
-            : t('update.upToDate', { version: status?.currentVersion ?? '' })}
+            : rolledBack
+              ? t('update.rolledBackTitle', { version: status?.applyError ?? '' })
+              : t('update.upToDate', { version: status?.currentVersion ?? '' })}
         </h2>
-        {status?.available && (
+        {available && (
           <p className="mt-1 text-sm text-muted-foreground">
             {t('update.fromTo', {
               current: status?.currentVersion ?? '',
               latest: status?.latestVersion ?? '',
             })}
+          </p>
+        )}
+        {rolledBack && (
+          <p className="mt-1 text-sm text-muted-foreground">
+            {t('update.rolledBackHint', { current: status?.currentVersion ?? '' })}
           </p>
         )}
 
@@ -163,11 +199,22 @@ export function UpdateDialog({ open, onClose }: UpdateDialogProps) {
             every control disabled — the shape of the 2.11.0 macOS report. */}
         {swapStalled && (
           <div className="mt-3 rounded-md border border-primary/30 bg-primary/10 px-3 py-3 text-sm">
-            <p>{t('update.restartRequired')}</p>
+            {/* "Restart the launcher to finish installing it" is TRUE only
+                while the payload is still staged. After a rollback it is advice
+                that cannot work — SelectBestEntry never picks a `failed` entry,
+                so no number of restarts installs it. The watchdog refreshes the
+                status first (see watchForSwap) precisely so this branch is
+                answered by the daemon rather than guessed; the retry itself is
+                offered by the button row below. */}
+            <p>{rolledBack ? t('update.stalledRolledBack') : t('update.restartRequired')}</p>
           </div>
         )}
 
-        {status?.applyError && (
+        {/* A failure that is not the CURRENT state of the dialog: an older
+            release rolled back while a newer one is now on offer. When the
+            rollback IS the current state the headline already names it, and
+            printing it twice is how the contradictory dialog read. */}
+        {status?.applyError && !rolledBack && (
           <p className="mt-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
             {t('update.failed', { error: status.applyError })}
           </p>
@@ -196,7 +243,7 @@ export function UpdateDialog({ open, onClose }: UpdateDialogProps) {
             When already on the latest version there is nothing newer to list,
             so skip the box entirely instead of showing a confusing
             "no changelog available" line. */}
-        {status?.available && (
+        {available && (
         <div className="mt-4 flex-1 overflow-auto rounded-md border border-border bg-background p-4">
           {loading && <p className="text-sm text-muted-foreground">{t('update.loadingChangelog')}</p>}
           {/* A failed fetch now reaches this branch (the daemon stopped
@@ -278,10 +325,29 @@ export function UpdateDialog({ open, onClose }: UpdateDialogProps) {
           >
             {t('common.cancel')}
           </button>
+          {/* The way back to a release the daemon has blacklisted. It is the
+              ONLY caller that sets the retry flag: the machine may not re-apply
+              a failed release, the person may. Hidden under the manual-update
+              classification for the same reason Install is — it would fail
+              identically. */}
+          {rolledBack && !manualUpdate && (
+            <button
+              type="button"
+              className="flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+              onClick={() => void onInstall(true)}
+              disabled={applying}
+              title={applying ? t('update.installing') : undefined}
+            >
+              {applying
+                ? <Loader2 size={14} className="shrink-0 animate-spin" />
+                : <Download size={14} className="shrink-0" />}
+              {t('update.tryAgain')}
+            </button>
+          )}
           {/* Auto-install is hidden under the manual-update classification —
               it would fail the same way again; the notice above offers the
               manual download instead. */}
-          {status?.available && !manualUpdate && (
+          {available && !manualUpdate && (
             <button
               type="button"
               className="flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"

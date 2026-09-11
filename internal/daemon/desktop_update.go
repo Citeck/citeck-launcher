@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"os"
 	"time"
+
+	"github.com/citeck/citeck-launcher/internal/update"
 )
 
 // verbUpdateApply mirrors desktop.VerbUpdateApply. The daemon cannot import
@@ -41,8 +43,17 @@ func (d *Daemon) handleUpdateChangelog(w http.ResponseWriter, r *http.Request) {
 // swap via the update.apply control verb. The verb is async on the wrapper side
 // (it returns immediately and swaps in the background), so this handler returns
 // promptly; the wrapper reloads the webview when the swap settles.
+//
+// ?retry=true is the user pressing "Try again" on a release that already failed
+// its health-gate — the only way past the blacklist that keeps the machine from
+// looping on a broken release (see update.UserRetry). It defaults to off, so
+// every other caller of this route keeps that loop guard.
 func (d *Daemon) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
-	version, err := d.updateSvc.Stage(r.Context())
+	var stageOpts []update.StageOption
+	if r.URL.Query().Get("retry") == "true" {
+		stageOpts = append(stageOpts, update.UserRetry())
+	}
+	version, err := d.updateSvc.Stage(r.Context(), stageOpts...)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

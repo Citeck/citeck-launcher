@@ -705,6 +705,10 @@ const en = {
   'update.installing': 'Updating…',
   'update.restartRequired': 'The update has been downloaded, but the window did not refresh. Restart the launcher to finish installing it.',
   'update.failed': 'Update failed: {error}',
+  'update.rolledBackTitle': 'Update to {version} did not install',
+  'update.rolledBackHint': 'It was rolled back, so the launcher is still running {current}. You can try again.',
+  'update.tryAgain': 'Try again',
+  'update.stalledRolledBack': 'The update did not install and was rolled back. Nothing was changed — you can try again.',
   'update.manualNotice': 'This version cannot install updates automatically. To get the latest features, download the new version from GitHub — it only takes a couple of minutes.',
   'update.openReleases': 'Open releases page',
 
