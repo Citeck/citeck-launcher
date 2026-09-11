@@ -134,7 +134,7 @@ dependencies:
 
 // The workspace side decodes from the YAML node, so an unquoted numeric tag
 // keeps its raw text. Pinned because the bundle side had to be brought to this
-// same behaviour: one spelling must not work in one file and fail in the other.
+// same behavior: one spelling must not work in one file and fail in the other.
 func TestWorkspaceConfig_AnUnquotedNumericTagStillNamesTheImage(t *testing.T) {
 	cfg := parseTestWorkspace(t, `
 dependencies:

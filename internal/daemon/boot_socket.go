@@ -2,10 +2,12 @@ package daemon
 
 import (
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -117,6 +119,38 @@ func (b *bootSocket) close() {
 	_ = os.Remove(b.listener.Addr().String())
 }
 
+// bootLoadingPage is what the socket serves for a request that is not an API
+// call while the daemon is still booting.
+//
+// It exists because of a REAL break, not for looks. An auto-update replaces the
+// daemon binary only — the desktop wrapper stays the version the user
+// installed — and a wrapper proxies whatever the daemon answers straight into
+// the webview. So when this daemon began answering a document request with
+// `503 DAEMON_STARTING`, a 2.12.0 wrapper running a 2.12.1 daemon put that JSON
+// on screen and left it there, because nothing reloads a webview. Reported from
+// the field as a white screen with JSON on it; a full reinstall (i.e. a new
+// wrapper) was the only way out.
+//
+// Before the socket was bound early there was no such answer to proxy: the
+// connection simply failed and the wrapper drew its own loading page. This
+// restores that property from the daemon's side, where it holds for EVERY
+// wrapper, old or new — the page refreshes itself, so the window arrives at the
+// real UI a second after the boot ends.
+//
+// Deliberately: no words that would need translating (the daemon has no locale
+// yet at this point in its boot — no config, no request context), the same dark
+// spinner the wrapper's own page draws, and no assets, since nothing else is
+// served yet.
+const bootLoadingPage = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta http-equiv="refresh" content="1">
+<title>Citeck Launcher</title><style>
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#1e1e1e}
+.spinner{width:28px;height:28px;border:3px solid #333;border-top:3px solid #888;
+border-radius:50%;animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style></head><body><div class="spinner"></div></body></html>
+`
+
 // bootHandler is what the socket serves while the daemon is still booting. It
 // touches NOTHING — no Docker, no store, no runtime — because being able to
 // answer while all three are still being built is the entire point.
@@ -137,7 +171,17 @@ func bootHandler() http.Handler {
 			})
 			return
 		}
-		// Everything else is refused honestly. Notably /daemon/status is NOT
+		if !strings.HasPrefix(r.URL.Path, api.APIV1) {
+			// Anything that is not an API call is a request for the WINDOW, and
+			// a window is not something to refuse with JSON — see
+			// bootLoadingPage for the white screen that answer produced on a
+			// wrapper one release older than this daemon.
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Header().Set("Cache-Control", "no-store")
+			_, _ = io.WriteString(w, bootLoadingPage)
+			return
+		}
+		// API calls are refused honestly. Notably /daemon/status is NOT
 		// answered with a synthetic "running": a client told the daemon is up
 		// and then handed a 503 on its next call is worse off than one told
 		// plainly to wait.

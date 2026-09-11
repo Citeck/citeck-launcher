@@ -159,7 +159,10 @@ func TestHealthAnswersWhileTheSlowBootPhaseIsStillRunning(t *testing.T) {
 func TestEveryOtherRouteIsRefusedWhileBooting(t *testing.T) {
 	h := newBootHarness(t)
 
-	for _, path := range []string{api.DaemonStatus, api.Namespace, "/api/v1/volumes", "/"} {
+	// API paths only. A DOCUMENT request is deliberately NOT refused — see
+	// TestADocumentRequestWhileBootingGetsTheLoadingPage for why that
+	// distinction is the whole fix.
+	for _, path := range []string{api.DaemonStatus, api.Namespace, "/api/v1/volumes"} {
 		resp, body := h.get(t, path)
 		assert.Equal(t, http.StatusServiceUnavailable, resp.StatusCode, "path %s", path)
 		assert.Equal(t, "1", resp.Header.Get("Retry-After"), "path %s must tell the client when to retry", path)
@@ -168,6 +171,37 @@ func TestEveryOtherRouteIsRefusedWhileBooting(t *testing.T) {
 		assert.Equal(t, api.ErrCodeDaemonStarting, errDto.Code, "path %s", path)
 		assert.NotEmpty(t, errDto.Message, "path %s", path)
 		assert.NotContains(t, string(body), `"running":true`, "path %s must not fake a running daemon", path)
+	}
+
+	_ = h.abortBoot(t, errors.New("test over"))
+}
+
+// The white screen reported after an auto-update from 2.12.0 to 2.12.1, and the
+// reason the boot refusal cannot cover document requests.
+//
+// An auto-update replaces the DAEMON only; the wrapper stays whatever version
+// the user installed. A 2.12.0 wrapper proxies the daemon's answer straight into
+// the webview, so the moment this daemon started answering a document request
+// with `503 DAEMON_STARTING`, that JSON became the window's contents — with no
+// way forward, because nothing reloads it. Before the early bind there was no
+// socket at all during boot, the proxy failed to connect, and the wrapper showed
+// its own auto-refreshing loading page instead.
+//
+// So a booting daemon serves a loading page of its own for anything that is not
+// an API call. Old wrappers show it and refresh into the real UI; new ones never
+// reach their own fallback. The API refusal is unchanged — an API caller wants
+// the honest 503, not HTML.
+func TestADocumentRequestWhileBootingGetsTheLoadingPage(t *testing.T) {
+	h := newBootHarness(t)
+
+	for _, path := range []string{"/", "/index.html", "/window/logs"} {
+		resp, body := h.get(t, path)
+		assert.Equal(t, http.StatusOK, resp.StatusCode, "path %s must not refuse the window", path)
+		assert.Contains(t, resp.Header.Get("Content-Type"), "text/html", "path %s", path)
+		assert.Contains(t, string(body), "http-equiv=\"refresh\"",
+			"path %s must come back on its own once the boot finishes", path)
+		assert.NotContains(t, string(body), api.ErrCodeDaemonStarting,
+			"path %s must not put the refusal JSON in front of the user", path)
 	}
 
 	_ = h.abortBoot(t, errors.New("test over"))
