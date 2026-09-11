@@ -105,16 +105,23 @@ func generatePgAdmin(ctx *NsGenContext) {
 	if !config.IsDesktopMode() {
 		return
 	}
+	// The namespace config is an explicit per-namespace choice and stays on top;
+	// below it the chain is the ordinary one every other third-party image
+	// follows (bundle section → bundle top level → workspace section → the typed
+	// workspace block → this default). pgAdmin used to consult its typed block
+	// BEFORE the bundle, which made the two `dependencies:` sections
+	// non-transitive for this one app: a section cannot sit between two sources
+	// when the lower of them already outranks the upper.
 	img := ctx.Config.PgAdmin.Image
 	if img == "" {
+		// Minor tag, not a patch tag: upstream stopped publishing "<major>.<minor>.0"
+		// tags after 9.15 (9.16 and 9.17 exist only as "9.16"/"9.17"), so pinning a
+		// patch here would name an image that does not exist on Docker Hub.
+		fallback := "dpage/pgadmin4:9.17"
 		if ctx.WorkspaceConfig != nil && ctx.WorkspaceConfig.PgAdmin.Image != "" {
-			img = ctx.WorkspaceConfig.PgAdmin.Image
-		} else {
-			// Minor tag, not a patch tag: upstream stopped publishing "<major>.<minor>.0"
-			// tags after 9.15 (9.16 and 9.17 exist only as "9.16"/"9.17"), so pinning a
-			// patch here would name an image that does not exist on Docker Hub.
-			img = bundleImageOr(ctx, appdef.AppPgadmin, "dpage/pgadmin4:9.17")
+			fallback = ctx.WorkspaceConfig.PgAdmin.Image
 		}
+		img = bundleImageOr(ctx, appdef.AppPgadmin, fallback)
 	}
 	app := ctx.GetOrCreateApp(appdef.AppPgadmin)
 	app.Image = img

@@ -9,6 +9,7 @@ import (
 
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/bundle"
+	"github.com/citeck/citeck-launcher/internal/config"
 )
 
 // wsDeps is the workspace `dependencies:` section as the parser produces it.
@@ -217,4 +218,66 @@ func TestAWorkspaceWithNoDependenciesSectionGeneratesTheSameDefs(t *testing.T) {
 	} {
 		assert.Equal(t, want, appByName(t, resp, name).Image, "image of %s", name)
 	}
+}
+
+// pgAdmin used to resolve its image the other way round from every other
+// third-party app: its typed workspace block was consulted BEFORE the bundle,
+// so a bundle that named a pgAdmin image lost to a workspace that named one.
+// That inversion predated the `dependencies:` sections and made them
+// non-transitive for this one app — a section cannot be inserted between two
+// sources when the lower of them already outranks the upper. The owner's
+// ruling: pgAdmin follows the same order as everything else.
+//
+// The namespace config stays on top of the chain (an explicit per-namespace
+// choice, like mongo's), and the five steps below it are now the ordinary ones.
+func TestPgAdminFollowsTheOrdinaryResolutionOrder(t *testing.T) {
+	config.SetDesktopMode(true) // pgAdmin is generated in desktop mode only
+	t.Cleanup(func() { config.SetDesktopMode(false) })
+
+	pgAdminImage := func(t *testing.T, cfg *Config, bun *bundle.Def, ws *bundle.WorkspaceConfig) string {
+		t.Helper()
+		app := findGeneratedApp(generateCfgWithWorkspace(t, cfg, bun, ws), appdef.AppPgadmin)
+		require.NotNil(t, app, "pgAdmin must be generated in desktop mode")
+		return app.Image
+	}
+	wsWithBlock := func(deps map[string]string) *bundle.WorkspaceConfig {
+		ws := &bundle.WorkspaceConfig{PgAdmin: bundle.PgAdminWsProps{Image: "dpage/pgadmin4:9.14"}}
+		if deps != nil {
+			ws.Dependencies = wsDeps(deps)
+		}
+		return ws
+	}
+
+	t.Run("the bundle now beats the typed workspace block", func(t *testing.T) {
+		bun := &bundle.Def{Applications: map[string]bundle.AppDef{
+			appdef.AppPgadmin: {Image: "dpage/pgadmin4:9.16"},
+		}}
+		assert.Equal(t, "dpage/pgadmin4:9.16", pgAdminImage(t, depsTestConfig(), bun, wsWithBlock(nil)))
+	})
+
+	t.Run("the bundle section beats the bundle top level", func(t *testing.T) {
+		bun := &bundle.Def{
+			Applications: map[string]bundle.AppDef{appdef.AppPgadmin: {Image: "dpage/pgadmin4:9.16"}},
+			Dependencies: map[string]bundle.AppDef{appdef.AppPgadmin: {Image: "dpage/pgadmin4:9.15"}},
+		}
+		assert.Equal(t, "dpage/pgadmin4:9.15", pgAdminImage(t, depsTestConfig(), bun, wsWithBlock(nil)))
+	})
+
+	t.Run("the workspace section beats the typed block", func(t *testing.T) {
+		ws := wsWithBlock(map[string]string{appdef.AppPgadmin: "dpage/pgadmin4:9.13"})
+		assert.Equal(t, "dpage/pgadmin4:9.13", pgAdminImage(t, depsTestConfig(), nil, ws))
+	})
+
+	t.Run("the typed block still beats the launcher default", func(t *testing.T) {
+		assert.Equal(t, "dpage/pgadmin4:9.14", pgAdminImage(t, depsTestConfig(), nil, wsWithBlock(nil)))
+	})
+
+	t.Run("the namespace config still wins over all of them", func(t *testing.T) {
+		cfg := depsTestConfig()
+		cfg.PgAdmin.Image = "dpage/pgadmin4:9.12"
+		bun := &bundle.Def{Dependencies: map[string]bundle.AppDef{
+			appdef.AppPgadmin: {Image: "dpage/pgadmin4:9.15"},
+		}}
+		assert.Equal(t, "dpage/pgadmin4:9.12", pgAdminImage(t, cfg, bun, wsWithBlock(nil)))
+	})
 }
