@@ -76,6 +76,17 @@ type AppDef struct {
 type Def struct {
 	Key          Key               `json:"key" yaml:"key"`
 	Applications map[string]AppDef `json:"applications" yaml:"applications"`
+	// Dependencies carries the images a bundle declares in its `dependencies:`
+	// section — third-party infrastructure (postgres, rabbitmq, zookeeper,
+	// keycloak, mailpit, pgadmin, onlyoffice…) rather than Citeck apps.
+	//
+	// It is deliberately NOT merged into Applications, for two independent
+	// reasons. (1) IsEmpty means "this bundle has no Citeck apps in it", which
+	// is what raises the non-dismissible bundle-error banner; a bundle that
+	// names only third-party images would otherwise look healthy while
+	// starting seven containers with none of the product in them. (2) the
+	// webapp loop admits bundle applications, and infra must never reach it.
+	Dependencies map[string]AppDef `json:"dependencies,omitempty" yaml:"dependencies,omitempty"`
 	CiteckApps   []AppDef          `json:"citeckApps,omitempty" yaml:"citeckApps,omitempty"`
 	Content      map[string]any    `json:"content,omitempty" yaml:"content,omitempty"` // raw bundle YAML as map
 }

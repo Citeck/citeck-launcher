@@ -129,10 +129,12 @@ func statesOf(pins map[deps.ID]string) map[deps.ID]deps.DependencyState {
 func generateCfgWithStates(t *testing.T, cfg *Config, bun *bundle.Def, states map[deps.ID]deps.DependencyState) *GenResp {
 	t.Helper()
 	apps := map[string]bundle.AppDef{appdef.AppGateway: {Image: "citeck/gateway:1.0.0"}}
+	var bundleDeps map[string]bundle.AppDef
 	if bun != nil {
 		maps.Copy(apps, bun.Applications)
+		bundleDeps = bun.Dependencies
 	}
-	resp, err := Generate(cfg, &bundle.Def{Applications: apps}, depsTestWorkspace(),
+	resp, err := Generate(cfg, &bundle.Def{Applications: apps, Dependencies: bundleDeps}, depsTestWorkspace(),
 		SystemSecrets{JWT: "j", OIDC: "o"}, GenerateOpts{DependencyStates: states})
 	require.NoError(t, err)
 	return resp

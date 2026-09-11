@@ -29,11 +29,41 @@ import (
 // UtilsImage returns the launcher-utils image from config (supports env override).
 var UtilsImage = config.UtilsImage()
 
+// bundleImageOr answers which image an app runs: the bundle's `dependencies:`
+// section first, then its top-level entry, then the caller's own fallback.
+//
+// The section wins on purpose. It exists so a bundle can raise a third-party
+// version for launchers that HAVE the dependency gate (2.12+) without touching
+// anyone on an older one — Kotlin 1.x and every Go release up to 2.11.7 apply
+// whatever image the bundle names straight onto the existing data volume, so a
+// top-level postgres 17 → 18 bump crash-loops their stand and a RabbitMQ
+// 4.1 → 4.2 bump rewrites the Mnesia data in place with no way back. Both of
+// those parsers ignore unknown keys, so the section is invisible to them. A
+// bundle in transition therefore legitimately carries BOTH (the top-level entry
+// for old launchers, the section for new ones), and reading the top level first
+// would make the section unusable for the one thing it is for.
+//
+// It applies to ANY app name, not just the gated dependencies, so a bundle
+// author can hide every third-party image there (mailpit, pgadmin,
+// onlyoffice…). Citeck apps stay at the top level — an old launcher must keep
+// seeing those.
 func bundleImageOr(ctx *NsGenContext, name, fallback string) string {
+	if image := bundleDependencyImage(ctx, name); image != "" {
+		return image
+	}
 	if app, ok := ctx.Bundle.Applications[name]; ok && app.Image != "" {
 		return app.Image
 	}
 	return fallback
+}
+
+// bundleDependencyImage answers only the bundle's `dependencies:` section (empty
+// when it names nothing for this app). Split out for generateMongoDB, which does
+// not go through bundleImageOr at all: mongo's image comes from the namespace
+// config and has never read the bundle's top-level map, so giving it the new
+// source must not quietly give it that one too.
+func bundleDependencyImage(ctx *NsGenContext, name string) string {
+	return ctx.Bundle.Dependencies[name].Image
 }
 
 func loadAppFiles(ctx *NsGenContext) {

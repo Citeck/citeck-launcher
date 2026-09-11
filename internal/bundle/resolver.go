@@ -999,8 +999,23 @@ func resolveImageURL(repository, tag string, imageRepoMap map[string]string) str
 // is returned verbatim. A nil receiver returns the input unchanged so callers
 // without a workspace config (CLI tools, tests) stay correct.
 func (w *WorkspaceConfig) ResolveImageRef(image string) string {
+	if w == nil {
+		return strings.TrimSpace(image)
+	}
+	// Reuse the single imageRepos ID→URL mapping (same source as
+	// resolveImageURL's repository+tag-pair call site) instead of re-scanning
+	// ImageRepos here.
+	return resolveImageRefWithRepos(image, buildImageRepoMap(w))
+}
+
+// resolveImageRefWithRepos is ResolveImageRef's body expressed over the
+// already-built imageRepos ID→URL map. parseBundleFile is handed that map and
+// never sees a WorkspaceConfig, so this is what lets the `dependencies:`
+// section's plain-string image form go through exactly the same rewriting as
+// every other bundle image instead of a second, drifting copy of the rule.
+func resolveImageRefWithRepos(image string, imageRepoMap map[string]string) string {
 	image = strings.TrimSpace(image)
-	if w == nil || image == "" {
+	if image == "" {
 		return image
 	}
 	repository, suffix := image, ""
@@ -1019,9 +1034,7 @@ func (w *WorkspaceConfig) ResolveImageRef(image string) string {
 	if !ok {
 		return image // no prefix segment → nothing to map (e.g. "busybox")
 	}
-	// Reuse the single imageRepos ID→URL mapping (same source as resolveImageURL's
-	// repository+tag-pair call site) instead of re-scanning ImageRepos here.
-	if registryURL, found := buildImageRepoMap(w)[prefix]; found {
+	if registryURL, found := imageRepoMap[prefix]; found {
 		return registryURL + "/" + rest + suffix
 	}
 	return image
@@ -1083,21 +1096,94 @@ func parseBundleFile(path, version string, aliasMap, imageRepoMap map[string]str
 		}
 	}
 
+	var dependencies map[string]AppDef
 	for appName, value := range raw {
-		if valueMap, ok := value.(map[string]any); ok {
-			processApp(appName, valueMap)
+		valueMap, ok := value.(map[string]any)
+		if !ok {
+			continue
 		}
+		// The dependencies section is a SECTION, not an app. The skip is
+		// structural, not cosmetic: this loop hands every top-level key to
+		// processApp, so without it an entry id that collides with the entry
+		// schema's own key ("dependencies.image") would be read as an
+		// application named "dependencies".
+		if appName == bundleDependenciesKey {
+			dependencies = parseBundleDependencies(valueMap, imageRepoMap)
+			continue
+		}
+		processApp(appName, valueMap)
 	}
 
 	def := &Def{
 		Key:          Key{Version: version},
 		Applications: applications,
+		Dependencies: dependencies,
 		CiteckApps:   citeckApps,
 		Content:      raw,
 	}
 
-	logger.Debug("Resolved bundle", "version", version, "apps", len(applications), "citeckApps", len(citeckApps))
+	logger.Debug("Resolved bundle", "version", version,
+		"apps", len(applications), "dependencies", len(dependencies), "citeckApps", len(citeckApps))
 	return def, nil
+}
+
+// bundleDependenciesKey is the top-level bundle key carrying third-party
+// infrastructure images.
+//
+// It exists for ONE reason, and it is a compatibility contract with the
+// bundles in the field rather than a matter of taste. This launcher pins each
+// infra dependency to the version its DATA runs on and holds a breaking bundle
+// bump back until the operator runs a migration; NO older launcher does — the
+// Kotlin 1.x line and every Go release up to 2.11.7 apply whatever image the
+// bundle names straight onto the existing volume. A top-level `postgres:` entry
+// raised from 17 to 18 therefore crash-loops an older launcher's stand ("The
+// data directory was initialized by PostgreSQL version 17…"), and a RabbitMQ
+// 4.1 → 4.2 bump upgrades the Mnesia data in place, silently and irreversibly.
+// Both parsers ignore keys they do not know, so an image moved in here is
+// invisible to them: one bundle can raise an infra version for 2.12+ users
+// while everyone on an older launcher keeps running what they run today.
+// Citeck apps stay at the top level for exactly the mirror-image reason — an
+// old launcher must keep seeing those.
+const bundleDependenciesKey = "dependencies"
+
+// parseBundleDependencies reads the `dependencies:` section. Each entry maps an
+// app id to an `image:` in either of the two forms a bundle author might reach
+// for — the plain string ("postgres:17.11", the spelling the section was
+// specified with) or the {repository, tag} map every existing top-level entry
+// uses — both resolved through the same imageRepos rewriting.
+//
+// Keys are canonical launcher app ids (postgres, rabbitmq, mailpit…) and are
+// NOT alias-mapped: the alias map describes Citeck webapps, and infra has no
+// aliases. An id this launcher does not know is kept and simply never asked
+// for — a future launcher may know it, and failing the whole bundle over it
+// would defeat the point of a section older launchers are meant to ignore.
+func parseBundleDependencies(section map[string]any, imageRepoMap map[string]string) map[string]AppDef {
+	out := make(map[string]AppDef, len(section))
+	for name, value := range section {
+		entry, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		if image := extractDependencyImage(entry, imageRepoMap); image != "" {
+			out[name] = AppDef{Image: image}
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// extractDependencyImage extracts a dependencies-section entry's image,
+// accepting BOTH the plain-string form and the {repository, tag} map form the
+// rest of the bundle uses. The dual form is deliberately scoped to this
+// section: widening extractBundleImage would change how a top-level entry is
+// read, and those must behave exactly as they do today.
+func extractDependencyImage(entry map[string]any, imageRepoMap map[string]string) string {
+	if image, ok := entry["image"].(string); ok {
+		return resolveImageRefWithRepos(image, imageRepoMap)
+	}
+	return extractBundleImage(entry, imageRepoMap)
 }
 
 // collectCiteckApps extracts ecos-apps init container images from a bundle entry.
