@@ -453,7 +453,36 @@ type liveStatusOpts struct {
 	waitAll      bool          // wait until ALL apps are running (ignore intermediate failures, block until Ctrl+C or success)
 	initialDelay time.Duration // pause before first poll (e.g. let reconciler pick up changes)
 	successMsg   string        // custom message on all-running (default: cli.allAppsStarted)
+
+	// The three bounds below are fields rather than constants so tests can
+	// drive the loop in milliseconds; zero means "use the package default".
+	pollInterval        time.Duration // between /namespace polls
+	unproductiveGrace   time.Duration // continuous time the wait may spend unable to end by itself
+	daemonFailureBudget time.Duration // continuous time the daemon may refuse to answer
 }
+
+const (
+	// liveStatusPollInterval is the cadence of the /namespace polls.
+	liveStatusPollInterval = 2 * time.Second
+
+	// liveStatusUnproductiveGrace bounds a CONTINUOUS run of iterations that
+	// cannot end the wait — a namespace sitting in the stop domain with no
+	// update in flight (a reload of a stopped namespace enqueues a command
+	// nothing drains), or a namespace with no apps at all. Two minutes is
+	// generous enough that a namespace merely passing through STOPPING is
+	// never cut short.
+	liveStatusUnproductiveGrace = 2 * time.Minute
+
+	// liveStatusDaemonFailureBudget bounds a CONTINUOUS run of failed
+	// /namespace calls. It has to tolerate a daemon restart: `citeck upgrade`
+	// swaps the binary and waits right afterwards.
+	liveStatusDaemonFailureBudget = 2 * time.Minute
+
+	// liveStatusErrorRetry is how long the loop waits after a failed poll.
+	// Capped by the poll interval so a caller driving the loop faster does
+	// not get a retry slower than its own cadence.
+	liveStatusErrorRetry = 1 * time.Second
+)
 
 // streamLiveStatus polls the daemon and shows an in-place table of app statuses.
 func streamLiveStatus(c *client.DaemonClient, opts liveStatusOpts) error {
@@ -466,10 +495,29 @@ func streamLiveStatus(c *client.DaemonClient, opts liveStatusOpts) error {
 		time.Sleep(opts.initialDelay)
 	}
 
+	poll := opts.pollInterval
+	if poll <= 0 {
+		poll = liveStatusPollInterval
+	}
+	errorRetry := min(liveStatusErrorRetry, poll)
+
+	grace := opts.unproductiveGrace
+	if grace <= 0 {
+		grace = liveStatusUnproductiveGrace
+	}
+	budget := opts.daemonFailureBudget
+	if budget <= 0 {
+		budget = liveStatusDaemonFailureBudget
+	}
+
 	isTTY := output.IsTTY()
 	firstPrint := true
 	linesPrinted := 0
 	lastRunning := -1
+	// Start of the CURRENT continuous run of iterations that cannot end the
+	// wait, and of the current continuous run of failed polls. Both are reset
+	// by the first iteration that disproves them; zero means "no run open".
+	var unproductiveSince, failingSince time.Time
 
 	for {
 		select {
@@ -481,9 +529,21 @@ func streamLiveStatus(c *client.DaemonClient, opts liveStatusOpts) error {
 
 		ns, err := c.GetNamespace()
 		if err != nil {
-			time.Sleep(1 * time.Second)
+			// A daemon that stops answering is worth retrying — `citeck
+			// upgrade` swaps the binary and waits right afterwards, so the
+			// socket legitimately goes away and comes back. Past the budget
+			// it is no longer a hiccup: we know nothing about the namespace
+			// any more, which is a failure and not a quiet success.
+			if failingSince.IsZero() {
+				failingSince = time.Now()
+			}
+			if time.Since(failingSince) >= budget {
+				return fmt.Errorf("lost contact with the daemon (no answer for %s): %w", budget, err)
+			}
+			time.Sleep(errorRetry)
 			continue
 		}
+		failingSince = time.Time{}
 
 		table, running, failed, stopped, total := renderAppTable(ns.Apps)
 
@@ -502,14 +562,41 @@ func streamLiveStatus(c *client.DaemonClient, opts liveStatusOpts) error {
 		}
 		lastRunning = running
 
+		// A wait is PRODUCTIVE while it can still end on its own: --follow is
+		// the user asking to keep watching; ns.Updating is the daemon saying it
+		// is acting on the command (the reloadMu wait, the git pull, the bundle
+		// resolve — minutes on a big bundle, throughout which the namespace
+		// legitimately reads STOPPED); and a namespace out of the stop domain
+		// with apps in it reaches the terminal checks below. Anything else is a
+		// wait for something nobody is going to do — `citeck reload` on a
+		// stopped namespace enqueues a command no loop drains — so it is
+		// bounded. The command itself succeeded; only the watching ends, and
+		// the table above has already been printed.
+		if opts.follow || ns.Updating || (total > 0 && !isNsPrecommandSnapshot(ns.Status)) {
+			unproductiveSince = time.Time{}
+		} else {
+			if unproductiveSince.IsZero() {
+				unproductiveSince = time.Now()
+			}
+			if time.Since(unproductiveSince) >= grace {
+				ensureI18n()
+				// The status is rendered plain: output.Colorize appends a
+				// reset, so a colorized status inside this line would end the
+				// yellow halfway through the sentence.
+				fmt.Printf("\n%s\n", output.Colorize(output.Yellow, //nolint:forbidigo // CLI result
+					t("cli.waitEnded", "status", ns.Status)))
+				return nil
+			}
+		}
+
 		if total == 0 || opts.follow {
-			time.Sleep(2 * time.Second)
+			time.Sleep(poll)
 			continue
 		}
 
 		// Guard against a stale pre-command snapshot: see isNsPrecommandSnapshot.
 		if isNsPrecommandSnapshot(ns.Status) {
-			time.Sleep(2 * time.Second)
+			time.Sleep(poll)
 			continue
 		}
 
@@ -541,7 +628,7 @@ func streamLiveStatus(c *client.DaemonClient, opts liveStatusOpts) error {
 		}
 
 		// waitAll mode or not all terminal yet: keep polling.
-		time.Sleep(2 * time.Second)
+		time.Sleep(poll)
 	}
 }
 

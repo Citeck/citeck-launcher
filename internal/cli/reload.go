@@ -38,35 +38,65 @@ func newReloadCmd() *cobra.Command {
 			}
 			defer c.Close()
 
-			result, err := c.ReloadNamespace()
-			if err != nil {
-				return fmt.Errorf("reload: %w", err)
-			}
-
-			if !result.Success {
-				return exitWithCode(ExitError, "reload failed: %s", result.Message)
-			}
-
-			output.PrintText(result.Message)
-
-			if detach {
-				return nil
-			}
-
-			// Wait for all services to stabilize.
-			if waitErr := StreamReloadStatus(c); waitErr != nil {
-				if errors.Is(waitErr, errInterrupted) {
-					return nil // Changes apply in background.
-				}
-				return waitErr
-			}
-			return nil
+			return runReload(c, detach, reloadWaitOpts())
 		},
 	}
 
 	cmd.Flags().BoolVarP(&detach, "detach", "d", false, "Don't wait for services to stabilize")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Validate config and show changes without applying")
 	return cmd
+}
+
+// runReload sends the reload and, unless detached, waits for the services it
+// restarts to settle. waitOpts is the wait to perform (a parameter so tests can
+// drive it in milliseconds).
+func runReload(c *client.DaemonClient, detach bool, waitOpts liveStatusOpts) error {
+	ensureI18n()
+
+	// Sample the namespace BEFORE the POST: a reload never starts a stopped
+	// namespace, so there would be nothing to watch and the wait used to hang
+	// until Ctrl+C (the daemon answers in milliseconds and only enqueues a
+	// command that nothing drains while the namespace is stopped).
+	//
+	// Before, not after, on purpose: after the POST a running namespace
+	// transitions through STARTING and can show a STOPPING blip, and skipping
+	// the wait on that one would drop the watch on a namespace that really is
+	// coming back. Before the POST the answer is stable. A sample we could not
+	// take says nothing, so it leaves the wait exactly as it was — the skip is
+	// an optimization of a known-stopped namespace, never a new failure mode.
+	skipWait := false
+	if !detach {
+		if ns, nsErr := c.GetNamespace(); nsErr == nil {
+			skipWait = isNsPrecommandSnapshot(ns.Status)
+		}
+	}
+
+	result, err := c.ReloadNamespace()
+	if err != nil {
+		return fmt.Errorf("reload: %w", err)
+	}
+	if !result.Success {
+		return exitWithCode(ExitError, "reload failed: %s", result.Message)
+	}
+
+	output.PrintText(result.Message)
+
+	if detach {
+		return nil
+	}
+	if skipWait {
+		output.PrintText(t("reload.notRunning"))
+		return nil
+	}
+
+	// Wait for all services to stabilize.
+	if waitErr := streamLiveStatus(c, waitOpts); waitErr != nil {
+		if errors.Is(waitErr, errInterrupted) {
+			return nil // Changes apply in background.
+		}
+		return waitErr
+	}
+	return nil
 }
 
 // newDiffCmd is a convenience alias: `citeck diff` ≡ `citeck reload --dry-run`.

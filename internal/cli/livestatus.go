@@ -17,11 +17,18 @@ import (
 // Exported so cli/setup can call it.
 func StreamReloadStatus(c *client.DaemonClient) error {
 	ensureI18n()
-	err := streamLiveStatus(c, liveStatusOpts{
+	return streamLiveStatus(c, reloadWaitOpts())
+}
+
+// reloadWaitOpts is the wait every "config changed, watch it land" caller
+// performs: a short pause so the daemon picks the change up, then the live
+// table until the apps settle.
+func reloadWaitOpts() liveStatusOpts {
+	ensureI18n()
+	return liveStatusOpts{
 		initialDelay: 1 * time.Second,
 		successMsg:   output.Colorize(output.Green, t("reload.complete")),
-	})
-	return err
+	}
 }
 
 // renderAppTable is a convenience wrapper around output.FormatAppTable
