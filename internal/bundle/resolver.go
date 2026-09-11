@@ -1153,6 +1153,7 @@ func parseBundleFile(path, version string, aliasMap, imageRepoMap map[string]str
 	}
 
 	applications := make(map[string]AppDef)
+	dependencies := parseBundleDependencies(data, imageRepoMap, logger)
 	var citeckApps []AppDef
 
 	// processApp handles one bundle entry. When appName is "ecos", it recurses
@@ -1193,19 +1194,18 @@ func parseBundleFile(path, version string, aliasMap, imageRepoMap map[string]str
 		}
 	}
 
-	var dependencies map[string]AppDef
 	for appName, value := range raw {
 		valueMap, ok := value.(map[string]any)
 		if !ok {
 			continue
 		}
-		// The dependencies section is a SECTION, not an app. The skip is
-		// structural, not cosmetic: this loop hands every top-level key to
-		// processApp, so without it an entry id that collides with the entry
-		// schema's own key ("dependencies.image") would be read as an
-		// application named "dependencies".
+		// The dependencies section is a SECTION, not an app, and it is read
+		// separately (see parseBundleDependencies). The skip is structural, not
+		// cosmetic: this loop hands every top-level key to processApp, so
+		// without it an entry id colliding with the entry schema's own key
+		// ("dependencies.image") would be read as an application named
+		// "dependencies".
 		if appName == bundleDependenciesKey {
-			dependencies = parseBundleDependencies(valueMap, imageRepoMap, logger)
 			continue
 		}
 		processApp(appName, valueMap)
@@ -1243,11 +1243,17 @@ func parseBundleFile(path, version string, aliasMap, imageRepoMap map[string]str
 // old launcher must keep seeing those.
 const bundleDependenciesKey = "dependencies"
 
-// parseBundleDependencies reads the `dependencies:` section. Each entry maps an
-// app id to an `image:` in either of the two forms a bundle author might reach
-// for — the plain string ("postgres:17.11", the spelling the section was
-// specified with) or the {repository, tag} map every existing top-level entry
-// uses — both resolved through the same imageRepos rewriting.
+// parseBundleDependencies reads the `dependencies:` section, from the YAML
+// itself rather than from the generic map the rest of parseBundleFile walks.
+// That is not a style choice: in the generic map an unquoted `tag: 17.11` has
+// already become float64(17.11), from which "17.10" comes back as "17.1", and
+// the entry silently names a version nobody wrote. Decoding the section through
+// the SAME DependencyEntry the workspace config uses keeps the tag's raw text
+// and guarantees one spelling cannot work in one file and fail in the other.
+// Each entry names its `image:` in either of the two forms — the plain string
+// ("postgres:17.11", the spelling the section was specified with) or the
+// {repository, tag} map every existing top-level entry uses — both resolved
+// through the same imageRepos rewriting.
 //
 // Keys are canonical launcher app ids (postgres, rabbitmq, mailpit…) and are
 // NOT alias-mapped: the alias map describes Citeck webapps, and infra has no
@@ -1258,18 +1264,22 @@ const bundleDependenciesKey = "dependencies"
 // makes the section safe to write at all, but silence is the wrong price for a
 // typo: the author's version then simply does not apply, the stand keeps
 // running the launcher's own default, and nothing anywhere says why.
-func parseBundleDependencies(section map[string]any, imageRepoMap map[string]string, logger *slog.Logger) map[string]AppDef {
+func parseBundleDependencies(data []byte, imageRepoMap map[string]string, logger *slog.Logger) map[string]AppDef {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	out := make(map[string]AppDef, len(section))
-	for name, value := range section {
-		entry, ok := value.(map[string]any)
-		if !ok {
-			logger.Warn("Bundle dependency entry is not a mapping; ignoring it", "app", name)
-			continue
-		}
-		image := extractDependencyImage(entry, imageRepoMap)
+	var doc struct {
+		Dependencies map[string]DependencyEntry `yaml:"dependencies"`
+	}
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		// The bundle as a whole already parsed above, so this can only be the
+		// section's own shape. It costs the section, never the bundle.
+		logger.Warn("Cannot read the bundle's dependencies section; ignoring it", "err", err)
+		return nil
+	}
+	out := make(map[string]AppDef, len(doc.Dependencies))
+	for name, entry := range doc.Dependencies {
+		image := resolveImageRefWithRepos(entry.Image, imageRepoMap)
 		if image == "" {
 			logger.Warn("Bundle dependency entry names no image; ignoring it", "app", name)
 			continue
@@ -1280,18 +1290,6 @@ func parseBundleDependencies(section map[string]any, imageRepoMap map[string]str
 		return nil
 	}
 	return out
-}
-
-// extractDependencyImage extracts a dependencies-section entry's image,
-// accepting BOTH the plain-string form and the {repository, tag} map form the
-// rest of the bundle uses. The dual form is deliberately scoped to this
-// section: widening extractBundleImage would change how a top-level entry is
-// read, and those must behave exactly as they do today.
-func extractDependencyImage(entry map[string]any, imageRepoMap map[string]string) string {
-	if image, ok := entry["image"].(string); ok {
-		return resolveImageRefWithRepos(image, imageRepoMap)
-	}
-	return extractBundleImage(entry, imageRepoMap)
 }
 
 // collectCiteckApps extracts ecos-apps init container images from a bundle entry.

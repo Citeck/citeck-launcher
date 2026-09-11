@@ -162,3 +162,26 @@ dependencies:
 	assert.Contains(t, buf.String(), "postgres", "the skipped entry must be named in the log")
 	assert.NotContains(t, buf.String(), "rabbitmq", "an entry that was read is not a finding")
 }
+
+// The one spelling that looks right and could easily not be: an UNQUOTED
+// numeric tag. `tag: 17.11` is a YAML float, not a string, and reading it out
+// of a generic map would hand us float64(17.11) — from which "17.10" comes back
+// as "17.1". The section is therefore decoded from the YAML node itself, where
+// the tag's raw text survives, and the same entry type as the workspace config
+// uses, so one spelling cannot work in one file and silently fail in the other.
+func TestParseBundleFile_AnUnquotedNumericTagStillNamesTheImage(t *testing.T) {
+	def := parseTestBundle(t, `
+dependencies:
+  postgres:
+    image:
+      repository: postgres
+      tag: 17.11
+  onlyoffice:
+    image:
+      repository: onlyoffice/documentserver
+      tag: 9.4.0.1
+`)
+	assert.Equal(t, "postgres:17.11", def.Dependencies["postgres"].Image,
+		"an unquoted tag must not silently lose its trailing digits")
+	assert.Equal(t, "onlyoffice/documentserver:9.4.0.1", def.Dependencies["onlyoffice"].Image)
+}

@@ -131,3 +131,17 @@ dependencies:
 	assert.Contains(t, buf.String(), "postgres", "the skipped entry must be named in the log")
 	assert.NotContains(t, buf.String(), "rabbitmq", "an entry that was read is not a finding")
 }
+
+// The workspace side decodes from the YAML node, so an unquoted numeric tag
+// keeps its raw text. Pinned because the bundle side had to be brought to this
+// same behaviour: one spelling must not work in one file and fail in the other.
+func TestWorkspaceConfig_AnUnquotedNumericTagStillNamesTheImage(t *testing.T) {
+	cfg := parseTestWorkspace(t, `
+dependencies:
+  postgres:
+    image:
+      repository: postgres
+      tag: 17.11
+`)
+	assert.Equal(t, "postgres:17.11", cfg.DependencyImage("postgres"))
+}
