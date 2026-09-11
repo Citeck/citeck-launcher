@@ -36,13 +36,18 @@ type Manifest struct {
 	Entries []Entry `json:"entries"`
 }
 
-func manifestPath(updatesDir string) string {
+// ManifestPath is the on-disk location of the manifest inside updatesDir.
+// Exported because the diagnostics dump collects the file verbatim: it is the
+// record of what was staged and how each payload's health-gate ended, and a
+// support archive that had to spell the name itself would drift from this
+// package the first time the layout moved.
+func ManifestPath(updatesDir string) string {
 	return filepath.Join(updatesDir, "manifest.json")
 }
 
 // Load reads the manifest. A missing file yields an empty manifest and nil error.
 func Load(updatesDir string) (*Manifest, error) {
-	data, err := os.ReadFile(manifestPath(updatesDir)) //nolint:gosec // G304: path from trusted config
+	data, err := os.ReadFile(ManifestPath(updatesDir)) //nolint:gosec // G304: path from trusted config
 	if err != nil {
 		if os.IsNotExist(err) {
 			return &Manifest{}, nil
@@ -65,7 +70,7 @@ func Save(updatesDir string, m *Manifest) error {
 	if err != nil {
 		return fmt.Errorf("marshal manifest: %w", err)
 	}
-	if err := fsutil.AtomicWriteFile(manifestPath(updatesDir), data, 0o644); err != nil { //nolint:gosec // not sensitive
+	if err := fsutil.AtomicWriteFile(ManifestPath(updatesDir), data, 0o644); err != nil { //nolint:gosec // not sensitive
 		return fmt.Errorf("write manifest: %w", err)
 	}
 	return nil

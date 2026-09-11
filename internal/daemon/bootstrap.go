@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -138,12 +139,8 @@ func Start(opts StartOptions) error {
 	socketMux := d.installRealRoutes(boot)
 	readyURL := d.startWebUI(socketMux, d.active().nsConfig)
 
-	slog.Info("Citeck Daemon started",
-		"socket", socketPath,
-		"webui", daemonCfg.Server.WebUI.Enabled,
-		"tcp", daemonCfg.Server.WebUI.Listen,
-		"pid", os.Getpid(),
-	)
+	exePath, _ := os.Executable()
+	slog.Info("Citeck Daemon started", startupLogAttrs(opts, socketPath, daemonCfg, exePath)...)
 
 	d.wireShutdownSignals(opts)
 
@@ -364,6 +361,48 @@ func constructDaemon(opts StartOptions, daemonCfg config.DaemonConfig, socketPat
 	// Construction complete — disable cleanup defers.
 	startupFailed = false
 	return d, nil
+}
+
+// startupLogAttrs builds the one line that fingerprints a boot in daemon.log.
+//
+// It used to carry the socket, the web UI flags and the pid — everything except
+// the two facts a support dump cannot reconstruct. The VERSION is the first: a
+// log spanning several boots could not say which release any of them was. The
+// BINARY is the second, and it only exists on desktop: the running daemon is
+// either the executable that shipped in the bundle or a staged auto-update
+// payload under UpdatesDir, which is precisely the question an update that
+// failed and rolled back raises.
+//
+// exePath comes from the caller's os.Executable() so this stays a pure
+// function. An empty path means the OS would not say, and then NEITHER attr is
+// emitted: a blank `binary` next to a confident `staged=false` would be a claim
+// we cannot make.
+func startupLogAttrs(opts StartOptions, socketPath string, cfg config.DaemonConfig, exePath string) []any {
+	attrs := []any{
+		"version", opts.Version,
+		"socket", socketPath,
+		"webui", cfg.Server.WebUI.Enabled,
+		"tcp", cfg.Server.WebUI.Listen,
+		"pid", os.Getpid(),
+	}
+	if exePath != "" {
+		attrs = append(attrs, "binary", exePath, "staged", isStagedPayloadPath(exePath))
+	}
+	return attrs
+}
+
+// isStagedPayloadPath reports whether the running executable lives under the
+// auto-update staging directory, i.e. whether the wrapper swapped a downloaded
+// payload in instead of spawning the bundled binary. A plain path comparison is
+// enough and deliberately so: this is a log attribute, not an access decision,
+// and resolving symlinks here would add an I/O failure mode to a line whose
+// whole job is to be written unconditionally.
+func isStagedPayloadPath(exePath string) bool {
+	rel, err := filepath.Rel(config.UpdatesDir(), filepath.Clean(exePath))
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // ensureDaemonDirs creates the daemon's directory layout (conf, data, logs,

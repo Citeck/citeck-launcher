@@ -15,6 +15,7 @@ import (
 	"github.com/citeck/citeck-launcher/internal/api"
 	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/namespace"
+	"github.com/citeck/citeck-launcher/internal/update"
 	"gopkg.in/yaml.v3"
 )
 
@@ -134,18 +135,24 @@ func (d *Daemon) writeSystemDumpZip(ctx context.Context, w http.ResponseWriter, 
 	}
 
 	// Daemon logs (daemon.log + rotated variants)
-	const maxDaemonLogSize = 2 * 1024 * 1024 // 2MB cap per file
-	for _, suffix := range []string{"", ".1", ".2", ".3"} {
-		logFile := config.DaemonLogPath() + suffix
-		data, err := os.ReadFile(logFile) //nolint:gosec // G304: logFile path is derived from internal config
-		if err != nil {
-			continue
-		}
-		if len(data) > maxDaemonLogSize {
-			data = data[len(data)-maxDaemonLogSize:]
-		}
-		fname := "daemon-logs/" + filepath.Base(logFile)
-		if fw, err := zw.Create(fname); err == nil {
+	addRotatedLogs(zw, config.DaemonLogPath(), "daemon-logs")
+
+	// Wrapper log (launcher.log + rotated variants) — desktop only, and absent
+	// in server mode, which is not a failure. It is the ONLY record of which
+	// daemon binary the wrapper selected and of how an auto-update's health gate
+	// ended, and on Windows it is the wrapper's only output at all: the wrapper
+	// is linked -H windowsgui and therefore has no stderr to fall back on.
+	addRotatedLogs(zw, config.LauncherLogPath(), "launcher-logs")
+
+	// updates/manifest.json — what was staged and what each payload's verdict
+	// was (staged / pending / good / failed). Read from disk rather than
+	// marshaled from update.Load, which answers a missing file with an EMPTY
+	// manifest: that would put a synthetic "nothing was ever staged" record into
+	// every server-mode dump, the same fabrication the daemon.yml entry above
+	// refuses to make. It carries no secret — the entries are a version, a path
+	// under the launcher home, a payload sha256 and two timestamps.
+	if data, err := os.ReadFile(update.ManifestPath(config.UpdatesDir())); err == nil { //nolint:gosec // G304: path derived from internal config
+		if fw, createErr := zw.Create("updates/manifest.json"); createErr == nil {
 			_, _ = fw.Write(data)
 		}
 	}
@@ -168,6 +175,31 @@ func (d *Daemon) writeSystemDumpZip(ctx context.Context, w http.ResponseWriter, 
 				// normalization the live log viewer already applies.
 				_, _ = fw.Write([]byte(stripAnsi(logs)))
 			}
+		}
+	}
+}
+
+// maxDumpLogSize caps each log file copied into the diagnostics ZIP. The dump
+// is something a user emails to support, not an archive of the whole history.
+const maxDumpLogSize = 2 * 1024 * 1024 // 2MB cap per file
+
+// addRotatedLogs copies a log file and its rotated siblings into the ZIP under
+// dirName/, keeping the TAIL of anything over the cap. Best-effort throughout:
+// a file that does not exist is skipped silently, because the daemon log is
+// present in both modes while the wrapper log exists only on desktop, and a
+// server-mode dump must not report that absence as a failure.
+func addRotatedLogs(zw *zip.Writer, logPath, dirName string) {
+	for _, suffix := range []string{"", ".1", ".2", ".3"} {
+		logFile := logPath + suffix
+		data, err := os.ReadFile(logFile) //nolint:gosec // G304: logFile path is derived from internal config
+		if err != nil {
+			continue
+		}
+		if len(data) > maxDumpLogSize {
+			data = data[len(data)-maxDumpLogSize:]
+		}
+		if fw, createErr := zw.Create(dirName + "/" + filepath.Base(logFile)); createErr == nil {
+			_, _ = fw.Write(data)
 		}
 	}
 }

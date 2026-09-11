@@ -28,6 +28,7 @@ import (
 	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/docker"
 	"github.com/citeck/citeck-launcher/internal/output"
+	"github.com/citeck/citeck-launcher/internal/update"
 	"github.com/spf13/cobra"
 )
 
@@ -200,7 +201,7 @@ func runDumpSystemInfo(ctx context.Context, info BuildInfo, full bool) error {
 				"review the archive before sharing it.")
 	}
 
-	prog := &dumpProgress{total: 20}
+	prog := &dumpProgress{total: 21}
 
 	// Section 1: basic info.txt + citeck namespace state
 	prog.step("Collecting info.txt")
@@ -233,6 +234,9 @@ func runDumpSystemInfo(ctx context.Context, info BuildInfo, full bool) error {
 
 	prog.step("Collecting daemon/namespace.yml")
 	collectFile(dw, "daemon/namespace.yml", config.NamespaceConfigPath())
+
+	prog.step("Collecting desktop/ update artifacts")
+	collectDesktopUpdateArtifacts(dw, full)
 
 	// Section 3: system commands
 	prog.step("Collecting system/uname.txt")
@@ -476,6 +480,37 @@ func collectSetupHistory(dw *dumpWriter, name string) {
 		return
 	}
 	dw.addFile(name, buf.Bytes())
+}
+
+// collectDesktopUpdateArtifacts adds the two desktop-only files an auto-update
+// failure cannot be diagnosed without:
+//
+//   - the wrapper's own log, which is where the daemon-binary selection and the
+//     health-gate verdict are recorded, and which on Windows is the wrapper's
+//     ONLY output (it is linked -H windowsgui and has no stderr),
+//   - the updater's manifest, which says what was staged and how each payload's
+//     health gate ended.
+//
+// Both are absent in a server install, and that absence is an ordinary state,
+// not a failed step: collectFile/collectTailFile would write a `<entry>.err`
+// and an errors.json line into every server-mode archive, inventing two
+// failures. Hence the stat gate. Both go through dumpWriter.addFile like every
+// other entry, so the harvested secret values are masked in them too — the
+// wrapper log is a log, and a log is exactly where this launcher has printed
+// secrets in the clear before.
+func collectDesktopUpdateArtifacts(dw *dumpWriter, full bool) {
+	if launcherLog := config.LauncherLogPath(); fileExists(launcherLog) {
+		collectTailFile(dw, "desktop/launcher.log", launcherLog, daemonLogTailLines, full)
+	}
+	if manifest := update.ManifestPath(config.UpdatesDir()); fileExists(manifest) {
+		collectFile(dw, "desktop/update-manifest.json", manifest)
+	}
+}
+
+// fileExists reports whether path is readable as a regular file.
+func fileExists(path string) bool {
+	st, err := os.Stat(path)
+	return err == nil && !st.IsDir()
 }
 
 // collectFile copies a file from disk into the archive verbatim.
