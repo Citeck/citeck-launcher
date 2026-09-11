@@ -29,10 +29,20 @@ import (
 // UtilsImage returns the launcher-utils image from config (supports env override).
 var UtilsImage = config.UtilsImage()
 
-// bundleImageOr answers which image an app runs: the bundle's `dependencies:`
-// section first, then its top-level entry, then the caller's own fallback.
+// bundleImageOr answers which image an app runs. The whole order, from the top:
 //
-// The section wins on purpose. It exists so a bundle can raise a third-party
+//  1. the BUNDLE's `dependencies:` section
+//  2. the bundle's top-level entry (how every bundle in the field names one)
+//  3. the WORKSPACE's `dependencies:` section
+//  4. the caller's fallback — which is, for the generators that have one, the
+//     legacy typed workspace block (ws.Postgres.Image, ws.Zookeeper.Image…)
+//  5. and failing that, the launcher's own literal default
+//
+// Steps 4 and 5 are the caller's business and reach here as one string; the
+// three this function owns are 1-3.
+//
+// Both sections win over the plain entries beneath them on purpose. They exist
+// so a bundle — or a workspace, for every namespace at once — can raise a third-party
 // version for launchers that HAVE the dependency gate (2.12+) without touching
 // anyone on an older one — Kotlin 1.x and every Go release up to 2.11.7 apply
 // whatever image the bundle names straight onto the existing data volume, so a
@@ -47,12 +57,20 @@ var UtilsImage = config.UtilsImage()
 // author can hide every third-party image there (mailpit, pgadmin,
 // onlyoffice…). Citeck apps stay at the top level — an old launcher must keep
 // seeing those.
+//
+// What the workspace section does NOT do is outrank the bundle. A bundle that
+// names an image beats a workspace that names one today, and every stand where
+// both do runs the bundle's; inverting that here would silently change what
+// those stands run on the next reload.
 func bundleImageOr(ctx *NsGenContext, name, fallback string) string {
 	if image := bundleDependencyImage(ctx, name); image != "" {
 		return image
 	}
 	if app, ok := ctx.Bundle.Applications[name]; ok && app.Image != "" {
 		return app.Image
+	}
+	if image := workspaceDependencyImage(ctx, name); image != "" {
+		return image
 	}
 	return fallback
 }
@@ -64,6 +82,17 @@ func bundleImageOr(ctx *NsGenContext, name, fallback string) string {
 // source must not quietly give it that one too.
 func bundleDependencyImage(ctx *NsGenContext, name string) string {
 	return ctx.Bundle.Dependencies[name].Image
+}
+
+// workspaceDependencyImage answers only the workspace config's `dependencies:`
+// section. Split out for the same reason as its bundle twin: generateMongoDB
+// consults the two sections directly, in the chain of its own, and must not
+// acquire the bundle's top-level map on the way. The registry rewriting lives
+// on the other side of this call (WorkspaceConfig.DependencyImage), so a
+// mirrored image resolves here exactly as it does for additionalApps; a nil
+// workspace config answers "".
+func workspaceDependencyImage(ctx *NsGenContext, name string) string {
+	return ctx.WorkspaceConfig.DependencyImage(name)
 }
 
 func loadAppFiles(ctx *NsGenContext) {

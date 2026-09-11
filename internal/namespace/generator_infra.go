@@ -45,13 +45,17 @@ func generateMongoDB(ctx *NsGenContext) {
 		return
 	}
 	// Precedence: the namespace config (an explicit, per-namespace choice) wins,
-	// then the bundle's `dependencies:` section, then the launcher's own
-	// default. Mongo deliberately does NOT consult the bundle's top-level map —
-	// it never has, and starting now would move the image of every namespace
-	// whose bundle happens to name one.
+	// then the bundle's `dependencies:` section, then the workspace's, then the
+	// launcher's own default. Mongo deliberately does NOT consult the bundle's
+	// top-level map, nor a typed workspace block (it has never had one) — it
+	// never has, and starting now would move the image of every namespace whose
+	// bundle happens to name one.
 	img := ctx.Config.MongoDB.Image
 	if img == "" {
 		img = bundleDependencyImage(ctx, appdef.AppMongodb)
+	}
+	if img == "" {
+		img = workspaceDependencyImage(ctx, appdef.AppMongodb)
 	}
 	if img == "" {
 		img = "mongo:4.0.2"

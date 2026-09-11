@@ -275,6 +275,12 @@ type WorkspaceConfig struct {
 	Alfresco           AlfrescoProps       `yaml:"alfresco,omitempty"`
 	Licenses           []LicenseInstance   `yaml:"licenses,omitempty"`
 	SttSidecar         *SttSidecarProps    `yaml:"sttSidecar,omitempty"`
+	// Dependencies is the workspace's `dependencies:` section: third-party
+	// infrastructure images (postgres, rabbitmq, zookeeper, keycloak, mailpit,
+	// pgadmin, onlyoffice…) named for every namespace of this workspace at
+	// once. See DependencyEntry for why it exists beside the typed blocks
+	// above rather than instead of them.
+	Dependencies map[string]DependencyEntry `yaml:"dependencies,omitempty"`
 	// AdditionalApps are custom containers added by configuration alone (no
 	// dedicated launcher generator), defined once here and applied to every
 	// namespace that uses this workspace. See AdditionalAppProps.
@@ -282,6 +288,88 @@ type WorkspaceConfig struct {
 	// Links are custom quick links shown in the launcher sidebar alongside the
 	// built-in ones. See WorkspaceLink.
 	Links []WorkspaceLink `yaml:"links,omitempty"`
+}
+
+// DependencyEntry is one entry of the workspace config's `dependencies:`
+// section — an app id mapped to the image it should run.
+//
+// The section exists for ONE reason, and it is a compatibility contract with
+// the workspace configs in the field rather than a matter of taste. It is the
+// same reason the BUNDLE has one (see bundleDependenciesKey), one level up.
+// This launcher pins each infra dependency to the version its DATA runs on and
+// holds a breaking bump back until the operator runs a migration; NO older
+// launcher does — the Kotlin 1.x line and every Go release up to 2.11.7 read
+// `postgres.image`, `zookeeper.image`, `keycloak.image` and the rest of the
+// typed blocks above and apply whatever they find straight onto the existing
+// volume. A typed `postgres:` block raised from 17 to 18 therefore crash-loops
+// an older launcher's stand, and a RabbitMQ 4.1 → 4.2 bump upgrades the Mnesia
+// data in place, silently and irreversibly. Both parsers ignore keys they do
+// not know, so an image moved in here is invisible to them: one workspace
+// config can raise an infra version for 2.12+ users while everyone on an older
+// launcher keeps running what they run today. The typed blocks stay for the
+// mirror-image reason — an old launcher must keep seeing those.
+//
+// It is also useful in its own right: a version raised here applies to every
+// namespace of the workspace, without waiting for a bundle to carry it.
+type DependencyEntry struct {
+	// Image is the resolved single-string reference ("postgres:17.11",
+	// "core/postgres:17.11"). It is NOT registry-resolved here — see
+	// WorkspaceConfig.DependencyImage.
+	Image string `yaml:"image"`
+}
+
+// UnmarshalYAML accepts both spellings of `image:` — the plain string
+// ("postgres:17.11", the form the section was specified with) and the
+// {repository, tag} map every existing typed block and bundle entry uses.
+//
+// It is deliberately TOTAL: it never reports an error. parseWorkspaceConfig
+// drops the ENTIRE workspace config on a YAML error — imageRepos, webapps,
+// bundleRepos and all — so a single entry this launcher cannot read must cost
+// nothing but itself. That is the same judgement the bundle side makes about
+// an id it does not know (parseBundleDependencies), and for the same reason:
+// the section only works if what a reader does not understand is ignored.
+func (d *DependencyEntry) UnmarshalYAML(node *yaml.Node) error {
+	var raw struct {
+		Image yaml.Node `yaml:"image"`
+	}
+	if err := node.Decode(&raw); err != nil {
+		// Swallowed on purpose, not overlooked: see the doc comment — an entry
+		// shape this launcher cannot read costs only itself, never the
+		// workspace's whole config.
+		return nil
+	}
+	switch raw.Image.Kind {
+	case yaml.ScalarNode:
+		d.Image = strings.TrimSpace(raw.Image.Value)
+	case yaml.MappingNode:
+		var pair struct {
+			Repository string `yaml:"repository"`
+			Tag        string `yaml:"tag"`
+		}
+		if err := raw.Image.Decode(&pair); err != nil {
+			return nil // idem
+		}
+		if pair.Repository != "" && pair.Tag != "" {
+			d.Image = pair.Repository + ":" + pair.Tag
+		}
+	}
+	return nil
+}
+
+// DependencyImage answers the image the workspace's `dependencies:` section
+// names for one app id, "" when it names none.
+//
+// The imageRepos rewriting happens HERE, at read time, and not while parsing:
+// ResolveImageRef is a method on the config that owns ImageRepos, so the entry
+// itself has no way to reach the registry map from inside UnmarshalYAML, and
+// resolving on read keeps one rule in one place — the same one additionalApps
+// and the bundle's own section already go through. A nil receiver answers
+// nothing, so a generator with no workspace config stays correct.
+func (w *WorkspaceConfig) DependencyImage(app string) string {
+	if w == nil {
+		return ""
+	}
+	return w.ResolveImageRef(w.Dependencies[app].Image)
 }
 
 // WorkspaceLink is a custom quick link declared in the workspace config and
@@ -767,6 +855,15 @@ func parseWorkspaceConfig(raw []byte, path string, logger *slog.Logger) *Workspa
 		logger.Warn("Invalid additionalApps in workspace config; ignoring them", "path", path, "err", err)
 		cfg.AdditionalApps = nil
 	}
+	// A dependencies entry whose image could not be read (see
+	// DependencyEntry.UnmarshalYAML, which is total on purpose) costs only
+	// itself — but not silently: unreported, a typo leaves the stand on the
+	// launcher's own default with no line anywhere explaining it.
+	for name, dep := range cfg.Dependencies {
+		if dep.Image == "" {
+			logger.Warn("Workspace dependency entry names no image; ignoring it", "app", name, "path", path)
+		}
+	}
 	return &cfg
 }
 
@@ -1108,7 +1205,7 @@ func parseBundleFile(path, version string, aliasMap, imageRepoMap map[string]str
 		// schema's own key ("dependencies.image") would be read as an
 		// application named "dependencies".
 		if appName == bundleDependenciesKey {
-			dependencies = parseBundleDependencies(valueMap, imageRepoMap)
+			dependencies = parseBundleDependencies(valueMap, imageRepoMap, logger)
 			continue
 		}
 		processApp(appName, valueMap)
@@ -1157,16 +1254,27 @@ const bundleDependenciesKey = "dependencies"
 // aliases. An id this launcher does not know is kept and simply never asked
 // for — a future launcher may know it, and failing the whole bundle over it
 // would defeat the point of a section older launchers are meant to ignore.
-func parseBundleDependencies(section map[string]any, imageRepoMap map[string]string) map[string]AppDef {
+// An entry whose image cannot be read is SKIPPED and logged. Skipping is what
+// makes the section safe to write at all, but silence is the wrong price for a
+// typo: the author's version then simply does not apply, the stand keeps
+// running the launcher's own default, and nothing anywhere says why.
+func parseBundleDependencies(section map[string]any, imageRepoMap map[string]string, logger *slog.Logger) map[string]AppDef {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	out := make(map[string]AppDef, len(section))
 	for name, value := range section {
 		entry, ok := value.(map[string]any)
 		if !ok {
+			logger.Warn("Bundle dependency entry is not a mapping; ignoring it", "app", name)
 			continue
 		}
-		if image := extractDependencyImage(entry, imageRepoMap); image != "" {
-			out[name] = AppDef{Image: image}
+		image := extractDependencyImage(entry, imageRepoMap)
+		if image == "" {
+			logger.Warn("Bundle dependency entry names no image; ignoring it", "app", name)
+			continue
 		}
+		out[name] = AppDef{Image: image}
 	}
 	if len(out) == 0 {
 		return nil

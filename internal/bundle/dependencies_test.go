@@ -1,6 +1,8 @@
 package bundle
 
 import (
+	"bytes"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -134,4 +136,29 @@ dependencies:
 	assert.Len(t, def.Dependencies, 2)
 	assert.True(t, def.IsEmpty(),
 		"a dependencies-only bundle has no Citeck apps and must still be reported as empty")
+}
+
+// A `dependencies:` entry this launcher cannot read an image out of is ignored
+// rather than fatal — that is what makes the section safe to write. But silence
+// is the wrong price for a typo: the author's version then simply does not
+// apply, the stand keeps running the launcher's own default, and nothing
+// anywhere says why. So the skip is logged, naming the id.
+func TestParseBundleFile_ADependencyWithNoReadableImageIsLogged(t *testing.T) {
+	buf := &bytes.Buffer{}
+	logger := slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+dependencies:
+  postgres:
+    imagee: postgres:17.11
+  rabbitmq:
+    image: rabbitmq:4.2.9-management
+`), 0o600))
+
+	def, err := parseBundleFile(path, "test", nil, nil, logger)
+	require.NoError(t, err)
+	assert.NotContains(t, def.Dependencies, "postgres")
+	assert.Contains(t, buf.String(), "postgres", "the skipped entry must be named in the log")
+	assert.NotContains(t, buf.String(), "rabbitmq", "an entry that was read is not a finding")
 }
