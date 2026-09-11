@@ -17,6 +17,7 @@ import (
 
 	"golang.org/x/term"
 
+	"github.com/citeck/citeck-launcher/internal/api"
 	"github.com/citeck/citeck-launcher/internal/client"
 	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/daemon"
@@ -348,6 +349,13 @@ const daemonStartupTimeout = 3 * time.Minute
 // showProgress is true, prints a dot roughly every 5 seconds so the user
 // knows the wait is alive — meant for the install path where first-time
 // bundle clone can take minutes on slow networks.
+//
+// "Ready" is NOT "the socket answers": the daemon binds it before the slow boot
+// phase (git pull, Docker enumeration, namespace start) so that liveness can be
+// probed immediately, and refuses every route but /health with
+// DAEMON_STARTING meanwhile. Everything this function hands its client to —
+// status streaming, the install wizard — would run straight into those 503s, so
+// the wait ends only when the daemon's own health says it has finished booting.
 func waitForDaemon(timeout time.Duration, showProgress bool) (*client.DaemonClient, error) {
 	deadline := time.Now().Add(timeout)
 	socketPath := config.SocketPath()
@@ -360,11 +368,14 @@ func waitForDaemon(timeout time.Duration, showProgress bool) (*client.DaemonClie
 			_ = conn.Close()
 			// Socket is up — try creating a client
 			c := client.TryNew(clientOpts())
-			if c != nil {
+			if c != nil && daemonFinishedBooting(c) {
 				if showProgress && !lastTick.IsZero() {
 					fmt.Println() //nolint:forbidigo // end progress line
 				}
 				return c, nil
+			}
+			if c != nil {
+				c.Close()
 			}
 		}
 		if showProgress && time.Since(lastTick) >= 5*time.Second {
@@ -377,6 +388,18 @@ func waitForDaemon(timeout time.Duration, showProgress bool) (*client.DaemonClie
 		fmt.Println() //nolint:forbidigo // end progress line
 	}
 	return nil, fmt.Errorf("timeout waiting for daemon socket at %s", socketPath)
+}
+
+// daemonFinishedBooting reports whether the daemon behind c has left its boot
+// handler. A daemon too old to know about HealthStatusStarting never reports it,
+// so this reads as "ready" there — which is what an upgrade rolling back to an
+// older binary needs.
+func daemonFinishedBooting(c *client.DaemonClient) bool {
+	health, err := c.GetHealth()
+	if err != nil || health == nil {
+		return false
+	}
+	return health.Status != api.HealthStatusStarting
 }
 
 // runDaemonMode reads password from stdin and runs the daemon (blocking).

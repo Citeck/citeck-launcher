@@ -8,6 +8,14 @@ import (
 	"github.com/citeck/citeck-launcher/internal/update"
 )
 
+// payloadGate is the Supervisor slice the boot gate uses: prove the running
+// daemon is alive, or restart into the previous one. An interface so a test can
+// observe WHICH budget each of the two got.
+type payloadGate interface {
+	WaitReady(ctx context.Context, timeout time.Duration) error
+	Restart(ctx context.Context, healthTimeout time.Duration) error
+}
+
 // GatePendingPayload health-gates a staged payload that was applied but never
 // judged, at wrapper start.
 //
@@ -30,9 +38,15 @@ import (
 // marks it `failed` and restarts, which is the rollback the swap path would have
 // performed. Returns true if it rolled back.
 //
+// The two budgets are NOT the same number and must not be collapsed into one:
+// healthTimeout judges the unproven payload (fail fast — the daemon answers as
+// soon as its process is alive), while rollbackTimeout waits for the known-good
+// binary underneath it, which may be an older release that binds its socket
+// only at the end of its boot. See RollbackHealthTimeout.
+//
 // Called once per wrapper start, from a goroutine — it blocks for up to
-// healthTimeout.
-func GatePendingPayload(ctx context.Context, sup *Supervisor, updatesDir, currentVersion string, healthTimeout time.Duration) (rolledBack bool) {
+// healthTimeout, plus rollbackTimeout when it rolls back.
+func GatePendingPayload(ctx context.Context, sup payloadGate, updatesDir, currentVersion string, healthTimeout, rollbackTimeout time.Duration) (rolledBack bool) {
 	entry, ok := update.SelectBestEntry(updatesDir, currentVersion)
 	if !ok || entry.State != update.StatePending {
 		return false // running the bundled binary, or an already-judged payload
@@ -55,7 +69,7 @@ func GatePendingPayload(ctx context.Context, sup *Supervisor, updatesDir, curren
 		slog.Error("Failed to mark ungated payload failed", "version", entry.Version, "err", merr)
 		return false // the restart below would just pick the same binary again
 	}
-	if rerr := sup.Restart(ctx, healthTimeout); rerr != nil {
+	if rerr := sup.Restart(ctx, rollbackTimeout); rerr != nil {
 		slog.Error("Rollback restart after a failed boot health gate also failed", "err", rerr)
 	}
 	return true

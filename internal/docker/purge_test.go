@@ -39,7 +39,7 @@ func TestCollectOrphanTargets(t *testing.T) {
 
 	gotNs := make([]string, 0, len(got))
 	for _, t := range got {
-		gotNs = append(gotNs, t.ns)
+		gotNs = append(gotNs, t.NS)
 	}
 	sort.Strings(gotNs)
 	want := []string{"a2uhq4a", "vazzgla"}

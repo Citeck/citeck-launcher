@@ -2,6 +2,7 @@ package desktop
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -47,7 +48,7 @@ func TestGatePendingPayload_PromotesAHealthyOne(t *testing.T) {
 	sv := &Supervisor{BinaryPath: "unused"}
 	sv.ready.Store(true)
 
-	assert.False(t, GatePendingPayload(t.Context(), sv, dir, "2.5.0", time.Second))
+	assert.False(t, GatePendingPayload(t.Context(), sv, dir, "2.5.0", time.Second, time.Second))
 	assert.Equal(t, update.StateGood, stateOf(t, dir))
 }
 
@@ -61,7 +62,7 @@ func TestGatePendingPayload_FailsAndRollsBackADeadOne(t *testing.T) {
 
 	sv := &Supervisor{BinaryPath: "unused"} // never becomes ready
 
-	assert.True(t, GatePendingPayload(t.Context(), sv, dir, "2.5.0", 300*time.Millisecond))
+	assert.True(t, GatePendingPayload(t.Context(), sv, dir, "2.5.0", 300*time.Millisecond, 300*time.Millisecond))
 	assert.Equal(t, update.StateFailed, stateOf(t, dir))
 
 	// The rollback is only real if the payload stops being selected.
@@ -76,11 +77,11 @@ func TestGatePendingPayload_LeavesJudgedAndAbsentPayloadsAlone(t *testing.T) {
 	stagePayload(t, dir, update.StateGood)
 	sv := &Supervisor{BinaryPath: "unused"} // never ready: would fail the gate if it ran
 
-	assert.False(t, GatePendingPayload(t.Context(), sv, dir, "2.5.0", 300*time.Millisecond))
+	assert.False(t, GatePendingPayload(t.Context(), sv, dir, "2.5.0", 300*time.Millisecond, 300*time.Millisecond))
 	assert.Equal(t, update.StateGood, stateOf(t, dir))
 
 	empty := t.TempDir()
-	assert.False(t, GatePendingPayload(t.Context(), sv, empty, "2.5.0", 300*time.Millisecond))
+	assert.False(t, GatePendingPayload(t.Context(), sv, empty, "2.5.0", 300*time.Millisecond, 300*time.Millisecond))
 }
 
 // A payload the wrapper is quitting on has not been judged — recording a verdict
@@ -93,6 +94,38 @@ func TestGatePendingPayload_RecordsNoVerdictWhenShuttingDown(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	assert.False(t, GatePendingPayload(ctx, sv, dir, "2.5.0", time.Second))
+	assert.False(t, GatePendingPayload(ctx, sv, dir, "2.5.0", time.Second, time.Second))
 	assert.Equal(t, update.StatePending, stateOf(t, dir))
+}
+
+// fakeGate records which budget each half of the gate was handed.
+type fakeGate struct {
+	waitBudget    time.Duration
+	restartBudget time.Duration
+	waitErr       error
+}
+
+func (f *fakeGate) WaitReady(_ context.Context, timeout time.Duration) error {
+	f.waitBudget = timeout
+	return f.waitErr
+}
+
+func (f *fakeGate) Restart(_ context.Context, healthTimeout time.Duration) error {
+	f.restartBudget = healthTimeout
+	return nil
+}
+
+// Same asymmetry as the swap path: the pending payload is unproven and judged
+// fast, the binary rolled back into is known good and gets the generous budget.
+// Collapsing the two would make a slow-booting OLD release look like a failed
+// rollback — and this gate runs at BOOT, where that older binary is exactly what
+// is underneath.
+func TestGatePendingPayload_RollsBackOnTheGenerousBudget(t *testing.T) {
+	dir := t.TempDir()
+	stagePayload(t, dir, update.StatePending)
+	g := &fakeGate{waitErr: errors.New("not ready")}
+
+	assert.True(t, GatePendingPayload(t.Context(), g, dir, "2.5.0", UpdateHealthTimeout, RollbackHealthTimeout))
+	assert.Equal(t, UpdateHealthTimeout, g.waitBudget, "the payload is judged by the swap budget")
+	assert.Equal(t, RollbackHealthTimeout, g.restartBudget)
 }

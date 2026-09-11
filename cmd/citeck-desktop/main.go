@@ -418,21 +418,28 @@ func run() error {
 	// on every start with nothing to judge it. Judge it now — promote it or roll
 	// it back — instead of leaving a possibly-dead daemon selected forever.
 	go func() {
-		if desktop.GatePendingPayload(ctx, supervisor, config.UpdatesDir(), version, desktop.UpdateHealthTimeout) {
+		if desktop.GatePendingPayload(ctx, supervisor, config.UpdatesDir(), version,
+			desktop.UpdateHealthTimeout, desktop.RollbackHealthTimeout) {
 			reloadWebview(window) // rolled back: the webview is talking to the old daemon now
 			refreshWindowTitle(socketClient, window)
 		}
 	}()
 
-	// Wait for the daemon to become ready, then open the readiness gate. Mirror
+	// Wait for the daemon to have finished BOOTING, then open the readiness
+	// gate. Not supervisor.Ready(): that is liveness — the daemon binds its
+	// socket before its slow boot phase so the update health gate can judge the
+	// BINARY — and proxying the webview at a daemon that is still booting would
+	// render its DAEMON_STARTING refusals instead of the loading page. Mirror
 	// the historical behavior: after 30s, proxy anyway (do NOT hard-fail) so a
-	// slow-but-eventually-ready daemon still gets through.
+	// slow-but-eventually-ready daemon still gets through; a refusal that slips
+	// through that window is turned back into the loading page by the asset
+	// handler.
 	go func() {
 		deadline := time.Now().Add(30 * time.Second)
 		ticker := time.NewTicker(200 * time.Millisecond)
 		defer ticker.Stop()
 		for {
-			if supervisor.Ready() {
+			if desktop.DaemonBooted() {
 				slog.Info("Daemon ready", "socket", socketPath)
 				// Reflect the RUNNING daemon's version in the title — it may be
 				// newer than this wrapper after a daemon-only auto-update.

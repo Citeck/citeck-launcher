@@ -2,6 +2,7 @@ package desktop
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -39,8 +40,24 @@ const (
 	daemonDialTimeout = 2 * time.Second
 
 	// UpdateHealthTimeout bounds how long Restart waits for a swapped daemon to
-	// report ready before the caller rolls back.
+	// report ready before the caller rolls back. It judges a NEW, unproven
+	// binary and may fail fast: since the daemon binds its socket before the
+	// slow boot phase, a healthy one answers in milliseconds, and a minute of
+	// silence means it does not run at all.
 	UpdateHealthTimeout = 60 * time.Second
+
+	// RollbackHealthTimeout bounds the restart INTO a known-good binary — the
+	// rollback after a failed swap, and the one GatePendingPayload performs.
+	// Deliberately far more generous than UpdateHealthTimeout, because it is a
+	// different question: that binary has already run on this machine, so there
+	// is nothing to prove and nothing better to fall back to, and it is very
+	// often an OLDER release that still binds its socket only at the END of its
+	// boot — exactly the late-bind behavior this launcher fixed. Measured on the
+	// Windows host that motivated the fix, such a boot took 90 s behind a dead
+	// Docker Desktop pipe. Giving up early there would report "rollback restart
+	// also failed" about a daemon that was simply still starting, and leave the
+	// window pointed at nothing.
+	RollbackHealthTimeout = 240 * time.Second
 )
 
 // Supervisor spawns the daemon as a separate child process (`<bin> start
@@ -434,6 +451,41 @@ func defaultReadyCheck() bool {
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 	return resp.StatusCode >= 200 && resp.StatusCode < 300
+}
+
+// DaemonBooted reports whether the daemon has finished BOOTING — a different
+// question from defaultReadyCheck's "is it alive?".
+//
+// The daemon binds its socket before the slow boot phase and serves a boot
+// handler on it: /health answers HealthStatusStarting and every other route is
+// refused with DAEMON_STARTING. That is exactly what the update health gate
+// wants (the binary runs), and exactly what the wrapper's UI proxy gate must
+// NOT accept — the webview would render the boot handler's 503s instead of the
+// loading page. A daemon too old to know about HealthStatusStarting never
+// reports it, so an older rolled-back binary reads as booted the moment it
+// answers, as it always did.
+func DaemonBooted() bool {
+	ctx, cancel := context.WithTimeout(context.Background(), daemonDialTimeout)
+	defer cancel()
+	client := unixSocketClient(config.SocketPath())
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://daemon"+api.Health, http.NoBody)
+	if err != nil {
+		return false
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	if err != nil || resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return false
+	}
+	var health api.HealthDto
+	if json.Unmarshal(body, &health) != nil {
+		return false
+	}
+	return health.Status != api.HealthStatusStarting
 }
 
 // postDaemonShutdown POSTs api.DaemonShutdown over the daemon socket with

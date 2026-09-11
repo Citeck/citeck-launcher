@@ -111,9 +111,88 @@ func Start(opts StartOptions) error {
 		return err
 	}
 
-	wsID, nsID, err := resolveStartupTarget()
+	// Bind the socket BEFORE the slow boot phase and serve the boot handler on
+	// it, so "is this daemon alive?" is answerable from now on. See
+	// boot_socket.go for why (a 60 s health gate that was really measuring a
+	// 90 s boot rolled a good release back).
+	boot, err := bindBootSocket(socketPath)
 	if err != nil {
 		return err
+	}
+	booted := false
+	defer func() {
+		if !booted {
+			// Every error return between the bind and the end of boot lands
+			// here: close the listener and unlink the socket file, or the next
+			// start finds a stale one and `citeck status` dials nobody.
+			boot.close()
+		}
+	}()
+	serveErr := boot.serve()
+
+	d, err := constructDaemonFn(opts, daemonCfg, socketPath)
+	if err != nil {
+		return err
+	}
+
+	socketMux := d.installRealRoutes(boot)
+	readyURL := d.startWebUI(socketMux, d.active().nsConfig)
+
+	slog.Info("Citeck Daemon started",
+		"socket", socketPath,
+		"webui", daemonCfg.Server.WebUI.Enabled,
+		"tcp", daemonCfg.Server.WebUI.Listen,
+		"pid", os.Getpid(),
+	)
+
+	d.wireShutdownSignals(opts)
+
+	// Boot complete — the deferred teardown of the early socket stands down and
+	// shutdown owns the server from here. Before the ReadyCh send, which blocks
+	// until the caller reads it.
+	booted = true
+
+	// Notify caller that the daemon is ready as soon as the HTTP listener
+	// is up — do NOT wait for the namespace to finish reconciling. On a
+	// cold start the namespace stays in STARTING for the full 5–10 minute
+	// webapp boot, and an earlier WaitForInitialReconcile(15s) here meant
+	// the desktop spinner blocked for a hard 15 seconds before the
+	// dashboard appeared. The dashboard already renders STOPPED / STARTING
+	// / PULLING fine and updates live via SSE — a brief STOPPED flicker is
+	// vastly better UX than a 15 s blank wait.
+	if opts.ReadyCh != nil {
+		opts.ReadyCh <- readyURL
+	}
+
+	// Block until the server (running since the early bind) stops.
+	if err := <-serveErr; err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return fmt.Errorf("server error: %w", err)
+	}
+
+	// Always return ErrShutdownRequested — whether shutdown came from an external
+	// context (desktop), SIGTERM, or the HTTP endpoint. The caller uses this to
+	// trigger os.Exit and avoid the process lingering on background goroutines.
+	return ErrShutdownRequested
+}
+
+// constructDaemonFn is the seam the boot-ordering tests replace. It points at
+// constructDaemon — everything between the single-instance guard and the moment
+// the daemon can serve its real routes — so a test can hold the boot open and
+// ask what the socket answers meanwhile. Production never reassigns it.
+var constructDaemonFn = constructDaemon
+
+// constructDaemon runs the SLOW boot phase: Docker client, store, secrets,
+// namespace load (git pull + bundle resolve), the desktop orphan sweep,
+// dependency-migration crash recovery and the namespace start. Minutes of I/O in
+// the worst case, all of it against things outside this process — which is
+// exactly why the socket must already be answering before it runs.
+//
+// It owns its own failure cleanup: nothing after it can fail, so a returned
+// daemon is one the caller may serve.
+func constructDaemon(opts StartOptions, daemonCfg config.DaemonConfig, socketPath string) (*Daemon, error) {
+	wsID, nsID, err := resolveStartupTarget()
+	if err != nil {
+		return nil, err
 	}
 
 	// Create Docker client
@@ -124,7 +203,7 @@ func Start(opts StartOptions) error {
 	}
 	dockerClient, err := docker.NewClient(dockerWorkspace, nsID)
 	if err != nil {
-		return fmt.Errorf("create docker client: %w", err)
+		return nil, fmt.Errorf("create docker client: %w", err)
 	}
 	startupFailed := true
 	defer func() {
@@ -135,7 +214,7 @@ func Start(opts StartOptions) error {
 
 	store, err := initStore()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer func() {
 		if startupFailed {
@@ -150,7 +229,7 @@ func Start(opts StartOptions) error {
 
 	secretSvc, err := initSecretService(store, opts)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Back-fill SecretID links for pre-secret-reference workspaces (and 1.x
@@ -176,7 +255,7 @@ func Start(opts StartOptions) error {
 		Desktop:       opts.Desktop,
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	nsCfg := loaded.NsConfig
 
@@ -188,9 +267,7 @@ func Start(opts StartOptions) error {
 	// the active namespace starts means start doesn't have to evict port
 	// squatters first. Bounded + fail-safe inside sweepOrphanDockerResources.
 	if config.IsDesktopMode() {
-		sweepCtx, sweepCancel := context.WithTimeout(context.Background(), 90*time.Second)
-		sweepOrphanDockerResources(sweepCtx, dockerClient, store, wsID, nsID)
-		sweepCancel()
+		sweepOrphanDockerResources(context.Background(), dockerClient, store, wsID, nsID)
 	}
 
 	bgCtx, bgCancel := context.WithCancel(context.Background()) //nolint:gosec // G118: bgCancel stored in Daemon struct, called in shutdown
@@ -236,7 +313,7 @@ func Start(opts StartOptions) error {
 	if daemonCfg.APIAuth.Enabled && !config.IsDesktopMode() {
 		token, generated, tokenErr := config.EnsureAPIToken(daemonCfg)
 		if tokenErr != nil {
-			return fmt.Errorf("resolve api auth token: %w", tokenErr)
+			return nil, fmt.Errorf("resolve api auth token: %w", tokenErr)
 		}
 		d.apiAuth = newAPIAuth(token)
 		switch {
@@ -284,45 +361,9 @@ func Start(opts StartOptions) error {
 	// Start ACME renewal service if Let's Encrypt is enabled
 	d.startACMERenewalIfConfigured()
 
-	listener, socketMux, err := d.initUnixServer()
-	if err != nil {
-		return err
-	}
-	readyURL := d.startWebUI(socketMux, nsCfg)
-
-	slog.Info("Citeck Daemon started",
-		"socket", socketPath,
-		"webui", daemonCfg.Server.WebUI.Enabled,
-		"tcp", daemonCfg.Server.WebUI.Listen,
-		"pid", os.Getpid(),
-	)
-
-	d.wireShutdownSignals(opts)
-
-	// Startup complete — disable cleanup defers
+	// Construction complete — disable cleanup defers.
 	startupFailed = false
-
-	// Notify caller that the daemon is ready as soon as the HTTP listener
-	// is up — do NOT wait for the namespace to finish reconciling. On a
-	// cold start the namespace stays in STARTING for the full 5–10 minute
-	// webapp boot, and an earlier WaitForInitialReconcile(15s) here meant
-	// the desktop spinner blocked for a hard 15 seconds before the
-	// dashboard appeared. The dashboard already renders STOPPED / STARTING
-	// / PULLING fine and updates live via SSE — a brief STOPPED flicker is
-	// vastly better UX than a 15 s blank wait.
-	if opts.ReadyCh != nil {
-		opts.ReadyCh <- readyURL
-	}
-
-	// Serve (blocks until shutdown)
-	if err := d.server.Serve(listener); err != nil && err != http.ErrServerClosed {
-		return fmt.Errorf("server error: %w", err)
-	}
-
-	// Always return ErrShutdownRequested — whether shutdown came from an external
-	// context (desktop), SIGTERM, or the HTTP endpoint. The caller uses this to
-	// trigger os.Exit and avoid the process lingering on background goroutines.
-	return ErrShutdownRequested
+	return d, nil
 }
 
 // ensureDaemonDirs creates the daemon's directory layout (conf, data, logs,
@@ -596,38 +637,32 @@ func initSecretService(store storage.Store, opts StartOptions) (*storage.SecretS
 	return secretSvc, nil
 }
 
-// initUnixServer creates the shared route mux, builds the daemon's primary
-// HTTP server around it, and binds the Unix socket (the trusted local-CLI
-// transport). Returns the listener and the mux — localhost TCP reuses the
-// same mux in startWebUI, so both transports serve identical routes.
-func (d *Daemon) initUnixServer() (net.Listener, *http.ServeMux, error) {
+// installRealRoutes builds the shared route mux and swaps it in behind the
+// already-serving boot socket. It binds NOTHING: the listener and the
+// http.Server were created by bindBootSocket before the slow boot phase, so the
+// swap is atomic, keeps every connection that is already open, and cannot race
+// a second bind on the same path. Returns the mux — localhost TCP reuses it in
+// startWebUI, so both transports serve identical routes.
+func (d *Daemon) installRealRoutes(boot *bootSocket) *http.ServeMux {
 	// Single mux for all routes. Localhost TCP is trusted (desktop thin
 	// client), non-localhost requires mTLS. Both paths get full access.
 	socketMux := http.NewServeMux()
 	d.registerRoutes(socketMux)
-	d.server = &http.Server{
-		Handler:        d.unixHandler(socketMux),
-		ReadTimeout:    30 * time.Second,
-		WriteTimeout:   120 * time.Second, // kcadm.sh exec can take 30-60s on slow hardware
-		MaxHeaderBytes: 1 << 20,           // 1MB
-	}
-
-	listener, err := net.Listen("unix", d.socketPath)
-	if err != nil {
-		return nil, nil, fmt.Errorf("listen on %s: %w", d.socketPath, err)
-	}
-	socketPerm := os.FileMode(0o600)
-	if chmodErr := os.Chmod(d.socketPath, socketPerm); chmodErr != nil {
-		slog.Warn("Failed to chmod socket", "path", d.socketPath, "err", chmodErr)
-	}
-	return listener, socketMux, nil
+	// d.server is what shutdown drains, so it must be the server that is
+	// actually serving — the one bindBootSocket created.
+	d.server = boot.server
+	boot.installRoutes(socketMux)
+	return socketMux
 }
 
-// unixHandler builds the middleware chain for the trusted Unix-socket
+// unixHandlerChain builds the middleware chain for the trusted Unix-socket
 // transport. Deliberately NO token auth / CSRF / CORS: socket access is
 // already restricted to the daemon's user by the 0600 file mode, so the
 // local CLI keeps working unchanged even when daemon.yml api_auth is on.
-func (d *Daemon) unixHandler(mux http.Handler) http.Handler {
+//
+// A free function because the chain is wrapped around the boot socket's
+// handler switch before any Daemon exists.
+func unixHandlerChain(mux http.Handler) http.Handler {
 	return RecoveryMiddleware(LoggingMiddleware(mux))
 }
 
@@ -873,6 +908,48 @@ func orphanKeepSet(store orphanKeepLister, activeWsID, activeNsID string) (map[s
 	return keep, true
 }
 
+// orphanSweeper is the Docker slice the startup sweep uses. Two methods rather
+// than one because the two phases answer different questions and get different
+// budgets — and because that makes the budget split testable without Docker.
+type orphanSweeper interface {
+	FindOrphans(ctx context.Context, keep map[string]bool) []docker.OrphanTarget
+	PurgeOrphans(ctx context.Context, targets []docker.OrphanTarget) []string
+}
+
+// Budgets for the two phases of the startup sweep. Vars, not consts, so a test
+// can shrink the deciding budget; nothing in production writes them.
+var (
+	// orphanSweepDecideTimeout bounds the three Docker enumerations the sweep
+	// decides from. Short on purpose: they are cheap calls against a healthy
+	// daemon (milliseconds), their failure is already fail-safe — a listing
+	// that errors contributes no labels and therefore purges nothing — and this
+	// runs BEFORE the namespace starts, so every second of it is a second of
+	// the launcher showing nothing. On the Windows host that motivated this
+	// change Docker Desktop's named pipe was dead and all three calls hung
+	// until the sweep's single 90 s deadline expired.
+	orphanSweepDecideTimeout = 10 * time.Second
+
+	// orphanSweepPurgeTimeout bounds the removals. Generous, because by then
+	// the sweep has DECIDED: it is force-removing containers and named volumes
+	// that may hold gigabytes, and giving up half way leaves the host in the
+	// state the sweep exists to clean up.
+	orphanSweepPurgeTimeout = 90 * time.Second
+)
+
+// runOrphanSweep runs the two phases under their own budgets. Split out of
+// sweepOrphanDockerResources so the split is testable against a fake Docker.
+func runOrphanSweep(ctx context.Context, dc orphanSweeper, keep map[string]bool) []string {
+	decideCtx, decideCancel := context.WithTimeout(ctx, orphanSweepDecideTimeout)
+	targets := dc.FindOrphans(decideCtx, keep)
+	decideCancel()
+	if len(targets) == 0 {
+		return nil
+	}
+	purgeCtx, purgeCancel := context.WithTimeout(ctx, orphanSweepPurgeTimeout)
+	defer purgeCancel()
+	return dc.PurgeOrphans(purgeCtx, targets)
+}
+
 // sweepOrphanDockerResources removes Docker resources for namespaces that no
 // longer exist in storage. Fail-safe: the keep set must be built completely
 // from storage (see orphanKeepSet); if it cannot be, nothing is removed. The
@@ -885,7 +962,7 @@ func sweepOrphanDockerResources(ctx context.Context, dc *docker.Client, store st
 	if !ok {
 		return
 	}
-	if purged := dc.SweepOrphans(ctx, keep); len(purged) > 0 {
+	if purged := runOrphanSweep(ctx, dc, keep); len(purged) > 0 {
 		slog.Info("Orphan-sweep removed leftover namespace resources",
 			"count", len(purged), "namespaces", purged)
 	}

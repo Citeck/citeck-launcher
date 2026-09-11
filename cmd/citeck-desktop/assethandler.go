@@ -115,6 +115,28 @@ func proxyViaSocket(w http.ResponseWriter, r *http.Request, socketClient *http.C
 	}
 	defer resp.Body.Close()
 
+	// A daemon that is still booting refuses everything but /health with a 503
+	// DAEMON_STARTING. For an API call that is the honest answer and goes
+	// through; for a document request it would replace the auto-refreshing
+	// loading page with raw JSON and no way forward, so keep the loading page.
+	// Reachable because the readiness gate also opens on a 30 s timer.
+	if resp.StatusCode == http.StatusServiceUnavailable && !strings.HasPrefix(r.URL.Path, "/api/") {
+		refusal, _ := io.ReadAll(io.LimitReader(resp.Body, 8*1024))
+		if desktop.IsDaemonStartingBody(resp.StatusCode, refusal) {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write([]byte(errorPageHTML(daemonStatus, nil)))
+			return
+		}
+		for k, vv := range resp.Header {
+			for _, v := range vv {
+				w.Header().Add(k, v)
+			}
+		}
+		w.WriteHeader(resp.StatusCode)
+		_, _ = w.Write(refusal)
+		return
+	}
+
 	// Copy response headers
 	for k, vv := range resp.Header {
 		for _, v := range vv {

@@ -198,10 +198,11 @@ func TestServerTCPHandler_EnabledRequiresToken(t *testing.T) {
 
 // The Unix-socket chain must NEVER enforce token auth, even when api_auth is
 // enabled — socket access is gated by the 0600 file mode and the local CLI
-// sends no token.
+// sends no token. It is built without a Daemon at all (it wraps the boot
+// socket's handler switch before one exists), so there is nothing the api_auth
+// setting could reach it through.
 func TestUnixHandler_BypassesTokenAuth(t *testing.T) {
-	d := &Daemon{apiAuth: newAPIAuth(testToken)}
-	h := d.unixHandler(okHandler())
+	h := unixHandlerChain(okHandler())
 	req := httptest.NewRequest("GET", "/api/v1/namespace", http.NoBody)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)

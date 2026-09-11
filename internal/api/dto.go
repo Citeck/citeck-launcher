@@ -604,6 +604,17 @@ const (
 // step count of zero means "no plan yet", so render a spinner, not a list.
 const DependencyMigrationStepPreparing = "preparing"
 
+// HealthStatusStarting is the HealthDto.Status a daemon reports while it is
+// still BOOTING. The daemon binds its Unix socket before the slow boot work
+// (git pull, Docker enumeration, namespace start) so that "is this process
+// alive?" can be answered immediately — the desktop update health gate asks
+// exactly that question, and while the socket was bound last it was really
+// measuring how long the whole boot took, which failed a good release on a host
+// whose Docker was unreachable. Readers that need a FULLY booted daemon (the
+// CLI's waitForDaemon, the desktop wrapper's UI proxy gate) branch on this
+// value; everything else is refused with ErrCodeDaemonStarting meanwhile.
+const HealthStatusStarting = "starting"
+
 // HealthDto reports the overall daemon health status.
 type HealthDto struct {
 	Status  string           `json:"status"` // "healthy", "degraded", "unhealthy"
@@ -728,6 +739,14 @@ const (
 	ErrCodeWorkspaceNotFound  = "WORKSPACE_NOT_FOUND"
 	ErrCodeNamespaceNotFound  = "NAMESPACE_NOT_FOUND"
 	ErrCodeWorkspaceInUse     = "WORKSPACE_IN_USE"
+	// ErrCodeDaemonStarting is returned (HTTP 503, with a Retry-After header)
+	// by every route except GET /health while the daemon is still booting. The
+	// socket is bound before the slow boot phase so a client — and above all
+	// the desktop update health gate — can tell "the process is alive" from
+	// "the process is dead"; until the real routes are in, there is no runtime,
+	// no store and no Docker client to answer with, and inventing a "running"
+	// answer for /daemon/status would leave the caller worse off than waiting.
+	ErrCodeDaemonStarting = "DAEMON_STARTING"
 	// ErrCodeAuthRequired is returned (HTTP 401) by the TCP transport when
 	// daemon.yml api_auth is enabled and the request carries neither a valid
 	// `Authorization: Bearer <token>` header nor the session cookie minted by
