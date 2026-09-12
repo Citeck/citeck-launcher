@@ -10,10 +10,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func wsWebappWithDeps(id string, deps []string) *bundle.WorkspaceConfig {
+// wsWebappWithDeps builds a workspace config whose emodel entry declares the
+// given dependsOn list, plus the "sidecar" additional app those lists point at.
+func wsWebappWithDeps(deps []string) *bundle.WorkspaceConfig {
 	return &bundle.WorkspaceConfig{
 		Webapps: []bundle.WebappConfig{{
-			ID:           id,
+			ID:           "emodel",
 			DefaultProps: bundle.WebappDefaultProps{DependsOn: deps},
 		}},
 		AdditionalApps: []bundle.AdditionalAppProps{{
@@ -29,7 +31,7 @@ func TestWebappDependsOn_FromWorkspaceConfig(t *testing.T) {
 		"emodel": {Image: "bundle/emodel:1.0"},
 	}}
 
-	resp, err := Generate(basicCfg(), bun, wsWebappWithDeps("emodel", []string{"sidecar"}),
+	resp, err := Generate(basicCfg(), bun, wsWebappWithDeps([]string{"sidecar"}),
 		SystemSecrets{JWT: "j", OIDC: "o"})
 	require.NoError(t, err)
 
@@ -49,7 +51,7 @@ func TestWebappDependsOn_NamespaceOverridesWorkspace(t *testing.T) {
 		"emodel": {Image: "bundle/emodel:1.0"},
 	}}
 
-	resp, err := Generate(cfg, bun, wsWebappWithDeps("emodel", []string{"sidecar"}),
+	resp, err := Generate(cfg, bun, wsWebappWithDeps([]string{"sidecar"}),
 		SystemSecrets{JWT: "j", OIDC: "o"})
 	require.NoError(t, err)
 
@@ -65,7 +67,7 @@ func TestWebappDependsOn_SelfDependencyIsRejected(t *testing.T) {
 		"emodel": {Image: "bundle/emodel:1.0"},
 	}}
 
-	_, err := Generate(basicCfg(), bun, wsWebappWithDeps("emodel", []string{"emodel"}),
+	_, err := Generate(basicCfg(), bun, wsWebappWithDeps([]string{"emodel"}),
 		SystemSecrets{JWT: "j", OIDC: "o"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "emodel")
@@ -108,7 +110,7 @@ func TestWebappDependsOn_NamespaceEntryWithoutDependsOnKeepsWorkspaceDeps(t *tes
 		"emodel": {Image: "bundle/emodel:1.0"},
 	}}
 
-	resp, err := Generate(cfg, bun, wsWebappWithDeps("emodel", []string{"sidecar"}),
+	resp, err := Generate(cfg, bun, wsWebappWithDeps([]string{"sidecar"}),
 		SystemSecrets{JWT: "j", OIDC: "o"})
 	require.NoError(t, err)
 

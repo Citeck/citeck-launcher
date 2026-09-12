@@ -63,6 +63,43 @@ type GenerateOpts struct {
 	DependencyStates map[deps.ID]deps.DependencyState
 }
 
+// generateBundleWebapps runs generateWebapp for every bundle application the
+// workspace config admits. Extracted from Generate to keep its cyclomatic
+// complexity under the linter threshold; the behavior is unchanged.
+//
+// The workspace list is a FILTER, not a source: an application the bundle does
+// not carry is never generated, and an empty list (a thin or lossily-migrated
+// workspace config) admits everything the bundle has — which is what the
+// collision guard below exists for. Names are sorted so NextPort() hands out
+// the same ports on every generation.
+func generateBundleWebapps(ctx *NsGenContext, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig) {
+	wsWebapps := make(map[string]bool)
+	if wsCfg != nil {
+		for _, w := range wsCfg.Webapps {
+			wsWebapps[w.ID] = true
+		}
+	}
+	webappNames := make([]string, 0, len(bun.Applications))
+	for name := range bun.Applications {
+		if len(wsWebapps) > 0 && !wsWebapps[name] {
+			continue
+		}
+		webappNames = append(webappNames, name)
+	}
+	sort.Strings(webappNames)
+	for _, name := range webappNames {
+		// Collision guard, same rule as generateAdditionalApps: an infra/core app
+		// cannot be redefined as a webapp — skip it, never overwrite, and say so
+		// loudly. See isBuiltInApp for the two directions it covers.
+		if isBuiltInApp(ctx, name) {
+			slog.Error("bundle application collides with a built-in app; skipping it as a webapp to avoid overwriting the built-in definition",
+				"name", name)
+			continue
+		}
+		generateWebapp(name, ctx)
+	}
+}
+
 // Generate creates container definitions from a namespace config, bundle, and workspace config.
 // Returns an error if a fatal generation step fails (e.g. rendering the Keycloak
 // init script); callers should abort the reload/start on error rather than
@@ -101,34 +138,7 @@ func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secre
 	generateAlfresco(ctx)
 	generateObserver(ctx)
 
-	// Generate webapps from bundle — only for apps declared in workspace config
-	// (matching Kotlin: context.workspaceConfig.webappsById.contains(app.key))
-	// Sort names for deterministic port assignment via NextPort().
-	wsWebapps := make(map[string]bool)
-	if wsCfg != nil {
-		for _, w := range wsCfg.Webapps {
-			wsWebapps[w.ID] = true
-		}
-	}
-	webappNames := make([]string, 0, len(bun.Applications))
-	for name := range bun.Applications {
-		if len(wsWebapps) > 0 && !wsWebapps[name] {
-			continue
-		}
-		webappNames = append(webappNames, name)
-	}
-	sort.Strings(webappNames)
-	for _, name := range webappNames {
-		// Collision guard, same rule as generateAdditionalApps: an infra/core app
-		// cannot be redefined as a webapp — skip it, never overwrite, and say so
-		// loudly. See isBuiltInApp for the two directions it covers.
-		if isBuiltInApp(ctx, name) {
-			slog.Error("bundle application collides with a built-in app; skipping it as a webapp to avoid overwriting the built-in definition",
-				"name", name)
-			continue
-		}
-		generateWebapp(name, ctx)
-	}
+	generateBundleWebapps(ctx, bun, wsCfg)
 
 	// STT sidecar (speech-to-text proxy for AI websocket traffic) — must run
 	// AFTER the AI webapp is generated because it injects an env var + dep
