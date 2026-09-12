@@ -3,6 +3,7 @@ import { getAppInspect, postAppRestart } from '../lib/api'
 import type { AppInspectDto } from '../lib/types'
 import { useDashboardStore } from '../lib/store'
 import { initProgressOf } from '../lib/initProgress'
+import { waitingForDepsText } from '../lib/waitingForDeps'
 import { openSecondaryView } from '../lib/desktop'
 import { formatDateTime } from '../lib/datetime'
 import { RegistryCredentialsDialog } from './RegistryCredentialsDialog'
@@ -36,7 +37,9 @@ export function AppDrawerContent({ appName }: AppDrawerContentProps) {
   const nsApps = useDashboardStore((s) => s.namespace?.apps)
   const appMeta = nsApps?.find((a) => a.name === appName)
   const initProg = appMeta ? initProgressOf(appMeta) : null
-  const { t } = useTranslation()
+  const { t, tDynamic } = useTranslation()
+  // Same rule as the table row: the held app's reason outranks statusText.
+  const statusDetail = (appMeta && waitingForDepsText(appMeta, t, tDynamic)) || appMeta?.statusText
 
   const load = useCallback(() => {
     const controller = new AbortController()
@@ -92,8 +95,8 @@ export function AppDrawerContent({ appName }: AppDrawerContentProps) {
       {/* The launcher status badge is in the drawer header (subtitle) and the
           Docker container state is the "Состояние" row; here we only surface
           statusText (e.g. failure detail), when present. */}
-      {appMeta?.statusText && (
-        <div className="text-[11px] text-muted-foreground">{appMeta.statusText}</div>
+      {statusDetail && (
+        <div className="text-[11px] text-muted-foreground">{statusDetail}</div>
       )}
 
       {/* Details grid */}

@@ -422,6 +422,7 @@ const ru = {
   'status.UPDATING': 'Обновление',
   'status.STOPPED': 'Остановлен',
   'status.STALLED': 'Зависло',
+  'app.status.waitingForDeps': 'Ожидает: {deps}',
 
   // -- Start Progress Stepper (Welcome quick start) --
   'startProgress.title': 'Запуск Citeck…',

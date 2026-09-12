@@ -572,13 +572,26 @@ func TestWaitForDepsHoldsOnDetachedDependency(t *testing.T) {
 		}
 		t.Fatalf("app-b should hold in DEPS_WAITING while app-a is detached, got %s", status)
 	}
-	b := r.FindApp("app-b")
-	if b == nil || !strings.Contains(b.StatusText, "app-a") {
+	// Asserted on the DTO, which is the only place the hold is stated: the
+	// runtime keeps no sentence and no field for it — the dependencies are
+	// derived when the namespace is serialized, so the reader can word them in
+	// its own language.
+	waiting := appDtoByName(t, r.ToNamespaceDto(), "app-b").WaitingFor
+	if len(waiting) != 1 || waiting[0].App != "app-a" {
+		t.Fatalf("app-b should report app-a as the unmet dependency, got %+v", waiting)
+	}
+	if waiting[0].Status != string(AppStatusStopped) {
+		t.Fatalf("app-b should report app-a as STOPPED, got %q", waiting[0].Status)
+	}
+	// And nothing was RENDERED on the way there. The runtime loop has no reader
+	// and no locale, so a sentence built here would be in daemon.yml's language
+	// whoever asked — and would be built by an i18n.T that is not goroutine-safe.
+	if b := r.FindApp("app-b"); b == nil || b.StatusText != "" {
 		text := "nil"
 		if b != nil {
 			text = b.StatusText
 		}
-		t.Fatalf("app-b StatusText should name the unmet dependency app-a, got %q", text)
+		t.Fatalf("app-b must carry no rendered waiting sentence, got %q", text)
 	}
 
 	// Re-attaching app-a (StartApp, the normal un-detach path) must release

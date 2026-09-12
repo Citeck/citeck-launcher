@@ -91,8 +91,8 @@ func generateQdrant(ctx *NsGenContext) {
 	// would be a needless outage. rag without qdrant is not a smaller rag — it
 	// is a rag that starts, looks RUNNING, and silently can't search or index
 	// anything. A silently broken app is worse than an honest one: with the
-	// dependency kept, detaching qdrant parks rag in DEPS_WAITING with
-	// StatusText naming what it's waiting on (see task 3), which is
+	// dependency kept, detaching qdrant parks rag in DEPS_WAITING and the
+	// namespace DTO names what it is waiting on (AppDto.WaitingFor), which is
 	// diagnosable and reversible with a plain `citeck start qdrant`.
 	ragApp.AddEnv("QDRANT_HOST", appdef.AppQdrant)
 	ragApp.AddEnv("QDRANT_GRPC_PORT", fmt.Sprintf("%d", grpcPort))

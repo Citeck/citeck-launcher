@@ -422,6 +422,7 @@ const zh = {
   'status.UPDATING': '更新中',
   'status.STOPPED': '已停止',
   'status.STALLED': '已挂起',
+  'app.status.waitingForDeps': '等待: {deps}',
 
   // -- Start Progress Stepper (Welcome quick start) --
   'startProgress.title': '正在启动 Citeck…',

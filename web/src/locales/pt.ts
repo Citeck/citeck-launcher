@@ -422,6 +422,7 @@ const pt = {
   'status.UPDATING': 'Atualizando',
   'status.STOPPED': 'Parado',
   'status.STALLED': 'Travado',
+  'app.status.waitingForDeps': 'Aguardando: {deps}',
 
   // -- Start Progress Stepper (Welcome quick start) --
   'startProgress.title': 'Iniciando o Citeck…',

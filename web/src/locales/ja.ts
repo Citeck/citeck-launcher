@@ -422,6 +422,7 @@ const ja = {
   'status.UPDATING': '更新中',
   'status.STOPPED': '\u505c\u6b62\u6e08\u307f',
   'status.STALLED': '\u30b9\u30c8\u30fc\u30eb',
+  'app.status.waitingForDeps': '待機中: {deps}',
 
   // -- Start Progress Stepper (Welcome quick start) --
   'startProgress.title': 'Citeck \u3092\u8d77\u52d5\u4e2d\u2026',

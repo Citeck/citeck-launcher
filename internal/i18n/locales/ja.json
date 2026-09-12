@@ -530,6 +530,5 @@
   "deps.msg.event.rolledBack": "{id} を {image} へロールバックしました",
   "deps.msg.event.rolledBackWithWarning": "{id} を {image} へロールバックしました。{error}",
   "deps.msg.action.migrationStarted": "{id} の {image} への移行を開始しました",
-  "deps.msg.action.rollbackStarted": "{id} の {image} へのロールバックを開始しました",
-  "app.status.waitingForDeps": "待機中: {deps}"
+  "deps.msg.action.rollbackStarted": "{id} の {image} へのロールバックを開始しました"
 }

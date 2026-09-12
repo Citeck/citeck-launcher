@@ -18,13 +18,11 @@ import (
 	"fmt"
 	"log/slog"
 	"runtime/pprof"
-	"strings"
 	"time"
 
 	"github.com/citeck/citeck-launcher/internal/api"
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/docker"
-	"github.com/citeck/citeck-launcher/internal/i18n"
 	"github.com/citeck/citeck-launcher/internal/namespace/nsactions"
 	"github.com/citeck/citeck-launcher/internal/namespace/workers"
 )
@@ -218,8 +216,6 @@ func (r *Runtime) stepAllAppsUnderLock() []dispatchPlan { //nolint:gocyclo // si
 			// T7 vs T8: deps satisfied → STARTING (dispatch first init or
 			// start), else → DEPS_WAITING.
 			if !r.appsDepsSatisfied(app) {
-				app.StatusText = i18n.T("app.status.waitingForDeps",
-					"deps", strings.Join(r.unmetDeps(app), ", "))
 				r.setAppStatus(app, AppStatusDepsWaiting)
 				continue
 			}
@@ -229,11 +225,12 @@ func (r *Runtime) stepAllAppsUnderLock() []dispatchPlan { //nolint:gocyclo // si
 			// No setAppStatus on the waiting branch: the app is ALREADY in
 			// DEPS_WAITING here, and setAppStatus early-returns on an unchanged
 			// status, so the call would only read as a transition that cannot
-			// happen. The text is refreshed because what it names can change
-			// (a dependency moving STOPPED → STARTING) while the status does not.
+			// happen. Nothing is stamped on the app either: WHAT it waits on can
+			// change (a dependency moving STOPPED → STARTING) while the status
+			// does not, and a field written here would have to be refreshed on
+			// every tick to stay true. It is derived from live state at the DTO
+			// boundary instead — see appWaitingForDeps in runtime_dto.go.
 			if !r.appsDepsSatisfied(app) {
-				app.StatusText = i18n.T("app.status.waitingForDeps",
-					"deps", strings.Join(r.unmetDeps(app), ", "))
 				continue
 			}
 			plans = r.beginStartingUnderLock(app, plans)
@@ -307,8 +304,12 @@ func (r *Runtime) beginStartingUnderLock(app *AppRuntime, plans []dispatchPlan) 
 	// initName). The STARTING app_status event below already triggers a UI
 	// refetch, so step 1/N needs no dedicated init-step event.
 	app.initActive = len(app.Def.InitContainers) > 0
-	// StatusText may hold a "Waiting for: ..." message from DEPS_WAITING —
-	// must not survive into STARTING.
+	// StatusText may still hold the last pull-progress line ("Pulling: 412mb
+	// 97%") or a failure detail from the attempt that preceded this one — both
+	// describe a phase that is over, and neither must survive into STARTING.
+	// The DEPS_WAITING hold is NOT among them: what an app waits on is derived
+	// at the DTO boundary from live state, so it stops being reported the
+	// moment the status leaves DEPS_WAITING, with nothing to clear.
 	app.StatusText = ""
 	r.setAppStatus(app, AppStatusStarting)
 	appDef := app.Def
@@ -361,16 +362,27 @@ func (r *Runtime) appsDepsSatisfied(app *AppRuntime) bool {
 }
 
 // unmetDeps lists the dependencies that are keeping app out of STARTING, each
-// with the state it is in, so the UI can say what the user has to start.
+// with the status it is in, so the UI can say what the user has to start.
+//
+// It returns STRUCTURE, not the sentence: this runs on the runtimeLoop
+// goroutine, which has no reader and therefore no language — the daemon serves
+// a web UI in one locale and a CLI in another at the same moment, and the
+// package-level i18n.T it used to call holds ONE global locale loaded from
+// daemon.yml and says in its own doc that it is not goroutine-safe. The
+// sentence is assembled by the reader, from the reader's own asset; see
+// api.WaitingDepDto.
+//
+// A dependency ABSENT from the current generation is not unmet — it is not part
+// of this namespace at all, which is the same rule appsDepsSatisfied applies.
 // Caller must hold r.mu.
-func (r *Runtime) unmetDeps(app *AppRuntime) []string {
-	var unmet []string
+func (r *Runtime) unmetDeps(app *AppRuntime) []api.WaitingDepDto {
+	var unmet []api.WaitingDepDto
 	for _, dep := range app.Def.DependsOn {
 		depApp, ok := r.apps[dep]
 		if !ok || depApp.Status == AppStatusRunning {
 			continue
 		}
-		unmet = append(unmet, fmt.Sprintf("%s (%s)", dep, depApp.Status))
+		unmet = append(unmet, api.WaitingDepDto{App: dep, Status: string(depApp.Status)})
 	}
 	return unmet
 }

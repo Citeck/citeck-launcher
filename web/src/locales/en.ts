@@ -424,6 +424,7 @@ const en = {
   'status.UPDATING': 'Updating',
   'status.STOPPED': 'Stopped',
   'status.STALLED': 'Stalled',
+  'app.status.waitingForDeps': 'Waiting for: {deps}',
 
   // -- Start Progress Stepper (Welcome quick start) --
   'startProgress.title': 'Starting Citeck…',

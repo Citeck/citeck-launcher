@@ -54,6 +54,26 @@ type AppDto struct {
 	// InitName is a short human-readable name of the running init step,
 	// derived from the init container image's last path segment.
 	InitName string `json:"initName,omitempty"`
+	// WaitingFor names the dependencies holding this app in DEPS_WAITING, and
+	// the status each of them is in. Empty for every other status.
+	WaitingFor []WaitingDepDto `json:"waitingFor,omitempty"`
+}
+
+// WaitingDepDto is ONE dependency an app is held on: its name, and the app
+// status it is currently in.
+//
+// It travels as STRUCTURE, not as the finished "Waiting for: qdrant (Stopped)"
+// sentence, because both halves of that sentence are already translated in the
+// reader's own asset: the web UI owns `app.status.waitingForDeps` and the
+// `status.*` labels it renders on every badge (web/src/locales/*.ts). Rendering
+// it in the daemon would either answer the UI in daemon.yml's language, or
+// force a second copy of all thirteen status labels into the CLI's JSON asset
+// to say what the UI already says. See internal/msg for the shape the daemon
+// uses when the sentence is NOT one the reader can already build — there the
+// key is the daemon's and only the locale is the reader's.
+type WaitingDepDto struct {
+	App    string `json:"app"`
+	Status string `json:"status"`
 }
 
 // AppFileDto describes a single bind-mounted file exposed via the per-app

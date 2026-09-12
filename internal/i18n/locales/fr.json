@@ -530,6 +530,5 @@
   "deps.msg.event.rolledBack": "{id} ramené à {image}",
   "deps.msg.event.rolledBackWithWarning": "{id} ramené à {image} ; {error}",
   "deps.msg.action.migrationStarted": "Migration de {id} vers {image} démarrée",
-  "deps.msg.action.rollbackStarted": "Retour arrière de {id} vers {image} démarré",
-  "app.status.waitingForDeps": "En attente de : {deps}"
+  "deps.msg.action.rollbackStarted": "Retour arrière de {id} vers {image} démarré"
 }

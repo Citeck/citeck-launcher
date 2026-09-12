@@ -422,6 +422,7 @@ const fr = {
   'status.UPDATING': 'Mise à jour',
   'status.STOPPED': 'Arr\u00eat\u00e9',
   'status.STALLED': 'Bloqu\u00e9',
+  'app.status.waitingForDeps': 'En attente de : {deps}',
 
   // -- Start Progress Stepper (Welcome quick start) --
   'startProgress.title': 'D\u00e9marrage de Citeck\u2026',

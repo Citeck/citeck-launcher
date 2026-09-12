@@ -422,6 +422,7 @@ const es = {
   'status.UPDATING': 'Actualizando',
   'status.STOPPED': 'Detenido',
   'status.STALLED': 'Bloqueado',
+  'app.status.waitingForDeps': 'Esperando: {deps}',
 
   // -- Start Progress Stepper (Welcome quick start) --
   'startProgress.title': 'Iniciando Citeck…',

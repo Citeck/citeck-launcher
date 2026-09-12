@@ -530,6 +530,5 @@
   "deps.msg.event.rolledBack": "{id} rolled back to {image}",
   "deps.msg.event.rolledBackWithWarning": "{id} rolled back to {image}; {error}",
   "deps.msg.action.migrationStarted": "Migration of {id} to {image} started",
-  "deps.msg.action.rollbackStarted": "Rollback of {id} to {image} started",
-  "app.status.waitingForDeps": "Waiting for: {deps}"
+  "deps.msg.action.rollbackStarted": "Rollback of {id} to {image} started"
 }

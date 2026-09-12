@@ -92,4 +92,25 @@ describe('AppTable', () => {
     expect(gatewayRow?.className).not.toContain('bg-primary')
     expect(gatewayRow?.className).toContain('hover:bg-accent')
   })
+
+  // The daemon sends {app, status} pairs and no sentence, so the row is the
+  // only place the hold is ever worded. A row that renders nothing looks
+  // exactly like an app nobody is waiting on.
+  it('a held app says which dependency holds it, with the status translated', () => {
+    const held: AppDto = {
+      name: 'rag', status: 'DEPS_WAITING', image: 'rag:1', cpu: '', memory: '',
+      kind: 'THIRD_PARTY', waitingFor: [{ app: 'qdrant', status: 'STOPPED' }],
+    }
+    renderWithRouter(<AppTable apps={[held]} />)
+    expect(screen.getByText('Waiting for: qdrant (Stopped)')).toBeInTheDocument()
+  })
+
+  it('falls back to statusText when nothing is holding the app', () => {
+    const failed: AppDto = {
+      name: 'rag', status: 'START_FAILED', image: 'rag:1', cpu: '', memory: '',
+      kind: 'THIRD_PARTY', statusText: 'container exited with code 1',
+    }
+    renderWithRouter(<AppTable apps={[failed]} />)
+    expect(screen.getByText('container exited with code 1')).toBeInTheDocument()
+  })
 })

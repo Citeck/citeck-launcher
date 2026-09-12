@@ -42,6 +42,7 @@ func (r *Runtime) ToNamespaceDto() api.NamespaceDto {
 			InitStep:         initStep,
 			InitTotal:        initTotal,
 			InitName:         initName,
+			WaitingFor:       r.appWaitingForDeps(app),
 		})
 	}
 	return api.NamespaceDto{
@@ -89,6 +90,27 @@ func ResolveDisplayBundleRef(ref bundle.Ref, cached *bundle.Def) string {
 // actually behaves.
 func displayAppStatus(app *AppRuntime) string {
 	return string(app.Status)
+}
+
+// appWaitingForDeps reports the dependencies holding this app in DEPS_WAITING,
+// or nil for every other status.
+//
+// It is DERIVED here rather than stamped on the app while the loop holds it,
+// because what an app waits on changes under it — a dependency moves STOPPED →
+// PULLING → RUNNING while the dependent's own status never leaves DEPS_WAITING
+// — so a stored copy would have to be rewritten on every tick to stay true, and
+// cleared on every path out. Reading r.apps at the moment the DTO is built has
+// neither failure mode.
+//
+// The status gate is what keeps the field honest: unmetDeps answers "which
+// dependencies are not RUNNING", which is also true of a RUNNING app whose
+// dependency has just died — and that app is not waiting for anything, the
+// liveness probe is. Caller must hold r.mu (read or write).
+func (r *Runtime) appWaitingForDeps(app *AppRuntime) []api.WaitingDepDto {
+	if app.Status != AppStatusDepsWaiting {
+		return nil
+	}
+	return r.unmetDeps(app)
 }
 
 // appInitProgress maps the runtime's ephemeral init-phase state onto the

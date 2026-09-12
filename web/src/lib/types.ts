@@ -37,6 +37,19 @@ export interface AppDto {
   initTotal?: number
   /** Short name of the running init step (init image basename without registry/tag). */
   initName?: string
+  /**
+   * Dependencies holding this app in DEPS_WAITING; absent for every other
+   * status. Structure rather than a finished sentence: the daemon has no
+   * reader and therefore no language, and both halves of the sentence are
+   * already translated here — see lib/waitingForDeps.ts.
+   */
+  waitingFor?: WaitingDepDto[]
+}
+
+/** One dependency an app is held on: its name, and the status it is in. */
+export interface WaitingDepDto {
+  app: string
+  status: string
 }
 
 export interface AppFileDto {

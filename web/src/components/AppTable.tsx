@@ -10,6 +10,7 @@ import { toast } from '../lib/toast'
 import { useDashboardStore } from '../lib/store'
 import { isEditableFile } from '../lib/files'
 import { initProgressOf } from '../lib/initProgress'
+import { waitingForDepsText } from '../lib/waitingForDeps'
 import { StatusBadge } from './StatusBadge'
 import { StatsCell } from './StatsCell'
 import { Square, Play, RotateCw, FileText, Settings, Circle, Lock } from 'lucide-react'
@@ -193,6 +194,10 @@ function GroupRows({ labelKey, apps, onAction, highlightedApp }: { labelKey: str
         const isTransitional = TRANSITIONAL.includes(app.status)
         const isHighlighted = highlightedApp === app.name
         const initProg = initProgressOf(app)
+        // The DEPS_WAITING sentence is worded here, from the {app, status}
+        // pairs the daemon sends — it outranks statusText, which for a held
+        // app carries at most a stale line from the phase before the hold.
+        const statusDetail = waitingForDepsText(app, t, tDynamic) ?? app.statusText
         return (
           // Whole row opens the inspect drawer; the actions cell and the
           // tag-copy cell stop propagation so their own clicks still win.
@@ -233,12 +238,12 @@ function GroupRows({ labelKey, apps, onAction, highlightedApp }: { labelKey: str
                     phase={pullProgress[app.name].phase}
                   />
                 ) : (
-                  app.statusText && (
+                  statusDetail && (
                     <span
                       className="text-muted-foreground text-[10px] truncate min-w-0"
-                      title={app.statusText}
+                      title={statusDetail}
                     >
-                      {app.statusText}
+                      {statusDetail}
                     </span>
                   )
                 )}
