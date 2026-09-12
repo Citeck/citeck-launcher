@@ -18,7 +18,8 @@ class NamespaceGeneratorRagTest {
         detachedApps: Set<String> = emptySet(),
         withRagInBundle: Boolean = true,
         withQdrantInBundle: Boolean = true,
-        withAiApp: Boolean = false
+        withAiApp: Boolean = false,
+        qdrantProps: WorkspaceConfig.QdrantProps = WorkspaceConfig.QdrantProps.DEFAULT
     ): NsGenContext {
         val bundleApps = mutableMapOf<String, BundleDef.BundleAppDef>()
         if (withRagInBundle) {
@@ -46,7 +47,8 @@ class NamespaceGeneratorRagTest {
             workspaceConfig = WorkspaceConfig(
                 imageRepos = emptyList(),
                 bundleRepos = emptyList(),
-                webapps = webapps
+                webapps = webapps,
+                qdrant = qdrantProps
             ),
             files = HashMap(),
             detachedApps = detachedApps
@@ -85,6 +87,26 @@ class NamespaceGeneratorRagTest {
         assertThat(rag.environments["QDRANT_HOST"]).isEqualTo(AppName.QDRANT)
         assertThat(rag.environments["QDRANT_GRPC_PORT"]).isEqualTo("6334")
         assertThat(rag.dependsOn).contains(AppName.QDRANT)
+    }
+
+    @Test
+    fun `configured qdrant props reach both the container and rag`() {
+        // The defect this guards is a CONFIGURED port: rag used to be told
+        // QDRANT_GRPC_PORT while the container kept listening on the image default,
+        // so a non-default value left rag dialling a socket qdrant never opened --
+        // both apps RUNNING, every vector-store call dead. Asserting the default on
+        // both sides would not catch that, since a hardcoded 6334 matches it.
+        val context = createContext(
+            qdrantProps = WorkspaceConfig.QdrantProps(memoryLimit = "2g", grpcPort = 7334)
+        )
+        NamespaceGenerator().generateQdrant(context)
+
+        val qdrant = context.applications[AppName.QDRANT]!!.build(false)
+        assertThat(qdrant.environments["QDRANT__SERVICE__GRPC_PORT"]).isEqualTo("7334")
+        assertThat(qdrant.resources!!.limits.memory).isEqualTo("2g")
+
+        val rag = context.applications[AppName.RAG]!!.build(false)
+        assertThat(rag.environments["QDRANT_GRPC_PORT"]).isEqualTo("7334")
     }
 
     @Test
