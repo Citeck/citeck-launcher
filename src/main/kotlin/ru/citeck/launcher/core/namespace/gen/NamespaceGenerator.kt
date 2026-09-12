@@ -49,6 +49,13 @@ class NamespaceGenerator {
             AppName.RAG
         )
 
+        /**
+         * Qdrant's HTTP port: where /healthz lives, and the port the startup probe
+         * targets. It is published (see generateQdrant) because httpProbeCheck resolves
+         * its target only from published host-port bindings.
+         */
+        private const val QDRANT_HTTP_PORT = 6333
+
         private val EMPTY_SPRING_PROPS_CONTENT = """
             ---
             # You can add spring properties here in yaml format
@@ -322,10 +329,21 @@ class NamespaceGenerator {
         context.getOrCreateApp(AppName.QDRANT)
             .withImage(image)
             .addVolume("qdrant_storage:/qdrant/storage")
+            // The startup probe below is an HTTP one, and httpProbeCheck resolves its
+            // target ONLY from published host-port bindings: with nothing published it
+            // returns false on every iteration, so qdrant would never become ready and
+            // rag would wait on it until the failure threshold expired. Every other
+            // probed app here publishes the port it is probed on.
+            .addPort("$QDRANT_HTTP_PORT:$QDRANT_HTTP_PORT")
+            // The gRPC port is configuration, so the container has to hear about it too:
+            // rag is told QDRANT_GRPC_PORT and would otherwise dial a port qdrant never
+            // opened (the image defaults to 6334). Qdrant maps QDRANT__<SECTION>__<KEY>
+            // onto its config, so this is the service.grpc_port knob.
+            .addEnv("QDRANT__SERVICE__GRPC_PORT", props.grpcPort.toString())
             .withKind(ApplicationKind.THIRD_PARTY)
             .withStartupCondition(
                 StartupCondition(
-                    probe = AppProbeDef(http = HttpProbeDef("/healthz", 6333))
+                    probe = AppProbeDef(http = HttpProbeDef("/healthz", QDRANT_HTTP_PORT))
                 )
             )
             .withResources(

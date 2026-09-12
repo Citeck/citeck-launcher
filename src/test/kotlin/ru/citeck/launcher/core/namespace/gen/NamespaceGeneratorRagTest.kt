@@ -72,6 +72,14 @@ class NamespaceGeneratorRagTest {
         val probe = qdrant.startupConditions.single().probe!!.http!!
         assertThat(probe.path).isEqualTo("/healthz")
         assertThat(probe.port).isEqualTo(6333)
+        // AppStartAction.httpProbeCheck resolves the probe target ONLY from published
+        // host-port bindings and has no container-IP fallback: without this port
+        // published the probe returns false on every iteration, qdrant never becomes
+        // ready, and rag waits on it until the failure threshold expires.
+        assertThat(qdrant.ports).contains("6333:6333")
+        // rag is told QDRANT_GRPC_PORT; the container has to be told the same thing or
+        // a configured non-default port leaves rag dialling a socket qdrant never opened.
+        assertThat(qdrant.environments["QDRANT__SERVICE__GRPC_PORT"]).isEqualTo("6334")
 
         val rag = context.applications[AppName.RAG]!!.build(false)
         assertThat(rag.environments["QDRANT_HOST"]).isEqualTo(AppName.QDRANT)
