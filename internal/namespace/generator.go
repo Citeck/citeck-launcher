@@ -391,7 +391,7 @@ func detectDependencyCycles(apps map[string]*AppBuilder) error {
 	for name := range apps {
 		names = append(names, name)
 	}
-	sort.Strings(names) // детерминированное сообщение об ошибке
+	sort.Strings(names) // deterministic error message
 	for _, name := range names {
 		if err := visit(name); err != nil {
 			return err

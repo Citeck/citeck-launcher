@@ -983,6 +983,13 @@ func generateSttSidecar(ctx *NsGenContext) {
 	}
 	stt.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: memoryLimit}}
 
+	// Detaching the sidecar removes AI's env + dependency below, so the daemon
+	// must regenerate on that toggle too — mark it whichever way it is right
+	// now, exactly as generateQdrant marks rag. Without this the re-attached
+	// sidecar never gets wired back into AI (speech-to-text stays silently dead
+	// until an unrelated reload), which is the regression the old hardcoded
+	// {onlyoffice, ai, stt-sidecar} set in attach_toggle_regen.go prevented.
+	ctx.MarkGatingApp(appdef.AppSttSidecar)
 	if !ctx.DetachedApps[appdef.AppSttSidecar] {
 		// Wire AI → STT only when both are active. Detached STT keeps its spec
 		// so a future re-attach is one click away, but AI must not block on a

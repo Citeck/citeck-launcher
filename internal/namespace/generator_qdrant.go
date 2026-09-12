@@ -60,11 +60,24 @@ func generateQdrant(ctx *NsGenContext) {
 	qdrant.Image = image
 	qdrant.Kind = appdef.KindThirdParty
 	qdrant.AddVolume("qdrant_storage:/qdrant/storage")
+	// The HTTP probe below needs a route to /healthz. runtime_app.go asks Docker
+	// for the published host port first and only falls back to the container IP,
+	// which is not routable from the host under Docker Desktop (macOS/Windows) —
+	// the same hazard KCManagementHostPort exists for. Every other HTTP-probed
+	// app publishes the port it is probed on; qdrant must too or it never leaves
+	// STARTING on a desktop stand and rag waits on it forever. Server mode drops
+	// every non-proxy publish (see Generate), so this costs nothing there.
+	qdrant.AddPort(fmt.Sprintf("%d:%d", qdrantHTTPPort, qdrantHTTPPort))
+	// The gRPC port is configuration, so the container has to hear about it too:
+	// rag is told QDRANT_GRPC_PORT and would otherwise dial a port qdrant never
+	// opened (the image defaults to 6334). Qdrant maps QDRANT__<SECTION>__<KEY>
+	// onto its config, so this is the service.grpc_port knob.
+	qdrant.AddEnv("QDRANT__SERVICE__GRPC_PORT", fmt.Sprintf("%d", grpcPort))
 	qdrant.StartupConditions = []appdef.StartupCondition{
 		{Probe: &appdef.AppProbeDef{
 			HTTP:             &appdef.HTTPProbeDef{Path: "/healthz", Port: qdrantHTTPPort},
 			PeriodSeconds:    5,
-			FailureThreshold: 10000, // как у STT: реальный потолок — внешнее ожидание запуска
+			FailureThreshold: 10000, // as for STT: the real ceiling is the outer start wait
 			TimeoutSeconds:   5,
 		}},
 	}

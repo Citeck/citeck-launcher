@@ -226,10 +226,14 @@ func (r *Runtime) stepAllAppsUnderLock() []dispatchPlan { //nolint:gocyclo // si
 			plans = r.beginStartingUnderLock(app, plans)
 		case AppStatusDepsWaiting:
 			// T9: deps satisfied → STARTING. Same dispatch criterion as T7.
+			// No setAppStatus on the waiting branch: the app is ALREADY in
+			// DEPS_WAITING here, and setAppStatus early-returns on an unchanged
+			// status, so the call would only read as a transition that cannot
+			// happen. The text is refreshed because what it names can change
+			// (a dependency moving STOPPED → STARTING) while the status does not.
 			if !r.appsDepsSatisfied(app) {
 				app.StatusText = i18n.T("app.status.waitingForDeps",
 					"deps", strings.Join(r.unmetDeps(app), ", "))
-				r.setAppStatus(app, AppStatusDepsWaiting)
 				continue
 			}
 			plans = r.beginStartingUnderLock(app, plans)

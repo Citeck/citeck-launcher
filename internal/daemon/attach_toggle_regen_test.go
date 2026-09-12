@@ -99,6 +99,15 @@ func newAttachToggleTestDaemon(t *testing.T) (*Daemon, *http.ServeMux, chan stru
 	t.Helper()
 	rt := namespace.NewRuntime(&namespace.Config{ID: "ns1"}, planStubDocker{}, t.TempDir())
 	t.Cleanup(rt.Shutdown)
+	// regenOnAttachToggle is a lookup into the runtime's last-generation gating
+	// set, so a runtime that never generated says "no app gates anything" and
+	// every toggle test here would pass vacuously. Seed what a real generation
+	// reports for these apps (see NsGenContext.MarkGatingApp).
+	rt.SetGatingApps(map[string]bool{
+		appdef.AppAi:         true,
+		appdef.AppOnlyoffice: true,
+		appdef.AppSttSidecar: true,
+	})
 	d := &Daemon{activeNs: &activeNamespace{
 		runtime:  rt,
 		nsConfig: &namespace.Config{ID: "ns1"},

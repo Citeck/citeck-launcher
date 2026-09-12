@@ -1570,4 +1570,11 @@ func TestGatingApps_ReportedByGenerator(t *testing.T) {
 		"переключение onlyoffice меняет ONLYOFFICE_TARGET на proxy, значит требует регенерации")
 	assert.True(t, resp.GatingApps[appdef.AppAlfresco],
 		"переключение alfresco меняет PROXY_TARGET/ALFRESCO_ENABLED на proxy, значит требует регенерации")
+	// The sidecar decides whether AI gets CITECK_AI_CALLRECORDING_STT_SIDECARURL
+	// and DependsOn(stt-sidecar) at all (generateSttSidecar). It was in the
+	// hardcoded set this field replaced, and dropping it means a re-attached
+	// sidecar is never wired back into AI — speech-to-text stays silently dead
+	// until an unrelated reload.
+	assert.True(t, resp.GatingApps[appdef.AppSttSidecar],
+		"переключение stt-sidecar меняет env и dependsOn у ai, значит требует регенерации")
 }
