@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -43,15 +42,33 @@ func reloadWaitOpts() liveStatusOpts {
 // themselves.
 func terminalStartMessage(held, total int, heldDeps []string, successMsg string) string {
 	if held > 0 {
-		return output.Colorize(output.Yellow, t("cli.appsHeldByStoppedDeps",
-			"held", strconv.Itoa(held),
-			"total", strconv.Itoa(total),
-			"deps", strings.Join(heldDeps, ", ")))
+		return output.Colorize(output.Yellow, output.HeldSummary(held, total, heldDeps))
 	}
 	if successMsg != "" {
 		return successMsg
 	}
 	return t("cli.allAppsStarted")
+}
+
+// singleAppHeldMessage words the end of a SINGLE-app wait that stopped because
+// the app is held by a dependency the operator detached.
+//
+// The roots are THIS app's, not the namespace's: with two independent detached
+// roots (`citeck stop postgres` and `citeck stop onlyoffice`) the
+// namespace-wide answer sends somebody waiting on emodel off to start
+// onlyoffice, which has nothing to do with emodel's hold. HeldRootsForApp still
+// walks THROUGH intermediate held apps, which is what the namespace-wide call
+// was here for — an app's own WaitingFor names a held neighbor the operator
+// never stopped and cannot start (RestartApp is a no-op on DEPS_WAITING).
+//
+// It is a function and not three lines inside the poll loop for the reason the
+// multi-app path already learned with terminalStartMessage: what the loop does
+// is easy to test, WHICH NAME it prints is the part that was wrong, and a
+// sentence built inline is a sentence no test can read.
+func singleAppHeldMessage(apps []api.AppDto, appName string) string {
+	return output.Colorize(output.Yellow, t("cli.appHeldByStoppedDeps",
+		"app", appName,
+		"deps", strings.Join(output.HeldRootsForApp(apps, appName), ", ")))
 }
 
 // isAppTerminalFailed reports whether the given app status is a terminal
@@ -140,15 +157,7 @@ func streamSingleAppStatus(c *client.DaemonClient, appName string) error {
 			// Held by a dependency the user detached: RestartApp on a
 			// DEPS_WAITING app is an explicit no-op and nothing else will move
 			// it, so polling for RUNNING here never ends. Name what to start.
-			fmt.Printf("%s\n", output.Colorize(output.Yellow, //nolint:forbidigo // CLI result
-				t("cli.appsHeldByStoppedDeps",
-					"held", "1", "total", "1",
-					// The roots come from the whole app list through the same
-					// rule the table uses: on a transitive hold this app's own
-					// WaitingFor names an intermediate held app, which the
-					// operator never stopped and cannot start (RestartApp is a
-					// no-op on DEPS_WAITING).
-					"deps", strings.Join(output.HeldDeps(ns.Apps), ", "))))
+			fmt.Printf("%s\n", singleAppHeldMessage(ns.Apps, appName)) //nolint:forbidigo // CLI result
 			return nil
 		case app.Status == api.AppStatusStopped:
 			// STOPPED is terminal only if the app was detached; for an active

@@ -39,7 +39,11 @@ export function AppDrawerContent({ appName }: AppDrawerContentProps) {
   const initProg = appMeta ? initProgressOf(appMeta) : null
   const { t, tDynamic } = useTranslation()
   // Same rule as the table row: the held app's reason outranks statusText.
-  const statusDetail = (appMeta && waitingForDepsText(appMeta, t, tDynamic)) || appMeta?.statusText
+  // `nsApps ?? []` rather than a defaulted parameter: the store's selector can
+  // legitimately answer undefined before the first namespace fetch lands, and
+  // with no list the walk degrades to naming an intermediate held app. Making
+  // that visible here is the whole reason the parameter is required.
+  const statusDetail = (appMeta && waitingForDepsText(appMeta, t, tDynamic, nsApps ?? [])) || appMeta?.statusText
 
   const load = useCallback(() => {
     const controller = new AbortController()
