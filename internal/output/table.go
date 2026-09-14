@@ -180,6 +180,47 @@ var kindOrder = []struct {
 	{"THIRD_PARTY", "Third Party"},
 }
 
+// HeldDeps answers which DETACHED apps are behind the holds in apps — the ones
+// an operator has to start to release the rest. Sorted, distinct. Exported for
+// the single-app wait, which has the same sentence to word and must not word it
+// from a different rule.
+func HeldDeps(apps []api.AppDto) []string {
+	set := map[string]bool{}
+	for _, app := range apps {
+		if app.Status == "DEPS_WAITING" && app.Held {
+			for _, dep := range heldRootsOf(app) {
+				set[dep] = true
+			}
+		}
+	}
+	out := make([]string, 0, len(set))
+	for name := range set {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// heldRootsOf picks, out of one held app's unmet dependencies, the ones the
+// operator can actually start.
+//
+// For a HELD app every unmet dependency is by construction either the detached
+// app itself or another app held by the same rule (see
+// Runtime.heldByDetachedDepsWalk), so "not DEPS_WAITING" is exactly the set of
+// detached roots. The filter is NOT `== "STOPPED"`: StopApp records the detach
+// in manualStoppedApps synchronously, BEFORE the stop can fail, so a detached
+// root can sit persistently in STOPPING_FAILED — and that spelling would then
+// produce "dependencies you stopped: ." with an empty list.
+func heldRootsOf(app api.AppDto) []string {
+	var roots []string
+	for _, dep := range app.WaitingFor {
+		if dep.Status != "DEPS_WAITING" {
+			roots = append(roots, dep.App)
+		}
+	}
+	return roots
+}
+
 // AppStatusCell renders one app's STATUS for any CLI surface. For DEPS_WAITING it appends the
 // dependencies the app is held on: the pairs travel in AppDto.WaitingFor for
 // the reader to word, and the CLI is a reader — without this the operator saw a
@@ -223,13 +264,8 @@ func FormatAppTable(apps []api.AppDto) AppTableResult {
 		case "DEPS_WAITING":
 			if app.Held {
 				held++
-				for _, dep := range app.WaitingFor {
-					// Only the STOPPED ones: an app held THROUGH another held
-					// app waits on something that is itself waiting, and naming
-					// that would send the operator to a link they cannot start.
-					if dep.Status == "STOPPED" {
-						heldDepSet[dep.App] = true
-					}
+				for _, dep := range heldRootsOf(app) {
+					heldDepSet[dep] = true
 				}
 			}
 		}

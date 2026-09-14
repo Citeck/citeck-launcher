@@ -106,10 +106,16 @@ func waitForServices(c *client.DaemonClient) {
 		// dependency the user detached cannot reach RUNNING until they start it
 		// again, and this loop has no deadline at all — only Ctrl+C.
 		if total > 0 && running+failed+stopped+held == total {
+			// Failed and held are ADDITIVE, never alternatives: two different
+			// problems with two different fixes, and a run that has both must
+			// not hide one behind the other.
 			switch {
 			case failed > 0:
-				fmt.Printf("\n%s\n", output.Colorize(output.Yellow,
-					fmt.Sprintf("%d/%d running, %d failed", running, total, failed))) //nolint:forbidigo // CLI result
+				line := fmt.Sprintf("%d/%d running, %d failed", running, total, failed)
+				if held > 0 {
+					line += fmt.Sprintf(", %d held by %s", held, strings.Join(r.HeldDeps, ", "))
+				}
+				fmt.Printf("\n%s\n", output.Colorize(output.Yellow, line)) //nolint:forbidigo // CLI result
 			case held > 0:
 				fmt.Printf("\n%s\n", output.Colorize(output.Yellow, //nolint:forbidigo // CLI result
 					i18n.T("cli.appsHeldByStoppedDeps",

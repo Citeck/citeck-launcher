@@ -54,16 +54,6 @@ func terminalStartMessage(held, total int, heldDeps []string, successMsg string)
 	return t("cli.allAppsStarted")
 }
 
-// waitingDepNames lists the dependencies an app is held on, for a surface that
-// has one app rather than a table.
-func waitingDepNames(app api.AppDto) []string {
-	names := make([]string, 0, len(app.WaitingFor))
-	for _, dep := range app.WaitingFor {
-		names = append(names, dep.App)
-	}
-	return names
-}
-
 // isAppTerminalFailed reports whether the given app status is a terminal
 // failure state (i.e. the app won't reach RUNNING without external action).
 func isAppTerminalFailed(status string) bool {
@@ -153,7 +143,12 @@ func streamSingleAppStatus(c *client.DaemonClient, appName string) error {
 			fmt.Printf("%s\n", output.Colorize(output.Yellow, //nolint:forbidigo // CLI result
 				t("cli.appsHeldByStoppedDeps",
 					"held", "1", "total", "1",
-					"deps", strings.Join(waitingDepNames(*app), ", "))))
+					// The roots come from the whole app list through the same
+					// rule the table uses: on a transitive hold this app's own
+					// WaitingFor names an intermediate held app, which the
+					// operator never stopped and cannot start (RestartApp is a
+					// no-op on DEPS_WAITING).
+					"deps", strings.Join(output.HeldDeps(ns.Apps), ", "))))
 			return nil
 		case app.Status == api.AppStatusStopped:
 			// STOPPED is terminal only if the app was detached; for an active

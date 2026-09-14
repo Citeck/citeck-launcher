@@ -462,3 +462,22 @@ func TestFormatAppTable_HeldDepsNamesTheDetachedRoots(t *testing.T) {
 		t.Errorf("heldDeps = %v, want [zookeeper] — только отцепленный корень", r.HeldDeps)
 	}
 }
+
+// A detached root can sit persistently in STOPPING_FAILED: StopApp records the
+// detach in manualStoppedApps synchronously, BEFORE the stop can fail. Matching
+// only "STOPPED" dropped it from the list, and the sentence built from that list
+// then read "dependencies you stopped: ." with nothing after the colon.
+func TestFormatAppTable_HeldDepsCoverADetachedRootThatFailedToStop(t *testing.T) {
+	apps := []api.AppDto{
+		{Name: "zookeeper", Status: "STOPPING_FAILED"},
+		{Name: "gateway", Status: "DEPS_WAITING", Held: true, WaitingFor: []api.WaitingDepDto{
+			{App: "zookeeper", Status: "STOPPING_FAILED"},
+		}},
+	}
+
+	r := FormatAppTable(apps)
+
+	if len(r.HeldDeps) != 1 || r.HeldDeps[0] != "zookeeper" {
+		t.Errorf("heldDeps = %v, want [zookeeper] — отцепленный корень остаётся корнем, как бы ни закончилась остановка", r.HeldDeps)
+	}
+}
