@@ -132,6 +132,20 @@ type NsGenContext struct {
 	// apps (currently: a webapp configured to depend on itself). Generate returns
 	// the first one after all generators have run.
 	DependencyErrors []error
+	// ConfiguredDependsOn records the dependencies THIS operator wrote — the
+	// `dependsOn` of a webapp in **namespace.yml**, app name -> targets. It is
+	// deliberately separate from the wiring a generator emits (which names apps
+	// this mode legitimately does not generate) and from the WORKSPACE layer
+	// (a shared file the local operator usually cannot edit — see
+	// applyConfiguredDependsOn for why that one must not fail generation).
+	// A target here that does not exist is a typo, and pruneAppsWithMissingDeps
+	// answers a typo by deleting the webapp itself.
+	ConfiguredDependsOn map[string][]string
+	// WorkspaceDependsOn is the same thing for the workspace layer, kept only so
+	// an absent target can be REPORTED distinctly from routine mode-driven
+	// pruning — the prune's own message is the one keycloak-under-BASIC-auth
+	// emits, which makes a real typo indistinguishable from normal operation.
+	WorkspaceDependsOn map[string][]string
 	// GatingApps records, via MarkGatingApp, which apps' detach state decides
 	// whether OTHER apps are generated at all (as opposed to DetachedApps /
 	// DependsOnDetachedApps, which are about dependency wiring on apps that are
@@ -153,8 +167,10 @@ func NewNsGenContext(cfg *Config, bun *bundle.Def) *NsGenContext {
 		// generation context is built, so resolveDependencyImage does not need
 		// to re-check for nil on each call, and GenResp.Dependencies is a map
 		// the caller can range over whatever the namespace generated.
-		DependencyImages: make(map[deps.ID]DependencyGen),
-		GatingApps:       make(map[string]bool),
+		DependencyImages:    make(map[deps.ID]DependencyGen),
+		GatingApps:          make(map[string]bool),
+		ConfiguredDependsOn: make(map[string][]string),
+		WorkspaceDependsOn:  make(map[string][]string),
 	}
 	ctx.portsCounter.Store(17020)
 	return ctx

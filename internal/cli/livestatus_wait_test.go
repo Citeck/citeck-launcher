@@ -259,3 +259,65 @@ func TestStreamLiveStatus_UnproductiveRunsAreReArmedByProgress(t *testing.T) {
 	assert.Greater(t, fd.getCount(), 20,
 		"no single unproductive stretch came near the grace, so the wait must have run to the end")
 }
+
+// nsHeld is a namespace where `rag` is parked by a detached `zookeeper`: the
+// shape `citeck start rag` hits when qdrant (or any hard dependency) is
+// stopped.
+func nsHeld(held bool) api.NamespaceDto {
+	return api.NamespaceDto{ID: "ns", Name: "ns", Status: "STARTING", Apps: []api.AppDto{
+		{Name: "zookeeper", Status: "STOPPED", Kind: "THIRD_PARTY"},
+		{Name: "rag", Status: "DEPS_WAITING", Held: held, Kind: "CITECK_CORE",
+			WaitingFor: []api.WaitingDepDto{{App: "zookeeper", Status: "STOPPED"}}},
+	}}
+}
+
+// A held app never reaches RUNNING on its own — RestartApp is an explicit no-op
+// on DEPS_WAITING — and this loop has no deadline at all, only Ctrl+C. So the
+// wait has to end on the first poll that sees the hold.
+func TestStreamSingleAppStatus_EndsOnAHeldApp(t *testing.T) {
+	ensureI18n()
+	fd := &fakeDaemon{ns: func(int) (api.NamespaceDto, bool) { return nsHeld(true), true }}
+	c := newFakeDaemon(t, fd)
+
+	done := make(chan error, 1)
+	go func() { done <- streamSingleAppStatus(c, "rag") }()
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(waitTestTimeout):
+		t.Fatal("ожидание удерживаемого приложения не завершилось — оно не завершится никогда")
+	}
+	assert.Equal(t, 1, fd.getCount(), "вердикт виден на первом же опросе")
+}
+
+// The same app WITHOUT the daemon's held verdict is genuinely pending: the wait
+// must poll again rather than return, or `citeck start <app>` would finish the
+// moment a dependency is momentarily not RUNNING. Asserted by ending the wait
+// on the SECOND answer — a loop that treated any DEPS_WAITING as terminal would
+// return after the first and never ask for it.
+func TestStreamSingleAppStatus_KeepsWaitingWhenTheAppIsNotHeld(t *testing.T) {
+	ensureI18n()
+	fd := &fakeDaemon{ns: func(n int) (api.NamespaceDto, bool) {
+		if n == 1 {
+			return nsHeld(false), true
+		}
+		ns := nsHeld(false)
+		ns.Apps[1].Status = "RUNNING"
+		ns.Apps[1].WaitingFor = nil
+		return ns, true
+	}}
+	c := newFakeDaemon(t, fd)
+
+	done := make(chan error, 1)
+	go func() { done <- streamSingleAppStatus(c, "rag") }()
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(waitTestTimeout):
+		t.Fatal("ожидание не завершилось даже после того, как приложение дошло до RUNNING")
+	}
+	assert.GreaterOrEqual(t, fd.getCount(), 2,
+		"без вердикта демона DEPS_WAITING — это не терминальное состояние")
+}

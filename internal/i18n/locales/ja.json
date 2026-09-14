@@ -152,6 +152,7 @@
   "cli.daemonNotRunningStart": "daemon が実行されていません — まず 'citeck start' で起動してください",
   "cli.daemonStarted": "daemon をバックグラウンドで起動しました",
   "cli.continueBackground": "バックグラウンドで続行します",
+  "cli.appsHeldByStoppedDeps": "{total} 個中 {held} 個のアプリが、停止された依存関係を待機しています: {deps}。それらを起動すると残りが解放されます。",
   "cli.allAppsStarted": "すべての app を起動しました。",
   "cli.waitingRetry": "（再試行を待機中...）",
   "cli.waitEnded": "待機を終了しました: namespace は {status} で、何も起動していません。`citeck status` で状態を確認してください。",

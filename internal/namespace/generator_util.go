@@ -76,10 +76,7 @@ func resolveAppImage(ctx *NsGenContext, name, namespaceImage, fallback string) s
 			image = ctx.Bundle.Applications[name].Image
 		}
 		if image != "" {
-			if namespaceImage != "" && namespaceImage != image {
-				slog.Warn("Bundle image overrides namespace image; use citeck edit for an explicit override",
-					"app", name, "bundleImage", image, "namespaceImage", namespaceImage)
-			}
+			warnDiscardedImageLayers(ctx, name, image, namespaceImage)
 			return image
 		}
 	}
@@ -90,6 +87,40 @@ func resolveAppImage(ctx *NsGenContext, name, namespaceImage, fallback string) s
 		return image
 	}
 	return fallback
+}
+
+// warnDiscardedImageLayers names every configured image the bundle's choice has
+// just displaced. Split out of resolveAppImage so that function keeps one job
+// (choosing) and this one keeps the other (saying what lost).
+func warnDiscardedImageLayers(ctx *NsGenContext, name, chosen, namespaceImage string) {
+	if namespaceImage != "" && namespaceImage != chosen {
+		slog.Warn("Bundle image overrides namespace image; use citeck edit for an explicit override",
+			"app", name, "bundleImage", chosen, "namespaceImage", namespaceImage)
+	}
+	if wsImage := discardedWorkspaceImage(ctx, name, chosen); wsImage != "" {
+		slog.Warn("Bundle image overrides workspace image; use citeck edit for an explicit override",
+			"app", name, "bundleImage", chosen, "workspaceImage", wsImage)
+	}
+}
+
+// discardedWorkspaceImage answers which image from the workspace
+// `dependencies:` section the bundle's choice has just displaced, or "" when
+// nothing was displaced.
+//
+// It exists so the losing layer is named rather than silently dropped: the
+// release that made the bundle outrank configuration promised exactly that, and
+// delivered it only for the namespace.yml layer. It reads the workspace SECTION
+// and not resolveAppImage's `fallback` argument, because that argument carries
+// two different things — a typed workspace block (operator configuration, worth
+// a warning) and the launcher's own built-in default (not configuration at all,
+// and a warning on it would fire for every app on every generation, since a
+// bundle naming a release image differs from the default by construction).
+func discardedWorkspaceImage(ctx *NsGenContext, name, chosen string) string {
+	wsImage := workspaceDependencyImage(ctx, name)
+	if wsImage == "" || wsImage == chosen {
+		return ""
+	}
+	return wsImage
 }
 
 // workspaceDependencyImage resolves the workspace section, including registry

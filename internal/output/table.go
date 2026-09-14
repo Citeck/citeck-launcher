@@ -135,7 +135,18 @@ type AppTableResult struct {
 	Running int
 	Failed  int
 	Stopped int
-	Total   int
+	// Held counts apps the daemon marked AppDto.Held: parked in DEPS_WAITING by
+	// a dependency the user has DETACHED, however many links away. They are
+	// settled, not pending — nothing in the namespace will release them until
+	// the operator starts that dependency again — so a wait loop that does not
+	// count them as terminal never ends. The decision is the daemon's; this side
+	// only counts it.
+	Held int
+	// HeldDeps names the DETACHED dependencies behind those holds — the union
+	// of the STOPPED entries in every held app's WaitingFor, i.e. the apps an
+	// operator has to start to release the rest. Sorted, distinct.
+	HeldDeps []string
+	Total    int
 	// AnyEdited is true when at least one app carries a user config edit
 	// (an ApplicationDef override or an edited mounted file). Callers use it
 	// to print the "* config edited" legend under the table.
@@ -169,6 +180,67 @@ var kindOrder = []struct {
 	{"THIRD_PARTY", "Third Party"},
 }
 
+// HeldDeps answers which DETACHED apps are behind the holds in apps — the ones
+// an operator has to start to release the rest. Sorted, distinct. Exported for
+// the single-app wait, which has the same sentence to word and must not word it
+// from a different rule.
+func HeldDeps(apps []api.AppDto) []string {
+	set := map[string]bool{}
+	for _, app := range apps {
+		if app.Status == "DEPS_WAITING" && app.Held {
+			for _, dep := range heldRootsOf(app) {
+				set[dep] = true
+			}
+		}
+	}
+	out := make([]string, 0, len(set))
+	for name := range set {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// heldRootsOf picks, out of one held app's unmet dependencies, the ones the
+// operator can actually start.
+//
+// For a HELD app every unmet dependency is by construction either the detached
+// app itself or another app held by the same rule (see
+// Runtime.heldByDetachedDepsWalk), so "not DEPS_WAITING" is exactly the set of
+// detached roots. The filter is NOT `== "STOPPED"`: StopApp records the detach
+// in manualStoppedApps synchronously, BEFORE the stop can fail, so a detached
+// root can sit persistently in STOPPING_FAILED — and that spelling would then
+// produce "dependencies you stopped: ." with an empty list.
+func heldRootsOf(app api.AppDto) []string {
+	var roots []string
+	for _, dep := range app.WaitingFor {
+		if dep.Status != "DEPS_WAITING" {
+			roots = append(roots, dep.App)
+		}
+	}
+	return roots
+}
+
+// AppStatusCell renders one app's STATUS for any CLI surface. For DEPS_WAITING it appends the
+// dependencies the app is held on: the pairs travel in AppDto.WaitingFor for
+// the reader to word, and the CLI is a reader — without this the operator saw a
+// bare DEPS_WAITING with no cause, which is the one status that cannot be acted
+// on without knowing it. The dependency NAMES are rendered raw (they are app
+// ids, not prose); their statuses are not, since the CLI locale asset has no
+// labels for them and a raw constant beside a translated status is worse than
+// naming the app alone.
+func AppStatusCell(app api.AppDto) string {
+	cell := ColorizeStatus(app.Status)
+	if app.Status != "DEPS_WAITING" || len(app.WaitingFor) == 0 {
+		return cell
+	}
+	names := make([]string, 0, len(app.WaitingFor))
+	for _, dep := range app.WaitingFor {
+		names = append(names, dep.App)
+	}
+	return cell + " ← " + strings.Join(names, ", ")
+}
+
 // FormatAppTable formats a list of apps into a grouped, aligned table with
 // status counts. Apps are grouped by Kind (Citeck Core / Extensions /
 // Additional / Third Party) with a bold group header between sections,
@@ -179,6 +251,8 @@ func FormatAppTable(apps []api.AppDto) AppTableResult {
 	total := len(apps)
 	var running, failed, stopped int
 
+	var held int
+	heldDepSet := map[string]bool{}
 	for _, app := range apps {
 		switch app.Status {
 		case "RUNNING":
@@ -187,8 +261,20 @@ func FormatAppTable(apps []api.AppDto) AppTableResult {
 			failed++
 		case "STOPPED":
 			stopped++
+		case "DEPS_WAITING":
+			if app.Held {
+				held++
+				for _, dep := range heldRootsOf(app) {
+					heldDepSet[dep] = true
+				}
+			}
 		}
 	}
+	heldDeps := make([]string, 0, len(heldDepSet))
+	for name := range heldDepSet {
+		heldDeps = append(heldDeps, name)
+	}
+	sort.Strings(heldDeps)
 
 	// Group apps by kind, sort alphabetically within each group.
 	groups := make(map[string][]api.AppDto, len(kindOrder))
@@ -219,7 +305,7 @@ func FormatAppTable(apps []api.AppDto) AppTableResult {
 		for _, app := range groupApps {
 			rows = append(rows, []string{
 				appNameCell(app),
-				ColorizeStatus(app.Status),
+				AppStatusCell(app),
 				app.Image,
 				app.CPU,
 				app.Memory,
@@ -270,6 +356,8 @@ func FormatAppTable(apps []api.AppDto) AppTableResult {
 	}
 
 	return AppTableResult{
+		Held:      held,
+		HeldDeps:  heldDeps,
 		Table:     FormatTable(headers, rows, 0, statusMinWidth),
 		Running:   running,
 		Failed:    failed,

@@ -172,6 +172,10 @@ export function Dashboard() {
   const drawerApp = drawerAppName ? apps.find((a) => a.name === drawerAppName) : null
   const runningCount = apps.filter((a) => a.status === 'RUNNING').length
   const isRunning = namespace.status === 'RUNNING'
+  // A namespace STALLED because the operator detached a dependency reads the
+  // same as one stalled by a crash, but the remedy is the opposite — see
+  // openInBrowserTooltip.
+  const anyAppHeld = namespace.apps.some((a) => a.held)
   const links = namespace.links ? [...namespace.links].sort((a, b) => a.order - b.order) : []
   const proxyUrl = links.find((l) => l.name === 'Citeck UI')?.url
   const serviceLinks = links.filter((l) => l.name !== 'Citeck UI')
@@ -277,7 +281,7 @@ export function Dashboard() {
                   : 'border-border text-muted-foreground cursor-not-allowed opacity-50'
               }`}
               onClick={() => { if (isRunning) openExternal(proxyUrl) }}
-              title={openInBrowserTooltip(namespace.status, t)}
+              title={openInBrowserTooltip(namespace.status, anyAppHeld, t)}
             >
               <Globe size={14} />
               {t('dashboard.openInBrowser')}
@@ -528,12 +532,18 @@ function isLinkAlwaysEnabled(l: { alwaysEnabled?: boolean; order: number; name: 
 }
 
 // Kotlin parity (NamespaceScreen.kt) — per-status tooltip on Open In Browser.
-function openInBrowserTooltip(status: string, t: (key: LocaleKey) => string): string {
+//
+// STALLED has two causes with opposite remedies: an app that FAILED (retrying it
+// is the answer, which is what the stalled text says) and an app HELD by a
+// dependency the operator detached, where restarting anything is a no-op and the
+// remedy is starting that dependency. Sending the second case after the first
+// is sending it nowhere.
+function openInBrowserTooltip(status: string, anyHeld: boolean, t: (key: LocaleKey) => string): string {
   switch (status) {
     case 'STARTING':
       return t('dashboard.openInBrowser.starting')
     case 'STALLED':
-      return t('dashboard.openInBrowser.stalled')
+      return anyHeld ? t('dashboard.openInBrowser.held') : t('dashboard.openInBrowser.stalled')
     case 'RUNNING':
       return t('dashboard.openInBrowser.tooltip')
     default:

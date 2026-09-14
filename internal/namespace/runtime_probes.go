@@ -12,7 +12,15 @@ func (r *Runtime) checkStatus() {
 		return
 	}
 	allRunning := true
-	anyFailed := false
+	// anyStuck: something is wrong AND it will not resolve itself. That is what
+	// separates the two statuses — RUNNING says the namespace is whole and
+	// usable, STALLED says a problem arose that needs a person. A failed app is
+	// the original member; an app HELD by a dependency the user detached is the
+	// other, and it is not a lesser one: nothing in the namespace will release
+	// it, so leaving such a namespace in STARTING pinned it there forever and
+	// took the reconciler and every liveness probe down with it (both are gated
+	// on RUNNING/STALLED).
+	anyStuck := false
 	for _, app := range r.apps {
 		// Skip manually-stopped apps — they are intentionally detached
 		if r.manualStoppedApps[app.Name] {
@@ -22,17 +30,21 @@ func (r *Runtime) checkStatus() {
 			allRunning = false
 		}
 		if app.Status == AppStatusStartFailed || app.Status == AppStatusPullFailed {
-			anyFailed = true
+			anyStuck = true
+		}
+		if r.heldByDetachedDepsUnderLock(app) {
+			anyStuck = true
 		}
 	}
 	if len(r.apps) > 0 && allRunning && r.status != NsStatusRunning {
 		r.setStatus(NsStatusRunning)
 	}
-	if anyFailed && (r.status == NsStatusStarting || r.status == NsStatusRunning) {
+	if anyStuck && (r.status == NsStatusStarting || r.status == NsStatusRunning) {
 		r.setStatus(NsStatusStalled)
 	}
-	// Recover from STALLED when failed apps have recovered
-	if !anyFailed && r.status == NsStatusStalled {
+	// Recover from STALLED once nothing is stuck any more — a failed app came
+	// back, or the operator started the dependency that was holding one.
+	if !anyStuck && r.status == NsStatusStalled {
 		r.setStatus(NsStatusStarting)
 	}
 }

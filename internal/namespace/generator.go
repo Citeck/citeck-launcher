@@ -157,9 +157,15 @@ func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secre
 	generateProxy(ctx)
 	generateOnlyOffice(ctx)
 
-	// All generators have run — every app name is now known. Drop any app whose
-	// dependsOn points at an app that wasn't generated (transitively); see
-	// pruneAppsWithMissingDeps.
+	// All generators have run — every app name is now known, so an operator's
+	// dependsOn target that is not among them is a typo and must be REPORTED.
+	// This has to happen before the prune, which answers a missing dependency by
+	// deleting the app that named it.
+	checkConfiguredDependsOnTargets(ctx)
+	warnWorkspaceDependsOnTargets(ctx)
+
+	// Drop any app whose dependsOn points at an app that wasn't generated
+	// (transitively); see pruneAppsWithMissingDeps.
 	pruneAppsWithMissingDeps(ctx)
 
 	if err := checkAppDependencyErrors(ctx); err != nil {
@@ -341,6 +347,51 @@ func pruneAppsWithMissingDeps(ctx *NsGenContext) {
 		}
 		if !removed {
 			return
+		}
+	}
+}
+
+// checkConfiguredDependsOnTargets reports a namespace.yml dependsOn target that
+// no generator produced. Without it the target falls through to
+// pruneAppsWithMissingDeps, which removes the webapp that named it — and,
+// transitively, everything depending on THAT — leaving nothing but an
+// slog.Error: a typo in `webapps.emodel.dependsOn` made emodel vanish from the
+// namespace. Two layers are deliberately NOT checked here, for the same reason:
+// naming an app this namespace does not generate is normal for them, and prune
+// is the right answer. Generator-emitted wiring names keycloak under BASIC
+// auth; the WORKSPACE layer is a shared file in a git repo the local operator
+// usually cannot edit, so a hard failure there would take down every namespace
+// on that workspace over a line none of them can change
+// (see applyConfiguredDependsOn).
+//
+// Must run AFTER every generator and BEFORE the prune.
+func checkConfiguredDependsOnTargets(ctx *NsGenContext) {
+	for app, deps := range ctx.ConfiguredDependsOn {
+		for _, dep := range deps {
+			if _, present := ctx.Applications[dep]; !present {
+				ctx.DependencyErrors = append(ctx.DependencyErrors,
+					fmt.Errorf("webapp %q is configured to depend on %q, which this namespace does not have",
+						app, dep))
+			}
+		}
+	}
+}
+
+// warnWorkspaceDependsOnTargets says out loud that a WORKSPACE-authored
+// dependsOn names an app this namespace does not have. The app it names is
+// about to be removed by pruneAppsWithMissingDeps, whose own message is the one
+// routine mode-driven pruning emits (keycloak under BASIC auth) — so without
+// this a real typo in the shared workspace file is indistinguishable from
+// normal operation, and its author has nothing to search the daemon log for.
+// Deliberately a warning and not an error: see applyConfiguredDependsOn.
+func warnWorkspaceDependsOnTargets(ctx *NsGenContext) {
+	for app, deps := range ctx.WorkspaceDependsOn {
+		for _, dep := range deps {
+			if _, present := ctx.Applications[dep]; !present {
+				slog.Warn("Workspace dependsOn names an app this namespace does not have; "+
+					"the webapp that names it is removed from the namespace",
+					"app", app, "missingDep", dep)
+			}
 		}
 	}
 }

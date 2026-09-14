@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -76,6 +77,7 @@ func waitForServices(c *client.DaemonClient) {
 
 		r := output.FormatAppTable(ns.Apps)
 		table, running, failed, stopped, total := r.Table, r.Running, r.Failed, r.Stopped, r.Total
+		held := r.Held
 
 		if isTTY {
 			if !firstPrint && linesPrinted > 0 {
@@ -100,11 +102,27 @@ func waitForServices(c *client.DaemonClient) {
 		// detached apps — the user intentionally took them offline, the
 		// reconciler won't bring them back, so without counting them here the
 		// loop would hang forever on any namespace with a detached service.
-		if total > 0 && running+failed+stopped == total {
-			if failed > 0 {
-				fmt.Printf("\n%s\n", output.Colorize(output.Yellow,
-					fmt.Sprintf("%d/%d running, %d failed", running, total, failed))) //nolint:forbidigo // CLI result
-			} else {
+		// HELD is terminal for the same reason, one step removed: an app whose
+		// dependency the user detached cannot reach RUNNING until they start it
+		// again, and this loop has no deadline at all — only Ctrl+C.
+		if total > 0 && running+failed+stopped+held == total {
+			// Failed and held are ADDITIVE, never alternatives: two different
+			// problems with two different fixes, and a run that has both must
+			// not hide one behind the other.
+			switch {
+			case failed > 0:
+				line := fmt.Sprintf("%d/%d running, %d failed", running, total, failed)
+				if held > 0 {
+					line += fmt.Sprintf(", %d held by %s", held, strings.Join(r.HeldDeps, ", "))
+				}
+				fmt.Printf("\n%s\n", output.Colorize(output.Yellow, line)) //nolint:forbidigo // CLI result
+			case held > 0:
+				fmt.Printf("\n%s\n", output.Colorize(output.Yellow, //nolint:forbidigo // CLI result
+					i18n.T("cli.appsHeldByStoppedDeps",
+						"held", strconv.Itoa(held),
+						"total", strconv.Itoa(total),
+						"deps", strings.Join(r.HeldDeps, ", "))))
+			default:
 				fmt.Printf("\n%s\n", output.Colorize(output.Green, i18n.T("setup.reload_complete"))) //nolint:forbidigo // success
 			}
 			return

@@ -376,3 +376,108 @@ func TestDisplayWidth(t *testing.T) {
 		}
 	}
 }
+
+// An app parked in DEPS_WAITING by a DETACHED dependency will not move until
+// the user starts that dependency again, so the CLI wait has to count it as
+// settled. It is neither RUNNING nor FAILED nor STOPPED, so `citeck start`'s
+// terminal check (running+failed+stopped == total) never matched and the
+// command polled forever — a reachable state since a stopped dependency began
+// holding its dependents.
+func TestFormatAppTable_CountsAppsHeldByADetachedDependency(t *testing.T) {
+	apps := []api.AppDto{
+		{Name: "gateway", Status: "RUNNING"},
+		{Name: "postgres", Status: "STOPPED"},
+		{Name: "emodel", Status: "DEPS_WAITING", Held: true, WaitingFor: []api.WaitingDepDto{
+			{App: "postgres", Status: "STOPPED"},
+		}},
+	}
+
+	r := FormatAppTable(apps)
+
+	if r.Held != 1 {
+		t.Errorf("held = %d, want 1 (an app held by a stopped dependency is terminal)", r.Held)
+	}
+	if r.Running != 1 || r.Stopped != 1 || r.Total != 3 {
+		t.Errorf("running/stopped/total = %d/%d/%d, want 1/1/3", r.Running, r.Stopped, r.Total)
+	}
+}
+
+// A DEPS_WAITING app the daemon did NOT mark held is genuinely pending — the
+// table must not decide otherwise on its own, or the two sides would answer the
+// same question differently.
+func TestFormatAppTable_AnUnmarkedDepsWaitingAppIsNotHeld(t *testing.T) {
+	apps := []api.AppDto{
+		{Name: "postgres", Status: "STARTING"},
+		{Name: "emodel", Status: "DEPS_WAITING", WaitingFor: []api.WaitingDepDto{
+			{App: "postgres", Status: "STARTING"},
+		}},
+	}
+
+	r := FormatAppTable(apps)
+
+	if r.Held != 0 {
+		t.Errorf("held = %d, want 0 (the daemon did not mark it held)", r.Held)
+	}
+}
+
+// The reason is on the wire (AppDto.WaitingFor) but `citeck status` rendered a
+// bare DEPS_WAITING, so the operator saw a stuck app with no cause.
+func TestFormatAppTable_DepsWaitingNamesWhatItWaitsFor(t *testing.T) {
+	apps := []api.AppDto{
+		{Name: "emodel", Status: "DEPS_WAITING", WaitingFor: []api.WaitingDepDto{
+			{App: "postgres", Status: "STOPPED"},
+			{App: "zookeeper", Status: "STARTING"},
+		}},
+	}
+
+	r := FormatAppTable(apps)
+
+	stripped := ansiRE.ReplaceAllString(r.Table, "")
+	if !strings.Contains(stripped, "postgres") || !strings.Contains(stripped, "zookeeper") {
+		t.Errorf("the STATUS cell must name what the app waits for, got:\n%s", stripped)
+	}
+}
+
+// The apps to start are the DETACHED ones at the root of the holds, not the
+// held apps themselves and not the links between them: an app held THROUGH
+// another held app waits on something that is itself waiting, and naming that
+// would send the operator to a link they cannot start.
+func TestFormatAppTable_HeldDepsNamesTheDetachedRoots(t *testing.T) {
+	apps := []api.AppDto{
+		{Name: "zookeeper", Status: "STOPPED"},
+		{Name: "gateway", Status: "DEPS_WAITING", Held: true, WaitingFor: []api.WaitingDepDto{
+			{App: "zookeeper", Status: "STOPPED"},
+		}},
+		{Name: "proxy", Status: "DEPS_WAITING", Held: true, WaitingFor: []api.WaitingDepDto{
+			{App: "gateway", Status: "DEPS_WAITING"},
+		}},
+	}
+
+	r := FormatAppTable(apps)
+
+	if r.Held != 2 {
+		t.Errorf("held = %d, want 2", r.Held)
+	}
+	if len(r.HeldDeps) != 1 || r.HeldDeps[0] != "zookeeper" {
+		t.Errorf("heldDeps = %v, want [zookeeper] — только отцепленный корень", r.HeldDeps)
+	}
+}
+
+// A detached root can sit persistently in STOPPING_FAILED: StopApp records the
+// detach in manualStoppedApps synchronously, BEFORE the stop can fail. Matching
+// only "STOPPED" dropped it from the list, and the sentence built from that list
+// then read "dependencies you stopped: ." with nothing after the colon.
+func TestFormatAppTable_HeldDepsCoverADetachedRootThatFailedToStop(t *testing.T) {
+	apps := []api.AppDto{
+		{Name: "zookeeper", Status: "STOPPING_FAILED"},
+		{Name: "gateway", Status: "DEPS_WAITING", Held: true, WaitingFor: []api.WaitingDepDto{
+			{App: "zookeeper", Status: "STOPPING_FAILED"},
+		}},
+	}
+
+	r := FormatAppTable(apps)
+
+	if len(r.HeldDeps) != 1 || r.HeldDeps[0] != "zookeeper" {
+		t.Errorf("heldDeps = %v, want [zookeeper] — отцепленный корень остаётся корнем, как бы ни закончилась остановка", r.HeldDeps)
+	}
+}

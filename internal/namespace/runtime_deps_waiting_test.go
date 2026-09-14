@@ -143,3 +143,210 @@ func TestDepsWaiting_TheHoldStopsBeingReportedOnceTheAppStarts(t *testing.T) {
 	assert.Empty(t, appDtoByName(t, r.ToNamespaceDto(), "rag").WaitingFor,
 		"a started app must not keep reporting why it was held")
 }
+
+// An app held in DEPS_WAITING by a DETACHED dependency is a PROBLEM that will
+// not resolve itself, which is what NS STALLED means — as opposed to RUNNING,
+// which says the namespace is whole and usable. checkStatus used to skip only
+// the detached app itself, so the held dependent kept `allRunning` false and
+// never set the failure flag: the namespace sat in STARTING forever. That is
+// not cosmetic, because the reconciler and every app's liveness probe are gated
+// on NS RUNNING/STALLED (runtime_loop.go) — one `citeck stop postgres` silently
+// disabled crash recovery and liveness for the WHOLE namespace, and
+// `citeck start` never stopped polling. STALLED ends the wait, restores both,
+// and does not claim a namespace is usable when part of it is not up.
+func TestAHoldByADetachedDependencyStallsTheNamespace(t *testing.T) {
+	r := newTestRuntimeWithApps(t, map[string]appdef.ApplicationDef{
+		"postgres": {Name: "postgres"},
+		"emodel":   {Name: "emodel", DependsOn: appdef.StringSet{"postgres"}},
+		"gateway":  {Name: "gateway"},
+	})
+	r.manualStoppedApps["postgres"] = true
+	r.apps["postgres"].Status = AppStatusStopped
+	r.apps["emodel"].Status = AppStatusDepsWaiting
+	r.apps["gateway"].Status = AppStatusRunning
+	r.status = NsStatusStarting
+
+	r.checkStatus()
+
+	assert.Equal(t, NsStatusStalled, r.status,
+		"удержание — это проблема, которая сама не решится, а не завершённый старт")
+}
+
+// …and the namespace comes back on its own the moment the operator starts the
+// dependency again: the hold is gone, nothing is stuck, so STALLED returns to
+// STARTING and the ordinary path takes it to RUNNING. Without this the status
+// would be a one-way door and the stand would read "problem" forever.
+func TestStartingTheDependencyAgainLiftsTheStall(t *testing.T) {
+	r := newTestRuntimeWithApps(t, map[string]appdef.ApplicationDef{
+		"postgres": {Name: "postgres"},
+		"emodel":   {Name: "emodel", DependsOn: appdef.StringSet{"postgres"}},
+	})
+	r.manualStoppedApps["postgres"] = true
+	r.apps["postgres"].Status = AppStatusStopped
+	r.apps["emodel"].Status = AppStatusDepsWaiting
+	r.status = NsStatusStarting
+	r.checkStatus()
+	require.Equal(t, NsStatusStalled, r.status)
+
+	// `citeck start postgres`: the detach is cleared and the app comes up.
+	delete(r.manualStoppedApps, "postgres")
+	r.apps["postgres"].Status = AppStatusRunning
+
+	r.checkStatus()
+	assert.Equal(t, NsStatusStarting, r.status, "проблема снята — неймспейс снова поднимается")
+
+	r.apps["emodel"].Status = AppStatusRunning
+	r.checkStatus()
+	assert.Equal(t, NsStatusRunning, r.status)
+}
+
+// The narrow shape of that rule, asserted on the predicate itself rather than
+// on the namespace status: in checkStatus a dependency that is merely slow is
+// ALSO not RUNNING, so it keeps the namespace in STARTING on its own and a
+// status-level test would pass no matter how wide the predicate got (verified
+// by mutation — widening it to "every DEPS_WAITING app is settled" left such a
+// test green). What must hold here is the meaning: only a hold the user created
+// counts as settled.
+func TestOnlyADetachedDependencyMakesTheHoldSettled(t *testing.T) {
+	r := newTestRuntimeWithApps(t, map[string]appdef.ApplicationDef{
+		"postgres": {Name: "postgres"},
+		"emodel":   {Name: "emodel", DependsOn: appdef.StringSet{"postgres"}},
+	})
+	r.apps["emodel"].Status = AppStatusDepsWaiting
+
+	r.apps["postgres"].Status = AppStatusStarting
+	assert.False(t, r.heldByDetachedDepsUnderLock(r.apps["emodel"]),
+		"зависимость ещё поднимается сама — это ожидание, а не решение пользователя")
+
+	r.apps["postgres"].Status = AppStatusStopped
+	assert.False(t, r.heldByDetachedDepsUnderLock(r.apps["emodel"]),
+		"остановленная, но НЕ отцепленная зависимость — не решение пользователя отцепить")
+
+	r.manualStoppedApps["postgres"] = true
+	assert.True(t, r.heldByDetachedDepsUnderLock(r.apps["emodel"]))
+}
+
+// A dependent waiting on two dependencies, one detached and one still starting,
+// is waiting on the one that can still move.
+func TestAMixedHoldIsNotSettled(t *testing.T) {
+	r := newTestRuntimeWithApps(t, map[string]appdef.ApplicationDef{
+		"postgres":  {Name: "postgres"},
+		"zookeeper": {Name: "zookeeper"},
+		"emodel":    {Name: "emodel", DependsOn: appdef.StringSet{"postgres", "zookeeper"}},
+	})
+	r.manualStoppedApps["postgres"] = true
+	r.apps["postgres"].Status = AppStatusStopped
+	r.apps["zookeeper"].Status = AppStatusStarting
+	r.apps["emodel"].Status = AppStatusDepsWaiting
+
+	assert.False(t, r.heldByDetachedDepsUnderLock(r.apps["emodel"]),
+		"одна из зависимостей ещё может подняться сама")
+}
+
+// An app that is not in DEPS_WAITING at all is never "held" — the predicate
+// gates a skip in checkStatus, so a true here would hide a genuinely pending or
+// failing app from the namespace status.
+func TestOnlyADepsWaitingAppCanBeHeld(t *testing.T) {
+	r := newTestRuntimeWithApps(t, map[string]appdef.ApplicationDef{
+		"postgres": {Name: "postgres"},
+		"emodel":   {Name: "emodel", DependsOn: appdef.StringSet{"postgres"}},
+	})
+	r.manualStoppedApps["postgres"] = true
+	r.apps["postgres"].Status = AppStatusStopped
+	r.apps["emodel"].Status = AppStatusStartFailed
+
+	assert.False(t, r.heldByDetachedDepsUnderLock(r.apps["emodel"]))
+}
+
+// A DEPS_WAITING app whose dependencies are all satisfied is about to move to
+// STARTING on the next tick — it is pending, not held, and calling it settled
+// would let the namespace report RUNNING while an app has not been started yet.
+// (The loop over unmet deps answers "true" vacuously without this guard.)
+func TestAnAppWithNoUnmetDependenciesIsNotHeld(t *testing.T) {
+	r := newTestRuntimeWithApps(t, map[string]appdef.ApplicationDef{
+		"postgres": {Name: "postgres"},
+		"emodel":   {Name: "emodel", DependsOn: appdef.StringSet{"postgres"}},
+	})
+	r.apps["postgres"].Status = AppStatusRunning
+	r.apps["emodel"].Status = AppStatusDepsWaiting
+
+	assert.False(t, r.heldByDetachedDepsUnderLock(r.apps["emodel"]))
+}
+
+// The settling rule has to be TRANSITIVE, or it only moves the hang one link up
+// the chain. Every webapp depends on zookeeper and rabbitmq, and the proxy
+// depends on the gateway — so in a default namespace with no rag in it,
+// `citeck stop zookeeper` leaves gateway held (its only unmet dep is detached)
+// while proxy waits on gateway, which is in DEPS_WAITING and NOT in
+// manualStoppedApps. A one-level rule counts proxy as pending and the namespace
+// sits in STARTING forever, which is the whole defect this rule exists to fix.
+func TestTheSettlingRuleFollowsTheWholeChain(t *testing.T) {
+	r := newTestRuntimeWithApps(t, map[string]appdef.ApplicationDef{
+		"zookeeper": {Name: "zookeeper"},
+		"gateway":   {Name: "gateway", DependsOn: appdef.StringSet{"zookeeper"}},
+		"proxy":     {Name: "proxy", DependsOn: appdef.StringSet{"gateway"}},
+	})
+	r.manualStoppedApps["zookeeper"] = true
+	r.apps["zookeeper"].Status = AppStatusStopped
+	r.apps["gateway"].Status = AppStatusDepsWaiting
+	r.apps["proxy"].Status = AppStatusDepsWaiting
+	r.status = NsStatusStarting
+
+	assert.True(t, r.heldByDetachedDepsUnderLock(r.apps["proxy"]),
+		"proxy ждёт gateway, который сам удерживается отцепленным zookeeper")
+
+	r.checkStatus()
+	assert.Equal(t, NsStatusStalled, r.status)
+}
+
+// …and only while the whole chain is held. One link that can still come up on
+// its own makes everything above it genuinely pending.
+func TestAChainWithALiveLinkIsNotSettled(t *testing.T) {
+	r := newTestRuntimeWithApps(t, map[string]appdef.ApplicationDef{
+		"zookeeper": {Name: "zookeeper"},
+		"gateway":   {Name: "gateway", DependsOn: appdef.StringSet{"zookeeper"}},
+		"proxy":     {Name: "proxy", DependsOn: appdef.StringSet{"gateway"}},
+	})
+	r.apps["zookeeper"].Status = AppStatusStarting
+	r.apps["gateway"].Status = AppStatusDepsWaiting
+	r.apps["proxy"].Status = AppStatusDepsWaiting
+
+	assert.False(t, r.heldByDetachedDepsUnderLock(r.apps["proxy"]))
+}
+
+// A dependency cycle is rejected at generation, but the predicate walks the
+// graph and must not recurse forever if one ever reaches the runtime (a
+// hand-edited state file, a future generator bug).
+func TestTheSettlingWalkTerminatesOnACycle(t *testing.T) {
+	r := newTestRuntimeWithApps(t, map[string]appdef.ApplicationDef{
+		"a": {Name: "a", DependsOn: appdef.StringSet{"b"}},
+		"b": {Name: "b", DependsOn: appdef.StringSet{"a"}},
+	})
+	r.apps["a"].Status = AppStatusDepsWaiting
+	r.apps["b"].Status = AppStatusDepsWaiting
+
+	assert.False(t, r.heldByDetachedDepsUnderLock(r.apps["a"]),
+		"цикл без единой отцепленной зависимости ничем не удерживается")
+}
+
+// The settled verdict travels on the wire as AppDto.Held, because deriving it
+// needs the detach set and a walk of the dependency graph — neither of which a
+// client has. The CLI's wait loop counts this flag; a DTO that never carries it
+// is a `citeck start` that never returns.
+func TestTheDtoCarriesTheHeldVerdict(t *testing.T) {
+	r := newTestRuntimeWithApps(t, map[string]appdef.ApplicationDef{
+		"zookeeper": {Name: "zookeeper"},
+		"gateway":   {Name: "gateway", DependsOn: appdef.StringSet{"zookeeper"}},
+		"proxy":     {Name: "proxy", DependsOn: appdef.StringSet{"gateway"}},
+	})
+	r.manualStoppedApps["zookeeper"] = true
+	r.apps["zookeeper"].Status = AppStatusStopped
+	r.apps["gateway"].Status = AppStatusDepsWaiting
+	r.apps["proxy"].Status = AppStatusDepsWaiting
+
+	dto := r.ToNamespaceDto()
+
+	assert.True(t, appDtoByName(t, dto, "gateway").Held)
+	assert.True(t, appDtoByName(t, dto, "proxy").Held, "решение должно быть транзитивным и на проводе")
+	assert.False(t, appDtoByName(t, dto, "zookeeper").Held, "сам отцепленный апп не «удерживается»")
+}

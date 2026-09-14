@@ -61,3 +61,39 @@ describe('waitingForDepsText', () => {
     expect(waitingForDepsText({ waitingFor: [] }, enT.t, enT.tDynamic)).toBeNull()
   })
 })
+
+describe('waitingForDepsText on a held app', () => {
+  // `citeck stop zookeeper` holds gateway, and proxy is held THROUGH gateway.
+  // Proxy's own waitingFor names gateway — an app the operator never stopped
+  // and cannot start, since a restart is a no-op on DEPS_WAITING. The sentence
+  // has to name the root they can actually start.
+  it('names the DETACHED root, not the held app in between', () => {
+    const proxy = {
+      held: true,
+      waitingFor: [{ app: 'gateway', status: 'DEPS_WAITING' }],
+    }
+    const gateway = {
+      held: true,
+      waitingFor: [
+        { app: 'zookeeper', status: 'STOPPED' },
+        { app: 'gateway', status: 'DEPS_WAITING' },
+      ],
+    }
+    expect(waitingForDepsText(gateway, enT.t, enT.tDynamic)).toBe('Waiting for: zookeeper (Stopped)')
+    // Nothing but intermediate links: say what we have rather than nothing.
+    expect(waitingForDepsText(proxy, enT.t, enT.tDynamic)).toContain('gateway')
+  })
+
+  // Without the daemon's verdict the list is untouched: an app waiting on a
+  // dependency that is still coming up is genuinely pending, and every entry is
+  // worth naming.
+  it('leaves an unheld app’s list alone', () => {
+    const app = {
+      waitingFor: [
+        { app: 'zookeeper', status: 'STARTING' },
+        { app: 'rabbitmq', status: 'DEPS_WAITING' },
+      ],
+    }
+    expect(waitingForDepsText(app, enT.t, enT.tDynamic)).toContain('rabbitmq')
+  })
+})

@@ -119,8 +119,11 @@ func TestQdrant_MarksRagAsGating_EvenWhenRagIsDetached(t *testing.T) {
 // without qdrant is not a smaller rag, it's a rag that looks RUNNING and
 // silently can't search or index anything. So a detached qdrant must still
 // leave rag's QDRANT_HOST/QDRANT_GRPC_PORT env vars and DependsOn(qdrant) in
-// place — rag ends up parked in DEPS_WAITING (task 3 behavior) rather than
-// starting broken. If a future change "unifies" this with the stt pattern by
+// place — a rag STARTED while qdrant is detached parks in DEPS_WAITING rather
+// than starting broken. (This is a generation-time contract: it does not stop a
+// rag that is already RUNNING when qdrant is stopped — StopApp never cascades
+// to dependents. See generator_qdrant.go.) If a future change "unifies" this
+// with the stt pattern by
 // adding a `!ctx.DetachedApps[appdef.AppQdrant]` guard around the rag wiring,
 // this test must fail.
 func TestQdrant_DetachedQdrant_RagKeepsHardDependency(t *testing.T) {

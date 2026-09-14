@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -31,15 +33,25 @@ func reloadWaitOpts() liveStatusOpts {
 	}
 }
 
-// renderAppTable is a convenience wrapper around output.FormatAppTable
-// that returns the counts used by streamLiveStatus. Stopped covers
-// intentionally-detached apps (STOPPED only); STOPPING_FAILED is counted
-// in Failed, matching isAppTerminalFailed below and the red colorization
-// in output.ColorizeStatus. The wait-for-terminal check must include
-// Stopped or the loop hangs on any namespace with a detached service.
-func renderAppTable(apps []api.AppDto) (table string, running, failed, stopped, total int) {
-	r := output.FormatAppTable(apps)
-	return r.Table, r.Running, r.Failed, r.Stopped, r.Total
+// terminalStartMessage words the end of a successful wait.
+//
+// "All apps started" would be a lie while apps sit HELD by a dependency the
+// user stopped. A detached app is one the user named themselves; a held one is
+// a second-order consequence of that, and hiding it behind the success line is
+// how a stand that answers nothing looks like a successful start. The held line
+// names the DETACHED apps to start, not the held ones — those release
+// themselves.
+func terminalStartMessage(held, total int, heldDeps []string, successMsg string) string {
+	if held > 0 {
+		return output.Colorize(output.Yellow, t("cli.appsHeldByStoppedDeps",
+			"held", strconv.Itoa(held),
+			"total", strconv.Itoa(total),
+			"deps", strings.Join(heldDeps, ", ")))
+	}
+	if successMsg != "" {
+		return successMsg
+	}
+	return t("cli.allAppsStarted")
 }
 
 // isAppTerminalFailed reports whether the given app status is a terminal
@@ -104,7 +116,7 @@ func streamSingleAppStatus(c *client.DaemonClient, appName string) error {
 			return fmt.Errorf("app %q not found", appName)
 		}
 
-		line := fmt.Sprintf("  %s  %s", appName, output.ColorizeStatus(app.Status))
+		line := fmt.Sprintf("  %s  %s", appName, output.AppStatusCell(*app))
 		if isTTY {
 			if !firstPrint && linesPrinted > 0 {
 				output.ClearLines(linesPrinted)
@@ -124,6 +136,20 @@ func streamSingleAppStatus(c *client.DaemonClient, appName string) error {
 			return nil
 		case isAppTerminalFailed(app.Status):
 			return exitWithCode(ExitError, "app %s: %s", appName, app.Status)
+		case app.Held:
+			// Held by a dependency the user detached: RestartApp on a
+			// DEPS_WAITING app is an explicit no-op and nothing else will move
+			// it, so polling for RUNNING here never ends. Name what to start.
+			fmt.Printf("%s\n", output.Colorize(output.Yellow, //nolint:forbidigo // CLI result
+				t("cli.appsHeldByStoppedDeps",
+					"held", "1", "total", "1",
+					// The roots come from the whole app list through the same
+					// rule the table uses: on a transitive hold this app's own
+					// WaitingFor names an intermediate held app, which the
+					// operator never stopped and cannot start (RestartApp is a
+					// no-op on DEPS_WAITING).
+					"deps", strings.Join(output.HeldDeps(ns.Apps), ", "))))
+			return nil
 		case app.Status == api.AppStatusStopped:
 			// STOPPED is terminal only if the app was detached; for an active
 			// start/restart, STOPPED briefly is normal (between stop → start).

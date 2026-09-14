@@ -152,6 +152,7 @@
   "cli.daemonNotRunningStart": "daemon is not running — start it first with 'citeck start'",
   "cli.daemonStarted": "Daemon started in background",
   "cli.continueBackground": "Continuing in background",
+  "cli.appsHeldByStoppedDeps": "{held} of {total} apps are waiting for dependencies you stopped: {deps}. Start them to release the rest.",
   "cli.allAppsStarted": "All apps started.",
   "cli.waitingRetry": "(waiting for retry...)",
   "cli.waitEnded": "No longer waiting: the namespace is {status} and nothing is starting. Run `citeck status` to check.",

@@ -1468,3 +1468,62 @@ func (r *Runtime) handleLivenessProbeResult(res workers.Result) {
 	r.dispatcher.Dispatch(plan.taskID, plan.fn, r.resultCh, r.signalCh)
 	r.signalCh.Flush()
 }
+
+// heldByDetachedDepsUnderLock reports whether app is parked in DEPS_WAITING
+// solely because the user detached something it (transitively) depends on.
+//
+// Such an app is STUCK, not pending, and the difference is load-bearing:
+// checkStatus counted a non-RUNNING app as "not there yet" and only a FAILED one
+// as a reason to go STALLED, so an app that is neither kept the namespace in
+// STARTING forever — and both the reconciler and every app's liveness probe are
+// gated on NS RUNNING/STALLED. One `citeck stop postgres` therefore used to
+// disable crash recovery and liveness for the WHOLE namespace, and left
+// `citeck start` polling with nothing left to wait for. A hold is now one of the
+// two things that STALL a namespace (the other being a failed app): RUNNING
+// means whole and usable, STALLED means a problem that will not resolve itself.
+// The same answer rides out as AppDto.Held so a client's wait loop can end.
+//
+// The rule is deliberately narrow: EVERY unmet dependency must be detached — or
+// itself held by this same rule. A dependency that is merely slow can still move
+// on its own, and calling that settled would report a namespace RUNNING while
+// half of it is coming up.
+//
+// The walk is TRANSITIVE because a one-level rule only moves the hang one link
+// up: every webapp depends on zookeeper and rabbitmq and the proxy depends on
+// the gateway, so `citeck stop zookeeper` leaves gateway held while proxy waits
+// on gateway — which is in DEPS_WAITING and not in manualStoppedApps. It is
+// guarded against cycles (rejected at generation, but a hand-edited state file
+// or a future generator bug must not spin the runtime loop).
+//
+// Caller must hold r.mu (read or write).
+func (r *Runtime) heldByDetachedDepsUnderLock(app *AppRuntime) bool {
+	return r.heldByDetachedDepsWalk(app, map[string]bool{})
+}
+
+func (r *Runtime) heldByDetachedDepsWalk(app *AppRuntime, visiting map[string]bool) bool {
+	if app.Status != AppStatusDepsWaiting {
+		return false
+	}
+	if visiting[app.Name] {
+		// A cycle holds nothing on its own: the apps in it wait on each other,
+		// and only a DETACHED app outside it can settle them.
+		return false
+	}
+	visiting[app.Name] = true
+	defer delete(visiting, app.Name)
+
+	unmet := r.unmetDeps(app)
+	if len(unmet) == 0 {
+		return false
+	}
+	for _, dep := range unmet {
+		if r.manualStoppedApps[dep.App] {
+			continue
+		}
+		depApp, ok := r.apps[dep.App]
+		if !ok || !r.heldByDetachedDepsWalk(depApp, visiting) {
+			return false
+		}
+	}
+	return true
+}

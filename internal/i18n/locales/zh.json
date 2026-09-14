@@ -152,6 +152,7 @@
   "cli.daemonNotRunningStart": "daemon 未运行 — 请先使用 'citeck start' 启动",
   "cli.daemonStarted": "daemon 已在后台启动",
   "cli.continueBackground": "在后台继续运行",
+  "cli.appsHeldByStoppedDeps": "{held}/{total} 个应用正在等待您停止的依赖：{deps}。启动它们即可释放其余应用。",
   "cli.allAppsStarted": "所有 app 已启动。",
   "cli.waitingRetry": "（正在等待重试...）",
   "cli.waitEnded": "不再等待：命名空间处于 {status} 状态，没有任何服务在启动。请运行 `citeck status` 查看状态。",
