@@ -25,6 +25,12 @@ import (
 //	zookeeper:3.9             → 3.9.5    exists
 //	mongo:4.0                 → 4.0.28   exists
 //	keycloak/keycloak:26      → 404. Keycloak publishes NO bare-major tag.
+//	qdrant/qdrant:v1.14     → 404. Qdrant publishes no floating minor tag
+//	                            either, so its legacy image names a concrete
+//	                            patch (probed 2026-09-15).
+//	qdrant/qdrant:v1.14.1     → exists, and it is the only version RAG has ever
+//	                            shipped with — every bundle carrying EcosRagApp
+//	                            names it.
 //	keycloak/keycloak:26.4    → exists (sha256:9409c59b…, 2025-12-01), and it
 //	                            is the minor of keycloak/keycloak:26.4.5, the
 //	                            value both the Kotlin 1.3.9 launcher and every
@@ -41,6 +47,7 @@ func TestLegacyImagesAreTheExactReferencesProbed(t *testing.T) {
 		Zookeeper: "zookeeper:3.9",
 		Keycloak:  "keycloak/keycloak:26.4",
 		MongoDB:   "mongo:4.0",
+		Qdrant:    "qdrant/qdrant:v1.14.1",
 	}
 	for _, d := range All() {
 		assert.Equal(t, want[d.ID()], d.LegacyImage(), string(d.ID()))
@@ -94,11 +101,15 @@ func TestLegacyImagesFloatOnlyOverNonBreakingComponents(t *testing.T) {
 // what the tag said.
 func numericComponents(t *testing.T, tag string) int {
 	t.Helper()
+	// trimVersionTagV, not a second copy of the rule: Qdrant's tags carry a
+	// leading "v" and a counter that did not skip it would read every one of
+	// them as naming NO component.
+	numeric := trimVersionTagV(tag)
 	end := 0
-	for end < len(tag) && (tag[end] == '.' || (tag[end] >= '0' && tag[end] <= '9')) {
+	for end < len(numeric) && (numeric[end] == '.' || (numeric[end] >= '0' && numeric[end] <= '9')) {
 		end++
 	}
-	parts := strings.Split(strings.TrimSuffix(tag[:end], "."), ".")
+	parts := strings.Split(strings.TrimSuffix(numeric[:end], "."), ".")
 	n := 0
 	for _, p := range parts {
 		if _, err := strconv.Atoi(p); err != nil {

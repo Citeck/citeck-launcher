@@ -167,6 +167,7 @@ func TestSeedAssumesTheLegacyImageWhenTheContainerProbeFailsOverExistingData(t *
 		containerErr: errors.New("dial unix /var/run/docker.sock: connection refused"),
 		volumes: map[string]map[string]string{
 			"postgres2": {"PG_VERSION": "17\n"}, "rabbitmq2": {}, "zookeeper2": {}, "mongo2": {},
+			"qdrant2": {},
 		},
 	}
 	got := seedDependencyPins(context.Background(), nil, p, nil, nil)
@@ -665,7 +666,14 @@ func TestSeedIsUnchangedForTheDependenciesThatArePresent(t *testing.T) {
 	p := fakeProbe{volumes: map[string]map[string]string{
 		"postgres2": {"PG_VERSION": "17\n"}, "rabbitmq2": {}, "zookeeper2": {}, "mongo2": {},
 	}}
-	all := namespaceDependencies(nil)
+	// Built from the registry rather than from namespaceDependencies(nil, …):
+	// that answer is deliberately NOT all-inclusive any more — qdrant is false
+	// without a bundle — and what this case is about is the FILTER argument, not
+	// the predicate that usually supplies it.
+	all := map[deps.ID]bool{}
+	for _, d := range deps.All() {
+		all[d.ID()] = true
+	}
 	full := seedDependencyPins(context.Background(), nil, p, nil, nil)
 	assert.Equal(t, full, seedDependencyPins(context.Background(), nil, p, nil, all),
 		"an all-inclusive filter is the same as no filter")
@@ -697,23 +705,100 @@ func TestNamespaceDependenciesMatchesWhatTheGeneratorEmits(t *testing.T) {
 	}
 	for name, cfg := range cases {
 		t.Run(name, func(t *testing.T) {
-			resp, err := namespace.Generate(cfg, &bundle.EmptyDef, &bundle.WorkspaceConfig{}, namespace.SystemSecrets{})
-			require.NoError(t, err)
-
-			generated := map[deps.ID]bool{}
-			for id := range resp.Dependencies {
-				generated[id] = true
-			}
-			predicted := map[deps.ID]bool{}
-			for id, ok := range namespaceDependencies(cfg) {
-				if ok {
-					predicted[id] = true
-				}
-			}
-			assert.Equal(t, generated, predicted,
-				"the seeding filter and the generator must agree about which dependencies this namespace has")
+			assertPredictionMatchesGenerator(t, cfg, &bundle.EmptyDef, &bundle.WorkspaceConfig{}, nil)
 		})
 	}
+}
+
+// The QDRANT half of the same contract, and it needs its own cases because its
+// switch is not in namespace.yml at all: qdrant follows the RAG webapp, which
+// comes from the BUNDLE, from the workspace webapp list that filters it, and
+// from the detach set.
+//
+// Wrongly predicting it ABSENT is the dangerous direction — no pin means the
+// bundle's image is applied to an existing vector index, across a minor Qdrant
+// does not guarantee it can read. Wrongly predicting it PRESENT is only
+// expensive, but it is expensive on EVERY load of every community stand, which
+// is the bill the keycloak filter exists to stop paying.
+func TestNamespaceDependenciesAnswersQdrantFromTheBundle(t *testing.T) {
+	ragBundle := func() *bundle.Def {
+		return &bundle.Def{Applications: map[string]bundle.AppDef{
+			"rag":    {Image: "harbor.citeck.ru/enterprise/citeck-rag:1.2.2"},
+			"qdrant": {Image: "qdrant/qdrant:v1.14.1"},
+		}}
+	}
+	ragWS := func() *bundle.WorkspaceConfig {
+		return &bundle.WorkspaceConfig{Webapps: []bundle.WebappConfig{{ID: "rag", Aliases: []string{"EcosRagApp"}}}}
+	}
+	cfg := &namespace.Config{ID: "ns"}
+
+	t.Run("a rag bundle has a qdrant to pin", func(t *testing.T) {
+		assertPredictionMatchesGenerator(t, cfg, ragBundle(), ragWS(), nil)
+		assert.True(t, namespaceDependencies(cfg, ragBundle(), ragWS(), nil)[deps.Qdrant])
+	})
+	t.Run("a community bundle has none", func(t *testing.T) {
+		bun := &bundle.Def{Applications: map[string]bundle.AppDef{
+			"emodel": {Image: "harbor.citeck.ru/community/emodel:1.0"}}}
+		ws := &bundle.WorkspaceConfig{Webapps: []bundle.WebappConfig{{ID: "emodel"}}}
+		assertPredictionMatchesGenerator(t, cfg, bun, ws, nil)
+		assert.False(t, namespaceDependencies(cfg, bun, ws, nil)[deps.Qdrant],
+			"a stand that will never run rag must not pay a probe for it on every load")
+	})
+	t.Run("a detached rag generates neither", func(t *testing.T) {
+		detached := map[string]bool{"rag": true}
+		assertPredictionMatchesGenerator(t, cfg, ragBundle(), ragWS(), detached)
+		assert.False(t, namespaceDependencies(cfg, ragBundle(), ragWS(), detached)[deps.Qdrant])
+	})
+	t.Run("a bundle with rag but no qdrant image generates neither", func(t *testing.T) {
+		bun := ragBundle()
+		delete(bun.Applications, "qdrant")
+		assertPredictionMatchesGenerator(t, cfg, bun, ragWS(), nil)
+		assert.False(t, namespaceDependencies(cfg, bun, ragWS(), nil)[deps.Qdrant])
+	})
+	t.Run("a workspace list that filters rag out", func(t *testing.T) {
+		ws := &bundle.WorkspaceConfig{Webapps: []bundle.WebappConfig{{ID: "emodel"}}}
+		assertPredictionMatchesGenerator(t, cfg, ragBundle(), ws, nil)
+		assert.False(t, namespaceDependencies(cfg, ragBundle(), ws, nil)[deps.Qdrant])
+	})
+	t.Run("rag disabled in namespace.yml", func(t *testing.T) {
+		off := false
+		disabled := &namespace.Config{ID: "ns", Webapps: map[string]namespace.WebappProps{
+			"rag": {Enabled: &off}}}
+		assertPredictionMatchesGenerator(t, disabled, ragBundle(), ragWS(), nil)
+		assert.False(t, namespaceDependencies(disabled, ragBundle(), ragWS(), nil)[deps.Qdrant])
+	})
+	// A namespace loaded before its bundle has resolved: no bundle means no RAG
+	// webapp and so no index to protect, which is why qdrant is the one
+	// dependency a nil answer does NOT default to present.
+	t.Run("no bundle at all", func(t *testing.T) {
+		assert.False(t, namespaceDependencies(cfg, nil, nil, nil)[deps.Qdrant])
+		assert.True(t, namespaceDependencies(nil, nil, nil, nil)[deps.Postgres],
+			"the other five still default to present")
+	})
+}
+
+// assertPredictionMatchesGenerator runs the REAL generator and demands that the
+// seeding filter名 exactly the dependencies it emitted.
+func assertPredictionMatchesGenerator(t *testing.T, cfg *namespace.Config, bun *bundle.Def,
+	wsCfg *bundle.WorkspaceConfig, detached map[string]bool,
+) {
+	t.Helper()
+	resp, err := namespace.Generate(cfg, bun, wsCfg, namespace.SystemSecrets{},
+		namespace.GenerateOpts{DetachedApps: detached})
+	require.NoError(t, err)
+
+	generated := map[deps.ID]bool{}
+	for id := range resp.Dependencies {
+		generated[id] = true
+	}
+	predicted := map[deps.ID]bool{}
+	for id, ok := range namespaceDependencies(cfg, bun, wsCfg, detached) {
+		if ok {
+			predicted[id] = true
+		}
+	}
+	assert.Equal(t, generated, predicted,
+		"the seeding filter and the generator must agree about which dependencies this namespace has")
 }
 
 // --- the volume generation --------------------------------------------------
@@ -810,10 +895,10 @@ func TestSeedProbesABoundedNumberOfGenerations(t *testing.T) {
 		require.LessOrEqual(t, gen, deps.MaxProbedVolumeGen)
 		perDependency[id]++
 	}
-	// postgres, rabbitmq, zookeeper and mongodb have volumes; keycloak does
-	// not and must never be probed with an empty name (in server mode that
+	// postgres, rabbitmq, zookeeper, mongodb and qdrant have volumes; keycloak
+	// does not and must never be probed with an empty name (in server mode that
 	// stats the volumes ROOT, which always exists).
-	assert.Len(t, perDependency, 4)
+	assert.Len(t, perDependency, 5)
 	assert.NotContains(t, perDependency, deps.Keycloak)
 	for id, n := range perDependency {
 		assert.Equal(t, deps.MaxProbedVolumeGen, n, "%s", id)

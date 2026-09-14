@@ -20,6 +20,7 @@ func TestEveryDependencyHasTheAgreedSupportFloor(t *testing.T) {
 		Zookeeper: {Major: 3, Minor: 9},
 		Keycloak:  {Major: 26, Minor: 4},
 		MongoDB:   {Major: 4},
+		Qdrant:    {Major: 1, Minor: 14},
 	}
 	got := make(map[ID]Version, len(All()))
 	for _, d := range All() {

@@ -12,7 +12,7 @@ func TestRegistryOrderAndLookup(t *testing.T) {
 	for _, d := range All() {
 		ids = append(ids, d.ID())
 	}
-	assert.Equal(t, []ID{Postgres, RabbitMQ, Zookeeper, Keycloak, MongoDB}, ids)
+	assert.Equal(t, []ID{Postgres, RabbitMQ, Zookeeper, Keycloak, MongoDB, Qdrant}, ids)
 
 	d, ok := Lookup(Postgres)
 	require.True(t, ok)
@@ -37,7 +37,17 @@ func TestBreakingRules(t *testing.T) {
 		{Postgres, "postgres:17.5", "postgres:18", true},
 		{Postgres, "postgres:18", "postgres:17.5", true}, // downgrade is a change too
 		{Postgres, "postgres:17.5", "postgres:latest", true},
-		{Postgres, "custom/pg:v17", "postgres:17.5", true},
+		// A suffix the parser ignores is not a version difference; a tag with
+		// no version at all is unreadable, and unreadable is breaking.
+		{Postgres, "custom/pg:17-alpine", "postgres:17.5", false},
+		{Postgres, "custom/pg:edge", "postgres:17.5", true},
+		// A leading "v" is READ (Qdrant publishes nothing else), so this pair
+		// is no longer the "unreadable tag" case it used to stand for here:
+		// custom/pg:v17 names major 17, and 17 → 17.5 moves no data. Reading it
+		// is also what lets the major break below be seen at all — before, both
+		// were held back by the same blanket "we cannot read this".
+		{Postgres, "custom/pg:v17", "postgres:17.5", false},
+		{Postgres, "custom/pg:v17", "postgres:18.1", true},
 		// The SAME image cannot move the data, whatever its tag says. Without
 		// this an unknown tag would report a permanent, un-actionable upgrade
 		// from X to X.
@@ -73,7 +83,7 @@ func TestBreakingRules(t *testing.T) {
 // test (TestEveryMigratableDependencyHasAMigratorAndARollback) is what checks
 // the other half.
 func TestWhichDependenciesAreMigratable(t *testing.T) {
-	migratable := map[ID]bool{Postgres: true, RabbitMQ: true, Zookeeper: true}
+	migratable := map[ID]bool{Postgres: true, RabbitMQ: true, Zookeeper: true, Qdrant: true}
 	for _, d := range All() {
 		assert.Equal(t, migratable[d.ID()], d.Migratable(), string(d.ID()))
 		assert.NotEmpty(t, d.LegacyImage(), string(d.ID()))

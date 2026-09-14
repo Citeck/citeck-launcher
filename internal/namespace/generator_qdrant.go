@@ -6,6 +6,7 @@ import (
 
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/bundle"
+	"github.com/citeck/citeck-launcher/internal/deps"
 )
 
 // Qdrant defaults. The HTTP port is fixed: 6333 is where /healthz lives, while
@@ -55,11 +56,26 @@ func generateQdrant(ctx *NsGenContext) {
 			"app", appdef.AppQdrant)
 		return
 	}
+	// Qdrant is a registered DEPENDENCY, so the image it actually runs is the
+	// gate's answer and not the bundle's offer: its storage compatibility spans
+	// exactly ONE minor, so a bundle raising the minor on an existing index is
+	// held back and reported rather than applied to data the new version may
+	// not read. With no pin — a namespace that has never started rag — the
+	// candidate applies unchanged.
+	image = resolveDependencyImage(ctx, deps.Qdrant, image)
 
 	qdrant := ctx.GetOrCreateApp(appdef.AppQdrant)
 	qdrant.Image = image
 	qdrant.Kind = appdef.KindThirdParty
-	qdrant.AddVolume("qdrant_storage:/qdrant/storage")
+	// The volume comes from the generation counter, NOT from a literal. It used
+	// to be "qdrant_storage", which is the one name outside the counter and
+	// therefore the one volume no migration could ever build a successor
+	// beside — a copy upgrade works by creating the next generation next to the
+	// current one. Generation 1 is "qdrant2", spelled like postgres2 and
+	// rabbitmq2. Nothing in the field paid for that rename: RAG has never been
+	// released, so the only stands carrying a qdrant_storage volume are dev
+	// ones, where the cost is re-indexing.
+	qdrant.AddVolume(resolveDependencyVolume(ctx, deps.Qdrant) + ":/qdrant/storage")
 	// The HTTP probe below needs a route to /healthz. runtime_app.go asks Docker
 	// for the published host port first and only falls back to the container IP,
 	// which is not routable from the host under Docker Desktop (macOS/Windows) —
@@ -113,4 +129,56 @@ func generateQdrant(ctx *NsGenContext) {
 	if aiApp, ok := ctx.Applications[appdef.AppAi]; ok && !ctx.DetachedApps[appdef.AppAi] {
 		aiApp.AddEnv("CITECK_AI_RAG_ENABLED", "true")
 	}
+}
+
+// WillGenerateQdrant answers, WITHOUT generating, whether a namespace with this
+// configuration emits a Qdrant container.
+//
+// It exists for the daemon's pin seeding, which runs BEFORE Generate — the pins
+// are an input to it — and must not pay a Docker probe for a dependency this
+// namespace does not have. Qdrant is the third conditional dependency, and the
+// only one whose condition is not in namespace.yml at all: it follows the RAG
+// webapp, which comes from the BUNDLE.
+//
+// Like namespaceDependencies' two other conditions, this RESTATES a rule that
+// lives in the generator, and the two are checked against each other by running
+// the real thing (TestNamespaceDependenciesMatchesWhatTheGeneratorEmits). The
+// dangerous direction is answering FALSE wrongly — no pin means the bundle's
+// image is applied to an existing index — so every condition below is one the
+// generator checks before it emits anything.
+func WillGenerateQdrant(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, detached map[string]bool) bool {
+	if cfg == nil || bun == nil {
+		return false
+	}
+	// generateQdrant returns before doing anything when rag is detached: a
+	// switched-off RAG costs no memory, and starting it regenerates.
+	if detached[appdef.AppRag] {
+		return false
+	}
+	// generateBundleWebapps: the bundle must carry the app, and a non-empty
+	// workspace webapp list is a FILTER over what the bundle carries.
+	if _, ok := bun.Applications[appdef.AppRag]; !ok {
+		return false
+	}
+	if wsCfg != nil && len(wsCfg.Webapps) > 0 {
+		var listed bool
+		for _, w := range wsCfg.Webapps {
+			if w.ID == appdef.AppRag {
+				listed = true
+				break
+			}
+		}
+		if !listed {
+			return false
+		}
+	}
+	ctx := NewNsGenContext(cfg, bun)
+	ctx.WorkspaceConfig = wsCfg
+	// generateWebapp's own first gate, which reads both config layers.
+	if !webappEnabled(appdef.AppRag, ctx) {
+		return false
+	}
+	// And generateQdrant's last one: with no qdrant image anywhere, rag starts
+	// without a vector store and there is no container to pin.
+	return resolveAppImage(ctx, appdef.AppQdrant, "", "") != ""
 }

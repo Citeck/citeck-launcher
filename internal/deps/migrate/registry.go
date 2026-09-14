@@ -46,6 +46,7 @@ var migrators = map[deps.ID]Migrator{
 	deps.Postgres:  PostgresMigrator{},
 	deps.RabbitMQ:  RabbitMigrator{},
 	deps.Zookeeper: ZookeeperMigrator{},
+	deps.Qdrant:    QdrantMigrator{},
 }
 
 // rollbacks is the same wiring for a journal found at boot.
@@ -60,6 +61,7 @@ var rollbacks = map[deps.ID]func(context.Context, Env, *deps.MigrationJournal) e
 	deps.Postgres:  RollbackPostgres,
 	deps.RabbitMQ:  RollbackCopyUpgrade,
 	deps.Zookeeper: RollbackCopyUpgrade,
+	deps.Qdrant:    RollbackCopyUpgrade,
 }
 
 // MigratorFor answers the migrator for a dependency. ok == false means this

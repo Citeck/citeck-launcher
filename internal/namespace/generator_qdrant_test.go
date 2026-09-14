@@ -6,6 +6,7 @@ import (
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/bundle"
 	"github.com/citeck/citeck-launcher/internal/config"
+	"github.com/citeck/citeck-launcher/internal/deps"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -174,7 +175,7 @@ func TestQdrant_ContainerShapeIsPinned(t *testing.T) {
 	qdrant := findGeneratedApp(resp, appdef.AppQdrant)
 	require.NotNil(t, qdrant)
 
-	assert.Contains(t, qdrant.Volumes, "qdrant_storage:/qdrant/storage",
+	assert.Contains(t, qdrant.Volumes, "qdrant2:/qdrant/storage",
 		"without the volume every recreate throws the vector index away")
 	assert.Contains(t, qdrant.Ports, "6333:6333",
 		"the HTTP probe has no route to the container on a desktop stand unless this port is published")
@@ -239,4 +240,93 @@ func TestQdrant_ImageComesFromTheBundleDependenciesSection(t *testing.T) {
 	qdrant := findGeneratedApp(resp, appdef.AppQdrant)
 	require.NotNil(t, qdrant, "a bundle that hides qdrant in `dependencies:` must still get a store")
 	assert.Equal(t, "qdrant/qdrant:v1.14.1", qdrant.Image)
+}
+
+// TestQdrant_GoesThroughTheDependencyGate is the registration of qdrant as an
+// infra DEPENDENCY rather than a plain generated app, and both halves matter.
+//
+// The IMAGE goes through resolveDependencyImage, so a bundle that raises the
+// minor on an existing namespace is HELD BACK and reported instead of being
+// applied to a vector index the new version may not read — Qdrant's storage
+// compatibility spans exactly one minor.
+//
+// The VOLUME comes from resolveDependencyVolume, which is what renamed it from
+// "qdrant_storage" to "qdrant2": a volume outside the generation counter cannot
+// be migrated at all, because a copy upgrade works by building the next
+// generation beside the current one. Nothing in the field paid for the rename —
+// RAG has never been released — and a dev stand pays a re-indexing.
+func TestQdrant_GoesThroughTheDependencyGate(t *testing.T) {
+	config.ResetDesktopMode()
+	cfg := basicCfg()
+	resp, err := Generate(cfg, ragBundle(), ragWorkspace(), SystemSecrets{JWT: "j", OIDC: "o"})
+	require.NoError(t, err)
+
+	qdrant := findGeneratedApp(resp, appdef.AppQdrant)
+	require.NotNil(t, qdrant)
+	assert.Contains(t, qdrant.Volumes, "qdrant2:/qdrant/storage",
+		"generation 1 of the counter, like postgres2 and rabbitmq2")
+	require.Contains(t, resp.Dependencies, deps.Qdrant,
+		"qdrant must be reported as a dependency, or nothing seeds or pins it")
+}
+
+// A namespace already pinned to v1.14.1 does NOT follow a bundle offering
+// v1.15.5: the minor is where Qdrant's format break sits, so the move is held
+// back and reported as an upgrade the launcher can perform.
+func TestQdrant_APinnedNamespaceHoldsBackAMinorBump(t *testing.T) {
+	config.ResetDesktopMode()
+	bun := ragBundle()
+	bun.Applications["qdrant"] = bundle.AppDef{Image: "qdrant/qdrant:v1.15.5"}
+
+	cfg := basicCfg()
+	resp, err := Generate(cfg, bun, ragWorkspace(), SystemSecrets{JWT: "j", OIDC: "o"},
+		GenerateOpts{DependencyStates: map[deps.ID]deps.DependencyState{
+			deps.Qdrant: {Image: "qdrant/qdrant:v1.14.1"}}})
+	require.NoError(t, err)
+
+	qdrant := findGeneratedApp(resp, appdef.AppQdrant)
+	require.NotNil(t, qdrant)
+	assert.Equal(t, "qdrant/qdrant:v1.14.1", qdrant.Image,
+		"the pin decides what runs, not the bundle")
+
+	var found bool
+	for _, up := range resp.DependencyUpgrades {
+		if up.ID == deps.Qdrant {
+			found = true
+			assert.Equal(t, "qdrant/qdrant:v1.15.5", up.To)
+			assert.True(t, up.Migratable, "this launcher ships a qdrant migrator")
+			assert.False(t, up.VendorBlocked, "one minor forward is what the vendor supports")
+		}
+	}
+	assert.True(t, found, "a held-back qdrant must be REPORTED, or the operator never learns of it")
+}
+
+// A patch bump inside one minor is not a data move, so it applies silently —
+// the same rule every other dependency follows.
+func TestQdrant_APatchBumpApplies(t *testing.T) {
+	config.ResetDesktopMode()
+	bun := ragBundle()
+	bun.Applications["qdrant"] = bundle.AppDef{Image: "qdrant/qdrant:v1.14.3"}
+
+	resp, err := Generate(basicCfg(), bun, ragWorkspace(), SystemSecrets{JWT: "j", OIDC: "o"},
+		GenerateOpts{DependencyStates: map[deps.ID]deps.DependencyState{
+			deps.Qdrant: {Image: "qdrant/qdrant:v1.14.1"}}})
+	require.NoError(t, err)
+
+	qdrant := findGeneratedApp(resp, appdef.AppQdrant)
+	require.NotNil(t, qdrant)
+	assert.Equal(t, "qdrant/qdrant:v1.14.3", qdrant.Image)
+	assert.Empty(t, resp.DependencyUpgrades)
+}
+
+// A namespace that has completed one migration mounts the NEXT generation.
+func TestQdrant_VolumeFollowsTheGenerationCounter(t *testing.T) {
+	config.ResetDesktopMode()
+	resp, err := Generate(basicCfg(), ragBundle(), ragWorkspace(), SystemSecrets{JWT: "j", OIDC: "o"},
+		GenerateOpts{DependencyStates: map[deps.ID]deps.DependencyState{
+			deps.Qdrant: {Image: "qdrant/qdrant:v1.14.1", VolumeGen: 2}}})
+	require.NoError(t, err)
+
+	qdrant := findGeneratedApp(resp, appdef.AppQdrant)
+	require.NotNil(t, qdrant)
+	assert.Contains(t, qdrant.Volumes, "qdrant3:/qdrant/storage")
 }

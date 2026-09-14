@@ -355,11 +355,24 @@ func newITEnvFor(t *testing.T, dep deps.ID, fromImage string) *itEnv {
 	// The pin is what the namespace's data runs on; the migration moves it.
 	rt.SetDependencyState(dep, deps.DependencyState{Image: fromImage})
 
+	// An empty bundle is enough for every dependency the generator emits
+	// unconditionally. Qdrant is the exception: it exists only where the RAG
+	// webapp does, so a namespace that is going to have one has to carry rag in
+	// its bundle — which is also the real shape of any stand that has a vector
+	// index to migrate.
+	bundleDef := &bundle.Def{Applications: map[string]bundle.AppDef{}}
+	wsCfg := &bundle.WorkspaceConfig{}
+	if dep == deps.Qdrant {
+		bundleDef.Applications["rag"] = bundle.AppDef{Image: itRagImage}
+		bundleDef.Applications["qdrant"] = bundle.AppDef{Image: fromImage}
+		wsCfg.Webapps = []bundle.WebappConfig{{ID: "rag", Aliases: []string{"EcosRagApp"}}}
+	}
+
 	act := activeNamespace{
 		runtime:         rt,
 		nsConfig:        nsCfg,
-		bundleDef:       &bundle.Def{Applications: map[string]bundle.AppDef{}},
-		workspaceConfig: &bundle.WorkspaceConfig{},
+		bundleDef:       bundleDef,
+		workspaceConfig: wsCfg,
 		systemSecrets:   namespace.SystemSecrets{JWT: "jwt-secret", OIDC: "oidc-secret"},
 		volumesBase:     base,
 		dockerClient:    dc,

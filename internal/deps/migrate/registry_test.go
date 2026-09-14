@@ -34,8 +34,8 @@ func TestEveryMigratableDependencyHasAMigratorAndARollback(t *testing.T) {
 		_, hasR := RollbackFor(d.ID())
 		assert.True(t, hasR, "%s claims Migratable() but no rollback is wired for it", d.ID())
 	}
-	assert.Equal(t, 3, migratable,
-		"postgres, rabbitmq and zookeeper are the three this release migrates — "+
+	assert.Equal(t, 4, migratable,
+		"postgres, rabbitmq, zookeeper and qdrant are the four this release migrates — "+
 			"adding or removing one is a deliberate act, not a side effect")
 }
 

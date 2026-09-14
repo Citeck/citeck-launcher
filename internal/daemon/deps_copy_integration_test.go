@@ -31,6 +31,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"sort"
@@ -1006,4 +1007,324 @@ func TestIntegration_TempRabbitDoesNotAnswerOnTheNamespaceNetwork(t *testing.T) 
 	assert.NotZerof(t, code, "%q resolved to %q on the namespace network: the temp container answers as the app",
 		appdef.AppRabbitmq, strings.TrimSpace(stdout))
 	assert.Empty(t, strings.TrimSpace(stdout))
+}
+
+// --- Qdrant --------------------------------------------------------------
+
+const (
+	// itQdrantFrom / itQdrantTo are the pair measured on 2026-09-15: one minor
+	// apart, which is exactly as far as Qdrant's storage compatibility reaches.
+	itQdrantFrom = "qdrant/qdrant:v1.14.1"
+	itQdrantTo   = "qdrant/qdrant:v1.15.5"
+	// itRagImage is never pulled or started — the RAG webapp only has to EXIST
+	// in the bundle for the generator to emit a qdrant at all.
+	itRagImage = "harbor.citeck.ru/enterprise/citeck-rag:1.2.2"
+)
+
+// itQdrantCollections is what the seed writes, and each column is read back
+// after the migration: two collections with different vector shapes, one of
+// them non-empty, plus an alias.
+var itQdrantCollections = []struct {
+	name   string
+	size   int
+	points int
+}{
+	{name: "docs", size: 4, points: 3},
+	{name: "notes", size: 8, points: 0},
+}
+
+const itQdrantAlias = "documents"
+
+// TestIntegration_Qdrant114To115 migrates a real vector store one minor
+// forward, which is the whole reason the dependency is registered: Qdrant
+// guarantees its storage across ONE minor, so a stand two releases behind
+// cannot simply be handed the new image, and re-building the index means
+// re-embedding every document at the provider's price.
+//
+// It is also the only test that runs the plan's HTTP transport for real. Every
+// other dependency's plan shells out to a tool the image ships (rabbitmqctl,
+// zkCli.sh, psql); the Qdrant image has neither curl nor wget, so its
+// readiness probe and its whole inventory are spoken by bash over /dev/tcp —
+// and a unit test with a scripted Exec cannot tell whether that script works.
+func TestIntegration_Qdrant114To115(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), itTestBudget)
+	defer cancel()
+	e := newITEnvFor(t, deps.Qdrant, itQdrantFrom)
+	e.seedQdrant(ctx, t)
+
+	src, dst := itVolumeOf(deps.Qdrant, 1), itVolumeOf(deps.Qdrant, 2)
+	before := e.volumeManifest(ctx, t, src)
+	require.NotEmpty(t, before)
+
+	pre := migrate.QdrantMigrator{}.Preflight(ctx, e.env, itQdrantFrom, itQdrantTo)
+	require.True(t, pre.OK, "preflight problems: %v", pre.Problems)
+	t.Logf("preflight: data %d B, required on the volume filesystem %d B, free %d B",
+		pre.DataSizeBytes, pre.RequiredVolumeBytes, pre.FreeVolumeBytes)
+
+	plan, journal, err := migrate.QdrantMigrator{}.Plan(ctx, e.env, itQdrantFrom, itQdrantTo, migrate.PlanOptions{})
+	require.NoError(t, err)
+	timer := newStepTimer()
+	started := time.Now()
+	runErr := migrate.Run(ctx, e.rt, journal, plan, timer.progress)
+	total := time.Since(started)
+	steps := timer.report(t)
+	require.NoError(t, runErr)
+	t.Logf("migration %s → %s took %s", itQdrantFrom, itQdrantTo, total.Round(time.Millisecond))
+	assert.Equal(t, migrate.CopyStepIDs(), steps)
+
+	st := e.rt.DependencyStates()[deps.Qdrant]
+	assert.Equal(t, itQdrantTo, st.Image)
+	assert.Equal(t, 2, st.Gen())
+	assert.Nil(t, e.rt.MigrationJournal())
+	last := e.rt.LastDependencyMigration()
+	require.NotNil(t, last)
+	assert.True(t, last.OK(), "verdict: %s", last.Error)
+	assert.Equal(t, src, last.OldVolume)
+
+	// The invariant: nothing in the plan opens the source for writing.
+	assert.Equal(t, before, e.volumeManifest(ctx, t, src), "the source volume was written to")
+
+	// Qdrant preallocates a 32 MiB write-ahead log per collection and writes it
+	// as a HOLE: measured, a store with three points is 739 MB apparent against
+	// 1.6 MB allocated — a ratio of 455, far past ZooKeeper's. So this is the
+	// sharpest test of `tar -S` there is: without it the copy writes those
+	// holes out as zeros and costs hundreds of megabytes the preflight never
+	// required, and the failure is an ENOSPC in the middle of a migration on an
+	// already-stopped namespace.
+	srcKB, srcBytes := e.volumeUsage(ctx, t, src)
+	dstKB, dstBytes := e.volumeUsage(ctx, t, dst)
+	t.Logf("volume cost: source %d KiB allocated / %d B apparent, copy %d KiB allocated / %d B apparent",
+		srcKB, srcBytes, dstKB, dstBytes)
+	assert.LessOrEqual(t, dstKB*1024, pre.RequiredVolumeBytes,
+		"the copy occupies more than the preflight required for it, so the space check can under-require")
+
+	// --- what the migrated server actually holds -----------------------------
+	def, err := e.env.GenerateDefFor(deps.Qdrant, deps.DependencyState{Image: itQdrantTo, VolumeGen: 2})
+	require.NoError(t, err)
+	_, err = e.env.RunAppDef(ctx, def, deps.TempContainerOpts{Name: itCheckContainer})
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, e.env.StopRemove(context.Background(), itCheckContainer)) }()
+	e.waitQdrant(ctx, t, itCheckContainer)
+
+	assert.Contains(t, e.qdrantGET(ctx, t, itCheckContainer, "/"), `"version":"1.15.5"`,
+		"the check container serves the new minor")
+
+	for _, c := range itQdrantCollections {
+		body := e.qdrantGET(ctx, t, itCheckContainer, "/collections/"+c.name)
+		assert.Containsf(t, body, fmt.Sprintf(`"points_count":%d`, c.points),
+			"collection %s lost points: %s", c.name, body)
+		assert.Containsf(t, body, fmt.Sprintf(`"size":%d`, c.size),
+			"collection %s changed shape: %s", c.name, body)
+	}
+	assert.Contains(t, e.qdrantGET(ctx, t, itCheckContainer, "/aliases"),
+		`"alias_name":"`+itQdrantAlias+`"`, "the alias the RAG service addresses by did not survive")
+}
+
+// seedQdrant builds a real v1.14.1 store on generation 1 of the volume and
+// stops it, which is the state a stopped namespace is in.
+func (e *itEnv) seedQdrant(ctx context.Context, t *testing.T) {
+	t.Helper()
+	started := time.Now()
+	vol := itVolumeOf(deps.Qdrant, 1)
+	require.NoError(t, e.env.CreateVolume(ctx, vol))
+	require.NoError(t, e.env.PullImage(ctx, itQdrantFrom, func(float64) {}))
+
+	def, err := e.env.GenerateDefFor(deps.Qdrant, deps.DependencyState{Image: itQdrantFrom})
+	require.NoError(t, err)
+	_, err = e.env.RunAppDef(ctx, def, deps.TempContainerOpts{Name: itSeedContainer})
+	require.NoError(t, err)
+	e.waitQdrant(ctx, t, itSeedContainer)
+
+	for _, c := range itQdrantCollections {
+		e.qdrantSend(ctx, t, itSeedContainer, "PUT", "/collections/"+c.name,
+			fmt.Sprintf(`{"vectors":{"size":%d,"distance":"Cosine"}}`, c.size))
+		if c.points == 0 {
+			continue
+		}
+		points := make([]string, 0, c.points)
+		for i := 1; i <= c.points; i++ {
+			vec := make([]string, c.size)
+			for k := range vec {
+				vec[k] = fmt.Sprintf("0.%d", (i+k)%9+1)
+			}
+			points = append(points, fmt.Sprintf(`{"id":%d,"vector":[%s],"payload":{"n":%d}}`,
+				i, strings.Join(vec, ","), i))
+		}
+		e.qdrantSend(ctx, t, itSeedContainer, "PUT", "/collections/"+c.name+"/points?wait=true",
+			`{"points":[`+strings.Join(points, ",")+`]}`)
+	}
+	e.qdrantSend(ctx, t, itSeedContainer, "POST", "/collections/aliases",
+		fmt.Sprintf(`{"actions":[{"create_alias":{"collection_name":%q,"alias_name":%q}}]}`,
+			itQdrantCollections[0].name, itQdrantAlias))
+
+	require.NoError(t, e.env.StopRemove(ctx, itSeedContainer))
+	t.Logf("seed: %s with %d collections ready in %s",
+		itQdrantFrom, len(itQdrantCollections), time.Since(started).Round(time.Millisecond))
+}
+
+// waitQdrant blocks until the server in container answers /readyz.
+func (e *itEnv) waitQdrant(ctx context.Context, t *testing.T, container string) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Minute)
+	for {
+		_, _, code, err := e.env.Exec(ctx, container, itQdrantBashGet("/readyz"))
+		if err == nil && code == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("qdrant in %s never became ready (last exit %d, err %v)", container, code, err)
+		}
+		time.Sleep(2 * time.Second)
+	}
+}
+
+// qdrantGET reads one endpoint's body. It deliberately uses the SAME bash
+// transport the plan does — the image has no curl and no wget — so a test that
+// passes is also evidence the transport works.
+func (e *itEnv) qdrantGET(ctx context.Context, t *testing.T, container, path string) string {
+	t.Helper()
+	stdout, stderr, code, err := e.env.Exec(ctx, container, itQdrantBashGet(path))
+	require.NoError(t, err)
+	require.Zerof(t, code, "GET %s: %s", path, stderr)
+	return stdout
+}
+
+// qdrantSend performs one write request, for the seed only.
+func (e *itEnv) qdrantSend(ctx context.Context, t *testing.T, container, method, path, body string) {
+	t.Helper()
+	script := `exec 3<>/dev/tcp/127.0.0.1/6333 || exit 1
+printf '%s %s HTTP/1.0\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n%s' \
+  "$1" "$2" "${#3}" "$3" >&3
+IFS= read -r status <&3
+printf '%s\n' "$status"
+case "$status" in *' 200 '*) exit 0 ;; *) exit 1 ;; esac`
+	stdout, stderr, code, err := e.env.Exec(ctx, container,
+		[]string{"bash", "-c", script, "qdrant-send", method, path, body})
+	require.NoError(t, err)
+	require.Zerof(t, code, "%s %s: %s %s", method, path, stdout, stderr)
+}
+
+// itQdrantBashGet mirrors the plan's own request shape. It is spelled out here
+// rather than exported from internal/deps/migrate on purpose: a test that
+// reused the production string could not tell a working transport from one
+// that is broken in the same way on both sides.
+func itQdrantBashGet(path string) []string {
+	script := `exec 3<>/dev/tcp/127.0.0.1/6333 || exit 1
+printf 'GET %s HTTP/1.0\r\nHost: localhost\r\n\r\n' "$1" >&3
+IFS= read -r status <&3 || exit 1
+case "$status" in *' 200 '*) ;; *) printf '%s\n' "$status" >&2; exit 1 ;; esac
+while IFS= read -r line <&3; do [ "${line%$'\r'}" = "" ] && break; done
+cat <&3`
+	return []string{"bash", "-c", script, "qdrant-get", path}
+}
+
+// TestIntegration_QdrantApiKeyFailsSafely answers the one question a known hole
+// raises: the migration cannot read a Qdrant that an operator has put an API
+// key on, so what does the FAILURE cost?
+//
+// The hole is real and deliberately not closed here — neither the generator nor
+// the workspace `qdrant:` section sets `QDRANT__SERVICE__API_KEY`, so only a
+// hand-written `citeck edit qdrant` produces it — but "the migration fails" is
+// only an acceptable answer if failing is cheap. What this proves on real
+// containers is that it is: the namespace's own volume still holds every
+// collection and serves them, the pin never moved, nothing is left running, and
+// the journal is closed so the next start does not go into crash recovery.
+//
+// It also pins WHERE it fails, which is not where one would guess: an API key
+// does NOT close /readyz or /healthz (measured — they answer 200 with a key
+// set), so readiness is reached and the run dies at `pre-upgrade`, the step
+// that reads the "before" inventory off the old image. That is step 5 of 11,
+// before the new image has been started at all.
+func TestIntegration_QdrantApiKeyFailsSafely(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), itTestBudget)
+	defer cancel()
+	e := newITEnvFor(t, deps.Qdrant, itQdrantFrom)
+	e.seedQdrant(ctx, t)
+
+	src, dst := itVolumeOf(deps.Qdrant, 1), itVolumeOf(deps.Qdrant, 2)
+	before := e.volumeManifest(ctx, t, src)
+	require.NotEmpty(t, before)
+
+	// What an operator's `citeck edit qdrant` would leave behind. It reaches the
+	// temp containers the same way it reaches the app's own container: through
+	// the stored def patch, which GenerateDefFor applies.
+	e.rt.RestoreEditedState(map[string]json.RawMessage{
+		appdef.AppQdrant: json.RawMessage(
+			`{"environments":{"QDRANT__SERVICE__API_KEY":"an-operator-set-key"}}`),
+	}, nil)
+
+	plan, journal, err := migrate.QdrantMigrator{}.Plan(ctx, e.env, itQdrantFrom, itQdrantTo, migrate.PlanOptions{})
+	require.NoError(t, err)
+	timer := newStepTimer()
+	runErr := migrate.Run(ctx, e.rt, journal, plan, timer.progress)
+	steps := timer.report(t)
+	require.Error(t, runErr, "an API key the launcher does not send must not read as a healthy migration")
+
+	// Step 5 of 11, and the readiness wait before it PASSED: /readyz is open
+	// even with a key set, so the failure is the inventory read and nothing
+	// earlier. If this ever moves to start-old, the health endpoints have
+	// started requiring the key and the wait is what fails.
+	assert.Contains(t, runErr.Error(), "step pre-upgrade")
+	assert.Contains(t, steps, "start-old", "readiness was reached; an API key does not close /readyz")
+	assert.NotContains(t, steps, "start-new", "the new image is never started")
+	var finalizeErr *migrate.FinalizeError
+	assert.NotErrorAs(t, runErr, &finalizeErr, "the migration failed; it did not commit")
+
+	// --- the data is intact --------------------------------------------------
+	assert.Equal(t, before, e.volumeManifest(ctx, t, src),
+		"the namespace's own volume was written to by a migration that failed")
+	st := e.rt.DependencyStates()[deps.Qdrant]
+	assert.Equal(t, itQdrantFrom, st.Image, "the pin never moves on failure")
+	assert.Equal(t, 1, st.Gen(), "and neither does the generation")
+	_, hasPrev := st.Previous()
+	assert.False(t, hasPrev, "a failed migration records no rollback target")
+
+	// --- nothing was left behind ---------------------------------------------
+	assert.NoDirExists(t, e.volumeDir(dst), "the rollback deletes the volume the plan created")
+	for _, c := range []string{migrate.SrcContainer, migrate.DstContainer} {
+		running, cErr := e.env.ContainerRunning(ctx, c)
+		require.NoError(t, cErr)
+		assert.False(t, running, "temp container %s survived the rollback", c)
+	}
+	// An OPEN journal is what makes the next launcher start refuse to start the
+	// namespace until it has been cleared, so a cheap failure has to close it.
+	assert.Nil(t, e.rt.MigrationJournal(), "a SUCCESSFUL rollback clears the journal")
+	last := e.rt.LastDependencyMigration()
+	require.NotNil(t, last)
+	assert.False(t, last.OK())
+	assert.NotContains(t, last.Error, "rollback failed")
+
+	// --- and the store still SERVES what it held -----------------------------
+	// Not merely intact on disk: the whole point of the question is whether the
+	// stand comes back. The check container carries the operator's key too,
+	// which is what a real one would.
+	def, err := e.env.GenerateDefFor(deps.Qdrant, deps.DependencyState{Image: itQdrantFrom})
+	require.NoError(t, err)
+	_, err = e.env.RunAppDef(ctx, def, deps.TempContainerOpts{Name: itCheckContainer})
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, e.env.StopRemove(context.Background(), itCheckContainer)) }()
+	e.waitQdrant(ctx, t, itCheckContainer)
+
+	for _, c := range itQdrantCollections {
+		body := e.qdrantGETWithKey(ctx, t, itCheckContainer, "/collections/"+c.name, "an-operator-set-key")
+		assert.Containsf(t, body, fmt.Sprintf(`"points_count":%d`, c.points),
+			"collection %s lost points to a migration that never touched its volume: %s", c.name, body)
+	}
+}
+
+// qdrantGETWithKey is qdrantGET plus the `api-key` header — the one thing the
+// production transport does not send, which is what this test exists about.
+func (e *itEnv) qdrantGETWithKey(ctx context.Context, t *testing.T, container, path, key string) string {
+	t.Helper()
+	script := `exec 3<>/dev/tcp/127.0.0.1/6333 || exit 1
+printf 'GET %s HTTP/1.0\r\nHost: localhost\r\napi-key: %s\r\n\r\n' "$1" "$2" >&3
+IFS= read -r status <&3 || exit 1
+case "$status" in *' 200 '*) ;; *) printf '%s\n' "$status" >&2; exit 1 ;; esac
+while IFS= read -r line <&3; do [ "${line%$'\r'}" = "" ] && break; done
+cat <&3`
+	stdout, stderr, code, err := e.env.Exec(ctx, container,
+		[]string{"bash", "-c", script, "qdrant-get-key", path, key})
+	require.NoError(t, err)
+	require.Zerof(t, code, "GET %s: %s", path, stderr)
+	return stdout
 }

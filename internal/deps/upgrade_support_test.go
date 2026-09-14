@@ -164,12 +164,12 @@ func TestBreakingAndVendorSupportAreDifferentQuestions(t *testing.T) {
 // vendor matrix or a new migrator may move it. Asserted as the rule shape
 // itself, so widening any of them fails here as well as in TestBreakingRules.
 func TestIsBreakingRuleShapesAreUnchanged(t *testing.T) {
-	minor := map[ID]bool{RabbitMQ: true, Zookeeper: true}
+	minor := map[ID]bool{RabbitMQ: true, Zookeeper: true, Qdrant: true}
 	for _, d := range All() {
 		t.Run(string(d.ID()), func(t *testing.T) {
 			sameMajorDifferentMinor := d.IsBreaking(Version{Major: 4, Minor: 1}, Version{Major: 4, Minor: 2})
 			assert.Equal(t, minor[d.ID()], sameMajorDifferentMinor,
-				"minor-breaking dependencies are exactly rabbitmq and zookeeper")
+				"minor-breaking dependencies are exactly rabbitmq, zookeeper and qdrant")
 			assert.True(t, d.IsBreaking(Version{Major: 4, Minor: 1}, Version{Major: 5, Minor: 1}),
 				"a major change is breaking for every dependency")
 			assert.False(t, d.IsBreaking(Version{Major: 4, Minor: 1, Patch: 2}, Version{Major: 4, Minor: 1, Patch: 9}),
