@@ -1468,3 +1468,34 @@ func (r *Runtime) handleLivenessProbeResult(res workers.Result) {
 	r.dispatcher.Dispatch(plan.taskID, plan.fn, r.resultCh, r.signalCh)
 	r.signalCh.Flush()
 }
+
+// heldByDetachedDepsUnderLock reports whether app is parked in DEPS_WAITING
+// solely because the user detached what it depends on.
+//
+// Such an app is SETTLED, not pending, and the difference is load-bearing:
+// checkStatus counts a non-RUNNING app as "not there yet" and a failed one as a
+// reason to go STALLED, so an app that is neither keeps the namespace in
+// STARTING forever — and both the reconciler and every app's liveness probe are
+// gated on NS RUNNING/STALLED. One `citeck stop postgres` therefore used to
+// disable crash recovery and liveness for the WHOLE namespace, and left
+// `citeck start` polling with nothing left to wait for.
+//
+// The rule is deliberately narrow: EVERY unmet dependency must be detached. A
+// dependency that is merely slow can still move on its own, and calling that
+// settled would report a namespace RUNNING while half of it is coming up.
+// Caller must hold r.mu (read or write).
+func (r *Runtime) heldByDetachedDepsUnderLock(app *AppRuntime) bool {
+	if app.Status != AppStatusDepsWaiting {
+		return false
+	}
+	unmet := r.unmetDeps(app)
+	if len(unmet) == 0 {
+		return false
+	}
+	for _, dep := range unmet {
+		if !r.manualStoppedApps[dep.App] {
+			return false
+		}
+	}
+	return true
+}

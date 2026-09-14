@@ -91,9 +91,19 @@ func generateQdrant(ctx *NsGenContext) {
 	// would be a needless outage. rag without qdrant is not a smaller rag — it
 	// is a rag that starts, looks RUNNING, and silently can't search or index
 	// anything. A silently broken app is worse than an honest one: with the
-	// dependency kept, detaching qdrant parks rag in DEPS_WAITING and the
-	// namespace DTO names what it is waiting on (AppDto.WaitingFor), which is
-	// diagnosable and reversible with a plain `citeck start qdrant`.
+	// dependency kept, rag cannot be STARTED while qdrant is detached — it parks
+	// in DEPS_WAITING and the namespace DTO names what it is waiting on
+	// (AppDto.WaitingFor), which is diagnosable and reversible with a plain
+	// `citeck start qdrant`.
+	//
+	// What this does NOT do is stop a rag that is already RUNNING: StopApp acts
+	// on the app it names and never cascades to dependents, and qdrant is not a
+	// gating app, so `citeck stop qdrant` triggers no regeneration either. The
+	// hold therefore takes effect on the next start of rag, not at the moment
+	// qdrant is stopped. Making the runtime evict RUNNING dependents of a
+	// detached hard dependency is a separate decision with a wide blast radius
+	// (it would apply to postgres, zookeeper and every configured dependsOn),
+	// and is deliberately not taken here.
 	ragApp.AddEnv("QDRANT_HOST", appdef.AppQdrant)
 	ragApp.AddEnv("QDRANT_GRPC_PORT", fmt.Sprintf("%d", grpcPort))
 	ragApp.AddDependsOn(appdef.AppQdrant)

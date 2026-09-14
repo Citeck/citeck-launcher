@@ -417,6 +417,13 @@ func applyConfiguredDependsOn(name string, app *AppBuilder, ctx *NsGenContext) {
 			continue
 		}
 		app.AddDependsOn(dep)
+		// Remember it as the OPERATOR's, so a target that does not exist is
+		// reported instead of silently costing this webapp its place in the
+		// namespace (checkConfiguredDependsOnTargets).
+		if ctx.ConfiguredDependsOn == nil {
+			ctx.ConfiguredDependsOn = map[string][]string{}
+		}
+		ctx.ConfiguredDependsOn[name] = append(ctx.ConfiguredDependsOn[name], dep)
 	}
 }
 

@@ -270,3 +270,48 @@ func TestPgAdminFollowsTheOrdinaryResolutionOrder(t *testing.T) {
 		assert.Equal(t, "dpage/pgadmin4:9.15", pgAdminImage(t, cfg, bun, wsWithBlock(nil)))
 	})
 }
+
+// The release notes for the bundle-over-config precedence promised that
+// configuration still trying to override the image is "logged as a warning
+// instead of silently taking effect" — but the warning covered only the
+// namespace.yml layer. A workspace `dependencies:` entry the bundle outranks
+// was discarded with no signal at all, which is the layer whose author is
+// furthest from the stand and least likely to notice.
+func TestWorkspaceDependencyImageOverriddenByTheBundleIsReported(t *testing.T) {
+	ctx := &NsGenContext{WorkspaceConfig: &bundle.WorkspaceConfig{
+		Dependencies: wsDeps(map[string]string{"postgres": "postgres:17.5"}),
+	}}
+
+	assert.Equal(t, "postgres:17.5",
+		discardedWorkspaceImage(ctx, "postgres", "postgres:17.11"),
+		"проигравшее значение из workspace должно быть названо")
+}
+
+// Two cases that must stay silent: the workspace names the SAME image the
+// bundle does (nothing was discarded), and the workspace says nothing at all
+// (the launcher's own default is not operator configuration and warning about
+// it would fire on every app of every namespace).
+func TestNoWarningWhenTheWorkspaceDiscardsNothing(t *testing.T) {
+	same := &NsGenContext{WorkspaceConfig: &bundle.WorkspaceConfig{
+		Dependencies: wsDeps(map[string]string{"postgres": "postgres:17.11"}),
+	}}
+	assert.Empty(t, discardedWorkspaceImage(same, "postgres", "postgres:17.11"))
+
+	silent := &NsGenContext{WorkspaceConfig: &bundle.WorkspaceConfig{}}
+	assert.Empty(t, discardedWorkspaceImage(silent, "postgres", "postgres:17.11"))
+}
+
+// …and the call site actually emits it. The helper above answers WHICH image
+// was discarded; this pins that resolveAppImage says so out loud, which is the
+// whole point — a pure helper nobody calls warns nobody.
+func TestTheDiscardedWorkspaceImageIsLogged(t *testing.T) {
+	logs := captureLogs(t)
+
+	generateWithWorkspace(t,
+		&bundle.Def{Dependencies: map[string]bundle.AppDef{"postgres": {Image: "postgres:17.11"}}},
+		&bundle.WorkspaceConfig{Dependencies: wsDeps(map[string]string{"postgres": "postgres:17.5"})})
+
+	out := logs.String()
+	assert.Contains(t, out, "Bundle image overrides workspace image")
+	assert.Contains(t, out, "postgres:17.5")
+}

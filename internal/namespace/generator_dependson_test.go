@@ -119,3 +119,44 @@ func TestWebappDependsOn_NamespaceEntryWithoutDependsOnKeepsWorkspaceDeps(t *tes
 	assert.Contains(t, []string(app.DependsOn), "sidecar",
 		"a namespace entry that says nothing about dependsOn must not silently drop the workspace list")
 }
+
+// A configured dependsOn naming an app that does not exist is a typo, and it
+// used to be answered by pruneAppsWithMissingDeps: the webapp that named it was
+// deleted from the namespace — together with anything depending on it — leaving
+// only an slog.Error. So `webapps.emodel.dependsOn: [sidcar]` made emodel
+// vanish. A self-dependency was already a reported error; an unknown target now
+// is too.
+func TestWebappDependsOn_UnknownTargetIsReportedNotPruned(t *testing.T) {
+	config.ResetDesktopMode()
+	bun := &bundle.Def{Applications: map[string]bundle.AppDef{
+		"emodel": {Image: "bundle/emodel:1.0"},
+	}}
+
+	resp, err := Generate(basicCfg(), bun, wsWebappWithDeps([]string{"sidcar"}),
+		SystemSecrets{JWT: "j", OIDC: "o"})
+
+	require.Error(t, err, "опечатка в dependsOn должна быть названа, а не стоить аппу места в неймспейсе")
+	assert.Contains(t, err.Error(), "sidcar")
+	assert.Contains(t, err.Error(), "emodel")
+	if err == nil && resp != nil {
+		assert.NotNil(t, findGeneratedApp(resp, "emodel"))
+	}
+}
+
+// The rule covers only what an OPERATOR wrote. A generator naming an app this
+// mode does not produce (keycloak under BASIC auth is the standing example) is
+// normal, and pruning stays the right answer for it — turning that into a hard
+// error would fail generation on every namespace that does not run keycloak.
+func TestWebappDependsOn_GeneratorEmittedTargetsAreStillPruned(t *testing.T) {
+	config.ResetDesktopMode()
+	bun := &bundle.Def{Applications: map[string]bundle.AppDef{
+		"emodel": {Image: "bundle/emodel:1.0"},
+	}}
+
+	// basicCfg() is BASIC auth, so no keycloak is generated, yet webapps carry
+	// generator-emitted wiring for it.
+	resp, err := Generate(basicCfg(), bun, nil, SystemSecrets{JWT: "j", OIDC: "o"})
+
+	require.NoError(t, err)
+	assert.NotNil(t, findGeneratedApp(resp, "emodel"))
+}

@@ -135,7 +135,12 @@ type AppTableResult struct {
 	Running int
 	Failed  int
 	Stopped int
-	Total   int
+	// Held counts apps parked in DEPS_WAITING by dependencies the user has
+	// DETACHED. They are settled, not pending: nothing in the namespace will
+	// release them until the operator starts the dependency again, so a wait
+	// loop that does not count them as terminal never ends.
+	Held  int
+	Total int
 	// AnyEdited is true when at least one app carries a user config edit
 	// (an ApplicationDef override or an edited mounted file). Callers use it
 	// to print the "* config edited" legend under the table.
@@ -169,6 +174,43 @@ var kindOrder = []struct {
 	{"THIRD_PARTY", "Third Party"},
 }
 
+// heldByDetachedDeps reports whether an app is in DEPS_WAITING solely because
+// the user stopped what it depends on. Mirrors the daemon-side rule
+// (Runtime.heldByDetachedDepsUnderLock): EVERY unmet dependency must be
+// STOPPED, since a dependency that is merely starting can still come up on its
+// own and its dependent is then genuinely pending.
+func heldByDetachedDeps(app api.AppDto) bool {
+	if len(app.WaitingFor) == 0 {
+		return false
+	}
+	for _, dep := range app.WaitingFor {
+		if dep.Status != "STOPPED" {
+			return false
+		}
+	}
+	return true
+}
+
+// appStatusCell renders the STATUS column. For DEPS_WAITING it appends the
+// dependencies the app is held on: the pairs travel in AppDto.WaitingFor for
+// the reader to word, and the CLI is a reader — without this the operator saw a
+// bare DEPS_WAITING with no cause, which is the one status that cannot be acted
+// on without knowing it. The dependency NAMES are rendered raw (they are app
+// ids, not prose); their statuses are not, since the CLI locale asset has no
+// labels for them and a raw constant beside a translated status is worse than
+// naming the app alone.
+func appStatusCell(app api.AppDto) string {
+	cell := ColorizeStatus(app.Status)
+	if app.Status != "DEPS_WAITING" || len(app.WaitingFor) == 0 {
+		return cell
+	}
+	names := make([]string, 0, len(app.WaitingFor))
+	for _, dep := range app.WaitingFor {
+		names = append(names, dep.App)
+	}
+	return cell + " ← " + strings.Join(names, ", ")
+}
+
 // FormatAppTable formats a list of apps into a grouped, aligned table with
 // status counts. Apps are grouped by Kind (Citeck Core / Extensions /
 // Additional / Third Party) with a bold group header between sections,
@@ -179,6 +221,7 @@ func FormatAppTable(apps []api.AppDto) AppTableResult {
 	total := len(apps)
 	var running, failed, stopped int
 
+	var held int
 	for _, app := range apps {
 		switch app.Status {
 		case "RUNNING":
@@ -187,6 +230,10 @@ func FormatAppTable(apps []api.AppDto) AppTableResult {
 			failed++
 		case "STOPPED":
 			stopped++
+		case "DEPS_WAITING":
+			if heldByDetachedDeps(app) {
+				held++
+			}
 		}
 	}
 
@@ -219,7 +266,7 @@ func FormatAppTable(apps []api.AppDto) AppTableResult {
 		for _, app := range groupApps {
 			rows = append(rows, []string{
 				appNameCell(app),
-				ColorizeStatus(app.Status),
+				appStatusCell(app),
 				app.Image,
 				app.CPU,
 				app.Memory,
@@ -270,6 +317,7 @@ func FormatAppTable(apps []api.AppDto) AppTableResult {
 	}
 
 	return AppTableResult{
+		Held:      held,
 		Table:     FormatTable(headers, rows, 0, statusMinWidth),
 		Running:   running,
 		Failed:    failed,

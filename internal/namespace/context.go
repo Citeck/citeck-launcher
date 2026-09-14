@@ -132,6 +132,13 @@ type NsGenContext struct {
 	// apps (currently: a webapp configured to depend on itself). Generate returns
 	// the first one after all generators have run.
 	DependencyErrors []error
+	// ConfiguredDependsOn records the dependencies an OPERATOR wrote (the
+	// workspace/namespace `dependsOn` of a webapp), app name -> targets. It is
+	// deliberately separate from the wiring a generator emits: a generator names
+	// only apps it knows, and legitimately names some that this mode does not
+	// generate, while an operator's target that does not exist is a typo — and
+	// pruneAppsWithMissingDeps answers a typo by deleting the webapp itself.
+	ConfiguredDependsOn map[string][]string
 	// GatingApps records, via MarkGatingApp, which apps' detach state decides
 	// whether OTHER apps are generated at all (as opposed to DetachedApps /
 	// DependsOnDetachedApps, which are about dependency wiring on apps that are
@@ -153,8 +160,9 @@ func NewNsGenContext(cfg *Config, bun *bundle.Def) *NsGenContext {
 		// generation context is built, so resolveDependencyImage does not need
 		// to re-check for nil on each call, and GenResp.Dependencies is a map
 		// the caller can range over whatever the namespace generated.
-		DependencyImages: make(map[deps.ID]DependencyGen),
-		GatingApps:       make(map[string]bool),
+		DependencyImages:    make(map[deps.ID]DependencyGen),
+		GatingApps:          make(map[string]bool),
+		ConfiguredDependsOn: make(map[string][]string),
 	}
 	ctx.portsCounter.Store(17020)
 	return ctx

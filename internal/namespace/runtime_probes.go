@@ -18,6 +18,11 @@ func (r *Runtime) checkStatus() {
 		if r.manualStoppedApps[app.Name] {
 			continue
 		}
+		// …and apps held by one, for the same reason: the hold is the user's
+		// own decision, and nothing in the namespace will lift it.
+		if r.heldByDetachedDepsUnderLock(app) {
+			continue
+		}
 		if app.Status != AppStatusRunning {
 			allRunning = false
 		}

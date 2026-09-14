@@ -568,7 +568,9 @@ func streamLiveStatus(c *client.DaemonClient, opts liveStatusOpts) error {
 		}
 		failingSince = time.Time{}
 
-		table, running, failed, stopped, total := renderAppTable(ns.Apps)
+		appTable := renderAppTable(ns.Apps)
+		table, running, failed := appTable.Table, appTable.Running, appTable.Failed
+		stopped, held, total := appTable.Stopped, appTable.Held, appTable.Total
 
 		if isTTY {
 			if !firstPrint && linesPrinted > 0 {
@@ -625,8 +627,11 @@ func streamLiveStatus(c *client.DaemonClient, opts liveStatusOpts) error {
 
 		// All non-detached apps reached RUNNING (detached apps count toward
 		// stopped, which is terminal for our wait purposes) — draw the final
-		// table without the summary and print the success message.
-		if running+stopped == total {
+		// table without the summary and print the success message. An app HELD
+		// by a detached dependency is terminal for the same reason the
+		// dependency itself is: the user stopped it, and nothing here will
+		// release the dependent until they start it again.
+		if running+stopped+held == total {
 			if isTTY && linesPrinted > 0 {
 				output.ClearLines(linesPrinted)
 				fmt.Println(table) //nolint:forbidigo // CLI table
@@ -641,9 +646,10 @@ func streamLiveStatus(c *client.DaemonClient, opts liveStatusOpts) error {
 		}
 
 		// Some apps failed and we've reached a terminal state. Detached apps
-		// (stopped) are terminal too — otherwise a failed + detached mix would
-		// loop forever waiting for the STOPPED apps to "recover".
-		if running+failed+stopped == total && !opts.waitAll {
+		// (stopped) and apps held by a detached dependency are terminal too —
+		// otherwise a failed + detached mix would loop forever waiting for the
+		// STOPPED apps to "recover".
+		if running+failed+stopped+held == total && !opts.waitAll {
 			ensureI18n()
 			fmt.Printf("\n%s\n", output.Colorize(output.Yellow,
 				fmt.Sprintf("%d/%d apps started, %d failed", running, total, failed))) //nolint:forbidigo // CLI result

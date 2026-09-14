@@ -157,9 +157,14 @@ func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secre
 	generateProxy(ctx)
 	generateOnlyOffice(ctx)
 
-	// All generators have run — every app name is now known. Drop any app whose
-	// dependsOn points at an app that wasn't generated (transitively); see
-	// pruneAppsWithMissingDeps.
+	// All generators have run — every app name is now known, so an operator's
+	// dependsOn target that is not among them is a typo and must be REPORTED.
+	// This has to happen before the prune, which answers a missing dependency by
+	// deleting the app that named it.
+	checkConfiguredDependsOnTargets(ctx)
+
+	// Drop any app whose dependsOn points at an app that wasn't generated
+	// (transitively); see pruneAppsWithMissingDeps.
 	pruneAppsWithMissingDeps(ctx)
 
 	if err := checkAppDependencyErrors(ctx); err != nil {
@@ -341,6 +346,28 @@ func pruneAppsWithMissingDeps(ctx *NsGenContext) {
 		}
 		if !removed {
 			return
+		}
+	}
+}
+
+// checkConfiguredDependsOnTargets reports an operator-configured dependsOn
+// target that no generator produced. Without it the target falls through to
+// pruneAppsWithMissingDeps, which removes the webapp that named it — and,
+// transitively, everything depending on THAT — leaving nothing but an
+// slog.Error: a typo in `webapps.emodel.dependsOn` made emodel vanish from the
+// namespace. Generator-emitted wiring is deliberately not checked here; naming
+// an app this mode does not generate is normal for it (keycloak under BASIC
+// auth), and pruning is the right answer there.
+//
+// Must run AFTER every generator and BEFORE the prune.
+func checkConfiguredDependsOnTargets(ctx *NsGenContext) {
+	for app, deps := range ctx.ConfiguredDependsOn {
+		for _, dep := range deps {
+			if _, present := ctx.Applications[dep]; !present {
+				ctx.DependencyErrors = append(ctx.DependencyErrors,
+					fmt.Errorf("webapp %q is configured to depend on %q, which this namespace does not have",
+						app, dep))
+			}
 		}
 	}
 }

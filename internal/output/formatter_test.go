@@ -376,3 +376,63 @@ func TestDisplayWidth(t *testing.T) {
 		}
 	}
 }
+
+// An app parked in DEPS_WAITING by a DETACHED dependency will not move until
+// the user starts that dependency again, so the CLI wait has to count it as
+// settled. It is neither RUNNING nor FAILED nor STOPPED, so `citeck start`'s
+// terminal check (running+failed+stopped == total) never matched and the
+// command polled forever — a reachable state since a stopped dependency began
+// holding its dependents.
+func TestFormatAppTable_CountsAppsHeldByADetachedDependency(t *testing.T) {
+	apps := []api.AppDto{
+		{Name: "gateway", Status: "RUNNING"},
+		{Name: "postgres", Status: "STOPPED"},
+		{Name: "emodel", Status: "DEPS_WAITING", WaitingFor: []api.WaitingDepDto{
+			{App: "postgres", Status: "STOPPED"},
+		}},
+	}
+
+	r := FormatAppTable(apps)
+
+	if r.Held != 1 {
+		t.Errorf("held = %d, want 1 (an app held by a stopped dependency is terminal)", r.Held)
+	}
+	if r.Running != 1 || r.Stopped != 1 || r.Total != 3 {
+		t.Errorf("running/stopped/total = %d/%d/%d, want 1/1/3", r.Running, r.Stopped, r.Total)
+	}
+}
+
+// A dependency that is still STARTING can move on its own, so its dependent is
+// genuinely pending and must NOT be counted as settled.
+func TestFormatAppTable_AnAppWaitingOnAStartingDependencyIsNotHeld(t *testing.T) {
+	apps := []api.AppDto{
+		{Name: "postgres", Status: "STARTING"},
+		{Name: "emodel", Status: "DEPS_WAITING", WaitingFor: []api.WaitingDepDto{
+			{App: "postgres", Status: "STARTING"},
+		}},
+	}
+
+	r := FormatAppTable(apps)
+
+	if r.Held != 0 {
+		t.Errorf("held = %d, want 0 (the dependency can still come up on its own)", r.Held)
+	}
+}
+
+// The reason is on the wire (AppDto.WaitingFor) but `citeck status` rendered a
+// bare DEPS_WAITING, so the operator saw a stuck app with no cause.
+func TestFormatAppTable_DepsWaitingNamesWhatItWaitsFor(t *testing.T) {
+	apps := []api.AppDto{
+		{Name: "emodel", Status: "DEPS_WAITING", WaitingFor: []api.WaitingDepDto{
+			{App: "postgres", Status: "STOPPED"},
+			{App: "zookeeper", Status: "STARTING"},
+		}},
+	}
+
+	r := FormatAppTable(apps)
+
+	stripped := ansiRE.ReplaceAllString(r.Table, "")
+	if !strings.Contains(stripped, "postgres") || !strings.Contains(stripped, "zookeeper") {
+		t.Errorf("the STATUS cell must name what the app waits for, got:\n%s", stripped)
+	}
+}
