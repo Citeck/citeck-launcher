@@ -244,3 +244,81 @@ func TestAnAppWithNoUnmetDependenciesIsNotHeld(t *testing.T) {
 
 	assert.False(t, r.heldByDetachedDepsUnderLock(r.apps["emodel"]))
 }
+
+// The settling rule has to be TRANSITIVE, or it only moves the hang one link up
+// the chain. Every webapp depends on zookeeper and rabbitmq, and the proxy
+// depends on the gateway — so in a default namespace with no rag in it,
+// `citeck stop zookeeper` leaves gateway held (its only unmet dep is detached)
+// while proxy waits on gateway, which is in DEPS_WAITING and NOT in
+// manualStoppedApps. A one-level rule counts proxy as pending and the namespace
+// sits in STARTING forever, which is the whole defect this rule exists to fix.
+func TestTheSettlingRuleFollowsTheWholeChain(t *testing.T) {
+	r := newTestRuntimeWithApps(t, map[string]appdef.ApplicationDef{
+		"zookeeper": {Name: "zookeeper"},
+		"gateway":   {Name: "gateway", DependsOn: appdef.StringSet{"zookeeper"}},
+		"proxy":     {Name: "proxy", DependsOn: appdef.StringSet{"gateway"}},
+	})
+	r.manualStoppedApps["zookeeper"] = true
+	r.apps["zookeeper"].Status = AppStatusStopped
+	r.apps["gateway"].Status = AppStatusDepsWaiting
+	r.apps["proxy"].Status = AppStatusDepsWaiting
+	r.status = NsStatusStarting
+
+	assert.True(t, r.heldByDetachedDepsUnderLock(r.apps["proxy"]),
+		"proxy ждёт gateway, который сам удерживается отцепленным zookeeper")
+
+	r.checkStatus()
+	assert.Equal(t, NsStatusRunning, r.status)
+}
+
+// …and only while the whole chain is held. One link that can still come up on
+// its own makes everything above it genuinely pending.
+func TestAChainWithALiveLinkIsNotSettled(t *testing.T) {
+	r := newTestRuntimeWithApps(t, map[string]appdef.ApplicationDef{
+		"zookeeper": {Name: "zookeeper"},
+		"gateway":   {Name: "gateway", DependsOn: appdef.StringSet{"zookeeper"}},
+		"proxy":     {Name: "proxy", DependsOn: appdef.StringSet{"gateway"}},
+	})
+	r.apps["zookeeper"].Status = AppStatusStarting
+	r.apps["gateway"].Status = AppStatusDepsWaiting
+	r.apps["proxy"].Status = AppStatusDepsWaiting
+
+	assert.False(t, r.heldByDetachedDepsUnderLock(r.apps["proxy"]))
+}
+
+// A dependency cycle is rejected at generation, but the predicate walks the
+// graph and must not recurse forever if one ever reaches the runtime (a
+// hand-edited state file, a future generator bug).
+func TestTheSettlingWalkTerminatesOnACycle(t *testing.T) {
+	r := newTestRuntimeWithApps(t, map[string]appdef.ApplicationDef{
+		"a": {Name: "a", DependsOn: appdef.StringSet{"b"}},
+		"b": {Name: "b", DependsOn: appdef.StringSet{"a"}},
+	})
+	r.apps["a"].Status = AppStatusDepsWaiting
+	r.apps["b"].Status = AppStatusDepsWaiting
+
+	assert.False(t, r.heldByDetachedDepsUnderLock(r.apps["a"]),
+		"цикл без единой отцепленной зависимости ничем не удерживается")
+}
+
+// The settled verdict travels on the wire as AppDto.Held, because deriving it
+// needs the detach set and a walk of the dependency graph — neither of which a
+// client has. The CLI's wait loop counts this flag; a DTO that never carries it
+// is a `citeck start` that never returns.
+func TestTheDtoCarriesTheHeldVerdict(t *testing.T) {
+	r := newTestRuntimeWithApps(t, map[string]appdef.ApplicationDef{
+		"zookeeper": {Name: "zookeeper"},
+		"gateway":   {Name: "gateway", DependsOn: appdef.StringSet{"zookeeper"}},
+		"proxy":     {Name: "proxy", DependsOn: appdef.StringSet{"gateway"}},
+	})
+	r.manualStoppedApps["zookeeper"] = true
+	r.apps["zookeeper"].Status = AppStatusStopped
+	r.apps["gateway"].Status = AppStatusDepsWaiting
+	r.apps["proxy"].Status = AppStatusDepsWaiting
+
+	dto := r.ToNamespaceDto()
+
+	assert.True(t, appDtoByName(t, dto, "gateway").Held)
+	assert.True(t, appDtoByName(t, dto, "proxy").Held, "решение должно быть транзитивным и на проводе")
+	assert.False(t, appDtoByName(t, dto, "zookeeper").Held, "сам отцепленный апп не «удерживается»")
+}

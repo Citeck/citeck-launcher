@@ -410,6 +410,16 @@ func webappDependsOn(name string, ctx *NsGenContext) []string {
 // on its own container). Extracted from generateWebapp to keep its cyclomatic
 // complexity under the linter threshold (same rationale as addWebappInfraEnv).
 func applyConfiguredDependsOn(name string, app *AppBuilder, ctx *NsGenContext) {
+	// Only the namespace.yml layer is validated as a typo (see
+	// checkConfiguredDependsOnTargets): it is the file THIS operator owns. The
+	// workspace layer lives in a git repo they usually cannot edit, and it is
+	// shared by every namespace on that workspace — failing generation there
+	// would take the whole namespace down over a line the operator cannot
+	// change, and over a target that is legitimately absent on some namespaces
+	// (an app turned off in namespace.yml, keycloak under BASIC auth). That
+	// layer keeps the prune.
+	wp, hasNsEntry := ctx.Config.Webapps[name]
+	fromNamespaceYAML := hasNsEntry && wp.DependsOn != nil
 	for _, dep := range webappDependsOn(name, ctx) {
 		if dep == name {
 			ctx.DependencyErrors = append(ctx.DependencyErrors,
@@ -417,7 +427,10 @@ func applyConfiguredDependsOn(name string, app *AppBuilder, ctx *NsGenContext) {
 			continue
 		}
 		app.AddDependsOn(dep)
-		// Remember it as the OPERATOR's, so a target that does not exist is
+		if !fromNamespaceYAML {
+			continue
+		}
+		// Remember it as THIS operator's, so a target that does not exist is
 		// reported instead of silently costing this webapp its place in the
 		// namespace (checkConfiguredDependsOnTargets).
 		if ctx.ConfiguredDependsOn == nil {

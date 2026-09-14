@@ -387,7 +387,7 @@ func TestFormatAppTable_CountsAppsHeldByADetachedDependency(t *testing.T) {
 	apps := []api.AppDto{
 		{Name: "gateway", Status: "RUNNING"},
 		{Name: "postgres", Status: "STOPPED"},
-		{Name: "emodel", Status: "DEPS_WAITING", WaitingFor: []api.WaitingDepDto{
+		{Name: "emodel", Status: "DEPS_WAITING", Held: true, WaitingFor: []api.WaitingDepDto{
 			{App: "postgres", Status: "STOPPED"},
 		}},
 	}
@@ -402,9 +402,10 @@ func TestFormatAppTable_CountsAppsHeldByADetachedDependency(t *testing.T) {
 	}
 }
 
-// A dependency that is still STARTING can move on its own, so its dependent is
-// genuinely pending and must NOT be counted as settled.
-func TestFormatAppTable_AnAppWaitingOnAStartingDependencyIsNotHeld(t *testing.T) {
+// A DEPS_WAITING app the daemon did NOT mark held is genuinely pending — the
+// table must not decide otherwise on its own, or the two sides would answer the
+// same question differently.
+func TestFormatAppTable_AnUnmarkedDepsWaitingAppIsNotHeld(t *testing.T) {
 	apps := []api.AppDto{
 		{Name: "postgres", Status: "STARTING"},
 		{Name: "emodel", Status: "DEPS_WAITING", WaitingFor: []api.WaitingDepDto{
@@ -415,7 +416,7 @@ func TestFormatAppTable_AnAppWaitingOnAStartingDependencyIsNotHeld(t *testing.T)
 	r := FormatAppTable(apps)
 
 	if r.Held != 0 {
-		t.Errorf("held = %d, want 0 (the dependency can still come up on its own)", r.Held)
+		t.Errorf("held = %d, want 0 (the daemon did not mark it held)", r.Held)
 	}
 }
 

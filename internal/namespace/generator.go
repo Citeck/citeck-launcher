@@ -350,14 +350,18 @@ func pruneAppsWithMissingDeps(ctx *NsGenContext) {
 	}
 }
 
-// checkConfiguredDependsOnTargets reports an operator-configured dependsOn
-// target that no generator produced. Without it the target falls through to
+// checkConfiguredDependsOnTargets reports a namespace.yml dependsOn target that
+// no generator produced. Without it the target falls through to
 // pruneAppsWithMissingDeps, which removes the webapp that named it — and,
 // transitively, everything depending on THAT — leaving nothing but an
 // slog.Error: a typo in `webapps.emodel.dependsOn` made emodel vanish from the
-// namespace. Generator-emitted wiring is deliberately not checked here; naming
-// an app this mode does not generate is normal for it (keycloak under BASIC
-// auth), and pruning is the right answer there.
+// namespace. Two layers are deliberately NOT checked here, for the same reason:
+// naming an app this namespace does not generate is normal for them, and prune
+// is the right answer. Generator-emitted wiring names keycloak under BASIC
+// auth; the WORKSPACE layer is a shared file in a git repo the local operator
+// usually cannot edit, so a hard failure there would take down every namespace
+// on that workspace over a line none of them can change
+// (see applyConfiguredDependsOn).
 //
 // Must run AFTER every generator and BEFORE the prune.
 func checkConfiguredDependsOnTargets(ctx *NsGenContext) {

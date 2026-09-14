@@ -59,7 +59,7 @@ func regenOnAttachToggle(rt *namespace.Runtime, name string) bool {
 func (d *Daemon) regenAfterAttachToggleAsync(app, action string) {
 	go func() {
 		if !d.longOp.TryLock(longOpUpdatePass) {
-			//nolint:gosec // G706: app is validated by validateAppName and gated to the constant attachToggleRegenApps set; action is a caller literal
+			//nolint:gosec // G706: app is validated by validateAppName and gated to the runtime's GatingApps set; action is a caller literal
 			slog.Warn("Attach-toggle regeneration skipped: "+d.longOp.Holder().busyEnglish()+
 				"; the proxy / AI wiring is regenerated on the next reload or start",
 				"app", app, "action", action)

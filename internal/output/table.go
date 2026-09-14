@@ -135,10 +135,12 @@ type AppTableResult struct {
 	Running int
 	Failed  int
 	Stopped int
-	// Held counts apps parked in DEPS_WAITING by dependencies the user has
-	// DETACHED. They are settled, not pending: nothing in the namespace will
-	// release them until the operator starts the dependency again, so a wait
-	// loop that does not count them as terminal never ends.
+	// Held counts apps the daemon marked AppDto.Held: parked in DEPS_WAITING by
+	// a dependency the user has DETACHED, however many links away. They are
+	// settled, not pending — nothing in the namespace will release them until
+	// the operator starts that dependency again — so a wait loop that does not
+	// count them as terminal never ends. The decision is the daemon's; this side
+	// only counts it.
 	Held  int
 	Total int
 	// AnyEdited is true when at least one app carries a user config edit
@@ -172,23 +174,6 @@ var kindOrder = []struct {
 	{"CITECK_CORE_EXTENSION", "Citeck Core Extensions"},
 	{"CITECK_ADDITIONAL", "Citeck Additional"},
 	{"THIRD_PARTY", "Third Party"},
-}
-
-// heldByDetachedDeps reports whether an app is in DEPS_WAITING solely because
-// the user stopped what it depends on. Mirrors the daemon-side rule
-// (Runtime.heldByDetachedDepsUnderLock): EVERY unmet dependency must be
-// STOPPED, since a dependency that is merely starting can still come up on its
-// own and its dependent is then genuinely pending.
-func heldByDetachedDeps(app api.AppDto) bool {
-	if len(app.WaitingFor) == 0 {
-		return false
-	}
-	for _, dep := range app.WaitingFor {
-		if dep.Status != "STOPPED" {
-			return false
-		}
-	}
-	return true
 }
 
 // appStatusCell renders the STATUS column. For DEPS_WAITING it appends the
@@ -231,7 +216,7 @@ func FormatAppTable(apps []api.AppDto) AppTableResult {
 		case "STOPPED":
 			stopped++
 		case "DEPS_WAITING":
-			if heldByDetachedDeps(app) {
+			if app.Held {
 				held++
 			}
 		}
