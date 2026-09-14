@@ -471,6 +471,20 @@ func (s *FileStore) ListNamespaces(_ string) ([]NamespaceRow, error) {
 	return []NamespaceRow{{ID: m.ID, Name: m.Name}}, nil
 }
 
+// ListAllNamespaceRefs mirrors ListNamespaces: server mode has one implicit
+// workspace, whose id is the empty string every Docker resource is labeled with.
+func (s *FileStore) ListAllNamespaceRefs() ([]NamespaceRef, error) {
+	rows, err := s.ListNamespaces("")
+	if err != nil {
+		return nil, err
+	}
+	out := make([]NamespaceRef, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, NamespaceRef{NsID: r.ID})
+	}
+	return out, nil
+}
+
 // LoadNamespaceConfig returns the server namespace config YAML from conf/namespace.yml.
 func (s *FileStore) LoadNamespaceConfig(_, _ string) (configYAML string, ok bool, err error) {
 	s.mu.RLock()

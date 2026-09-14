@@ -31,6 +31,16 @@ type orphanVolumeDir struct {
 	Name      string
 }
 
+// orphanNamedVolume is a Docker NAMED volume belonging to a namespace the store
+// no longer has. Desktop mode keeps every app's data in these (server mode uses
+// bind directories, which orphanVolumeDir covers), so without them `citeck
+// clean --volumes` could not reclaim a desktop namespace's data at all.
+type orphanNamedVolume struct {
+	Name      string
+	Namespace string
+	Workspace string
+}
+
 func newCleanCmd() *cobra.Command {
 	var execute bool
 	var volumes bool
@@ -57,9 +67,10 @@ func newCleanCmd() *cobra.Command {
 
 // cleanScanResult holds the results of scanning for orphaned resources.
 type cleanScanResult struct {
-	orphans    []orphanContainer
-	orphanVols []orphanVolumeDir
-	orphanNets []string
+	orphans        []orphanContainer
+	orphanVols     []orphanVolumeDir
+	orphanNamedVol []orphanNamedVolume
+	orphanNets     []string
 }
 
 func runClean(execute, volumes, images bool) error {
@@ -82,7 +93,8 @@ func runClean(execute, volumes, images bool) error {
 		return err
 	}
 
-	if len(scan.orphans) == 0 && len(scan.orphanVols) == 0 && len(scan.orphanNets) == 0 && !images {
+	if len(scan.orphans) == 0 && len(scan.orphanVols) == 0 && len(scan.orphanNamedVol) == 0 &&
+		len(scan.orphanNets) == 0 && !images {
 		output.PrintResult(map[string]any{"orphans": 0}, func() {
 			output.PrintText("No orphaned resources found.")
 		})
@@ -113,6 +125,10 @@ func scanOrphans(ctx context.Context, dc *docker.Client, knownNS map[string]bool
 
 	if volumes {
 		scan.orphanVols = findOrphanVolumeDirs(knownNS)
+		scan.orphanNamedVol, err = findOrphanNamedVolumes(ctx, dc, knownNS)
+		if err != nil {
+			return scan, fmt.Errorf("scan named volumes: %w", err)
+		}
 	}
 
 	scan.orphanNets, _ = findOrphanNetworks(ctx, dc, knownNS)
@@ -121,10 +137,11 @@ func scanOrphans(ctx context.Context, dc *docker.Client, knownNS map[string]bool
 
 func printOrphanFindings(scan cleanScanResult, execute, images bool) {
 	output.PrintResult(map[string]any{
-		"containers": len(scan.orphans),
-		"volumes":    len(scan.orphanVols),
-		"networks":   len(scan.orphanNets),
-		"dryRun":     !execute,
+		"containers":   len(scan.orphans),
+		"volumes":      len(scan.orphanVols),
+		"namedVolumes": len(scan.orphanNamedVol),
+		"networks":     len(scan.orphanNets),
+		"dryRun":       !execute,
 	}, func() {
 		if len(scan.orphans) > 0 {
 			output.PrintText(fmt.Sprintf("Orphaned containers: %d", len(scan.orphans)))
@@ -136,6 +153,12 @@ func printOrphanFindings(scan cleanScanResult, execute, images bool) {
 			output.PrintText(fmt.Sprintf("Orphaned volume dirs: %d", len(scan.orphanVols)))
 			for _, v := range scan.orphanVols {
 				output.PrintText(fmt.Sprintf("  %-30s  ns=%s", v.Name, v.Namespace))
+			}
+		}
+		if len(scan.orphanNamedVol) > 0 {
+			output.PrintText(fmt.Sprintf("Orphaned named volumes (DATA): %d", len(scan.orphanNamedVol)))
+			for _, v := range scan.orphanNamedVol {
+				output.PrintText(fmt.Sprintf("  %-40s  ns=%s", v.Name, v.Namespace))
 			}
 		}
 		if len(scan.orphanNets) > 0 {
@@ -154,7 +177,8 @@ func printOrphanFindings(scan cleanScanResult, execute, images bool) {
 }
 
 func confirmCleanRemoval(scan cleanScanResult, images bool) bool {
-	what := fmt.Sprintf("%d containers, %d volume dirs, %d networks", len(scan.orphans), len(scan.orphanVols), len(scan.orphanNets))
+	what := fmt.Sprintf("%d containers, %d volume dirs, %d named volumes, %d networks",
+		len(scan.orphans), len(scan.orphanVols), len(scan.orphanNamedVol), len(scan.orphanNets))
 	if images {
 		what += " + dangling images"
 	}
@@ -199,6 +223,16 @@ func executeCleanRemoval(dc *docker.Client, scan cleanScanResult, images bool) e
 		}
 	}
 
+	namedVolRemoved := 0
+	for _, v := range scan.orphanNamedVol {
+		if err := dc.RemoveVolume(execCtx, v.Name); err != nil {
+			output.Errf("Failed to remove volume %s: %v", v.Name, err)
+			failed++
+		} else {
+			namedVolRemoved++
+		}
+	}
+
 	var reclaimedMB float64
 	if images {
 		pruneCtx, pruneCancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -213,15 +247,17 @@ func executeCleanRemoval(dc *docker.Client, scan cleanScanResult, images bool) e
 	}
 
 	jsonResult := map[string]any{
-		"removed":    removed,
-		"volRemoved": volRemoved,
-		"failed":     failed,
+		"removed":         removed,
+		"volRemoved":      volRemoved,
+		"namedVolRemoved": namedVolRemoved,
+		"failed":          failed,
 	}
 	if images {
 		jsonResult["reclaimedMB"] = reclaimedMB
 	}
 	output.PrintResult(jsonResult, func() {
-		output.PrintText(fmt.Sprintf("Removed %d containers, %d volume dirs (%d failed)", removed, volRemoved, failed))
+		output.PrintText(fmt.Sprintf("Removed %d containers, %d volume dirs, %d named volumes (%d failed)",
+			removed, volRemoved, namedVolRemoved, failed))
 		if images && reclaimedMB > 0 {
 			output.PrintText(fmt.Sprintf("Reclaimed %.1f MB from dangling images", reclaimedMB))
 		}
@@ -247,24 +283,25 @@ func knownNamespaceIDs() (map[string]bool, error) {
 // the SQLite store (a freshly-created namespace has a store row before any
 // directory exists, so a directory scan would miss it).
 func desktopKnownNamespaceIDs() (map[string]bool, error) {
-	known := make(map[string]bool)
 	store, err := storage.NewSQLiteStore(config.HomeDir())
 	if err != nil {
 		return nil, fmt.Errorf("open store: %w", err)
 	}
 	defer store.Close()
-	workspaces, err := store.ListWorkspaces()
+	return knownNamespaceIDsFromStore(store)
+}
+
+// knownNamespaceIDsFromStore reads EVERY stored namespace, not a walk of
+// workspaces → their namespaces: a namespace row can outlive its workspace row,
+// and this set is what protects a namespace from being offered for deletion.
+func knownNamespaceIDsFromStore(store storage.Store) (map[string]bool, error) {
+	refs, err := store.ListAllNamespaceRefs()
 	if err != nil {
-		return nil, fmt.Errorf("list workspaces: %w", err)
+		return nil, fmt.Errorf("list namespaces: %w", err)
 	}
-	for _, ws := range workspaces {
-		rows, lerr := store.ListNamespaces(ws.ID)
-		if lerr != nil {
-			return nil, fmt.Errorf("list namespaces for %s: %w", ws.ID, lerr)
-		}
-		for _, row := range rows {
-			known[row.ID] = true
-		}
+	known := make(map[string]bool, len(refs))
+	for _, ref := range refs {
+		known[ref.NsID] = true
 	}
 	return known, nil
 }
@@ -311,6 +348,35 @@ func findOrphanNetworks(ctx context.Context, dc *docker.Client, knownNS map[stri
 		orphans = append(orphans, net.Name)
 	}
 	return orphans, nil
+}
+
+// findOrphanNamedVolumes lists every launcher-labeled Docker named volume on
+// the host and keeps those whose namespace the store no longer has.
+func findOrphanNamedVolumes(ctx context.Context, dc *docker.Client, knownNS map[string]bool) ([]orphanNamedVolume, error) {
+	vols, err := dc.ListAllLauncherVolumes(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list volumes: %w", err)
+	}
+	return collectOrphanNamedVolumes(vols, knownNS), nil
+}
+
+// collectOrphanNamedVolumes is the decision, kept pure so it is testable without
+// Docker. A volume with no namespace label is skipped for the same reason the
+// container scan skips one: it cannot be attributed, and this list is about to
+// be offered for deletion.
+func collectOrphanNamedVolumes(vols []docker.LauncherVolume, knownNS map[string]bool) []orphanNamedVolume {
+	orphans := make([]orphanNamedVolume, 0, len(vols))
+	for _, v := range vols {
+		if v.Namespace == "" || knownNS[v.Namespace] {
+			continue
+		}
+		orphans = append(orphans, orphanNamedVolume{
+			Name:      v.Name,
+			Namespace: v.Namespace,
+			Workspace: v.Workspace,
+		})
+	}
+	return orphans
 }
 
 func findOrphanVolumeDirs(knownNS map[string]bool) []orphanVolumeDir {

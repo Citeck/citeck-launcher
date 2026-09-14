@@ -53,6 +53,39 @@ func (c *Client) ListVolumes(ctx context.Context) ([]VolumeInfo, error) {
 	return out, nil
 }
 
+// LauncherVolume is a named volume carrying the launcher's labels, listed
+// host-wide rather than scoped to one (namespace, workspace). Used by
+// `citeck clean` to find the volumes of namespaces the store no longer has.
+type LauncherVolume struct {
+	Name      string
+	Namespace string
+	Workspace string
+	OrigName  string
+}
+
+// ListAllLauncherVolumes returns EVERY named volume with the citeck.launcher
+// label, whatever namespace or workspace it belongs to — the volume counterpart
+// of ListAllLauncherContainers. Sizes are not measured (that needs a container
+// per volume); the caller asks for one with VolumeSize if it wants a number.
+func (c *Client) ListAllLauncherVolumes(ctx context.Context) ([]LauncherVolume, error) {
+	resp, err := c.cli.VolumeList(ctx, client.VolumeListOptions{
+		Filters: make(client.Filters).Add("label", LabelLauncher+"=true"),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list all launcher volumes: %w", err)
+	}
+	out := make([]LauncherVolume, 0, len(resp.Items))
+	for _, v := range resp.Items {
+		out = append(out, LauncherVolume{
+			Name:      v.Name,
+			Namespace: v.Labels[LabelNamespace],
+			Workspace: v.Labels[LabelWorkspace],
+			OrigName:  v.Labels[LabelOrigName],
+		})
+	}
+	return out, nil
+}
+
 // EnsureUtilsImage makes sure the launcher-utils image is on the host, pulling
 // it if it is not. It is the shared preamble of EVERY caller of
 // RunUtilsContainer — volume sizing, snapshot export/import, the dependency

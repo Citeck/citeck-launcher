@@ -395,9 +395,12 @@ func (s *SQLiteStore) DeleteWorkspace(id string) error {
 		return fmt.Errorf("delete workspace %s: %w", id, err)
 	}
 	// Cascade the workspace's namespaces (config + state rows) — otherwise they
-	// orphan in the DB and, worse, keep SweepOrphans protecting their Docker
-	// volumes (the keep-set is built from stored namespaces), so the data would
-	// never be reclaimed.
+	// orphan in the DB: rows the launcher still reads as namespaces, belonging
+	// to a workspace nothing lists. (An earlier version of this comment claimed
+	// such rows PROTECT their Docker volumes from the startup sweep. They did
+	// not: the sweep's keep set is built from the namespaces table directly
+	// exactly because a workspace-first walk could not reach them, and before
+	// that fix they were unprotected, not over-protected.)
 	if _, err := tx.Exec("DELETE FROM namespaces WHERE ws_id = ?", id); err != nil {
 		return fmt.Errorf("delete workspace %s namespaces: %w", id, err)
 	}
@@ -703,6 +706,30 @@ func (s *SQLiteStore) ListNamespaces(wsID string) ([]NamespaceRow, error) {
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate namespaces: %w", err)
+	}
+	return out, nil
+}
+
+// ListAllNamespaceRefs returns every namespace row in the store, whether or not
+// its workspace still has a row of its own. The startup orphan-sweep builds its
+// keep set from this: walking workspaces first made a namespace whose workspace
+// row was deleted unreachable, and swept its containers.
+func (s *SQLiteStore) ListAllNamespaceRefs() ([]NamespaceRef, error) {
+	rows, err := s.db.Query(`SELECT DISTINCT ws_id, ns_id FROM namespaces ORDER BY ws_id, ns_id`)
+	if err != nil {
+		return nil, fmt.Errorf("query all namespaces: %w", err)
+	}
+	defer rows.Close()
+	var out []NamespaceRef
+	for rows.Next() {
+		var r NamespaceRef
+		if err := rows.Scan(&r.WsID, &r.NsID); err != nil {
+			return nil, fmt.Errorf("scan namespace ref: %w", err)
+		}
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate namespace refs: %w", err)
 	}
 	return out, nil
 }

@@ -85,15 +85,18 @@ func orphanKey(nsID, wsID string) string {
 // distinct (namespace, workspace) pairs that should be purged: those NOT in
 // keep. Resources with an empty namespace label are skipped — they cannot be
 // addressed by PurgeNamespace's exact-label filter and are too ambiguous to
-// remove safely. Pure (no Docker calls) so the keep/dedup logic is unit-tested
-// independently of the SDK.
+// remove safely. Resources with an empty WORKSPACE label are skipped for a
+// different reason: only a launcher in SERVER mode writes that (Client.workspace
+// is empty there), so the pair belongs to a stand this desktop profile does not
+// own and whose store it cannot read. Pure (no Docker calls) so the keep/dedup
+// logic is unit-tested independently of the SDK.
 func collectOrphanTargets(labelSets []map[string]string, keep map[string]bool) []OrphanTarget {
 	seen := map[string]bool{}
 	var targets []OrphanTarget
 	for _, labels := range labelSets {
 		ns := labels[LabelNamespace]
 		ws := labels[LabelWorkspace]
-		if ns == "" {
+		if ns == "" || ws == "" {
 			continue
 		}
 		key := orphanKey(ns, ws)
@@ -155,19 +158,51 @@ func (c *Client) FindOrphans(ctx context.Context, keep map[string]bool) []Orphan
 	return collectOrphanTargets(labelSets, keep)
 }
 
-// PurgeOrphans is the sweep's REMOVING phase: each pair goes through
-// PurgeNamespace (containers → named volumes → network). Returns the distinct
-// namespace ids it purged, for the caller to log. Desktop-only by convention
-// (the caller gates on IsDesktopMode); server mode has a single file-backed
-// namespace and no orphan churn.
-func (c *Client) PurgeOrphans(ctx context.Context, targets []OrphanTarget) []string {
-	purged := make([]string, 0, len(targets))
+// RemoveOrphanContainers is the sweep's REMOVING phase, and it removes
+// CONTAINERS and nothing else. The startup sweep exists to free the published
+// host ports a leftover namespace is squatting, which is a property of its
+// containers; reclaiming disk was never its job. It used to call PurgeNamespace
+// — containers with RemoveVolumes, then every named volume of the pair, then
+// the network — so a pair the keep set could not account for lost its data
+// silently, at daemon start, with two INFO lines to show for it. Removing data
+// is now reachable only through something the operator typed: deleting the
+// namespace or the workspace, or `citeck clean --force`.
+//
+// RemoveVolumes is FALSE for the same reason: an anonymous volume is still the
+// container's data, and nobody asked for it to go.
+//
+// Returns the distinct namespace ids it removed containers for, so the caller
+// can log them. Desktop-only by convention (the caller gates on IsDesktopMode);
+// server mode has a single file-backed namespace and no orphan churn.
+func (c *Client) RemoveOrphanContainers(ctx context.Context, targets []OrphanTarget) []string {
+	removed := make([]string, 0, len(targets))
 	for _, t := range targets {
-		slog.Info("SweepOrphans: purging orphaned namespace resources", "ns", t.NS, "ws", t.WS)
-		c.PurgeNamespace(ctx, t.NS, t.WS)
-		purged = append(purged, t.NS)
+		nsFilter := make(client.Filters).Add("label", LabelNamespace+"="+t.NS)
+		cs, err := c.cli.ContainerList(ctx, client.ContainerListOptions{All: true, Filters: nsFilter})
+		if err != nil {
+			slog.Warn("SweepOrphans: list containers failed", "ns", t.NS, "err", err)
+			continue
+		}
+		acted := false
+		for _, ct := range cs.Items {
+			if !strings.EqualFold(ct.Labels[LabelWorkspace], t.WS) {
+				continue
+			}
+			if !acted {
+				slog.Info("SweepOrphans: removing containers of an orphaned namespace "+
+					"(its volumes and network are kept)", "ns", t.NS, "ws", t.WS)
+				acted = true
+			}
+			if _, rmErr := c.cli.ContainerRemove(ctx, ct.ID,
+				client.ContainerRemoveOptions{Force: true, RemoveVolumes: false}); rmErr != nil {
+				slog.Warn("SweepOrphans: remove container failed", "ns", t.NS, "container", ct.ID, "err", rmErr)
+			}
+		}
+		if acted {
+			removed = append(removed, t.NS)
+		}
 	}
-	return purged
+	return removed
 }
 
 // OrphanKey builds the keep-set key for a (namespace, workspace) that still

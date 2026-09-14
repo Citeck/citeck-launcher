@@ -194,6 +194,9 @@ func (m *mockStore) ListGitRepoStates() ([]storage.GitRepoState, error) { return
 func (m *mockStore) ListNamespaces(string) ([]storage.NamespaceRow, error) {
 	return nil, nil
 }
+func (m *mockStore) ListAllNamespaceRefs() ([]storage.NamespaceRef, error) {
+	return nil, nil
+}
 func (m *mockStore) LoadNamespaceConfig(_, _ string) (configYAML string, ok bool, err error) {
 	return "", false, nil
 }
