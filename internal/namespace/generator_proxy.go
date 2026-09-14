@@ -117,10 +117,7 @@ func generateProxy(ctx *NsGenContext) {
 	}
 	app.AddEnv("ECOS_PAGE_TITLE", "Citeck Launcher")
 
-	proxyImg := ctx.Config.Proxy.Image
-	if proxyImg == "" {
-		proxyImg = bundleImageOr(ctx, appdef.AppProxy, "")
-	}
+	proxyImg := resolveAppImage(ctx, appdef.AppProxy, ctx.Config.Proxy.Image, "")
 	app.Image = proxyImg
 
 	proxyTarget := fmt.Sprintf("%s:%s", appdef.AppGateway, gatewayPort)

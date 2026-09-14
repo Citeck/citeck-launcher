@@ -63,11 +63,28 @@ var UtilsImage = config.UtilsImage()
 // both do runs the bundle's; inverting that here would silently change what
 // those stands run on the next reload.
 func bundleImageOr(ctx *NsGenContext, name, fallback string) string {
-	if image := bundleDependencyImage(ctx, name); image != "" {
-		return image
+	return resolveAppImage(ctx, name, "", fallback)
+}
+
+// resolveAppImage keeps the release selected by the bundle above namespace
+// and workspace defaults. Explicit citeck edit patches are applied later by
+// Generate. Dependency data pins are also handled separately by their gate.
+func resolveAppImage(ctx *NsGenContext, name, namespaceImage, fallback string) string {
+	if ctx.Bundle != nil {
+		image := ctx.Bundle.Dependencies[name].Image
+		if image == "" {
+			image = ctx.Bundle.Applications[name].Image
+		}
+		if image != "" {
+			if namespaceImage != "" && namespaceImage != image {
+				slog.Warn("Bundle image overrides namespace image; use citeck edit for an explicit override",
+					"app", name, "bundleImage", image, "namespaceImage", namespaceImage)
+			}
+			return image
+		}
 	}
-	if app, ok := ctx.Bundle.Applications[name]; ok && app.Image != "" {
-		return app.Image
+	if namespaceImage != "" {
+		return namespaceImage
 	}
 	if image := workspaceDependencyImage(ctx, name); image != "" {
 		return image
@@ -75,22 +92,8 @@ func bundleImageOr(ctx *NsGenContext, name, fallback string) string {
 	return fallback
 }
 
-// bundleDependencyImage answers only the bundle's `dependencies:` section (empty
-// when it names nothing for this app). Split out for generateMongoDB, which does
-// not go through bundleImageOr at all: mongo's image comes from the namespace
-// config and has never read the bundle's top-level map, so giving it the new
-// source must not quietly give it that one too.
-func bundleDependencyImage(ctx *NsGenContext, name string) string {
-	return ctx.Bundle.Dependencies[name].Image
-}
-
-// workspaceDependencyImage answers only the workspace config's `dependencies:`
-// section. Split out for the same reason as its bundle twin: generateMongoDB
-// consults the two sections directly, in the chain of its own, and must not
-// acquire the bundle's top-level map on the way. The registry rewriting lives
-// on the other side of this call (WorkspaceConfig.DependencyImage), so a
-// mirrored image resolves here exactly as it does for additionalApps; a nil
-// workspace config answers "".
+// workspaceDependencyImage resolves the workspace section, including registry
+// prefixes. A nil workspace config answers "".
 func workspaceDependencyImage(ctx *NsGenContext, name string) string {
 	return ctx.WorkspaceConfig.DependencyImage(name)
 }

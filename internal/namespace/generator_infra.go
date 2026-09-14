@@ -44,22 +44,7 @@ func generateMongoDB(ctx *NsGenContext) {
 	if !ctx.Config.MongoEnabled() {
 		return
 	}
-	// Precedence: the namespace config (an explicit, per-namespace choice) wins,
-	// then the bundle's `dependencies:` section, then the workspace's, then the
-	// launcher's own default. Mongo deliberately does NOT consult the bundle's
-	// top-level map, nor a typed workspace block (it has never had one) — it
-	// never has, and starting now would move the image of every namespace whose
-	// bundle happens to name one.
-	img := ctx.Config.MongoDB.Image
-	if img == "" {
-		img = bundleDependencyImage(ctx, appdef.AppMongodb)
-	}
-	if img == "" {
-		img = workspaceDependencyImage(ctx, appdef.AppMongodb)
-	}
-	if img == "" {
-		img = "mongo:4.0.2"
-	}
+	img := resolveAppImage(ctx, appdef.AppMongodb, ctx.Config.MongoDB.Image, "mongo:4.0.2")
 	img = resolveDependencyImage(ctx, deps.MongoDB, img)
 	app := ctx.GetOrCreateApp(appdef.AppMongodb)
 	app.Image = img
@@ -105,24 +90,12 @@ func generatePgAdmin(ctx *NsGenContext) {
 	if !config.IsDesktopMode() {
 		return
 	}
-	// The namespace config is an explicit per-namespace choice and stays on top;
-	// below it the chain is the ordinary one every other third-party image
-	// follows (bundle section → bundle top level → workspace section → the typed
-	// workspace block → this default). pgAdmin used to consult its typed block
-	// BEFORE the bundle, which made the two `dependencies:` sections
-	// non-transitive for this one app: a section cannot sit between two sources
-	// when the lower of them already outranks the upper.
-	img := ctx.Config.PgAdmin.Image
-	if img == "" {
-		// Minor tag, not a patch tag: upstream stopped publishing "<major>.<minor>.0"
-		// tags after 9.15 (9.16 and 9.17 exist only as "9.16"/"9.17"), so pinning a
-		// patch here would name an image that does not exist on Docker Hub.
-		fallback := "dpage/pgadmin4:9.17"
-		if ctx.WorkspaceConfig != nil && ctx.WorkspaceConfig.PgAdmin.Image != "" {
-			fallback = ctx.WorkspaceConfig.PgAdmin.Image
-		}
-		img = bundleImageOr(ctx, appdef.AppPgadmin, fallback)
+	// Upstream publishes minor tags (9.17), not patch tags (9.17.0).
+	fallback := "dpage/pgadmin4:9.17"
+	if ctx.WorkspaceConfig != nil && ctx.WorkspaceConfig.PgAdmin.Image != "" {
+		fallback = ctx.WorkspaceConfig.PgAdmin.Image
 	}
+	img := resolveAppImage(ctx, appdef.AppPgadmin, ctx.Config.PgAdmin.Image, fallback)
 	app := ctx.GetOrCreateApp(appdef.AppPgadmin)
 	app.Image = img
 	app.Kind = appdef.KindThirdParty

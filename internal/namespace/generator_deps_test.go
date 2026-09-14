@@ -317,8 +317,7 @@ func TestKeycloakMajorBumpIsHeldByThePin(t *testing.T) {
 		From: "keycloak/keycloak:26.4.5", To: "keycloak/keycloak:27.0.1", Migratable: false}, *up)
 }
 
-// Mongo takes its image from the namespace config rather than the bundle, so
-// its gate sits on a different line and needs its own test.
+// A Mongo image from namespace fallback still passes through the data gate.
 func TestMongoMajorBumpIsHeldByThePin(t *testing.T) {
 	cfg := depsTestConfig()
 	cfg.MongoDB = MongoDbProps{Image: "mongo:7.0.5"}

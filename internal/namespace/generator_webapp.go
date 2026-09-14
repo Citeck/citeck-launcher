@@ -44,14 +44,14 @@ func generateWebapp(name string, ctx *NsGenContext) {
 		return
 	}
 
-	bundleApp, ok := ctx.Bundle.Applications[name]
+	_, ok := ctx.Bundle.Applications[name]
 	if !ok {
 		return
 	}
 
 	port := ctx.NextPort()
 	app := ctx.GetOrCreateApp(name)
-	app.Image = bundleApp.Image
+	app.Image = ""
 	app.Kind = webappKind(name)
 	app.IsJVM = true
 
@@ -91,9 +91,6 @@ func generateWebapp(name string, ctx *NsGenContext) {
 		if wp.ServerPort > 0 {
 			port = wp.ServerPort
 		}
-		if wp.Image != "" {
-			app.Image = wp.Image
-		}
 		if wp.MemoryLimit != "" {
 			app.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: wp.MemoryLimit}}
 		}
@@ -110,6 +107,8 @@ func generateWebapp(name string, ctx *NsGenContext) {
 			debugPort = wp.DebugPort
 		}
 	}
+
+	app.Image = resolveAppImage(ctx, name, ctx.Config.Webapps[name].Image, app.Image)
 
 	// debugPort: add JDWP agent to JAVA_OPTS (preserve workspace-set JAVA_OPTS if namespace didn't set heapSize)
 	if debugPort > 0 {
@@ -704,10 +703,7 @@ func generateObserver(ctx *NsGenContext) {
 		return
 	}
 
-	obsImage := ctx.Config.Observer.Image
-	if obsImage == "" {
-		obsImage = bundleImageOr(ctx, appdef.AppObserver, "citeck/observer:1.1.0")
-	}
+	obsImage := resolveAppImage(ctx, appdef.AppObserver, ctx.Config.Observer.Image, "citeck/observer:1.1.0")
 
 	const (
 		// Observer ports: 17014–17017 (KC mgmt 17013 sits below; ZK admin 17018, Alfresco 17019, webapps 17020+)
@@ -897,8 +893,7 @@ const (
 //   - STT detached → the STT spec is still generated (so the user can re-attach
 //     it from the UI without losing the AppRuntime), but the AI app does NOT
 //     get the env var or dependency so AI keeps starting without the sidecar.
-//   - Image: workspaceConfig.sttSidecar.image wins; else bundle's stt-sidecar
-//     image; else skip (no image = nothing to deploy).
+//   - Image: bundle first, then workspace defaults; skip if neither names one.
 //   - HTTP startup probe at /health on the container port — same probe Kotlin
 //     uses, gated by the standard outer 240s running-state wait.
 func generateSttSidecar(ctx *NsGenContext) {
@@ -925,12 +920,7 @@ func generateSttSidecar(ctx *NsGenContext) {
 		memoryLimit = sttSidecarDefaultMemory
 	}
 
-	image := props.Image
-	if image == "" && ctx.Bundle != nil {
-		if bundleApp, exists := ctx.Bundle.Applications[appdef.AppSttSidecar]; exists {
-			image = bundleApp.Image
-		}
-	}
+	image := bundleImageOr(ctx, appdef.AppSttSidecar, props.Image)
 	if image == "" {
 		// Nothing to deploy. AI keeps running; the env var simply isn't set
 		// (the AI app falls back to its built-in defaults, same as Kotlin).

@@ -147,9 +147,7 @@ func TestDependencyImageResolutionOrder(t *testing.T) {
 	})
 }
 
-// Mongo keeps its own chain: it reads its image from the NAMESPACE config and
-// has never consulted the bundle's top-level map, so the workspace section
-// slots in as the step below the bundle section and above the literal.
+// Mongo follows the same bundle-first image order as other dependencies.
 func TestMongoWorkspaceDependencyPrecedence(t *testing.T) {
 	wsMongo := func() *bundle.WorkspaceConfig {
 		return &bundle.WorkspaceConfig{Dependencies: wsDeps(map[string]string{
@@ -167,22 +165,22 @@ func TestMongoWorkspaceDependencyPrecedence(t *testing.T) {
 		assert.Equal(t, "mongo:4.2.24",
 			appByName(t, generateWithWorkspace(t, bun, wsMongo()), appdef.AppMongodb).Image)
 	})
-	t.Run("the namespace config beats both", func(t *testing.T) {
+	t.Run("the bundle beats namespace and workspace", func(t *testing.T) {
 		cfg := depsTestConfig()
 		cfg.MongoDB.Image = "mongo:4.4.18"
 		bun := &bundle.Def{Dependencies: map[string]bundle.AppDef{
 			appdef.AppMongodb: {Image: "mongo:4.2.24"},
 		}}
-		assert.Equal(t, "mongo:4.4.18",
+		assert.Equal(t, "mongo:4.2.24",
 			appByName(t, generateCfgWithWorkspace(t, cfg, bun, wsMongo()), appdef.AppMongodb).Image)
 	})
-	t.Run("a top-level bundle entry is still ignored", func(t *testing.T) {
+	t.Run("a top-level bundle entry beats the default", func(t *testing.T) {
 		bun := &bundle.Def{Applications: map[string]bundle.AppDef{
 			appdef.AppMongodb: {Image: "mongo:9.9.9"},
 		}}
-		assert.Equal(t, "mongo:4.0.2",
+		assert.Equal(t, "mongo:9.9.9",
 			appByName(t, generateWithWorkspace(t, bun, nil), appdef.AppMongodb).Image,
-			"mongo has never read the bundle's top-level map and must not start now")
+			"the bundle selects the image")
 	})
 }
 
@@ -220,16 +218,7 @@ func TestAWorkspaceWithNoDependenciesSectionGeneratesTheSameDefs(t *testing.T) {
 	}
 }
 
-// pgAdmin used to resolve its image the other way round from every other
-// third-party app: its typed workspace block was consulted BEFORE the bundle,
-// so a bundle that named a pgAdmin image lost to a workspace that named one.
-// That inversion predated the `dependencies:` sections and made them
-// non-transitive for this one app — a section cannot be inserted between two
-// sources when the lower of them already outranks the upper. The owner's
-// ruling: pgAdmin follows the same order as everything else.
-//
-// The namespace config stays on top of the chain (an explicit per-namespace
-// choice, like mongo's), and the five steps below it are now the ordinary ones.
+// pgAdmin follows the bundle-first order, including namespace conflicts.
 func TestPgAdminFollowsTheOrdinaryResolutionOrder(t *testing.T) {
 	config.SetDesktopMode(true) // pgAdmin is generated in desktop mode only
 	t.Cleanup(func() { config.SetDesktopMode(false) })
@@ -272,12 +261,12 @@ func TestPgAdminFollowsTheOrdinaryResolutionOrder(t *testing.T) {
 		assert.Equal(t, "dpage/pgadmin4:9.14", pgAdminImage(t, depsTestConfig(), nil, wsWithBlock(nil)))
 	})
 
-	t.Run("the namespace config still wins over all of them", func(t *testing.T) {
+	t.Run("the bundle beats the namespace config", func(t *testing.T) {
 		cfg := depsTestConfig()
 		cfg.PgAdmin.Image = "dpage/pgadmin4:9.12"
 		bun := &bundle.Def{Dependencies: map[string]bundle.AppDef{
 			appdef.AppPgadmin: {Image: "dpage/pgadmin4:9.15"},
 		}}
-		assert.Equal(t, "dpage/pgadmin4:9.12", pgAdminImage(t, cfg, bun, wsWithBlock(nil)))
+		assert.Equal(t, "dpage/pgadmin4:9.15", pgAdminImage(t, cfg, bun, wsWithBlock(nil)))
 	})
 }

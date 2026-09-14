@@ -773,7 +773,7 @@ func TestNamespaceLevelDataSources(t *testing.T) {
 	}
 }
 
-func TestWebappDefaultProps_ImageOverride(t *testing.T) {
+func TestWebappBundleImageOverridesWorkspaceDefault(t *testing.T) {
 	cfg := &Config{
 		Authentication: AuthenticationProps{Type: AuthBasic, Users: []string{"admin"}},
 		Proxy:          ProxyProps{Port: 80},
@@ -796,8 +796,8 @@ func TestWebappDefaultProps_ImageOverride(t *testing.T) {
 	require.NoError(t, err)
 	for _, app := range resp.Applications {
 		if app.Name == "emodel" {
-			if app.Image != "custom-registry/emodel:2.0" {
-				t.Errorf("expected workspace default image override, got %s", app.Image)
+			if app.Image != "nexus.citeck.ru/emodel:1.0" {
+				t.Errorf("expected bundle image, got %s", app.Image)
 			}
 			return
 		}

@@ -54,17 +54,15 @@ func TestBundleDependenciesCoverAnUngatedThirdPartyImage(t *testing.T) {
 	assert.Equal(t, "axllent/mailpit:v1.99.0", appByName(t, generateWithPins(t, bun, nil), appdef.AppMailpit).Image)
 }
 
-// Mongo never went through bundleImageOr — it reads the namespace config and
-// falls back to a literal. The new section slots in between: an explicit
-// per-namespace image still wins, because that is the user's own choice.
+// Mongo uses the bundle image above namespace defaults; data pins still apply afterwards.
 func TestMongoImagePrecedence(t *testing.T) {
 	depsBundle := &bundle.Def{Dependencies: map[string]bundle.AppDef{
 		appdef.AppMongodb: {Image: "mongo:4.4.29"},
 	}}
-	t.Run("namespace config wins over the bundle", func(t *testing.T) {
+	t.Run("bundle wins over namespace config", func(t *testing.T) {
 		cfg := depsTestConfig()
 		cfg.MongoDB.Image = "mongo:4.2.24"
-		assert.Equal(t, "mongo:4.2.24",
+		assert.Equal(t, "mongo:4.4.29",
 			appByName(t, generateCfgWithStates(t, cfg, depsBundle, nil), appdef.AppMongodb).Image)
 	})
 	t.Run("the bundle section wins over the literal default", func(t *testing.T) {
@@ -75,13 +73,13 @@ func TestMongoImagePrecedence(t *testing.T) {
 		assert.Equal(t, "mongo:4.0.2",
 			appByName(t, generateWithPins(t, nil, nil), appdef.AppMongodb).Image)
 	})
-	t.Run("a top-level bundle entry is still ignored", func(t *testing.T) {
+	t.Run("a top-level bundle entry beats the default", func(t *testing.T) {
 		bun := &bundle.Def{Applications: map[string]bundle.AppDef{
 			appdef.AppMongodb: {Image: "mongo:9.9.9"},
 		}}
-		assert.Equal(t, "mongo:4.0.2",
+		assert.Equal(t, "mongo:9.9.9",
 			appByName(t, generateWithPins(t, bun, nil), appdef.AppMongodb).Image,
-			"mongo has never read the bundle's top-level map and must not start now")
+			"the bundle selects the image")
 	})
 }
 
