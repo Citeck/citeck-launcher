@@ -437,3 +437,28 @@ func TestFormatAppTable_DepsWaitingNamesWhatItWaitsFor(t *testing.T) {
 		t.Errorf("the STATUS cell must name what the app waits for, got:\n%s", stripped)
 	}
 }
+
+// The apps to start are the DETACHED ones at the root of the holds, not the
+// held apps themselves and not the links between them: an app held THROUGH
+// another held app waits on something that is itself waiting, and naming that
+// would send the operator to a link they cannot start.
+func TestFormatAppTable_HeldDepsNamesTheDetachedRoots(t *testing.T) {
+	apps := []api.AppDto{
+		{Name: "zookeeper", Status: "STOPPED"},
+		{Name: "gateway", Status: "DEPS_WAITING", Held: true, WaitingFor: []api.WaitingDepDto{
+			{App: "zookeeper", Status: "STOPPED"},
+		}},
+		{Name: "proxy", Status: "DEPS_WAITING", Held: true, WaitingFor: []api.WaitingDepDto{
+			{App: "gateway", Status: "DEPS_WAITING"},
+		}},
+	}
+
+	r := FormatAppTable(apps)
+
+	if r.Held != 2 {
+		t.Errorf("held = %d, want 2", r.Held)
+	}
+	if len(r.HeldDeps) != 1 || r.HeldDeps[0] != "zookeeper" {
+		t.Errorf("heldDeps = %v, want [zookeeper] — только отцепленный корень", r.HeldDeps)
+	}
+}

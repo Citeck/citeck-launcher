@@ -422,12 +422,17 @@ func applyConfiguredDependsOn(name string, app *AppBuilder, ctx *NsGenContext) {
 	fromNamespaceYAML := hasNsEntry && wp.DependsOn != nil
 	for _, dep := range webappDependsOn(name, ctx) {
 		if dep == name {
+			// Rejected from EITHER layer, unlike an absent target: a webapp
+			// waiting on its own container is never legitimate anywhere, so
+			// there is no namespace on which a workspace-authored self-dep is
+			// the right configuration — nothing is lost by failing all of them.
 			ctx.DependencyErrors = append(ctx.DependencyErrors,
 				fmt.Errorf("webapp %q depends on itself", name))
 			continue
 		}
 		app.AddDependsOn(dep)
 		if !fromNamespaceYAML {
+			ctx.WorkspaceDependsOn[name] = append(ctx.WorkspaceDependsOn[name], dep)
 			continue
 		}
 		// Remember it as THIS operator's, so a target that does not exist is

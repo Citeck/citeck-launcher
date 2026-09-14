@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -31,14 +33,25 @@ func reloadWaitOpts() liveStatusOpts {
 	}
 }
 
-// renderAppTable is a convenience wrapper around output.FormatAppTable
-// that returns the counts used by streamLiveStatus. Stopped covers
-// intentionally-detached apps (STOPPED only); STOPPING_FAILED is counted
-// in Failed, matching isAppTerminalFailed below and the red colorization
-// in output.ColorizeStatus. The wait-for-terminal check must include
-// Stopped or the loop hangs on any namespace with a detached service.
-func renderAppTable(apps []api.AppDto) output.AppTableResult {
-	return output.FormatAppTable(apps)
+// terminalStartMessage words the end of a successful wait.
+//
+// "All apps started" would be a lie while apps sit HELD by a dependency the
+// user stopped. A detached app is one the user named themselves; a held one is
+// a second-order consequence of that, and hiding it behind the success line is
+// how a stand that answers nothing looks like a successful start. The held line
+// names the DETACHED apps to start, not the held ones — those release
+// themselves.
+func terminalStartMessage(held, total int, heldDeps []string, successMsg string) string {
+	if held > 0 {
+		return output.Colorize(output.Yellow, t("cli.appsHeldByStoppedDeps",
+			"held", strconv.Itoa(held),
+			"total", strconv.Itoa(total),
+			"deps", strings.Join(heldDeps, ", ")))
+	}
+	if successMsg != "" {
+		return successMsg
+	}
+	return t("cli.allAppsStarted")
 }
 
 // isAppTerminalFailed reports whether the given app status is a terminal

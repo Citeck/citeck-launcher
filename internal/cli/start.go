@@ -568,7 +568,7 @@ func streamLiveStatus(c *client.DaemonClient, opts liveStatusOpts) error {
 		}
 		failingSince = time.Time{}
 
-		appTable := renderAppTable(ns.Apps)
+		appTable := output.FormatAppTable(ns.Apps)
 		table, running, failed := appTable.Table, appTable.Running, appTable.Failed
 		stopped, held, total := appTable.Stopped, appTable.Held, appTable.Total
 
@@ -637,11 +637,8 @@ func streamLiveStatus(c *client.DaemonClient, opts liveStatusOpts) error {
 				fmt.Println(table) //nolint:forbidigo // CLI table
 			}
 			ensureI18n()
-			msg := opts.successMsg
-			if msg == "" {
-				msg = t("cli.allAppsStarted")
-			}
-			fmt.Printf("\n%s\n", msg) //nolint:forbidigo // CLI success
+			fmt.Printf("\n%s\n", //nolint:forbidigo // CLI result
+				terminalStartMessage(held, total, appTable.HeldDeps, opts.successMsg))
 			return nil
 		}
 

@@ -160,6 +160,24 @@ func TestWebappDependsOn_UnknownWorkspaceTargetStillPrunes(t *testing.T) {
 		"апп с недостижимой зависимостью по-прежнему вырезается")
 }
 
+// …but it is not silent about it. The prune's own message is the one routine
+// mode-driven pruning emits (keycloak under BASIC auth), so a real typo in the
+// shared workspace file would be indistinguishable from normal operation and
+// its author would have nothing to search the daemon log for.
+func TestWebappDependsOn_UnknownWorkspaceTargetIsNamedInTheLog(t *testing.T) {
+	config.ResetDesktopMode()
+	logs := captureLogs(t)
+
+	_, err := Generate(basicCfg(),
+		&bundle.Def{Applications: map[string]bundle.AppDef{"emodel": {Image: "bundle/emodel:1.0"}}},
+		wsWebappWithDeps([]string{"sidcar"}), SystemSecrets{JWT: "j", OIDC: "o"})
+
+	require.NoError(t, err)
+	out := logs.String()
+	assert.Contains(t, out, "Workspace dependsOn names an app this namespace does not have")
+	assert.Contains(t, out, "sidcar")
+}
+
 // The rule covers only what an OPERATOR wrote. A generator naming an app this
 // mode does not produce (keycloak under BASIC auth is the standing example) is
 // normal, and pruning stays the right answer for it — turning that into a hard

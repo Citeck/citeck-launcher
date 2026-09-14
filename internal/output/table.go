@@ -141,8 +141,12 @@ type AppTableResult struct {
 	// the operator starts that dependency again — so a wait loop that does not
 	// count them as terminal never ends. The decision is the daemon's; this side
 	// only counts it.
-	Held  int
-	Total int
+	Held int
+	// HeldDeps names the DETACHED dependencies behind those holds — the union
+	// of the STOPPED entries in every held app's WaitingFor, i.e. the apps an
+	// operator has to start to release the rest. Sorted, distinct.
+	HeldDeps []string
+	Total    int
 	// AnyEdited is true when at least one app carries a user config edit
 	// (an ApplicationDef override or an edited mounted file). Callers use it
 	// to print the "* config edited" legend under the table.
@@ -207,6 +211,7 @@ func FormatAppTable(apps []api.AppDto) AppTableResult {
 	var running, failed, stopped int
 
 	var held int
+	heldDepSet := map[string]bool{}
 	for _, app := range apps {
 		switch app.Status {
 		case "RUNNING":
@@ -218,9 +223,22 @@ func FormatAppTable(apps []api.AppDto) AppTableResult {
 		case "DEPS_WAITING":
 			if app.Held {
 				held++
+				for _, dep := range app.WaitingFor {
+					// Only the STOPPED ones: an app held THROUGH another held
+					// app waits on something that is itself waiting, and naming
+					// that would send the operator to a link they cannot start.
+					if dep.Status == "STOPPED" {
+						heldDepSet[dep.App] = true
+					}
+				}
 			}
 		}
 	}
+	heldDeps := make([]string, 0, len(heldDepSet))
+	for name := range heldDepSet {
+		heldDeps = append(heldDeps, name)
+	}
+	sort.Strings(heldDeps)
 
 	// Group apps by kind, sort alphabetically within each group.
 	groups := make(map[string][]api.AppDto, len(kindOrder))
@@ -303,6 +321,7 @@ func FormatAppTable(apps []api.AppDto) AppTableResult {
 
 	return AppTableResult{
 		Held:      held,
+		HeldDeps:  heldDeps,
 		Table:     FormatTable(headers, rows, 0, statusMinWidth),
 		Running:   running,
 		Failed:    failed,

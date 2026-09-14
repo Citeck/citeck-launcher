@@ -152,6 +152,7 @@
   "cli.daemonNotRunningStart": "le daemon n'est pas en cours d'exécution — démarrez-le d'abord avec 'citeck start'",
   "cli.daemonStarted": "Daemon démarré en arrière-plan",
   "cli.continueBackground": "Poursuite en arrière-plan",
+  "cli.appsHeldByStoppedDeps": "{held} applications sur {total} attendent des dépendances que vous avez arrêtées : {deps}. Démarrez-les pour libérer les autres.",
   "cli.allAppsStarted": "Toutes les applications sont démarrées.",
   "cli.waitingRetry": "(attente avant nouvelle tentative...)",
   "cli.waitEnded": "Fin de l'attente : le namespace est {status} et rien ne démarre. Exécutez `citeck status` pour vérifier.",

@@ -152,6 +152,7 @@
   "cli.daemonNotRunningStart": "Daemon läuft nicht — bitte zuerst mit 'citeck start' starten",
   "cli.daemonStarted": "Daemon im Hintergrund gestartet",
   "cli.continueBackground": "Fortsetzung im Hintergrund",
+  "cli.appsHeldByStoppedDeps": "{held} von {total} Apps warten auf von Ihnen gestoppte Abhängigkeiten: {deps}. Starten Sie diese, um die übrigen freizugeben.",
   "cli.allAppsStarted": "Alle Apps gestartet.",
   "cli.waitingRetry": "(Warten auf neuen Versuch...)",
   "cli.waitEnded": "Es wird nicht länger gewartet: Der Namespace ist {status} und es startet nichts. Zum Prüfen: `citeck status`.",
