@@ -1,11 +1,13 @@
 package cli
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/docker"
 	"github.com/citeck/citeck-launcher/internal/storage"
 )
@@ -29,6 +31,26 @@ func TestOrphanedNamedVolumesAreFoundForNamespacesTheStoreNoLongerHas(t *testing
 	assert.Equal(t, "citeck_volume_postgres2_gone_ws", got[0].Name)
 	assert.Equal(t, "gone", got[0].Namespace)
 	assert.Equal(t, "citeck_volume_rabbitmq2_gone_ws", got[1].Name)
+}
+
+// A SERVER install owns no launcher-labeled named volume at all — it binds
+// every plain volume source into its runtime directory, and only the desktop
+// path calls CreateVolume, which is what applies the labels. Its keep set is
+// also a single namespace id read out of namespace.yml. So a server-mode scan
+// of named volumes could only ever list somebody else's desktop stand, and then
+// offer its PostgreSQL data for deletion under a confirmation the operator gave
+// about their own orphans.
+//
+// The client is deliberately nil: the gate has to come BEFORE Docker is asked,
+// so moving it below the listing makes this test panic rather than pass.
+func TestServerModeOffersNoNamedVolumeForDeletion(t *testing.T) {
+	config.SetDesktopMode(false)
+	t.Cleanup(config.ResetDesktopMode)
+
+	got, err := findOrphanNamedVolumes(context.Background(), nil, map[string]bool{"the-one-server-ns": true})
+
+	require.NoError(t, err)
+	assert.Empty(t, got, "a server install never owns a named volume, so it may never offer one")
 }
 
 // Same rule the containers scan follows: a volume with no namespace label
@@ -60,4 +82,32 @@ func TestNamespacesWhoseWorkspaceRowIsGoneAreStillKnownToClean(t *testing.T) {
 
 	assert.True(t, known["5fn7t5q"])
 	assert.True(t, known["3q5h43y"], "a stored namespace is known even with no workspace row")
+}
+
+// A developer machine routinely runs BOTH a desktop profile and a server
+// install, and neither one's keep set can contain the other's namespaces — so
+// each read the other's live stand as orphaned and offered it for deletion. The
+// workspace label is what separates them: `Client.workspace` is the workspace id
+// in desktop mode and the empty string in server mode. Same rule the startup
+// sweep learned (collectOrphanTargets skips an empty workspace), except here it
+// guards a confirmation the operator is about to give.
+func TestOnlyThisInstallationsResourcesAreOffered(t *testing.T) {
+	config.SetDesktopMode(true)
+	t.Cleanup(config.ResetDesktopMode)
+
+	if !belongsToThisProfile("some-ws") {
+		t.Errorf("desktop: a workspace-labeled resource is this profile's")
+	}
+	if belongsToThisProfile("") {
+		t.Errorf("desktop: an unlabeled workspace means a SERVER install's live stand")
+	}
+
+	config.SetDesktopMode(false)
+	if !belongsToThisProfile("") {
+		t.Errorf("server: server mode writes an empty workspace, so that is ours")
+	}
+	if belongsToThisProfile("some-ws") {
+		t.Errorf("server: a workspace-labeled resource belongs to a desktop profile")
+	}
+
 }
