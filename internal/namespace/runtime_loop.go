@@ -1472,13 +1472,16 @@ func (r *Runtime) handleLivenessProbeResult(res workers.Result) {
 // heldByDetachedDepsUnderLock reports whether app is parked in DEPS_WAITING
 // solely because the user detached something it (transitively) depends on.
 //
-// Such an app is SETTLED, not pending, and the difference is load-bearing:
-// checkStatus counts a non-RUNNING app as "not there yet" and a failed one as a
-// reason to go STALLED, so an app that is neither keeps the namespace in
+// Such an app is STUCK, not pending, and the difference is load-bearing:
+// checkStatus counted a non-RUNNING app as "not there yet" and only a FAILED one
+// as a reason to go STALLED, so an app that is neither kept the namespace in
 // STARTING forever — and both the reconciler and every app's liveness probe are
 // gated on NS RUNNING/STALLED. One `citeck stop postgres` therefore used to
 // disable crash recovery and liveness for the WHOLE namespace, and left
-// `citeck start` polling with nothing left to wait for.
+// `citeck start` polling with nothing left to wait for. A hold is now one of the
+// two things that STALL a namespace (the other being a failed app): RUNNING
+// means whole and usable, STALLED means a problem that will not resolve itself.
+// The same answer rides out as AppDto.Held so a client's wait loop can end.
 //
 // The rule is deliberately narrow: EVERY unmet dependency must be detached — or
 // itself held by this same rule. A dependency that is merely slow can still move

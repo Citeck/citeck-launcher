@@ -58,9 +58,10 @@ type AppDto struct {
 	// the status each of them is in. Empty for every other status.
 	WaitingFor []WaitingDepDto `json:"waitingFor,omitempty"`
 	// Held marks a DEPS_WAITING app whose hold traces back, through however
-	// many links, to a dependency the user DETACHED. Such an app is settled:
-	// nothing in the namespace will release it until the operator starts that
-	// dependency again, so a client's wait loop must treat it as terminal.
+	// many links, to a dependency the user DETACHED. Nothing in the namespace
+	// will release it until the operator starts that dependency again, so a
+	// client's wait loop must treat it as terminal — and the namespace itself
+	// reports STALLED while any app is in this state.
 	//
 	// It is a DECISION on the wire rather than something a client re-derives
 	// from WaitingFor: the answer needs manualStoppedApps (a detached app and

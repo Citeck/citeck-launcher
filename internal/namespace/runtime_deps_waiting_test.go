@@ -144,17 +144,17 @@ func TestDepsWaiting_TheHoldStopsBeingReportedOnceTheAppStarts(t *testing.T) {
 		"a started app must not keep reporting why it was held")
 }
 
-// An app held in DEPS_WAITING by a DETACHED dependency is settled, not pending:
-// the user stopped that dependency on purpose and nothing will move the
-// dependent until they start it again. checkStatus used to skip only the
-// detached app itself, so the held dependent kept `allRunning` false and never
-// set `anyFailed` — the namespace sat in STARTING forever. That is not cosmetic:
-// the reconciler and every app's liveness probe are gated on NS RUNNING/STALLED
-// (runtime_loop.go), so one `citeck stop postgres` silently disabled crash
-// recovery and liveness for the WHOLE namespace, and `citeck start` never
-// stopped polling. Before the stopped-dependency change the dependent started,
-// failed its probe and reached STALLED, which was at least terminal.
-func TestNamespaceSettlesWhenTheOnlyHoldIsADetachedDependency(t *testing.T) {
+// An app held in DEPS_WAITING by a DETACHED dependency is a PROBLEM that will
+// not resolve itself, which is what NS STALLED means — as opposed to RUNNING,
+// which says the namespace is whole and usable. checkStatus used to skip only
+// the detached app itself, so the held dependent kept `allRunning` false and
+// never set the failure flag: the namespace sat in STARTING forever. That is
+// not cosmetic, because the reconciler and every app's liveness probe are gated
+// on NS RUNNING/STALLED (runtime_loop.go) — one `citeck stop postgres` silently
+// disabled crash recovery and liveness for the WHOLE namespace, and
+// `citeck start` never stopped polling. STALLED ends the wait, restores both,
+// and does not claim a namespace is usable when part of it is not up.
+func TestAHoldByADetachedDependencyStallsTheNamespace(t *testing.T) {
 	r := newTestRuntimeWithApps(t, map[string]appdef.ApplicationDef{
 		"postgres": {Name: "postgres"},
 		"emodel":   {Name: "emodel", DependsOn: appdef.StringSet{"postgres"}},
@@ -168,8 +168,36 @@ func TestNamespaceSettlesWhenTheOnlyHoldIsADetachedDependency(t *testing.T) {
 
 	r.checkStatus()
 
-	assert.Equal(t, NsStatusRunning, r.status,
-		"удерживаемый detached-зависимостью апп — это осознанное решение пользователя, а не незавершённый старт")
+	assert.Equal(t, NsStatusStalled, r.status,
+		"удержание — это проблема, которая сама не решится, а не завершённый старт")
+}
+
+// …and the namespace comes back on its own the moment the operator starts the
+// dependency again: the hold is gone, nothing is stuck, so STALLED returns to
+// STARTING and the ordinary path takes it to RUNNING. Without this the status
+// would be a one-way door and the stand would read "problem" forever.
+func TestStartingTheDependencyAgainLiftsTheStall(t *testing.T) {
+	r := newTestRuntimeWithApps(t, map[string]appdef.ApplicationDef{
+		"postgres": {Name: "postgres"},
+		"emodel":   {Name: "emodel", DependsOn: appdef.StringSet{"postgres"}},
+	})
+	r.manualStoppedApps["postgres"] = true
+	r.apps["postgres"].Status = AppStatusStopped
+	r.apps["emodel"].Status = AppStatusDepsWaiting
+	r.status = NsStatusStarting
+	r.checkStatus()
+	require.Equal(t, NsStatusStalled, r.status)
+
+	// `citeck start postgres`: the detach is cleared and the app comes up.
+	delete(r.manualStoppedApps, "postgres")
+	r.apps["postgres"].Status = AppStatusRunning
+
+	r.checkStatus()
+	assert.Equal(t, NsStatusStarting, r.status, "проблема снята — неймспейс снова поднимается")
+
+	r.apps["emodel"].Status = AppStatusRunning
+	r.checkStatus()
+	assert.Equal(t, NsStatusRunning, r.status)
 }
 
 // The narrow shape of that rule, asserted on the predicate itself rather than
@@ -268,7 +296,7 @@ func TestTheSettlingRuleFollowsTheWholeChain(t *testing.T) {
 		"proxy ждёт gateway, который сам удерживается отцепленным zookeeper")
 
 	r.checkStatus()
-	assert.Equal(t, NsStatusRunning, r.status)
+	assert.Equal(t, NsStatusStalled, r.status)
 }
 
 // …and only while the whole chain is held. One link that can still come up on

@@ -48,8 +48,9 @@ export interface AppDto {
    * True when this app's DEPS_WAITING hold traces back — through however many
    * links — to a dependency the user DETACHED. Such an app is settled, not
    * pending: nothing will release it until that dependency is started again,
-   * which is why the daemon reports its namespace as RUNNING rather than
-   * STARTING forever. The decision is the daemon's; it needs the detach set and
+   * which is why the daemon reports such a namespace as STALLED — a problem
+   * that will not resolve itself — rather than leaving it STARTING forever.
+   * The decision is the daemon's; it needs the detach set and
    * a walk of the dependency graph, so readers take the flag rather than
    * re-deriving it from waitingFor.
    */
