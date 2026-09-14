@@ -30,7 +30,7 @@ func (f *fakeSweeper) FindOrphans(ctx context.Context, _ map[string]bool) []dock
 	return f.targets
 }
 
-func (f *fakeSweeper) PurgeOrphans(ctx context.Context, targets []docker.OrphanTarget) []string {
+func (f *fakeSweeper) RemoveOrphanContainers(ctx context.Context, targets []docker.OrphanTarget) []string {
 	f.purgeCalled = true
 	f.purgeDeadline, _ = ctx.Deadline()
 	out := make([]string, 0, len(targets))

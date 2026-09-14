@@ -26,7 +26,7 @@ endif
 GOLANGCI_LINT=$(GOBIN)/golangci-lint
 
 .PHONY: all check build build-fast build-web build-desktop run test test-unit test-race test-coverage \
-        test-e2e test-integration test-integration-deps lint fmt tidy tools clean help dev-daemon dev-desktop web-deps deadcode \
+        test-e2e test-integration test-integration-deps test-integration-sweep lint fmt tidy tools clean help dev-daemon dev-desktop web-deps deadcode \
         release-server release-desktop-linux release-desktop-windows release-desktop-macos \
         jvm-attach-class
 
@@ -86,6 +86,7 @@ help:
 	@echo "  make test-coverage  - Go tests with coverage report"
 	@echo "  make test-e2e       - Web UI Playwright e2e (needs a running daemon, see target)"
 	@echo "  make test-integration-deps - Real-Docker PostgreSQL 17->18 migration (opt-in, see target)"
+	@echo "  make test-integration-sweep - Real-Docker orphan-sweep keeps named volumes (opt-in)"
 	@echo "  make lint           - Run Go + Web linters"
 	@echo "  make deadcode       - Dead-code analysis vs scripts/ci/deadcode-allowlist.txt"
 	@echo "  make fmt            - Format Go code"
@@ -163,7 +164,14 @@ test-integration:
 #   unshare --user --map-auto --map-root-user make test-integration-deps
 #   sudo make test-integration-deps
 test-integration-deps:
-	go test -tags integration -run 'TestIntegration_' -timeout 30m -v ./internal/daemon/
+	go test -tags integration -run 'TestIntegration_Postgres|TestIntegration_Rollback' -timeout 30m -v ./internal/daemon/
+
+# Real-Docker proof that the startup orphan-sweep removes a leftover namespace's
+# containers and leaves its named volumes (and the data in them) alone. Cheap:
+# one busybox container and one volume, all labeled with a namespace id of their
+# own, so it is safe to run beside real stands.
+test-integration-sweep:
+	go test -tags integration -run 'TestIntegration_OrphanSweep' -timeout 10m -v ./internal/daemon/
 
 # Web UI end-to-end tests (Playwright, web/tests/). PREREQUISITE: a daemon
 # serving the web UI at http://127.0.0.1:7088 must already be running (see

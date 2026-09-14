@@ -134,6 +134,15 @@ type NamespaceRow struct {
 	Status string
 }
 
+// NamespaceRef identifies a stored namespace by the pair its Docker resources
+// are labeled with. Listed workspace-free on purpose: a namespace row can
+// outlive its workspace row (every 1.x-era workspace deletion left one behind),
+// and a consumer that walks workspaces first cannot see those at all.
+type NamespaceRef struct {
+	WsID string
+	NsID string
+}
+
 // NamespaceID returns the selected namespace for the current workspace, or ""
 // when no selection is recorded. Convenience accessor for the common case.
 func (s *LauncherState) NamespaceID() string {
@@ -186,6 +195,9 @@ type Store interface {
 	// interface free of internal/namespace (no import cycle). Desktop:
 	// SQLite rows. Server: mapped to conf/namespace.yml + runtime state file.
 	ListNamespaces(wsID string) ([]NamespaceRow, error)
+	// ListAllNamespaceRefs returns every stored namespace, including any whose
+	// workspace row is gone.
+	ListAllNamespaceRefs() ([]NamespaceRef, error)
 	LoadNamespaceConfig(wsID, nsID string) (configYAML string, ok bool, err error)
 	SaveNamespaceConfig(wsID, nsID, name, configYAML string) error
 	LoadNamespaceState(wsID, nsID string) (stateJSON string, ok bool, err error)

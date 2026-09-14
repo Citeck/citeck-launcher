@@ -256,13 +256,15 @@ func constructDaemon(opts StartOptions, daemonCfg config.DaemonConfig, socketPat
 	}
 	nsCfg := loaded.NsConfig
 
-	// Startup orphan-sweep (desktop only): remove Docker resources for
-	// namespaces that no longer exist in storage. These pile up from the
-	// migration-test churn — a deleted/wiped namespace whose containers keep
-	// running (detach leaves them up across restarts) squats the host ports the
-	// active namespace needs and its data volumes eat disk. Running it BEFORE
-	// the active namespace starts means start doesn't have to evict port
-	// squatters first. Bounded + fail-safe inside sweepOrphanDockerResources.
+	// Startup orphan-sweep (desktop only): remove the CONTAINERS of namespaces
+	// that no longer exist in storage. These pile up from the migration-test
+	// churn — a deleted/wiped namespace whose containers keep running (detach
+	// leaves them up across restarts) squats the host ports the active namespace
+	// needs. Running it BEFORE the active namespace starts means start doesn't
+	// have to evict port squatters first. It leaves named volumes and networks
+	// alone: freeing ports was the point, reclaiming disk never was, and doing
+	// it unasked cost a running stand its data. Bounded + fail-safe inside
+	// sweepOrphanDockerResources.
 	if config.IsDesktopMode() {
 		sweepOrphanDockerResources(context.Background(), dockerClient, store, wsID, nsID)
 	}
@@ -899,7 +901,7 @@ func (d *Daemon) wireShutdownSignals(opts StartOptions) {
 // it is decided by a function that can be tested without a Docker client.
 type orphanKeepLister interface {
 	ListWorkspaces() ([]storage.WorkspaceDto, error)
-	ListNamespaces(wsID string) ([]storage.NamespaceRow, error)
+	ListAllNamespaceRefs() ([]storage.NamespaceRef, error)
 }
 
 // orphanKeepSet answers which (namespace, workspace) pairs the sweep must not
@@ -933,16 +935,20 @@ func orphanKeepSet(store orphanKeepLister, activeWsID, activeNsID string) (map[s
 		slog.Debug("Orphan-sweep skipped: this profile has no workspaces yet")
 		return nil, false
 	}
-	for _, ws := range wss {
-		nss, nsErr := store.ListNamespaces(ws.ID)
-		if nsErr != nil {
-			// Incomplete keep set → bail out entirely; never purge on doubt.
-			slog.Warn("Orphan-sweep skipped: cannot list namespaces", "ws", ws.ID, "err", nsErr)
-			return nil, false
-		}
-		for _, ns := range nss {
-			keep[docker.OrphanKey(ns.ID, ws.ID)] = true
-		}
+	// Every stored namespace, NOT a walk of workspaces → their namespaces: a
+	// namespace row can outlive its workspace row (that is what every 1.x-era
+	// workspace deletion left behind, and the cascade only arrived in 2.9), and
+	// the workspace-first walk could not reach those at all. Measured on one
+	// real profile: 8 of 11 stored namespaces were unreachable that way, and
+	// every non-empty-workspace purge in its daemon.log had hit one of them.
+	refs, nsErr := store.ListAllNamespaceRefs()
+	if nsErr != nil {
+		// Incomplete keep set → bail out entirely; never purge on doubt.
+		slog.Warn("Orphan-sweep skipped: cannot list namespaces", "err", nsErr)
+		return nil, false
+	}
+	for _, ref := range refs {
+		keep[docker.OrphanKey(ref.NsID, ref.WsID)] = true
 	}
 	return keep, true
 }
@@ -952,7 +958,7 @@ func orphanKeepSet(store orphanKeepLister, activeWsID, activeNsID string) (map[s
 // budgets — and because that makes the budget split testable without Docker.
 type orphanSweeper interface {
 	FindOrphans(ctx context.Context, keep map[string]bool) []docker.OrphanTarget
-	PurgeOrphans(ctx context.Context, targets []docker.OrphanTarget) []string
+	RemoveOrphanContainers(ctx context.Context, targets []docker.OrphanTarget) []string
 }
 
 // Budgets for the two phases of the startup sweep. Vars, not consts, so a test
@@ -968,10 +974,12 @@ var (
 	// until the sweep's single 90 s deadline expired.
 	orphanSweepDecideTimeout = 10 * time.Second
 
-	// orphanSweepPurgeTimeout bounds the removals. Generous, because by then
-	// the sweep has DECIDED: it is force-removing containers and named volumes
-	// that may hold gigabytes, and giving up half way leaves the host in the
-	// state the sweep exists to clean up.
+	// orphanSweepPurgeTimeout bounds the removals. Generous, because by then the
+	// sweep has DECIDED and is force-removing containers, and giving up half way
+	// leaves the host in the state the sweep exists to clean up. It no longer
+	// removes named volumes, so the multi-gigabyte case this number was chosen
+	// for is gone; the budget stays because stopping a stuck container is still
+	// the slow part.
 	orphanSweepPurgeTimeout = 90 * time.Second
 )
 
@@ -986,13 +994,15 @@ func runOrphanSweep(ctx context.Context, dc orphanSweeper, keep map[string]bool)
 	}
 	purgeCtx, purgeCancel := context.WithTimeout(ctx, orphanSweepPurgeTimeout)
 	defer purgeCancel()
-	return dc.PurgeOrphans(purgeCtx, targets)
+	return dc.RemoveOrphanContainers(purgeCtx, targets)
 }
 
-// sweepOrphanDockerResources removes Docker resources for namespaces that no
-// longer exist in storage. Fail-safe: the keep set must be built completely
-// from storage (see orphanKeepSet); if it cannot be, nothing is removed. The
-// active namespace is always kept.
+// sweepOrphanDockerResources removes the CONTAINERS of namespaces that no
+// longer exist in storage — never their named volumes or networks, which are
+// reclaimed only by something the operator typed (see RemoveOrphanContainers).
+// Fail-safe: the keep set must be built completely from storage (see
+// orphanKeepSet); if it cannot be, nothing is removed. The active namespace is
+// always kept.
 func sweepOrphanDockerResources(ctx context.Context, dc *docker.Client, store storage.Store, activeWsID, activeNsID string) {
 	if dc == nil || store == nil {
 		return
@@ -1002,7 +1012,8 @@ func sweepOrphanDockerResources(ctx context.Context, dc *docker.Client, store st
 		return
 	}
 	if purged := runOrphanSweep(ctx, dc, keep); len(purged) > 0 {
-		slog.Info("Orphan-sweep removed leftover namespace resources",
+		slog.Info("Orphan-sweep removed the containers of leftover namespaces; "+
+			"their volumes and networks are kept — reclaim them with `citeck clean`",
 			"count", len(purged), "namespaces", purged)
 	}
 }

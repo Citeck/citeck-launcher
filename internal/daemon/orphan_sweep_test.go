@@ -15,7 +15,7 @@ import (
 // built from. Errors are per call so a test can fail exactly one listing.
 type fakeKeepLister struct {
 	wss    []storage.WorkspaceDto
-	nss    map[string][]storage.NamespaceRow
+	refs   []storage.NamespaceRef
 	wsErr  error
 	nsErr  error
 	nsCall int
@@ -25,12 +25,12 @@ func (f *fakeKeepLister) ListWorkspaces() ([]storage.WorkspaceDto, error) {
 	return f.wss, f.wsErr
 }
 
-func (f *fakeKeepLister) ListNamespaces(wsID string) ([]storage.NamespaceRow, error) {
+func (f *fakeKeepLister) ListAllNamespaceRefs() ([]storage.NamespaceRef, error) {
 	f.nsCall++
 	if f.nsErr != nil {
 		return nil, f.nsErr
 	}
-	return f.nss[wsID], nil
+	return f.refs, nil
 }
 
 // A profile that has never created anything must not sweep. This is the whole
@@ -67,9 +67,8 @@ func TestAnActiveNamespaceIsKeptAndAllowsTheSweep(t *testing.T) {
 func TestEveryStoredNamespaceIsKept(t *testing.T) {
 	f := &fakeKeepLister{
 		wss: []storage.WorkspaceDto{{ID: "ws1"}, {ID: "ws2"}},
-		nss: map[string][]storage.NamespaceRow{
-			"ws1": {{ID: "ns1"}, {ID: "ns2"}},
-			"ws2": {{ID: "ns3"}},
+		refs: []storage.NamespaceRef{
+			{WsID: "ws1", NsID: "ns1"}, {WsID: "ws1", NsID: "ns2"}, {WsID: "ws2", NsID: "ns3"},
 		},
 	}
 	keep, ok := orphanKeepSet(f, "ws1", "ns1")
@@ -92,4 +91,21 @@ func TestAFailedListingRefusesTheSweep(t *testing.T) {
 		_, ok := orphanKeepSet(f, "ws1", "ns1")
 		assert.False(t, ok)
 	})
+}
+
+// A namespace row whose WORKSPACE row is gone is still a namespace: its config
+// and state sit in the same table, and something on the host may be running it.
+// The keep set used to be walked WS-first (ListWorkspaces → ListNamespaces per
+// ws), so such a row was unreachable and its containers were swept. On the
+// machine this was found on, 8 of 11 stored namespaces were in exactly that
+// state and every non-empty-workspace purge in daemon.log hit one of them.
+func TestANamespaceWhoseWorkspaceRowIsGoneIsStillKept(t *testing.T) {
+	f := &fakeKeepLister{
+		wss:  []storage.WorkspaceDto{{ID: "ykbsidq"}},
+		refs: []storage.NamespaceRef{{WsID: "ykbsidq", NsID: "5fn7t5q"}, {WsID: "default", NsID: "3q5h43y"}},
+	}
+	keep, ok := orphanKeepSet(f, "ykbsidq", "5fn7t5q")
+	require.True(t, ok)
+	assert.True(t, keep[docker.OrphanKey("3q5h43y", "default")],
+		"a stored namespace must be kept even when its workspace row is missing")
 }

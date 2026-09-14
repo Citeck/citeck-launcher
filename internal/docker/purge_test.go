@@ -66,3 +66,25 @@ func TestCollectOrphanTargetsAllKept(t *testing.T) {
 		t.Fatalf("expected no orphans when every pair is kept, got %v", got)
 	}
 }
+
+// A resource with no WORKSPACE label was created by a launcher in SERVER mode
+// (Client.workspace is empty there — see client.go). A desktop profile's keep
+// set can never contain such a pair, so the sweep read every server-mode stand
+// on the host as an orphan of its own. Measured on one machine: 8 of the 21
+// recorded purges were `ns=<something> ws=`, one of them a stand that was being
+// used at the time. Same reasoning as the empty-namespace skip beside it — the
+// pair does not belong to this profile and cannot be addressed safely.
+func TestPairsWithoutAWorkspaceLabelAreNeverTargeted(t *testing.T) {
+	keep := map[string]bool{OrphanKey("mine", "default"): true}
+	labelSets := []map[string]string{
+		{LabelNamespace: "default", LabelWorkspace: ""}, // a server-mode stand
+		{LabelNamespace: "default"},                     // no workspace label at all
+		{LabelNamespace: "gone", LabelWorkspace: "default"},
+	}
+
+	got := collectOrphanTargets(labelSets, keep)
+
+	if len(got) != 1 || got[0].NS != "gone" {
+		t.Fatalf("orphan targets = %+v, want only the desktop pair {gone default}", got)
+	}
+}
