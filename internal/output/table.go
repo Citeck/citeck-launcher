@@ -180,7 +180,7 @@ var kindOrder = []struct {
 	{"THIRD_PARTY", "Third Party"},
 }
 
-// appStatusCell renders the STATUS column. For DEPS_WAITING it appends the
+// AppStatusCell renders one app's STATUS for any CLI surface. For DEPS_WAITING it appends the
 // dependencies the app is held on: the pairs travel in AppDto.WaitingFor for
 // the reader to word, and the CLI is a reader — without this the operator saw a
 // bare DEPS_WAITING with no cause, which is the one status that cannot be acted
@@ -188,7 +188,7 @@ var kindOrder = []struct {
 // ids, not prose); their statuses are not, since the CLI locale asset has no
 // labels for them and a raw constant beside a translated status is worse than
 // naming the app alone.
-func appStatusCell(app api.AppDto) string {
+func AppStatusCell(app api.AppDto) string {
 	cell := ColorizeStatus(app.Status)
 	if app.Status != "DEPS_WAITING" || len(app.WaitingFor) == 0 {
 		return cell
@@ -269,7 +269,7 @@ func FormatAppTable(apps []api.AppDto) AppTableResult {
 		for _, app := range groupApps {
 			rows = append(rows, []string{
 				appNameCell(app),
-				appStatusCell(app),
+				AppStatusCell(app),
 				app.Image,
 				app.CPU,
 				app.Memory,
