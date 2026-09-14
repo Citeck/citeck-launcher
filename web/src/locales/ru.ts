@@ -12,6 +12,7 @@ const ru = {
   'dashboard.openInBrowser.disabled': 'Приложение не запущено. Запустите его, чтобы открыть в браузере.',
   'dashboard.openInBrowser.starting': 'Приложение запускается. Пожалуйста, подождите...',
   'dashboard.openInBrowser.stalled': 'Приложение зависло. Пожалуйста, попробуйте запустить его снова.',
+  'dashboard.openInBrowser.held': 'Часть приложений ждёт остановленных вами зависимостей. Запустите их, чтобы приложение стало доступно.',
 
   // -- Docker not available screen --
   'dockerUnavailable.title': 'Docker недоступен',

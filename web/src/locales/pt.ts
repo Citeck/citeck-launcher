@@ -12,6 +12,7 @@ const pt = {
   'dashboard.openInBrowser.disabled': 'O aplicativo n\u00e3o est\u00e1 em execu\u00e7\u00e3o. Inicie-o para abrir no navegador.',
   'dashboard.openInBrowser.starting': 'O aplicativo est\u00e1 iniciando. Aguarde, por favor...',
   'dashboard.openInBrowser.stalled': 'O aplicativo est\u00e1 travado. Por favor, tente inici\u00e1-lo novamente.',
+  'dashboard.openInBrowser.held': 'Algumas aplicações aguardam dependências que você parou. Inicie-as para que a aplicação fique disponível.',
 
   // -- Docker not available screen --
   'dockerUnavailable.title': 'O Docker não está disponível',
