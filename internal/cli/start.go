@@ -648,8 +648,14 @@ func streamLiveStatus(c *client.DaemonClient, opts liveStatusOpts) error {
 		// STOPPED apps to "recover".
 		if running+failed+stopped+held == total && !opts.waitAll {
 			ensureI18n()
-			fmt.Printf("\n%s\n", output.Colorize(output.Yellow,
-				fmt.Sprintf("%d/%d apps started, %d failed", running, total, failed))) //nolint:forbidigo // CLI result
+			summary := fmt.Sprintf("%d/%d apps started, %d failed", running, total, failed)
+			if held > 0 {
+				// The hold must not disappear behind the failure count: it is a
+				// different problem with a different fix, and the apps it holds
+				// are not among the failed ones.
+				summary += fmt.Sprintf(", %d held by %s", held, strings.Join(appTable.HeldDeps, ", "))
+			}
+			fmt.Printf("\n%s\n", output.Colorize(output.Yellow, summary)) //nolint:forbidigo // CLI result
 			return nil
 		}
 
