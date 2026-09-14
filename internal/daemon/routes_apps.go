@@ -283,10 +283,13 @@ func (d *Daemon) handleAppStop(w http.ResponseWriter, r *http.Request) {
 		writeInternalError(w, err)
 		return
 	}
-	// Detaching a cross-wiring app (ai / stt-sidecar / onlyoffice) changes other
-	// apps' generated config — regenerate so the proxy drops its upstream and AI
-	// drops the STT wiring (Kotlin v1.4.1 parity). StopApp has already recorded
-	// the detach in ManualStoppedApps, which doReload's Generate reads.
+	// Detaching a GATING app — one whose detach state changes what other apps
+	// get generated — changes other apps' generated config, so regenerate: the
+	// proxy drops its upstream, AI drops the STT wiring, rag loses its vector
+	// store. The set is not a list kept here: the generator reports it as
+	// GenResp.GatingApps (see NsGenContext.MarkGatingApp), which is what
+	// regenOnAttachToggle reads. StopApp has already recorded the detach in
+	// ManualStoppedApps, which doReload's Generate reads.
 	// Let go of the long-operation lock BEFORE the hand-off: the regeneration
 	// pass TryLocks the same lock, so a handler still holding it here would
 	// make the toggle skip its own regeneration. release is idempotent, so the
@@ -343,10 +346,11 @@ func (d *Daemon) handleAppStart(w http.ResponseWriter, r *http.Request) {
 		writeInternalError(w, err)
 		return
 	}
-	// Re-attaching a cross-wiring app (ai / stt-sidecar / onlyoffice) must
-	// regenerate so the proxy re-adds its upstream and AI re-acquires the STT
-	// wiring (Kotlin v1.4.1 parity). StartApp has already cleared the detach
-	// flag in ManualStoppedApps, which doReload's Generate reads.
+	// Re-attaching a GATING app (same set as the detach path above, read from
+	// GenResp.GatingApps rather than listed here) must regenerate so the proxy
+	// re-adds its upstream, AI re-acquires the STT wiring and rag gets its
+	// vector store back. StartApp has already cleared the detach flag in
+	// ManualStoppedApps, which doReload's Generate reads.
 	// Let go of the long-operation lock BEFORE the hand-off: the regeneration
 	// pass TryLocks the same lock, so a handler still holding it here would
 	// make the toggle skip its own regeneration. release is idempotent, so the
