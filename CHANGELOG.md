@@ -3,6 +3,7 @@
 ## New features
 
 * Added RAG support: enterprise bundles now include a new `rag` application (disabled by default). Enabling it automatically starts a Qdrant vector database and grants the AI assistant access to the knowledge base.
+* The Qdrant data volume is named `qdrant2`, matching the naming the 2.x launcher uses for every infra dependency's data (`postgres2`, `rabbitmq2`). Both launchers share one `~/.citeck/launcher` and the same container labels, so a namespace opened in either now finds the same volume. A stand that already ran `rag` on an earlier build of this release starts with an empty index and needs to re-index.
 
 # Release 1.4.1
 

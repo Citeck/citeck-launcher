@@ -69,7 +69,11 @@ class NamespaceGeneratorRagTest {
 
         val qdrant = context.applications[AppName.QDRANT]!!.build(false)
         assertThat(qdrant.image).isEqualTo(qdrantImage)
-        assertThat(qdrant.volumes).contains("qdrant_storage:/qdrant/storage")
+        // Generation 1 of 2.x's volume-generation scheme, the same shape as the
+        // "postgres2" this generator has always emitted. The two launchers share
+        // one ~/.citeck/launcher, so a namespace opened in both has to find one
+        // volume rather than two.
+        assertThat(qdrant.volumes).contains("qdrant2:/qdrant/storage")
 
         val probe = qdrant.startupConditions.single().probe!!.http!!
         assertThat(probe.path).isEqualTo("/healthz")

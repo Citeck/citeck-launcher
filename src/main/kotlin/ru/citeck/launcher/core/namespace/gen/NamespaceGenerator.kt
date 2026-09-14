@@ -328,7 +328,14 @@ class NamespaceGenerator {
 
         context.getOrCreateApp(AppName.QDRANT)
             .withImage(image)
-            .addVolume("qdrant_storage:/qdrant/storage")
+            // "qdrant2", not "qdrant_storage": 2.x registers qdrant as an infra
+            // dependency, and its volume names are generation-counted there
+            // ("postgres2" below is generation 1 of the same scheme). The two
+            // launchers share ~/.citeck/launcher and the same container labels, so
+            // a namespace opened in both must find ONE volume, not two — qdrant was
+            // the only dependency where the names had diverged. Renaming costs
+            // nothing in the field: RAG has never been released.
+            .addVolume("qdrant2:/qdrant/storage")
             // The startup probe below is an HTTP one, and httpProbeCheck resolves its
             // target ONLY from published host-port bindings: with nothing published it
             // returns false on every iteration, so qdrant would never become ready and
