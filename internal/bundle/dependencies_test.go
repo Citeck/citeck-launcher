@@ -185,3 +185,68 @@ dependencies:
 		"an unquoted tag must not silently lose its trailing digits")
 	assert.Equal(t, "onlyoffice/documentserver:9.4.0.1", def.Dependencies["onlyoffice"].Image)
 }
+
+// The dependencies section is the ONE place a list means a ladder, and the
+// target is its LAST rung — that is where the stand is being taken.
+func TestABundleDependencyLadderKeepsEveryRungAndTargetsTheLast(t *testing.T) {
+	def := parseTestBundle(t, `
+dependencies:
+  qdrant:
+    image:
+      - qdrant/qdrant:v1.15.5
+      - qdrant/qdrant:v1.16.1
+      - qdrant/qdrant:v1.19.1
+`)
+	entry := def.Dependencies["qdrant"]
+	assert.Equal(t, []string{
+		"qdrant/qdrant:v1.15.5", "qdrant/qdrant:v1.16.1", "qdrant/qdrant:v1.19.1",
+	}, entry.Images)
+	assert.Equal(t, "qdrant/qdrant:v1.19.1", entry.Image,
+		"the target is the last rung: that is where the ladder leads")
+}
+
+// Everywhere else a list has no route to walk, so the FIRST element is taken —
+// the most conservative rung, the one most likely to match what is already in
+// the volume. Same principle as LegacyImage().
+func TestABundleApplicationListTakesTheFirstElement(t *testing.T) {
+	def := parseTestBundle(t, `
+eapps:
+  image:
+    - harbor/ecos-eapps:1.0.0
+    - harbor/ecos-eapps:2.0.0
+`)
+	assert.Equal(t, "harbor/ecos-eapps:1.0.0", def.Applications["eapps"].Image)
+	assert.Nil(t, def.Applications["eapps"].Images,
+		"an applications entry has no ladder to offer")
+}
+
+func TestAWorkspaceDependencyLadderIsRegistryResolvedAndTargetsTheLast(t *testing.T) {
+	ws := parseWorkspaceConfig([]byte(`
+imageRepos:
+  - id: core
+    url: nexus.citeck.ru
+webapps: []
+dependencies:
+  qdrant:
+    image:
+      - core/qdrant:v1.15.5
+      - core/qdrant:v1.19.1
+`), "ws.yml", slog.Default())
+	assert.Equal(t, []string{"nexus.citeck.ru/qdrant:v1.15.5", "nexus.citeck.ru/qdrant:v1.19.1"},
+		ws.DependencyImageChain("qdrant"))
+	assert.Equal(t, "nexus.citeck.ru/qdrant:v1.19.1", ws.DependencyImage("qdrant"))
+}
+
+func TestAWorkspaceDependencyWithALadderHoleNamesNothing(t *testing.T) {
+	ws := parseWorkspaceConfig([]byte(`
+imageRepos: []
+webapps: []
+dependencies:
+  qdrant:
+    image:
+      - qdrant/qdrant:v1.15.5
+      - {repository: qdrant/qdrant}
+`), "ws.yml", slog.Default())
+	assert.Empty(t, ws.DependencyImage("qdrant"))
+	assert.Nil(t, ws.DependencyImageChain("qdrant"))
+}

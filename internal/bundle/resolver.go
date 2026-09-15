@@ -303,8 +303,70 @@ type WorkspaceConfig struct {
 	Links []WorkspaceLink `yaml:"links,omitempty"`
 }
 
+// decodeImageValues reads an `image:` value in any of the three shapes the
+// launcher accepts and answers them as an ordered list.
+//
+// The shapes are the plain string ("postgres:18.6"), the {repository, tag}
+// map every typed block and bundle entry uses, and a SEQUENCE of either. What
+// the sequence MEANS is not decided here: the `dependencies:` section reads it
+// as a ladder whose last rung is the target, and every other reader takes the
+// first element (see the callers). One decoder rather than two, because the
+// rule for reading a tag has drifted into two places before and the result was
+// a spelling that worked in the bundle and failed in the workspace config.
+//
+// It decodes from the yaml.Node rather than from a generic map on purpose: in
+// a map an unquoted `tag: 17.10` has already become float64(17.1), and the
+// entry then names a version nobody wrote.
+//
+// A shape it cannot read answers nil, and so does a sequence with ONE
+// unreadable element — the whole ladder, not just that rung. A ladder is a
+// route, and a route with a hole in it is a hop the vendor was never asked
+// about; the dependency staying on its pin is the only honest answer.
+func decodeImageValues(node *yaml.Node) []string {
+	if node == nil {
+		return nil
+	}
+	switch node.Kind {
+	case yaml.ScalarNode:
+		if v := strings.TrimSpace(node.Value); v != "" {
+			return []string{v}
+		}
+		return nil
+	case yaml.MappingNode:
+		var pair struct {
+			Repository string `yaml:"repository"`
+			Tag        string `yaml:"tag"`
+		}
+		if err := node.Decode(&pair); err != nil {
+			return nil
+		}
+		if pair.Repository == "" || pair.Tag == "" {
+			return nil
+		}
+		return []string{pair.Repository + ":" + pair.Tag}
+	case yaml.SequenceNode:
+		out := make([]string, 0, len(node.Content))
+		for _, item := range node.Content {
+			one := decodeImageValues(item)
+			if len(one) != 1 {
+				// Either unreadable or itself a sequence. Both poison the
+				// ladder: see the doc comment.
+				return nil
+			}
+			out = append(out, one[0])
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
 // DependencyEntry is one entry of the workspace config's `dependencies:`
-// section — an app id mapped to the image it should run.
+// section — an app id mapped to the image, or the LADDER of images, it should
+// run.
 //
 // The section exists for ONE reason, and it is a compatibility contract with
 // the workspace configs in the field rather than a matter of taste. It is the
@@ -324,16 +386,19 @@ type WorkspaceConfig struct {
 //
 // It is also useful in its own right: a version raised here applies to every
 // namespace of the workspace, without waiting for a bundle to carry it.
+//
+// Images is the ladder as written. Image is its LAST rung, which is the
+// target — everything that only wants "what should this run" reads Image and
+// is unaffected by the ladder's existence.
 type DependencyEntry struct {
-	// Image is the resolved single-string reference ("postgres:17.11",
-	// "core/postgres:17.11"). It is NOT registry-resolved here — see
-	// WorkspaceConfig.DependencyImage.
-	Image string `yaml:"image"`
+	Image  string   `yaml:"-"`
+	Images []string `yaml:"-"`
 }
 
-// UnmarshalYAML accepts both spellings of `image:` — the plain string
-// ("postgres:17.11", the form the section was specified with) and the
-// {repository, tag} map every existing typed block and bundle entry uses.
+// UnmarshalYAML accepts any of the shapes decodeImageValues knows — the plain
+// string ("postgres:17.11", the form the section was specified with), the
+// {repository, tag} map every existing typed block and bundle entry uses, and
+// a sequence of either, read as the ladder this entry names.
 //
 // It is deliberately TOTAL: it never reports an error. parseWorkspaceConfig
 // drops the ENTIRE workspace config on a YAML error — imageRepos, webapps,
@@ -351,21 +416,12 @@ func (d *DependencyEntry) UnmarshalYAML(node *yaml.Node) error {
 		// workspace's whole config.
 		return nil
 	}
-	switch raw.Image.Kind {
-	case yaml.ScalarNode:
-		d.Image = strings.TrimSpace(raw.Image.Value)
-	case yaml.MappingNode:
-		var pair struct {
-			Repository string `yaml:"repository"`
-			Tag        string `yaml:"tag"`
-		}
-		if err := raw.Image.Decode(&pair); err != nil {
-			return nil // idem
-		}
-		if pair.Repository != "" && pair.Tag != "" {
-			d.Image = pair.Repository + ":" + pair.Tag
-		}
+	values := decodeImageValues(&raw.Image)
+	if len(values) == 0 {
+		return nil
 	}
+	d.Images = values
+	d.Image = values[len(values)-1]
 	return nil
 }
 
@@ -383,6 +439,29 @@ func (w *WorkspaceConfig) DependencyImage(app string) string {
 		return ""
 	}
 	return w.ResolveImageRef(w.Dependencies[app].Image)
+}
+
+// DependencyImageChain answers the LADDER the workspace's `dependencies:`
+// section names for one app id, registry-resolved rung by rung, nil when it
+// names none. A single-image entry answers a one-rung ladder, so callers need
+// no second shape for the ordinary case.
+func (w *WorkspaceConfig) DependencyImageChain(app string) []string {
+	if w == nil {
+		return nil
+	}
+	raw := w.Dependencies[app].Images
+	if len(raw) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(raw))
+	for _, image := range raw {
+		resolved := w.ResolveImageRef(image)
+		if resolved == "" {
+			return nil
+		}
+		out = append(out, resolved)
+	}
+	return out
 }
 
 // WorkspaceLink is a custom quick link declared in the workspace config and
@@ -1292,12 +1371,20 @@ func parseBundleDependencies(data []byte, imageRepoMap map[string]string, logger
 	}
 	out := make(map[string]AppDef, len(doc.Dependencies))
 	for name, entry := range doc.Dependencies {
-		image := resolveImageRefWithRepos(entry.Image, imageRepoMap)
-		if image == "" {
+		images := make([]string, 0, len(entry.Images))
+		for _, raw := range entry.Images {
+			image := resolveImageRefWithRepos(raw, imageRepoMap)
+			if image == "" {
+				images = nil
+				break
+			}
+			images = append(images, image)
+		}
+		if len(images) == 0 {
 			logger.Warn("Bundle dependency entry names no image; ignoring it", "app", name)
 			continue
 		}
-		out[name] = AppDef{Image: image}
+		out[name] = AppDef{Image: images[len(images)-1], Images: images}
 	}
 	if len(out) == 0 {
 		return nil
@@ -1328,14 +1415,28 @@ func collectCiteckApps(value map[string]any, imageRepoMap map[string]string, cit
 	return citeckApps
 }
 
-// extractBundleImage extracts image URL from a bundle entry's image.repository + image.tag.
+// extractBundleImage extracts one image URL from a bundle entry's `image:`.
+//
+// A LIST is accepted and its FIRST element taken. Nothing outside the
+// `dependencies:` section can walk a ladder — there is no pin, no hold and no
+// migration out here — so the only honest reading is the most conservative
+// rung, which is the same rule LegacyImage() follows.
 func extractBundleImage(entry map[string]any, imageRepoMap map[string]string) string {
 	imgObj, ok := entry["image"]
 	if !ok {
 		return ""
 	}
-	imgMap, ok := imgObj.(map[string]any)
-	if !ok {
+	if list, isList := imgObj.([]any); isList {
+		if len(list) == 0 {
+			return ""
+		}
+		imgObj = list[0]
+	}
+	if s, isStr := imgObj.(string); isStr {
+		return resolveImageRefWithRepos(s, imageRepoMap)
+	}
+	imgMap, isMap := imgObj.(map[string]any)
+	if !isMap {
 		return ""
 	}
 	return resolveImageURL(strVal(imgMap, "repository"), strVal(imgMap, "tag"), imageRepoMap)
