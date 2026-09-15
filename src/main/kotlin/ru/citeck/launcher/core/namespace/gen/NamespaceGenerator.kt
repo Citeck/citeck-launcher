@@ -287,7 +287,7 @@ class NamespaceGenerator {
         val props = context.workspaceConfig.sttSidecar
         val port = props.port
         val image = props.image.takeIf { it.isNotBlank() }
-            ?: context.bundle.applications[AppName.STT_SIDECAR]?.image?.takeIf { it.isNotBlank() }
+            ?: context.bundle.imageOf(AppName.STT_SIDECAR).takeIf { it.isNotBlank() }
             ?: return
 
         context.getOrCreateApp(AppName.STT_SIDECAR)
@@ -323,7 +323,7 @@ class NamespaceGenerator {
         // Image is deliberately not configurable via WorkspaceConfig (unlike stt-sidecar):
         // qdrant is an implementation detail of the rag bundle app and its version is pinned
         // by the bundle release, not by workspace-local overrides.
-        val image = context.bundle.applications[AppName.QDRANT]?.image?.takeIf { it.isNotBlank() }
+        val image = context.bundle.imageOf(AppName.QDRANT).takeIf { it.isNotBlank() }
             ?: return
 
         context.getOrCreateApp(AppName.QDRANT)
@@ -432,7 +432,7 @@ class NamespaceGenerator {
 
         app.withImage(
             proxyProps.image.ifBlank {
-                context.bundle.applications[AppName.PROXY]?.image ?: ""
+                context.bundle.imageOf(AppName.PROXY)
             }
         )
 
@@ -543,7 +543,7 @@ class NamespaceGenerator {
             ApplicationKind.CITECK_ADDITIONAL
         }
 
-        app.withImage(webappProps.image.ifBlank { context.bundle.applications[name]?.image ?: "" })
+        app.withImage(webappProps.image.ifBlank { context.bundle.imageOf(name) })
             .withKind(kind)
             .addEnv("SERVER_PORT", port.toString())
             .addEnv("SPRING_PROFILES_ACTIVE", springProfiles.joinToString())
