@@ -62,6 +62,7 @@
   "install.release.notFoundHelp": "Pour une installation en ligne, vérifiez votre connexion internet et réessayez.\nPour une installation hors ligne, utilisez : citeck install --workspace <chemin-vers-workspace.zip>",
   "install.release.latest": "dernière",
   "install.release.back": "Retour",
+  "install.release.launcherTooOld": "Le bundle {bundle} nécessite le lanceur {needs} ou plus récent ; ce lanceur est en version {current}. Mettez à jour le lanceur, ou choisissez une version antérieure.",
   "install.canceled": "Installation annulée.",
   "snapshot.list.empty": "Aucun snapshot trouvé",
   "snapshot.export.outputDir.label": "Répertoire de sortie",

@@ -62,6 +62,7 @@
   "install.release.notFoundHelp": "在线安装：请检查网络连接后重试。\n离线安装请使用：citeck install --workspace <workspace.zip 路径>",
   "install.release.latest": "最新",
   "install.release.back": "返回",
+  "install.release.launcherTooOld": "捆绑包 {bundle} 需要启动器 {needs} 或更高版本；当前启动器是 {current}。请更新启动器，或选择更早的版本。",
   "install.canceled": "安装已取消。",
   "snapshot.list.empty": "未找到快照",
   "snapshot.export.outputDir.label": "输出目录",

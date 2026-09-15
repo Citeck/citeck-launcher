@@ -62,6 +62,7 @@
   "install.release.notFoundHelp": "Para la instalación online, compruebe su conexión a internet y reintente.\nPara la instalación offline, use: citeck install --workspace <ruta-a-workspace.zip>",
   "install.release.latest": "más reciente",
   "install.release.back": "Atrás",
+  "install.release.launcherTooOld": "El bundle {bundle} requiere el lanzador {needs} o posterior; este lanzador es {current}. Actualice el lanzador, o elija una versión anterior.",
   "install.canceled": "Instalación cancelada.",
   "snapshot.list.empty": "No se encontraron snapshots",
   "snapshot.export.outputDir.label": "Directorio de salida",

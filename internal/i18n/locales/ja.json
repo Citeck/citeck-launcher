@@ -62,6 +62,7 @@
   "install.release.notFoundHelp": "オンラインインストールの場合はインターネット接続を確認して再試行してください。\nオフラインインストールの場合: citeck install --workspace <workspace.zip のパス>",
   "install.release.latest": "最新",
   "install.release.back": "戻る",
+  "install.release.launcherTooOld": "バンドル {bundle} にはランチャー {needs} 以降が必要です。このランチャーは {current} です。ランチャーを更新するか、より古いバージョンを選択してください。",
   "install.canceled": "インストールをキャンセルしました。",
   "snapshot.list.empty": "スナップショットが見つかりません",
   "snapshot.export.outputDir.label": "出力ディレクトリ",
