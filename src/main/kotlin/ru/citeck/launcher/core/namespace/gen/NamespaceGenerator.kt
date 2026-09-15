@@ -56,6 +56,26 @@ class NamespaceGenerator {
          */
         private const val QDRANT_HTTP_PORT = 6333
 
+        /**
+         * The Qdrant version this launcher runs, pinned HERE and taken from
+         * nowhere else — not the bundle, not the workspace config.
+         *
+         * This launcher has no dependency gate: whatever image it is handed is
+         * applied straight onto the existing data volume. Qdrant guarantees it
+         * can read its own storage across ONE minor only, so a bundle raising
+         * that minor would silently hand a newer server a volume it may not be
+         * able to read — with no hold, no report and no migration, because none
+         * of that exists here. Reading the version from anywhere external is
+         * therefore not a feature this launcher can have safely.
+         *
+         * The 2.x launcher is where a Qdrant version moves: it pins what the
+         * data runs on, holds a breaking candidate back, and migrates a COPY of
+         * the volume on request. Raising the number below is a deliberate act
+         * that says "this launcher's users may be moved onto that version with
+         * no migration at all", and today that is only true of a fresh volume.
+         */
+        private const val QDRANT_IMAGE = "qdrant/qdrant:v1.19.1"
+
         private val EMPTY_SPRING_PROPS_CONTENT = """
             ---
             # You can add spring properties here in yaml format
@@ -287,7 +307,7 @@ class NamespaceGenerator {
         val props = context.workspaceConfig.sttSidecar
         val port = props.port
         val image = props.image.takeIf { it.isNotBlank() }
-            ?: context.bundle.imageOf(AppName.STT_SIDECAR).takeIf { it.isNotBlank() }
+            ?: context.bundle.applications[AppName.STT_SIDECAR]?.image?.takeIf { it.isNotBlank() }
             ?: return
 
         context.getOrCreateApp(AppName.STT_SIDECAR)
@@ -320,14 +340,9 @@ class NamespaceGenerator {
         }
 
         val props = context.workspaceConfig.qdrant
-        // Image is deliberately not configurable via WorkspaceConfig (unlike stt-sidecar):
-        // qdrant is an implementation detail of the rag bundle app and its version is pinned
-        // by the bundle release, not by workspace-local overrides.
-        val image = context.bundle.imageOf(AppName.QDRANT).takeIf { it.isNotBlank() }
-            ?: return
 
         context.getOrCreateApp(AppName.QDRANT)
-            .withImage(image)
+            .withImage(QDRANT_IMAGE)
             // "qdrant2", not "qdrant_storage": 2.x registers qdrant as an infra
             // dependency, and its volume names are generation-counted there
             // ("postgres2" below is generation 1 of the same scheme). The two
@@ -432,7 +447,7 @@ class NamespaceGenerator {
 
         app.withImage(
             proxyProps.image.ifBlank {
-                context.bundle.imageOf(AppName.PROXY)
+                context.bundle.applications[AppName.PROXY]?.image ?: ""
             }
         )
 
@@ -543,7 +558,7 @@ class NamespaceGenerator {
             ApplicationKind.CITECK_ADDITIONAL
         }
 
-        app.withImage(webappProps.image.ifBlank { context.bundle.imageOf(name) })
+        app.withImage(webappProps.image.ifBlank { context.bundle.applications[name]?.image ?: "" })
             .withKind(kind)
             .addEnv("SERVER_PORT", port.toString())
             .addEnv("SPRING_PROFILES_ACTIVE", springProfiles.joinToString())

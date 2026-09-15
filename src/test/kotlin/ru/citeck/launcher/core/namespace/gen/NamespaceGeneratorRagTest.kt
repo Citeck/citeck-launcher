@@ -11,13 +11,17 @@ import kotlin.test.Test
 class NamespaceGeneratorRagTest {
 
     private val ragImage = "harbor.citeck.ru/enterprise/citeck-rag:1.2.2"
-    private val qdrantImage = "qdrant/qdrant:v1.14.1"
+
+    // What generateQdrant pins. It is NOT read from the bundle: this launcher
+    // has no dependency gate, so an image handed to it is applied straight onto
+    // the existing data volume.
+    private val pinnedQdrantImage = "qdrant/qdrant:v1.19.1"
     private val aiImage = "ai:latest"
 
     private fun createContext(
         detachedApps: Set<String> = emptySet(),
         withRagInBundle: Boolean = true,
-        withQdrantInBundle: Boolean = true,
+        qdrantImageInBundle: String = "",
         withAiApp: Boolean = false,
         qdrantProps: WorkspaceConfig.QdrantProps = WorkspaceConfig.QdrantProps.DEFAULT
     ): NsGenContext {
@@ -25,8 +29,8 @@ class NamespaceGeneratorRagTest {
         if (withRagInBundle) {
             bundleApps[AppName.RAG] = BundleDef.BundleAppDef(ragImage)
         }
-        if (withQdrantInBundle) {
-            bundleApps[AppName.QDRANT] = BundleDef.BundleAppDef(qdrantImage)
+        if (qdrantImageInBundle.isNotEmpty()) {
+            bundleApps[AppName.QDRANT] = BundleDef.BundleAppDef(qdrantImageInBundle)
         }
         if (withAiApp) {
             bundleApps[AppName.AI] = BundleDef.BundleAppDef(aiImage)
@@ -68,7 +72,7 @@ class NamespaceGeneratorRagTest {
         NamespaceGenerator().generateQdrant(context)
 
         val qdrant = context.applications[AppName.QDRANT]!!.build(false)
-        assertThat(qdrant.image).isEqualTo(qdrantImage)
+        assertThat(qdrant.image).isEqualTo(pinnedQdrantImage)
         // Generation 1 of 2.x's volume-generation scheme, the same shape as the
         // "postgres2" this generator has always emitted. The two launchers share
         // one ~/.citeck/launcher, so a namespace opened in both has to find one
@@ -147,16 +151,40 @@ class NamespaceGeneratorRagTest {
         assertThat(rag.dependsOn).contains(AppName.QDRANT)
     }
 
+    /**
+     * The version is this launcher's, and a bundle cannot move it.
+     *
+     * There is no dependency gate here: an image handed to this generator is
+     * applied straight onto the existing data volume, with no hold, no report
+     * and no migration — none of which exists in 1.x. Qdrant guarantees it can
+     * read its own storage across ONE minor only, so following a bundle would
+     * mean silently handing a newer server a volume it may not be able to read.
+     * Moving a Qdrant version is the 2.x launcher's job, which pins what the
+     * data runs on and migrates a COPY of the volume on request.
+     */
     @Test
-    fun `qdrant is not generated when not present in bundle even with rag active`() {
-        val context = createContext(withQdrantInBundle = false)
+    fun `the bundle does not decide the qdrant version`() {
+        val context = createContext(qdrantImageInBundle = "qdrant/qdrant:v1.14.1")
         NamespaceGenerator().generateQdrant(context)
 
-        assertThat(context.applications).doesNotContainKey(AppName.QDRANT)
+        val qdrant = context.applications[AppName.QDRANT]!!.build(false)
+        assertThat(qdrant.image).isEqualTo(pinnedQdrantImage)
+    }
 
+    /**
+     * And a bundle that names no qdrant at all still gets one, because rag
+     * without a vector store is not a smaller rag — it is a rag that starts,
+     * looks RUNNING and can neither search nor index anything.
+     */
+    @Test
+    fun `qdrant is generated even when the bundle names none`() {
+        val context = createContext()
+        NamespaceGenerator().generateQdrant(context)
+
+        assertThat(context.applications).containsKey(AppName.QDRANT)
         val rag = context.applications[AppName.RAG]!!.build(false)
-        assertThat(rag.environments).doesNotContainKey("QDRANT_HOST")
-        assertThat(rag.dependsOn).doesNotContain(AppName.QDRANT)
+        assertThat(rag.environments["QDRANT_HOST"]).isEqualTo(AppName.QDRANT)
+        assertThat(rag.dependsOn).contains(AppName.QDRANT)
     }
 
     @Test

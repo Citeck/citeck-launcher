@@ -3,7 +3,6 @@
 ## New features
 
 * Added RAG support: enterprise bundles now include a new `rag` application (disabled by default). Enabling it automatically starts a Qdrant vector database and grants the AI assistant access to the knowledge base.
-* Bundles may declare their third-party images under a `dependencies:` section, and the launcher now reads it. The section is invisible to launchers that do not know it, which is how one bundle can raise an infra version for newer launchers while everyone else keeps running what they run today. It matters here for Qdrant in particular: its image comes from the bundle and from nowhere else, so a bundle that moved it into that section would otherwise leave `rag` running with no vector store at all.
 * The Qdrant data volume is named `qdrant2`, matching the naming the 2.x launcher uses for every infra dependency's data (`postgres2`, `rabbitmq2`). Both launchers share one `~/.citeck/launcher` and the same container labels, so a namespace opened in either now finds the same volume. A stand that already ran `rag` on an earlier build of this release starts with an empty index and needs to re-index.
 
 # Release 1.4.1
