@@ -43,7 +43,7 @@ func zkEnv(t *testing.T, s *execScript) *guardEnv {
 
 func runZkPlan(t *testing.T, env *guardEnv, from, to string) error {
 	t.Helper()
-	plan, j, err := (ZookeeperMigrator{}).Plan(context.Background(), env, from, to, PlanOptions{})
+	plan, j, err := (ZookeeperMigrator{}).Plan(context.Background(), env, Path{from, to}, PlanOptions{})
 	require.NoError(t, err)
 	return Run(context.Background(), j2store(), j, plan, nil)
 }
@@ -87,7 +87,7 @@ func TestZkSupportsPairRefusesDataOlderThan35(t *testing.T) {
 // data is perfectly intact.
 func TestZkPreflightDoesNotRequireASnapshot(t *testing.T) {
 	env := zkEnv(t, &execScript{})
-	res := (ZookeeperMigrator{}).Preflight(context.Background(), env, zkFrom, zkTo)
+	res := (ZookeeperMigrator{}).Preflight(context.Background(), env, Path{zkFrom, zkTo})
 	require.True(t, res.OK, res.Problems)
 	assert.Empty(t, res.Problems)
 	joined := joinEN(append(res.Problems, res.Warnings...))
@@ -103,7 +103,7 @@ func TestZkPreflightDoesNotRequireASnapshot(t *testing.T) {
 func TestZkPreflightRefusesAMissingSourceVolume(t *testing.T) {
 	env := zkEnv(t, &execScript{})
 	delete(env.Volumes, deps.VolumeName(zookeeperDescriptor(t), 1))
-	res := (ZookeeperMigrator{}).Preflight(context.Background(), env, zkFrom, zkTo)
+	res := (ZookeeperMigrator{}).Preflight(context.Background(), env, Path{zkFrom, zkTo})
 	require.False(t, res.OK)
 	assert.Contains(t, joinEN(res.Problems), "zookeeper2")
 }

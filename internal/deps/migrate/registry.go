@@ -28,11 +28,13 @@ type Migrator interface {
 	// is the wrong advice for a policy that will never change.
 	SupportsPair(from, to deps.Version) (ok bool, problem msg.Message)
 	// Preflight measures and reports everything that would refuse or endanger
-	// the migration, without touching the data.
-	Preflight(ctx context.Context, env Env, from, to string) PreflightResult
+	// the migration, without touching the data. It is given the whole ROUTE:
+	// a refusal on any rung refuses the migration, and measuring only the ends
+	// would pass a ladder whose middle the vendor forbids.
+	Preflight(ctx context.Context, env Env, path Path) PreflightResult
 	// Plan runs the preflight again and, if it passes, builds the executable
 	// plan plus the journal that will be written ahead of its first step.
-	Plan(ctx context.Context, env Env, from, to string, opts PlanOptions) (*Plan, deps.MigrationJournal, error)
+	Plan(ctx context.Context, env Env, path Path, opts PlanOptions) (*Plan, deps.MigrationJournal, error)
 }
 
 // migrators is the single wiring point between a registry descriptor that

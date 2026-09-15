@@ -404,11 +404,11 @@ func TestIntegration_Rabbit41To42(t *testing.T) {
 	before := e.volumeManifest(ctx, t, src)
 	require.NotEmpty(t, before, "a seeded RabbitMQ volume is not empty; an empty manifest means the walk failed")
 
-	pre := migrate.RabbitMigrator{}.Preflight(ctx, e.env, itRabbitFrom, itRabbitTo)
+	pre := migrate.RabbitMigrator{}.Preflight(ctx, e.env, migrate.Path{itRabbitFrom, itRabbitTo})
 	require.True(t, pre.OK, "preflight problems: %v", pre.Problems)
 	t.Logf("preflight: data %d B, free volume %d B, warnings %v", pre.DataSizeBytes, pre.FreeVolumeBytes, pre.Warnings)
 
-	plan, journal, err := migrate.RabbitMigrator{}.Plan(ctx, e.env, itRabbitFrom, itRabbitTo, migrate.PlanOptions{})
+	plan, journal, err := migrate.RabbitMigrator{}.Plan(ctx, e.env, migrate.Path{itRabbitFrom, itRabbitTo}, migrate.PlanOptions{})
 	require.NoError(t, err)
 
 	timer := newStepTimer()
@@ -675,7 +675,7 @@ func TestIntegration_Zookeeper38To39(t *testing.T) {
 	before := e.volumeManifest(ctx, t, src)
 	require.NotEmpty(t, before)
 
-	pre := migrate.ZookeeperMigrator{}.Preflight(ctx, e.env, itZkFrom, itZkTo)
+	pre := migrate.ZookeeperMigrator{}.Preflight(ctx, e.env, migrate.Path{itZkFrom, itZkTo})
 	require.True(t, pre.OK, "preflight problems: %v", pre.Problems)
 	t.Logf("preflight: data %d B, required on the volume filesystem %d B, free %d B",
 		pre.DataSizeBytes, pre.RequiredVolumeBytes, pre.FreeVolumeBytes)
@@ -700,7 +700,7 @@ func TestIntegration_Zookeeper38To39(t *testing.T) {
 	assert.Equal(t, 1, snapshots,
 		"a graceful stop wrote a second snapshot after all; this test no longer covers the txnlog-only case: %v", before)
 
-	plan, journal, err := migrate.ZookeeperMigrator{}.Plan(ctx, e.env, itZkFrom, itZkTo, migrate.PlanOptions{})
+	plan, journal, err := migrate.ZookeeperMigrator{}.Plan(ctx, e.env, migrate.Path{itZkFrom, itZkTo}, migrate.PlanOptions{})
 	require.NoError(t, err)
 	timer := newStepTimer()
 	started := time.Now()
@@ -847,7 +847,7 @@ func TestIntegration_CopyRollbackOnBadTarget(t *testing.T) {
 	// at a step EARLIER than the one this test is about.
 	require.NoError(t, e.env.PullImage(ctx, itBadImage, func(float64) {}))
 
-	plan, journal, err := migrate.ZookeeperMigrator{}.Plan(ctx, e.env, itZkFrom, itZkTo, migrate.PlanOptions{})
+	plan, journal, err := migrate.ZookeeperMigrator{}.Plan(ctx, e.env, migrate.Path{itZkFrom, itZkTo}, migrate.PlanOptions{})
 	require.NoError(t, err)
 
 	// What the world looked like at the moment of failure, so the assertions
@@ -1056,12 +1056,12 @@ func TestIntegration_Qdrant114To115(t *testing.T) {
 	before := e.volumeManifest(ctx, t, src)
 	require.NotEmpty(t, before)
 
-	pre := migrate.QdrantMigrator{}.Preflight(ctx, e.env, itQdrantFrom, itQdrantTo)
+	pre := migrate.QdrantMigrator{}.Preflight(ctx, e.env, migrate.Path{itQdrantFrom, itQdrantTo})
 	require.True(t, pre.OK, "preflight problems: %v", pre.Problems)
 	t.Logf("preflight: data %d B, required on the volume filesystem %d B, free %d B",
 		pre.DataSizeBytes, pre.RequiredVolumeBytes, pre.FreeVolumeBytes)
 
-	plan, journal, err := migrate.QdrantMigrator{}.Plan(ctx, e.env, itQdrantFrom, itQdrantTo, migrate.PlanOptions{})
+	plan, journal, err := migrate.QdrantMigrator{}.Plan(ctx, e.env, migrate.Path{itQdrantFrom, itQdrantTo}, migrate.PlanOptions{})
 	require.NoError(t, err)
 	timer := newStepTimer()
 	started := time.Now()
@@ -1253,7 +1253,7 @@ func TestIntegration_QdrantApiKeyFailsSafely(t *testing.T) {
 			`{"environments":{"QDRANT__SERVICE__API_KEY":"an-operator-set-key"}}`),
 	}, nil)
 
-	plan, journal, err := migrate.QdrantMigrator{}.Plan(ctx, e.env, itQdrantFrom, itQdrantTo, migrate.PlanOptions{})
+	plan, journal, err := migrate.QdrantMigrator{}.Plan(ctx, e.env, migrate.Path{itQdrantFrom, itQdrantTo}, migrate.PlanOptions{})
 	require.NoError(t, err)
 	timer := newStepTimer()
 	runErr := migrate.Run(ctx, e.rt, journal, plan, timer.progress)

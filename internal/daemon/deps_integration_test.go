@@ -605,7 +605,7 @@ func TestIntegration_Postgres17To18(t *testing.T) {
 	e.seed(ctx, t)
 	e.requireReadableCluster(ctx, t)
 
-	pre := migrate.PostgresMigrator{}.Preflight(ctx, e.env, itFromImage, itToImage)
+	pre := migrate.PostgresMigrator{}.Preflight(ctx, e.env, migrate.Path{itFromImage, itToImage})
 	require.True(t, pre.OK, "preflight problems: %v", pre.Problems)
 	require.Empty(t, pre.Warnings, "a fresh namespace has no leftover target volume")
 	assert.False(t, pre.WasRunning, "the harness never starts the namespace")
@@ -613,7 +613,7 @@ func TestIntegration_Postgres17To18(t *testing.T) {
 
 	// Wired exactly as handleDependencyMigrate wires it: plan from the
 	// migrator, engine over the namespace Runtime as the journal store.
-	plan, journal, err := migrate.PostgresMigrator{}.Plan(ctx, e.env, itFromImage, itToImage, migrate.PlanOptions{})
+	plan, journal, err := migrate.PostgresMigrator{}.Plan(ctx, e.env, migrate.Path{itFromImage, itToImage}, migrate.PlanOptions{})
 	require.NoError(t, err)
 
 	timer := newStepTimer()
@@ -702,7 +702,7 @@ func TestIntegration_RollbackOnBadTarget(t *testing.T) {
 	// at a step EARLIER than the one this test is about.
 	require.NoError(t, e.env.PullImage(ctx, itBadImage, func(float64) {}))
 
-	plan, journal, err := migrate.PostgresMigrator{}.Plan(ctx, e.env, itFromImage, itToImage, migrate.PlanOptions{})
+	plan, journal, err := migrate.PostgresMigrator{}.Plan(ctx, e.env, migrate.Path{itFromImage, itToImage}, migrate.PlanOptions{})
 	require.NoError(t, err)
 
 	// What the world looked like at the moment of failure, so the assertions

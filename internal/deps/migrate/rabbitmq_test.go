@@ -74,7 +74,7 @@ func rabbitPlanEnv(t *testing.T, s *execScript) *guardEnv {
 
 func runRabbitPlan(t *testing.T, env *guardEnv, from, to string) error {
 	t.Helper()
-	plan, j, err := (RabbitMigrator{}).Plan(context.Background(), env, from, to, PlanOptions{})
+	plan, j, err := (RabbitMigrator{}).Plan(context.Background(), env, Path{from, to}, PlanOptions{})
 	require.NoError(t, err)
 	return Run(context.Background(), j2store(), j, plan, nil)
 }
@@ -233,14 +233,14 @@ func TestRabbitPreflightChecksDeprecatedFeaturesForA43Target(t *testing.T) {
 		env := rabbitPlanEnv(t, s)
 		env.Containers[appdef.AppRabbitmq] = appdef.ApplicationDef{Name: appdef.AppRabbitmq, Image: rabbitTo}
 		env.States[deps.RabbitMQ] = deps.DependencyState{Image: rabbitTo}
-		res := (RabbitMigrator{}).Preflight(context.Background(), env, rabbitTo, rabbit43)
+		res := (RabbitMigrator{}).Preflight(context.Background(), env, Path{rabbitTo, rabbit43})
 		require.False(t, res.OK)
 		assert.Contains(t, joinEN(res.Problems), "classic_queue_mirroring")
 	})
 	t.Run("a stopped namespace is a warning, not a refusal", func(t *testing.T) {
 		env := rabbitPlanEnv(t, &execScript{})
 		env.States[deps.RabbitMQ] = deps.DependencyState{Image: rabbitTo}
-		res := (RabbitMigrator{}).Preflight(context.Background(), env, rabbitTo, rabbit43)
+		res := (RabbitMigrator{}).Preflight(context.Background(), env, Path{rabbitTo, rabbit43})
 		require.True(t, res.OK, res.Problems)
 		assert.Contains(t, joinEN(res.Warnings), "deprecated features")
 	})
@@ -248,7 +248,7 @@ func TestRabbitPreflightChecksDeprecatedFeaturesForA43Target(t *testing.T) {
 		s := &execScript{}
 		env := rabbitPlanEnv(t, s)
 		env.Containers[appdef.AppRabbitmq] = appdef.ApplicationDef{Name: appdef.AppRabbitmq, Image: rabbitTo}
-		res := (RabbitMigrator{}).Preflight(context.Background(), env, rabbitFrom, rabbitTo)
+		res := (RabbitMigrator{}).Preflight(context.Background(), env, Path{rabbitFrom, rabbitTo})
 		require.True(t, res.OK, res.Problems)
 		assert.NotContains(t, strings.Join(s.calls, "\n"), "deprecated")
 	})

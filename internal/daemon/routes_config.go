@@ -15,6 +15,7 @@ import (
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/bundle"
 	"github.com/citeck/citeck-launcher/internal/config"
+	"github.com/citeck/citeck-launcher/internal/deps/migrate"
 	"github.com/citeck/citeck-launcher/internal/namespace"
 
 	"github.com/citeck/citeck-launcher/internal/i18n"
@@ -234,7 +235,7 @@ func (d *Daemon) handleGetNamespace(w http.ResponseWriter, r *http.Request) {
 		// upgrade a click away, one that needs a newer launcher, and one no
 		// launcher will ever perform — so collapsing any two of them
 		// advertises a migration that cannot happen.
-		problem := d.pairProblem(u.ID, u.From, u.To)
+		problem := d.routeProblem(u.ID, migrate.Path(u.Path))
 		upgrade := api.DependencyUpgradeDto{
 			ID: string(u.ID), App: u.App, From: u.From, To: u.To,
 			// A backwards candidate is excluded here as well as flagged below:

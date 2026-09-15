@@ -66,7 +66,7 @@ func envWith17Data() *migratetest.FakeEnv {
 // otherwise recorded in two unrelated sequences.
 func runPlan(t *testing.T, env *migratetest.FakeEnv, opts PlanOptions) (*fakeStore, error) {
 	t.Helper()
-	plan, j, err := PostgresMigrator{}.Plan(context.Background(), env, from17, to18, opts)
+	plan, j, err := PostgresMigrator{}.Plan(context.Background(), env, Path{from17, to18}, opts)
 	require.NoError(t, err)
 	st := &fakeStore{onSet: func(rec deps.MigrationJournal) {
 		if rec.CreatedVolume != "" {
@@ -79,7 +79,7 @@ func runPlan(t *testing.T, env *migratetest.FakeEnv, opts PlanOptions) (*fakeSto
 func TestPreflightHappyPath(t *testing.T) {
 	env := envWith17Data()
 	env.Running = true
-	res := PostgresMigrator{}.Preflight(context.Background(), env, from17, to18)
+	res := PostgresMigrator{}.Preflight(context.Background(), env, Path{from17, to18})
 	assert.True(t, res.OK, res.Problems)
 	assert.Empty(t, res.Problems)
 	assert.Empty(t, res.Warnings)
@@ -105,7 +105,7 @@ func TestPreflightHappyPath(t *testing.T) {
 // pinned where the rendering happens: TestRenderedPreflightMarshalsEmptyListsNotNull.
 func TestPreflightKeepsEmptyListsNonNil(t *testing.T) {
 	env := envWith17Data()
-	res := PostgresMigrator{}.Preflight(context.Background(), env, from17, to18)
+	res := PostgresMigrator{}.Preflight(context.Background(), env, Path{from17, to18})
 	require.True(t, res.OK, res.Problems)
 	assert.NotNil(t, res.Problems)
 	assert.NotNil(t, res.Warnings)
@@ -127,7 +127,7 @@ func TestExistingTargetVolumeIsReportedOnlyAsAStructuredField(t *testing.T) {
 	env := envWith17Data()
 	env.Volumes[newVol] = map[string]string{"18/docker/PG_VERSION": "18\n"}
 	env.VolSize[newVol] = 1 << 30
-	res := PostgresMigrator{}.Preflight(context.Background(), env, from17, to18)
+	res := PostgresMigrator{}.Preflight(context.Background(), env, Path{from17, to18})
 	require.NotNil(t, res.ExistingTargetVolume)
 	assert.Equal(t, newVol, res.ExistingTargetVolume.Name)
 	assert.Equal(t, "18", res.ExistingTargetVolume.Version)
@@ -144,7 +144,7 @@ func TestExistingTargetVolumeIsReportedOnlyAsAStructuredField(t *testing.T) {
 func TestEighteenToNineteenIsNowSupported(t *testing.T) {
 	env := envWith17Data()
 	env.Volumes[oldVol] = map[string]string{"18/docker/PG_VERSION": "18\n"}
-	res := PostgresMigrator{}.Preflight(context.Background(), env, to18, "postgres:19")
+	res := PostgresMigrator{}.Preflight(context.Background(), env, Path{to18, "postgres:19"})
 	assert.True(t, res.OK, res.Problems)
 	assert.Empty(t, res.Problems)
 }
@@ -158,7 +158,7 @@ func TestSameLayoutMajorsMigrateIntoTheNextGeneration(t *testing.T) {
 	env := envWith17Data()
 	env.Volumes[oldVol]["PG_VERSION"] = "16\n"
 	env.ExecFn = migratetest.PostgresExec(map[string]migratetest.PostgresInventory{"": migratetest.HealthyPostgres()})
-	plan, j, err := PostgresMigrator{}.Plan(context.Background(), env, "postgres:16", "postgres:17", PlanOptions{})
+	plan, j, err := PostgresMigrator{}.Plan(context.Background(), env, Path{"postgres:16", "postgres:17"}, PlanOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, oldVol, j.SourceVolume)
 	assert.Equal(t, 2, j.ToVolumeGen)
@@ -213,40 +213,40 @@ func TestPostgresSupportsEveryForwardMajor(t *testing.T) {
 func TestPreflightProblems(t *testing.T) {
 	ctx := context.Background()
 	t.Run("unreadable version", func(t *testing.T) {
-		res := PostgresMigrator{}.Preflight(ctx, envWith17Data(), "postgres:latest", to18)
+		res := PostgresMigrator{}.Preflight(ctx, envWith17Data(), Path{"postgres:latest", to18})
 		assert.False(t, res.OK)
 		assert.Contains(t, joinEN(res.Problems), "current image")
 	})
 	t.Run("not breaking", func(t *testing.T) {
-		res := PostgresMigrator{}.Preflight(ctx, envWith17Data(), from17, "postgres:17.11")
+		res := PostgresMigrator{}.Preflight(ctx, envWith17Data(), Path{from17, "postgres:17.11"})
 		assert.False(t, res.OK)
 		assert.Contains(t, joinEN(res.Problems), "does not need a migration")
 	})
 	t.Run("downgrade", func(t *testing.T) {
 		env := envWith17Data()
 		env.Volumes[oldVol]["PG_VERSION"] = "18\n"
-		res := PostgresMigrator{}.Preflight(ctx, env, to18, from17)
+		res := PostgresMigrator{}.Preflight(ctx, env, Path{to18, from17})
 		assert.False(t, res.OK)
 		assert.Contains(t, joinEN(res.Problems), "downgrade")
 	})
 	t.Run("data major mismatch", func(t *testing.T) {
 		env := envWith17Data()
 		env.Volumes[oldVol]["PG_VERSION"] = "16\n"
-		res := PostgresMigrator{}.Preflight(ctx, env, from17, to18)
+		res := PostgresMigrator{}.Preflight(ctx, env, Path{from17, to18})
 		assert.False(t, res.OK)
 		assert.Contains(t, joinEN(res.Problems), "PG_VERSION")
 	})
 	t.Run("unreadable PG_VERSION", func(t *testing.T) {
 		env := envWith17Data()
 		delete(env.Volumes[oldVol], "PG_VERSION")
-		res := PostgresMigrator{}.Preflight(ctx, env, from17, to18)
+		res := PostgresMigrator{}.Preflight(ctx, env, Path{from17, to18})
 		assert.False(t, res.OK)
 		assert.Contains(t, joinEN(res.Problems), "PG_VERSION")
 	})
 	t.Run("no space on host", func(t *testing.T) {
 		env := envWith17Data()
 		env.FreeHost = 1 << 30
-		res := PostgresMigrator{}.Preflight(ctx, env, from17, to18)
+		res := PostgresMigrator{}.Preflight(ctx, env, Path{from17, to18})
 		assert.False(t, res.OK)
 		joined := joinEN(res.Problems)
 		assert.Contains(t, joined, "host")
@@ -255,7 +255,7 @@ func TestPreflightProblems(t *testing.T) {
 	t.Run("no space on volume filesystem", func(t *testing.T) {
 		env := envWith17Data()
 		env.FreeVolume = 1 << 30
-		res := PostgresMigrator{}.Preflight(ctx, env, from17, to18)
+		res := PostgresMigrator{}.Preflight(ctx, env, Path{from17, to18})
 		assert.False(t, res.OK)
 		assert.Contains(t, joinEN(res.Problems), "volume")
 	})
@@ -263,7 +263,7 @@ func TestPreflightProblems(t *testing.T) {
 		env := envWith17Data()
 		env.Volumes[newVol] = map[string]string{"18/docker/PG_VERSION": "18\n"}
 		env.VolSize[newVol] = 7 << 20
-		res := PostgresMigrator{}.Preflight(ctx, env, from17, to18)
+		res := PostgresMigrator{}.Preflight(ctx, env, Path{from17, to18})
 		assert.True(t, res.OK, "an existing volume is confirmable, not fatal")
 		require.NotNil(t, res.ExistingTargetVolume)
 		assert.Equal(t, api.ExistingVolume{Name: newVol, SizeBytes: 7 << 20, Version: "18"}, *res.ExistingTargetVolume)
@@ -272,7 +272,7 @@ func TestPreflightProblems(t *testing.T) {
 	t.Run("existing but empty target volume reports no version", func(t *testing.T) {
 		env := envWith17Data()
 		env.Volumes[newVol] = map[string]string{}
-		res := PostgresMigrator{}.Preflight(ctx, env, from17, to18)
+		res := PostgresMigrator{}.Preflight(ctx, env, Path{from17, to18})
 		require.NotNil(t, res.ExistingTargetVolume)
 		assert.Equal(t, "empty", res.ExistingTargetVolume.Version)
 	})
@@ -331,7 +331,7 @@ func TestPostgresPlanHappyPath(t *testing.T) {
 // copy that drifts the first time a step is renamed.
 func TestPostgresStepIDsAreThePlansOwnSteps(t *testing.T) {
 	env := envWith17Data()
-	plan, _, err := PostgresMigrator{}.Plan(context.Background(), env, from17, to18, PlanOptions{})
+	plan, _, err := PostgresMigrator{}.Plan(context.Background(), env, Path{from17, to18}, PlanOptions{})
 	require.NoError(t, err)
 	ids := make([]string, 0, len(plan.Steps))
 	for _, st := range plan.Steps {
@@ -486,7 +486,7 @@ func TestVerifyFailsWhenARoleDidNotSurvive(t *testing.T) {
 func TestExistingTargetVolumeRequiresConfirmation(t *testing.T) {
 	env := envWith17Data()
 	env.Volumes[newVol] = map[string]string{"18/docker/PG_VERSION": "18\n"}
-	_, _, err := PostgresMigrator{}.Plan(context.Background(), env, from17, to18, PlanOptions{})
+	_, _, err := PostgresMigrator{}.Plan(context.Background(), env, Path{from17, to18}, PlanOptions{})
 	assert.Contains(t, planProblemsEN(t, err), "already exists")
 
 	st, err := runPlan(t, env, PlanOptions{ReplaceExistingVolume: true})
@@ -502,7 +502,7 @@ func TestExistingTargetVolumeRequiresConfirmation(t *testing.T) {
 // leaves that volume's data alone.
 func TestCreateVolumeRefusesAVolumeThatAppearedAfterThePreflight(t *testing.T) {
 	env := envWith17Data()
-	plan, j, err := PostgresMigrator{}.Plan(context.Background(), env, from17, to18, PlanOptions{})
+	plan, j, err := PostgresMigrator{}.Plan(context.Background(), env, Path{from17, to18}, PlanOptions{})
 	require.NoError(t, err)
 	env.Volumes[newVol] = map[string]string{"18/docker/PG_VERSION": "18\n"}
 
@@ -585,7 +585,7 @@ func TestRollbackLeavesTheNamespaceStoppedWhenATempContainerSurvived(t *testing.
 func TestPlanRefusesWhenPreflightFails(t *testing.T) {
 	env := envWith17Data()
 	env.FreeHost = 1 << 20
-	_, _, err := PostgresMigrator{}.Plan(context.Background(), env, from17, to18, PlanOptions{})
+	_, _, err := PostgresMigrator{}.Plan(context.Background(), env, Path{from17, to18}, PlanOptions{})
 	require.ErrorContains(t, err, "preflight failed")
 }
 
@@ -762,7 +762,7 @@ func TestPreflightNeverMutates(t *testing.T) {
 	env := envWith17Data()
 	env.Running = true
 	env.Volumes[newVol] = map[string]string{} // the interesting case: it has work it could do
-	res := PostgresMigrator{}.Preflight(ctx, env, from17, to18)
+	res := PostgresMigrator{}.Preflight(ctx, env, Path{from17, to18})
 	require.True(t, res.OK, res.Problems)
 	require.NotNil(t, res.ExistingTargetVolume, "the leftover volume is reported")
 

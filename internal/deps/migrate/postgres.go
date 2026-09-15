@@ -48,7 +48,8 @@ type PostgresMigrator struct{}
 // and the web dialog maps over both, so a nil slice — the ordinary happy path
 // — would marshal as `null` and crash the confirm screen into the error
 // boundary. See NewPreflightResult.
-func (m PostgresMigrator) Preflight(ctx context.Context, env Env, from, to string) PreflightResult {
+func (m PostgresMigrator) Preflight(ctx context.Context, env Env, route Path) PreflightResult {
+	from, to := route.From(), route.To()
 	res := NewPreflightResult(from, to)
 	res.WasRunning = env.IsRunning()
 	fromV, toV, problems := versionProblems(deps.Postgres, from, to)
@@ -141,8 +142,9 @@ type pgRun struct {
 // Plan builds the major-upgrade plan. It refuses an existing target volume
 // unless opts.ReplaceExistingVolume is set (the confirm dialog's checkbox /
 // the CLI's --replace-existing).
-func (m PostgresMigrator) Plan(ctx context.Context, env Env, from, to string, opts PlanOptions) (*Plan, deps.MigrationJournal, error) {
-	pre := m.Preflight(ctx, env, from, to)
+func (m PostgresMigrator) Plan(ctx context.Context, env Env, route Path, opts PlanOptions) (*Plan, deps.MigrationJournal, error) {
+	from, to := route.From(), route.To()
+	pre := m.Preflight(ctx, env, route)
 	if !pre.OK {
 		return nil, deps.MigrationJournal{}, refusePlan(pre.Problems...)
 	}

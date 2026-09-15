@@ -144,11 +144,13 @@ func (d *Daemon) dependencyItems(ctx context.Context, t *i18n.Translator, act ac
 //     upgrade at all, and none of the three questions below has a truthful
 //     answer for it: no launcher moves data backwards (so "update the
 //     launcher" is a lie), the vendor was never asked (a backwards move skips
-//     vendorVerdict, because "there is no upgrade path from 4.2.9 to 4.1.8"
-//     answers a question nobody asked), and the migrator's own refusal for a
-//     downgrade is deliberately EMPTY — which, before this arm existed, made
-//     the very first case below claim it as an ordinary "upgrade available".
-//     It comes first for that reason: every later arm would answer it wrongly;
+//     routeVerdict — which asks the vendor about every adjacent pair of the
+//     ROUTE, not the single (pin, target) jump — because "there is no upgrade
+//     path from 4.2.9 to 4.1.8" answers a question nobody asked), and the
+//     migrator's own refusal for a downgrade is deliberately EMPTY — which,
+//     before this arm existed, made the very first case below claim it as an
+//     ordinary "upgrade available". It comes first for that reason: every
+//     later arm would answer it wrongly;
 //  1. does this LAUNCHER ship a migration for the dependency at all? If not,
 //     nothing about the pair matters — "update the launcher" is the whole
 //     answer, and it is the truthful one;
@@ -173,7 +175,7 @@ func (d *Daemon) heldUpgradeStatus(t *i18n.Translator, desc deps.Descriptor, hel
 	if !desc.Migratable() {
 		return api.DependencyRequiresLauncherUpdate, ""
 	}
-	problem := d.pairProblem(desc.ID(), held.From, target)
+	problem := d.routeProblem(desc.ID(), migrate.Path(held.Path))
 	switch {
 	case problem.Empty():
 		return api.DependencyUpgradeAvailable, ""
@@ -274,29 +276,25 @@ func migrationFinishedAt(rt *namespace.Runtime, id deps.ID) int64 {
 	return res.FinishedAt.UnixMilli()
 }
 
-// pairProblem asks the dependency's migrator about ONE version pair and
-// answers the operator-facing refusal, "" when the pair is fine. It is the
-// single place the list route, the preflight route and the migrate route agree
-// on what a pair is worth, and it carries the REASON rather than a boolean so
-// the three cannot word it differently.
+// routeProblem asks the dependency's migrator about EVERY adjacent pair of a
+// route and answers the first operator-facing refusal, "" when every hop is
+// fine. It is the single place the list route, the preflight route and the
+// migrate route agree on what a route is worth, and it carries the REASON
+// rather than a boolean so the three cannot word it differently.
 //
-// Two carve-outs, both of which answer "" and leave the refusal to the
-// preflight, which has the accurate message for each:
+// Two carve-outs, applied PER HOP, both of which move on to the next hop
+// rather than answering for the whole route — the refusal they would leave
+// unsaid belongs to the preflight, which has the accurate message for each:
 //
-//   - an UNPARSABLE tag on either side. There are no versions to ask a
-//     migrator about, and the preflight's message names the tag;
+//   - an UNPARSABLE tag on either side of the hop. There are no versions to
+//     ask a migrator about, and the preflight's message names the tag;
 //   - any refusal the migrator states with an EMPTY reason. That is its
 //     contract (see migrate.Migrator): a downgrade is a POLICY, not a missing
 //     feature, and routing it here would tell the operator to go and update a
 //     launcher that will never grow the ability.
-func (d *Daemon) pairProblem(id deps.ID, from, to string) msg.Message {
+func (d *Daemon) routeProblem(id deps.ID, path migrate.Path) msg.Message {
 	desc, found := deps.Lookup(id)
 	if !found {
-		return msg.Message{}
-	}
-	fromV, okFrom := desc.ParseVersion(from)
-	toV, okTo := desc.ParseVersion(to)
-	if !okFrom || !okTo {
 		return msg.Message{}
 	}
 	m, wired := d.migratorFor(id)
@@ -306,8 +304,15 @@ func (d *Daemon) pairProblem(id deps.ID, from, to string) msg.Message {
 		// about the pair here would add a second, weaker account of it.
 		return msg.Message{}
 	}
-	if ok, problem := m.SupportsPair(fromV, toV); !ok {
-		return problem
+	for _, hop := range path.Hops() {
+		fromV, okFrom := desc.ParseVersion(hop[0])
+		toV, okTo := desc.ParseVersion(hop[1])
+		if !okFrom || !okTo {
+			continue
+		}
+		if ok, problem := m.SupportsPair(fromV, toV); !ok && !problem.Empty() {
+			return problem
+		}
 	}
 	return msg.Message{}
 }
@@ -415,18 +420,18 @@ func (d *Daemon) handleListDependencies(w http.ResponseWriter, r *http.Request) 
 }
 
 // resolveMigration validates the {id} path segment and answers the pending
-// (from → to) pair. Every refusal has already been written when ok is false.
-func (d *Daemon) resolveMigration(ctx context.Context, w http.ResponseWriter, r *http.Request, act activeNamespace, id string) (from, to string, ok bool) {
+// upgrade's ROUTE. Every refusal has already been written when ok is false.
+func (d *Daemon) resolveMigration(ctx context.Context, w http.ResponseWriter, r *http.Request, act activeNamespace, id string) (path migrate.Path, ok bool) {
 	t := d.translatorFor(r)
 	desc, found := deps.Lookup(deps.ID(id))
 	if !found {
 		writeErrorCode(w, http.StatusNotFound, api.ErrCodeDependencyUnknown,
 			t.T("deps.msg.route.unknownDependency", "id", id))
-		return "", "", false
+		return nil, false
 	}
 	if act.runtime == nil {
 		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeNotConfigured, "no namespace configured")
-		return "", "", false
+		return nil, false
 	}
 	// "Nothing to migrate" is checked BEFORE "this launcher cannot migrate it":
 	// for a dependency with no pending upgrade the second answer would send the
@@ -441,7 +446,7 @@ func (d *Daemon) resolveMigration(ctx context.Context, w http.ResponseWriter, r 
 	if upgrade == nil {
 		writeErrorCode(w, http.StatusConflict, api.ErrCodeDependencyUpToDate,
 			t.T("deps.msg.route.noPendingUpgrade", "id", id))
-		return "", "", false
+		return nil, false
 	}
 	// A BACKWARDS candidate is still a held-back "upgrade" and would otherwise
 	// walk straight past the two arms below into the preflight, which refuses
@@ -449,19 +454,34 @@ func (d *Daemon) resolveMigration(ctx context.Context, w http.ResponseWriter, r 
 	// either of them: DEPENDENCY_NOT_MIGRATABLE would promise that a newer
 	// launcher helps (none will ever move data backwards) and
 	// DEPENDENCY_PAIR_UNSUPPORTED would report a vendor refusal to a question
-	// nobody asked — a backwards move never reaches vendorVerdict at all.
+	// nobody asked — a backwards move never reaches routeVerdict at all, the
+	// function that asks the vendor about every adjacent pair of the route,
+	// not just the (pin, target) jump.
 	if upgrade.BundleOlder {
 		writeErrorCode(w, http.StatusConflict, api.ErrCodeDependencyBackwards,
 			t.Render(bundleOlderDetail(desc, upgrade.From, upgrade.To,
 				d.rollbackOffer(ctx, act, desc, act.runtime.DependencyStates()[desc.ID()]))))
-		return "", "", false
+		return nil, false
 	}
 	if !desc.Migratable() {
 		writeErrorCode(w, http.StatusConflict, api.ErrCodeDependencyNotMigratable,
 			t.T("deps.msg.route.notMigratable", "id", id))
-		return "", "", false
+		return nil, false
 	}
-	// The dependency is migratable but this PAIR is refused. WHICH refusal it
+	route := migrate.Path(upgrade.Path)
+	if len(route) == 0 {
+		// No route at all — a rung the version parser could not read. There is
+		// nothing to plan a migration FROM, and inventing a two-element
+		// [From, To] pair here is exactly what Path's EMPTY-means-no-route
+		// contract forbids: the operator already has the tag-level detail
+		// through the list route's StatusDetail, so this refusal stays the
+		// same one an unmigratable dependency gets rather than a second,
+		// weaker account of the same problem.
+		writeErrorCode(w, http.StatusConflict, api.ErrCodeDependencyNotMigratable,
+			t.T("deps.msg.route.notMigratable", "id", id))
+		return nil, false
+	}
+	// The dependency is migratable but this ROUTE is refused. WHICH refusal it
 	// is decides the code, and the two must never be collapsed: a hop the
 	// DEPENDENCY'S vendor forbids is not fixed by a newer launcher, so it gets
 	// its own code and the vendor's own sentence (which names the intermediate
@@ -469,15 +489,15 @@ func (d *Daemon) resolveMigration(ctx context.Context, w http.ResponseWriter, r 
 	// carry out keeps the old code and the old answer — update the launcher —
 	// with a message that names the versions, because "postgres cannot be
 	// migrated" would contradict the 17 → 18 the same launcher performs.
-	if problem := d.pairProblem(desc.ID(), upgrade.From, upgrade.To); !problem.Empty() {
+	if problem := d.routeProblem(desc.ID(), route); !problem.Empty() {
 		code := api.ErrCodeDependencyNotMigratable
 		if upgrade.VendorBlocked {
 			code = api.ErrCodeDependencyPairUnsupported
 		}
 		writeErrorCode(w, http.StatusConflict, code, t.Render(problem))
-		return "", "", false
+		return nil, false
 	}
-	return upgrade.From, upgrade.To, true
+	return route, true
 }
 
 // preMigrationProblems collects everything that would refuse a migration of
@@ -539,12 +559,12 @@ func (d *Daemon) handleDependencyPreflight(w http.ResponseWriter, r *http.Reques
 	act := d.active()
 	t := d.translatorFor(r)
 	id := r.PathValue("id")
-	from, to, ok := d.resolveMigration(r.Context(), w, r, act, id)
+	path, ok := d.resolveMigration(r.Context(), w, r, act, id)
 	if !ok {
 		return
 	}
 	if problems := d.preMigrationProblems(t, act, settleBeforeMigrating); len(problems) > 0 {
-		writeJSON(w, renderPreflight(t, migrate.RefusedPreflight(from, to, problems...)))
+		writeJSON(w, renderPreflight(t, migrate.RefusedPreflight(path.From(), path.To(), problems...)))
 		return
 	}
 	if act.dockerClient == nil {
@@ -561,7 +581,7 @@ func (d *Daemon) handleDependencyPreflight(w http.ResponseWriter, r *http.Reques
 	// Docker VM), which on a real cluster outlives the socket server's 120s
 	// write deadline — and the result is the only thing the confirm dialog has.
 	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
-	writeJSON(w, renderPreflight(t, m.Preflight(r.Context(), env, from, to)))
+	writeJSON(w, renderPreflight(t, m.Preflight(r.Context(), env, path)))
 }
 
 // namespaceIDOf is the id a namespace-scoped daemon field is pinned to.
@@ -591,10 +611,11 @@ func (d *Daemon) handleDependencyMigrate(w http.ResponseWriter, r *http.Request)
 	act := d.active()
 	t := d.translatorFor(r)
 	id := deps.ID(r.PathValue("id"))
-	from, to, ok := d.resolveMigration(r.Context(), w, r, act, string(id))
+	path, ok := d.resolveMigration(r.Context(), w, r, act, string(id))
 	if !ok {
 		return
 	}
+	from, to := path.From(), path.To()
 	nsID := namespaceIDOf(act)
 	if blocked := d.journalBlocker(t, act); blocked != "" {
 		writeErrorCode(w, http.StatusConflict, api.ErrCodeDependencyMigrationInProgress, blocked)
@@ -649,7 +670,7 @@ func (d *Daemon) handleDependencyMigrate(w http.ResponseWriter, r *http.Request)
 	// Same measurement as the preflight route, and the same deadline problem:
 	// the 202 is written only after the plan is built.
 	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
-	plan, journal, err := m.Plan(r.Context(), env, from, to, migrate.PlanOptions{
+	plan, journal, err := m.Plan(r.Context(), env, path, migrate.PlanOptions{
 		ReplaceExistingVolume: req.ReplaceExistingVolume,
 	})
 	if err != nil {

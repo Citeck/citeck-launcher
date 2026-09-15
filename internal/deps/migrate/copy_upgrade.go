@@ -121,24 +121,38 @@ func CopyStepIDs() []string {
 // against a pair that is not going to happen. ok=true means the caller may
 // append its own problems and warnings and then set res.OK itself.
 func CopyPreflight(
-	ctx context.Context, env Env, id deps.ID, from, to string,
+	ctx context.Context, env Env, id deps.ID, path Path,
 	supportsPair func(from, to deps.Version) (ok bool, problem msg.Message),
 ) (PreflightResult, CopyVolumes, bool) {
-	res := NewPreflightResult(from, to)
+	res := NewPreflightResult(path.From(), path.To())
 	res.WasRunning = env.IsRunning()
-	fromV, toV, problems := versionProblems(id, from, to)
-	if len(problems) > 0 {
+	// The ends decide whether a migration is needed at all (a downgrade, an
+	// unparsable tag, a pair that needs no migration); the HOPS decide whether
+	// the route can be walked. Both, in that order.
+	if _, _, problems := versionProblems(id, path.From(), path.To()); len(problems) > 0 {
 		res.Problems = append(res.Problems, problems...)
-		return res, CopyVolumes{}, false
-	}
-	if ok, problem := supportsPair(fromV, toV); !ok {
-		res.Problems = append(res.Problems, pairRefusal(problem, from, to))
 		return res, CopyVolumes{}, false
 	}
 	d, ok := deps.Lookup(id)
 	if !ok { // unreachable: versionProblems just looked it up
 		res.Problems = append(res.Problems, NotRegisteredProblem(id))
 		return res, CopyVolumes{}, false
+	}
+	for _, hop := range path.Hops() {
+		fromV, okFrom := d.ParseVersion(hop[0])
+		toV, okTo := d.ParseVersion(hop[1])
+		switch {
+		case !okFrom:
+			res.Problems = append(res.Problems, msg.New("deps.msg.version.unreadableFrom", "image", hop[0]))
+			return res, CopyVolumes{}, false
+		case !okTo:
+			res.Problems = append(res.Problems, msg.New("deps.msg.version.unreadableTo", "image", hop[1]))
+			return res, CopyVolumes{}, false
+		}
+		if ok, problem := supportsPair(fromV, toV); !ok {
+			res.Problems = append(res.Problems, pairRefusal(problem, hop[0], hop[1]))
+			return res, CopyVolumes{}, false
+		}
 	}
 	src, dst, toGen := migrationVolumes(d, env.DependencyState(id))
 	vols := CopyVolumes{Source: src, Target: dst, TargetGen: toGen}
@@ -191,7 +205,8 @@ type copyRun struct {
 // above): the two refusals every copy migrator shares — a preflight that
 // failed, and an existing target volume the user has not agreed to replace —
 // live here so three migrators cannot word them three ways.
-func BuildCopyUpgrade(env Env, spec CopySpec, from, to string, opts PlanOptions, pre PreflightResult) (*Plan, deps.MigrationJournal, error) {
+func BuildCopyUpgrade(env Env, spec CopySpec, path Path, opts PlanOptions, pre PreflightResult) (*Plan, deps.MigrationJournal, error) {
+	from, to := path.From(), path.To()
 	if err := spec.validate(); err != nil {
 		return nil, deps.MigrationJournal{}, err
 	}

@@ -45,7 +45,7 @@ func qdrantEnv(t *testing.T, s *execScript) *guardEnv {
 
 func runQdrantPlan(t *testing.T, env *guardEnv, from, to string) error {
 	t.Helper()
-	plan, j, err := (QdrantMigrator{}).Plan(context.Background(), env, from, to, PlanOptions{})
+	plan, j, err := (QdrantMigrator{}).Plan(context.Background(), env, Path{from, to}, PlanOptions{})
 	require.NoError(t, err)
 	return Run(context.Background(), j2store(), j, plan, nil)
 }
@@ -85,7 +85,7 @@ func TestQdrantSupportsPairFollowsTheOneMinorRule(t *testing.T) {
 
 func TestQdrantPreflightPassesOnAnOrdinaryStoppedNamespace(t *testing.T) {
 	env := qdrantEnv(t, &execScript{})
-	res := (QdrantMigrator{}).Preflight(context.Background(), env, qdrantFrom, qdrantTo)
+	res := (QdrantMigrator{}).Preflight(context.Background(), env, Path{qdrantFrom, qdrantTo})
 	require.True(t, res.OK, res.Problems)
 	assert.Empty(t, res.Problems)
 	assert.True(t, res.Measured())
@@ -98,7 +98,7 @@ func TestQdrantPreflightPassesOnAnOrdinaryStoppedNamespace(t *testing.T) {
 func TestQdrantPreflightRefusesAMissingSourceVolume(t *testing.T) {
 	env := qdrantEnv(t, &execScript{})
 	delete(env.Volumes, deps.VolumeName(qdrantDescriptorOf(t), 1))
-	res := (QdrantMigrator{}).Preflight(context.Background(), env, qdrantFrom, qdrantTo)
+	res := (QdrantMigrator{}).Preflight(context.Background(), env, Path{qdrantFrom, qdrantTo})
 	require.False(t, res.OK)
 	assert.Contains(t, joinEN(res.Problems), "qdrant2")
 }

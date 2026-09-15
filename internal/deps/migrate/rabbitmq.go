@@ -71,27 +71,27 @@ func (RabbitMigrator) SupportsPair(from, to deps.Version) (ok bool, problem msg.
 
 // Preflight runs the shared copy-upgrade checks and then RabbitMQ's own
 // concern: the deprecated features a 4.3 target removes. It never mutates.
-func (m RabbitMigrator) Preflight(ctx context.Context, env Env, from, to string) PreflightResult {
-	res, _, ok := CopyPreflight(ctx, env, deps.RabbitMQ, from, to, m.SupportsPair)
+func (m RabbitMigrator) Preflight(ctx context.Context, env Env, path Path) PreflightResult {
+	res, _, ok := CopyPreflight(ctx, env, deps.RabbitMQ, path, m.SupportsPair)
 	if !ok {
 		return res
 	}
-	d, _ := deps.Lookup(deps.RabbitMQ) // registered: CopyPreflight just looked it up
-	toV, _ := d.ParseVersion(to)       // parseable: CopyPreflight refuses a tag it cannot read
+	d, _ := deps.Lookup(deps.RabbitMQ)  // registered: CopyPreflight just looked it up
+	toV, _ := d.ParseVersion(path.To()) // parseable: CopyPreflight refuses a tag it cannot read
 	res.checkRabbitDeprecatedFeatures(ctx, env, toV)
 	res.OK = len(res.Problems) == 0
 	return res
 }
 
 // Plan builds the copy-upgrade plan for this pair.
-func (m RabbitMigrator) Plan(ctx context.Context, env Env, from, to string, opts PlanOptions) (*Plan, deps.MigrationJournal, error) {
-	pre := m.Preflight(ctx, env, from, to)
+func (m RabbitMigrator) Plan(ctx context.Context, env Env, path Path, opts PlanOptions) (*Plan, deps.MigrationJournal, error) {
+	pre := m.Preflight(ctx, env, path)
 	d, found := deps.Lookup(deps.RabbitMQ)
 	if !found { // unreachable: RabbitMQ is in the fixed registry
 		return nil, deps.MigrationJournal{}, refusePlan(NotRegisteredProblem(deps.RabbitMQ))
 	}
-	toV, _ := d.ParseVersion(to)
-	return BuildCopyUpgrade(env, rabbitCopySpec(toV), from, to, opts, pre)
+	toV, _ := d.ParseVersion(path.To())
+	return BuildCopyUpgrade(env, rabbitCopySpec(toV), path, opts, pre)
 }
 
 // rabbitCopySpec is everything the shared plan does not know about RabbitMQ.

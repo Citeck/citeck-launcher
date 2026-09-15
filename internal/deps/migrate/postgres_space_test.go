@@ -27,7 +27,7 @@ func TestASharedFilesystemMustHoldTheDumpAndTheNewClusterAtOnce(t *testing.T) {
 		env := envWith17Data()
 		env.SharedFS = true
 		env.FreeHost, env.FreeVolume = 3<<30, 3<<30
-		res := PostgresMigrator{}.Preflight(ctx, env, from17, to18)
+		res := PostgresMigrator{}.Preflight(ctx, env, Path{from17, to18})
 
 		assert.False(t, res.OK, "3 GiB holds either the dump or the new cluster, not both")
 		assert.True(t, res.SharedFilesystem)
@@ -44,7 +44,7 @@ func TestASharedFilesystemMustHoldTheDumpAndTheNewClusterAtOnce(t *testing.T) {
 		env := envWith17Data()
 		env.SharedFS = true
 		env.FreeHost, env.FreeVolume = 6<<30, 6<<30
-		res := PostgresMigrator{}.Preflight(ctx, env, from17, to18)
+		res := PostgresMigrator{}.Preflight(ctx, env, Path{from17, to18})
 
 		assert.True(t, res.OK, res.Problems)
 		assert.Equal(t, int64(5<<30), res.RequiredTotalBytes)
@@ -58,7 +58,7 @@ func TestASharedFilesystemMustHoldTheDumpAndTheNewClusterAtOnce(t *testing.T) {
 		env := envWith17Data()
 		env.SharedFS = true
 		env.FreeHost, env.FreeVolume = 100<<30, 4<<30
-		res := PostgresMigrator{}.Preflight(ctx, env, from17, to18)
+		res := PostgresMigrator{}.Preflight(ctx, env, Path{from17, to18})
 
 		assert.False(t, res.OK)
 		assert.Contains(t, joinEN(res.Problems), "4.0 GiB")
@@ -76,7 +76,7 @@ func TestSeparateFilesystemsKeepThePerFilesystemCheck(t *testing.T) {
 		env := envWith17Data()
 		env.SharedFS = false
 		env.FreeHost, env.FreeVolume = 3<<30, 3<<30
-		res := PostgresMigrator{}.Preflight(ctx, env, from17, to18)
+		res := PostgresMigrator{}.Preflight(ctx, env, Path{from17, to18})
 
 		assert.True(t, res.OK, res.Problems)
 		assert.False(t, res.SharedFilesystem)
@@ -87,7 +87,7 @@ func TestSeparateFilesystemsKeepThePerFilesystemCheck(t *testing.T) {
 		env := envWith17Data()
 		env.SharedFS = false
 		env.FreeHost = 1 << 30
-		res := PostgresMigrator{}.Preflight(ctx, env, from17, to18)
+		res := PostgresMigrator{}.Preflight(ctx, env, Path{from17, to18})
 
 		assert.False(t, res.OK)
 		joined := joinEN(res.Problems)
@@ -109,7 +109,7 @@ func TestAnUnanswerableFilesystemIdentityRequiresTheSumAndSaysSo(t *testing.T) {
 	env.FreeHost, env.FreeVolume = 3<<30, 3<<30
 	env.FailOn["sharedfs:"] = errors.New("stat /var/lib/citeck: no such file or directory")
 
-	res := PostgresMigrator{}.Preflight(context.Background(), env, from17, to18)
+	res := PostgresMigrator{}.Preflight(context.Background(), env, Path{from17, to18})
 
 	require.False(t, res.OK)
 	assert.True(t, res.SharedFilesystem, "the safe direction")
