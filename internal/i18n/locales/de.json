@@ -516,6 +516,7 @@
   "deps.msg.edit.wayBackHedged": "`citeck deps rollback {id}` setzt den Namespace auf das Volume zurück, das seine Migration aufbewahrt hat — sofern sie eines angelegt hat.",
   "deps.msg.busy.snapshot": "ein Snapshot läuft — warten Sie, bis er abgeschlossen ist",
   "deps.msg.busy.migration": "eine Abhängigkeitsmigration läuft — warten Sie, bis sie abgeschlossen ist",
+  "bundle.msg.launcherTooOld": "Bundle {bundle} benötigt Launcher {needs} oder neuer; dieser Launcher ist {current}. Aktualisieren Sie den Launcher, oder wählen Sie ein älteres Bundle.",
   "deps.msg.busy.rollback": "ein Rollback einer Abhängigkeit läuft — warten Sie, bis es abgeschlossen ist",
   "deps.msg.busy.updatePass": "ein Update-Durchlauf läuft — warten Sie, bis er abgeschlossen ist",
   "deps.msg.busy.request": "eine andere Namespace-Operation läuft — warten Sie, bis sie abgeschlossen ist",

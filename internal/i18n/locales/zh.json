@@ -516,6 +516,7 @@
   "deps.msg.edit.wayBackHedged": "如果那次迁移保留了卷，`citeck deps rollback {id}` 会把命名空间切回该卷。",
   "deps.msg.busy.snapshot": "正在处理快照 — 请等待其完成",
   "deps.msg.busy.migration": "依赖迁移正在进行 — 请等待其完成",
+  "bundle.msg.launcherTooOld": "捆绑包 {bundle} 需要启动器 {needs} 或更高版本；当前启动器是 {current}。请更新启动器，或选择更早的捆绑包。",
   "deps.msg.busy.rollback": "依赖回滚正在进行 — 请等待其完成",
   "deps.msg.busy.updatePass": "更新正在进行 — 请等待其完成",
   "deps.msg.busy.request": "另一项命名空间操作正在进行 — 请等待其完成",

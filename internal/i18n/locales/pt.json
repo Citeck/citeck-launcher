@@ -516,6 +516,7 @@
   "deps.msg.edit.wayBackHedged": "`citeck deps rollback {id}` devolve o namespace ao volume que a migração reteve, caso ela tenha criado algum.",
   "deps.msg.busy.snapshot": "há um snapshot em andamento — aguarde até que ele termine",
   "deps.msg.busy.migration": "há uma migração de dependência em andamento — aguarde até que ela termine",
+  "bundle.msg.launcherTooOld": "O bundle {bundle} requer o launcher {needs} ou mais recente; este launcher é {current}. Atualize o launcher, ou escolha um bundle anterior.",
   "deps.msg.busy.rollback": "há uma reversão de dependência em andamento — aguarde até que ela termine",
   "deps.msg.busy.updatePass": "há uma atualização em andamento — aguarde até que ela termine",
   "deps.msg.busy.request": "há outra operação de namespace em andamento — aguarde até que ela termine",

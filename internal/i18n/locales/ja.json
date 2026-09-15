@@ -516,6 +516,7 @@
   "deps.msg.edit.wayBackHedged": "`citeck deps rollback {id}` は、その移行がボリュームを残していれば、名前空間をそのボリュームに戻します。",
   "deps.msg.busy.snapshot": "スナップショットの処理中です — 完了するまでお待ちください",
   "deps.msg.busy.migration": "依存関係の移行中です — 完了するまでお待ちください",
+  "bundle.msg.launcherTooOld": "バンドル {bundle} にはランチャー {needs} 以降が必要です。このランチャーは {current} です。ランチャーを更新するか、より古いバンドルを選択してください。",
   "deps.msg.busy.rollback": "依存関係のロールバック中です — 完了するまでお待ちください",
   "deps.msg.busy.updatePass": "更新処理の実行中です — 完了するまでお待ちください",
   "deps.msg.busy.request": "別の名前空間操作の実行中です — 完了するまでお待ちください",

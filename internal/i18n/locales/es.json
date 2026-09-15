@@ -516,6 +516,7 @@
   "deps.msg.edit.wayBackHedged": "`citeck deps rollback {id}` devuelve el espacio de nombres al volumen que conservó su migración, si es que creó alguno.",
   "deps.msg.busy.snapshot": "hay una instantánea en curso: espere a que termine",
   "deps.msg.busy.migration": "hay una migración de dependencia en curso: espere a que termine",
+  "bundle.msg.launcherTooOld": "El bundle {bundle} requiere el lanzador {needs} o posterior; este lanzador es {current}. Actualice el lanzador, o elija un bundle anterior.",
   "deps.msg.busy.rollback": "hay una reversión de dependencia en curso: espere a que termine",
   "deps.msg.busy.updatePass": "hay una pasada de actualización en curso: espere a que termine",
   "deps.msg.busy.request": "hay otra operación del espacio de nombres en curso: espere a que termine",

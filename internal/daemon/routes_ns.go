@@ -553,8 +553,11 @@ func (d *Daemon) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 
 	nsCfg, err := d.createNamespace(req)
 	if err != nil {
+		var floor *errLauncherTooOld
 		var ce *createNamespaceError
 		switch {
+		case errors.As(err, &floor):
+			d.writeLauncherTooOldError(w, r, floor)
 		case errors.As(err, &ce) && ce.code != "":
 			writeErrorCode(w, ce.status, ce.code, ce.message)
 		case errors.As(err, &ce):
@@ -792,6 +795,12 @@ func (d *Daemon) persistNewNamespace(wsID string, nsCfg *namespace.Config) error
 			message: fmt.Sprintf("namespace %q already exists", nsCfg.ID)}
 	}
 	if persistErr := d.persistNamespaceConfig(wsID, nsCfg.ID, data); persistErr != nil {
+		// *errLauncherTooOld travels unwrapped so the handler can render it
+		// in the request's language — see handleCreateNamespace.
+		var floor *errLauncherTooOld
+		if errors.As(persistErr, &floor) {
+			return persistErr
+		}
 		return &createNamespaceError{status: http.StatusBadRequest, code: api.ErrCodeInvalidConfig,
 			message: persistErr.Error()}
 	}
@@ -1114,6 +1123,11 @@ func (d *Daemon) handlePutNamespaceEdit(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if err := d.persistNamespaceConfig(wsID, nsID, data); err != nil {
+		var floor *errLauncherTooOld
+		if errors.As(err, &floor) {
+			d.writeLauncherTooOldError(w, r, floor)
+			return
+		}
 		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeInvalidConfig, err.Error())
 		return
 	}

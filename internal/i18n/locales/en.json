@@ -516,6 +516,7 @@
   "deps.msg.edit.wayBackHedged": "`citeck deps rollback {id}` puts the namespace back on the volume its migration retained, if it made one.",
   "deps.msg.busy.snapshot": "a snapshot is in progress — wait for it to finish",
   "deps.msg.busy.migration": "a dependency migration is in progress — wait for it to finish",
+  "bundle.msg.launcherTooOld": "Bundle {bundle} needs launcher {needs} or newer; this launcher is {current}. Update the launcher, or pick an earlier bundle.",
   "deps.msg.busy.rollback": "a dependency rollback is running — wait for it to finish",
   "deps.msg.busy.updatePass": "an update pass is in progress — wait for it to finish",
   "deps.msg.busy.request": "another namespace operation is in progress — wait for it to finish",

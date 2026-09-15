@@ -516,6 +516,7 @@
   "deps.msg.edit.wayBackHedged": "`citeck deps rollback {id}` replace l'espace de noms sur le volume conservé par sa migration, si celle-ci en a créé un.",
   "deps.msg.busy.snapshot": "un instantané est en cours — attendez qu'il se termine",
   "deps.msg.busy.migration": "une migration de dépendance est en cours — attendez qu'elle se termine",
+  "bundle.msg.launcherTooOld": "Le bundle {bundle} nécessite le lanceur {needs} ou plus récent ; ce lanceur est en version {current}. Mettez à jour le lanceur, ou choisissez un bundle antérieur.",
   "deps.msg.busy.rollback": "un retour arrière de dépendance est en cours — attendez qu'il se termine",
   "deps.msg.busy.updatePass": "une passe de mise à jour est en cours — attendez qu'elle se termine",
   "deps.msg.busy.request": "une autre opération sur l'espace de noms est en cours — attendez qu'elle se termine",

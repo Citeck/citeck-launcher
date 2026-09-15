@@ -915,6 +915,13 @@ const (
 	// nothing has migrated it, or it has already been rolled back (a rollback
 	// clears its own target — there is no roll-forward).
 	ErrCodeDependencyNoRollbackTarget = "DEPENDENCY_NO_ROLLBACK_TARGET"
+	// ErrCodeLauncherTooOld is returned (HTTP 409) when the namespace config
+	// being written names a bundle whose minLauncherVersion is above this
+	// launcher's version. It is raised on WRITE only — creating, editing,
+	// upgrading — never on load: refusing to load would leave the operator
+	// unable to open the namespace and pick a different bundle, which is the
+	// only way out of the situation.
+	ErrCodeLauncherTooOld = "LAUNCHER_TOO_OLD"
 )
 
 // UpgradeRequestDto is the request body for the namespace upgrade endpoint.
