@@ -16,6 +16,7 @@
 - **`dependencies:` takes the WHOLE list, target = LAST element. Everything else takes `[0]`.** Spec §3.2.
 - **One migration = one journal = one generation increment = rollback to the original.** True for all four migratable dependencies. Spec §6, §7.1.
 - **The source volume is only ever READ**, on every rung. Spec §6, §7.1.
+- **The migration dump is gzip -1, written and read through a `bash -c` pipe with `set -o pipefail`.** Without pipefail a half-finished `pg_dumpall` is followed by a gzip that exits 0 and the migration restores a truncated cluster. Spec §7.3.
 - **A ladder needs NO more disk than a single hop, in either plan — and for PostgreSQL that is true only because of the STEP ORDER.** A dump is removed as soon as the restore that consumed it succeeded, and an intermediate cluster as soon as the next dump has been taken from it; the peak stays `source + one dump + one cluster`, which is today's single-hop peak. Do NOT raise the preflight's requirement: that would refuse a migration that fits. Spec §7.2.
 - **An unreadable rung invalidates the whole ladder** — the dependency stays on its pin; no rung is silently skipped. Spec §4.
 - **A ladder makes the entry invisible to launchers 2.12.0–2.12.2** (they skip an entry whose `image:` is a sequence). Never write a ladder for `rabbitmq` in a shipped bundle while those versions are in the field. Spec §3.3.
@@ -1957,7 +1958,206 @@ git commit -m "feat(migrate): postgres walks the whole ladder in one migration, 
 
 ---
 
-### Task 8: A real-Docker integration test of a three-rung qdrant walk
+### Task 8: The dump is written and read compressed
+
+**Files:**
+- Modify: `internal/deps/migrate/postgres.go` (`dumpAt`, `restoreAt`, `dumpPathsFor`, `watchFileGrowth` call)
+- Modify: `internal/deps/migrate/postgres_restore.go` (`RestoreCommandPrefix` keeps its job; add `RestoreScript`)
+- Test: `internal/deps/migrate/postgres_test.go` (extend), `internal/deps/migrate/postgres_ladder_test.go` (extend)
+
+**Interfaces:**
+- Consumes: the multi-rung pg plan from Task 7 (`dumpAt(i)`, `restoreAt(i)`, `dumpPathsFor(i)`).
+- Produces:
+  - `func DumpScript(outPath string) []string` — the full `bash -c` command the dump step runs.
+  - `func RestoreScript(dumpPath string) []string` — the full `bash -c` command the restore step runs.
+  - `RestoreCommandPrefix() []string` — UNCHANGED signature and contents; it is now the psql part that appears INSIDE the restore script, and the integration test matches it as a substring.
+- Dump files are named `…​.sql.gz`.
+
+**Why this is its own task:** it is not part of the ladder. A single-hop migration gets it too, and keeping it separate means the ladder's tests and this one's cannot mask each other.
+
+- [ ] **Step 1: Write the failing tests**
+
+Append to `internal/deps/migrate/postgres_test.go`:
+
+```go
+// The dump is compressed on the way out and decompressed on the way in. A
+// cluster's SQL text compresses several-fold, so this is both less disk and
+// less I/O — and at gzip -1 the CPU cost is small enough that reading the
+// smaller file back can pay for it.
+func TestDumpAndRestoreAreCompressed(t *testing.T) {
+	dump := DumpScript("/dump/hop0-dump.sql.gz")
+	assert.Equal(t, "bash", dump[0])
+	assert.Equal(t, "-c", dump[1])
+	assert.Contains(t, dump[2], "pg_dumpall")
+	assert.Contains(t, dump[2], "gzip -1")
+	assert.Contains(t, dump[2], "/dump/hop0-dump.sql.gz")
+
+	restore := RestoreScript("/dump/hop0-dump.sql.gz")
+	assert.Equal(t, "bash", restore[0])
+	assert.Equal(t, "-c", restore[1])
+	assert.Contains(t, restore[2], "gunzip -c /dump/hop0-dump.sql.gz")
+	// The psql invocation is the SAME one RestoreCommandPrefix names, so the
+	// integration test's identification of the restore's stderr keeps working
+	// and the flags have one source.
+	assert.Contains(t, restore[2], strings.Join(RestoreCommandPrefix(), " "))
+	assert.NotContains(t, restore[2], "-f ", "psql reads the pipe, not a file")
+}
+
+// A pipe hides the failure of everything but its last command. Without
+// pipefail a pg_dumpall that died halfway is followed by a gzip that exits 0,
+// and the migration proceeds to restore a truncated cluster and call it
+// verified. Same on the way back: a corrupt archive makes gunzip fail while
+// psql exits 0 on the empty input it got.
+func TestBothScriptsFailOnAnyStageOfThePipe(t *testing.T) {
+	for _, script := range [][]string{
+		DumpScript("/dump/d.sql.gz"),
+		RestoreScript("/dump/d.sql.gz"),
+	} {
+		assert.Contains(t, script[2], "set -o pipefail")
+		assert.Equal(t, "bash", script[0],
+			"dash only grew pipefail in 0.5.12; bash is in every postgres image and is 5.2 there")
+	}
+}
+
+// The dump's progress is reported as an absolute size with NO percentage: the
+// file is compressed, so its size against the cluster's size is not a
+// fraction of anything, and a bar that creeps to 15% and then jumps to done
+// reads as a stall. Both renderers already draw percent 0 as indeterminate —
+// the same choice the copy step makes.
+func TestCompressedDumpProgressIsIndeterminate(t *testing.T) {
+	var seen []float64
+	p := func(pct float64, _ msg.Message) { seen = append(seen, pct) }
+	env := newFakeEnvWithFileSize(t, 4096)
+	stop := watchFileGrowth(t.Context(), env, "/dump/d.sql.gz", 0, time.Millisecond, p)
+	assert.Eventually(t, func() bool { return len(seen) > 0 }, time.Second, time.Millisecond)
+	stop()
+	for _, pct := range seen {
+		assert.Zero(t, pct)
+	}
+}
+```
+
+Append to `internal/deps/migrate/postgres_ladder_test.go`:
+
+```go
+// Every rung's dump is compressed, not just the first.
+func TestEveryRungsDumpIsCompressed(t *testing.T) {
+	env := newPostgresFakeEnv(t, "postgres:17.5", 1)
+	path := Path{"postgres:17.5", "postgres:18.6", "postgres:19.2"}
+	plan, _, err := PostgresMigrator{}.Plan(t.Context(), env, path, PlanOptions{})
+	require.NoError(t, err)
+	require.NoError(t, runPlanAgainstFake(t, plan, env))
+
+	for _, cmd := range env.ExecutedCommands() {
+		if len(cmd) == 3 && strings.Contains(cmd[2], "pg_dumpall") {
+			assert.Contains(t, cmd[2], "gzip -1")
+		}
+	}
+	for _, name := range env.DumpsWritten() {
+		assert.True(t, strings.HasSuffix(name, ".sql.gz"), "dump %q is not compressed", name)
+	}
+}
+```
+
+`newFakeEnvWithFileSize`, `ExecutedCommands()` and `DumpsWritten()` are test seams on
+`migratetest.FakeEnv` — add whatever does not exist. They are bookkeeping over calls the
+fake already receives.
+
+- [ ] **Step 2: Run to verify they fail**
+
+Run: `go test ./internal/deps/migrate/ -run 'Compressed|PipeStage|Pipe' -v`
+Expected: FAIL — `undefined: DumpScript`, `undefined: RestoreScript`.
+
+- [ ] **Step 3: Write the two scripts**
+
+In `internal/deps/migrate/postgres_restore.go`, beside `RestoreCommandPrefix`:
+
+```go
+// gzipLevel is the compression the dump is written at.
+//
+// 1, not the default 6: the dump is a transient file inside a migration that
+// has already stopped the namespace, so the seconds matter and the last few
+// percent of ratio do not. SQL text compresses several-fold even at level 1,
+// which is the whole of the saving; the same reasoning already picks level 1
+// for the JVM heap dumps this launcher configures.
+const gzipLevel = "1"
+
+// DumpScript is the command the dump step runs: pg_dumpall piped into gzip.
+//
+// It is `bash -c` and not `sh -c`, and it sets pipefail, and those two are one
+// decision. A pipe reports only its LAST command's status, so without pipefail
+// a pg_dumpall that died halfway is followed by a gzip that exits 0 — and the
+// migration restores a truncated cluster and verifies it against an inventory
+// read from the same half-dumped source. /bin/sh in the postgres image is dash,
+// which only grew pipefail in 0.5.12; bash is present (5.2) and has had it
+// since forever, so bash is the one that cannot be wrong on an older base.
+func DumpScript(outPath string) []string {
+	return []string{"bash", "-c", "set -o pipefail; " +
+		"pg_dumpall -h 127.0.0.1 -U postgres | gzip -" + gzipLevel + " > " + shellQuote(outPath)}
+}
+
+// RestoreScript is the command the restore step runs: the archive decompressed
+// into the SAME psql invocation RestoreCommandPrefix names — so the flags have
+// one source and the integration test can still identify the restore's own
+// stderr by that prefix, now as a substring of this script.
+func RestoreScript(dumpPath string) []string {
+	return []string{"bash", "-c", "set -o pipefail; " +
+		"gunzip -c " + shellQuote(dumpPath) + " | " + strings.Join(RestoreCommandPrefix(), " ")}
+}
+
+// shellQuote wraps a path in single quotes for the two scripts above. The
+// paths are built by the launcher (the dump directory plus a fixed file name),
+// so this guards a path with a space in it rather than hostile input — but a
+// dump directory under a user's home is exactly where a space appears.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'''`) + "'"
+}
+```
+
+- [ ] **Step 4: Use them, and name the files `.sql.gz`**
+
+In `postgres.go`:
+- `dumpPathsFor(i)` builds `fmt.Sprintf("hop%d-%s", i, dumpFile)` where `dumpFile` gains the `.gz` suffix — change the constant, not the format string, so the single-hop plan's name follows too.
+- `dumpAt(i)` runs `r.env.Exec(ctx, container, DumpScript(inContainer))`, and its error wrapping says `pg_dumpall` as before.
+- `restoreAt(i)` runs `r.env.Exec(ctx, DstContainer, RestoreScript(inContainer))`; `restoreErrors(stderr)` is unchanged — psql still writes its ERROR lines to the script's stderr.
+- The `watchFileGrowth` call passes **0** as `expected`:
+
+```go
+	// 0, not r.dataSize: the file is compressed, so its size is not a fraction
+	// of the cluster's. A percentage computed from it creeps to ~15% and then
+	// jumps to done, which reads as a stall; both renderers draw 0 as
+	// indeterminate, which is the truth.
+	stop := watchFileGrowth(ctx, r.env, hostPath, 0, dumpProgressPoll, p)
+```
+
+- [ ] **Step 5: Run the tests**
+
+Run: `go test ./internal/deps/... 2>&1 | tail -20`
+Expected: PASS.
+
+- [ ] **Step 6: Mutation check**
+
+1. `DumpScript` drops `set -o pipefail` → `TestBothScriptsFailOnAnyStageOfThePipe` fails.
+2. `DumpScript` uses `sh` → the same test fails on `bash`.
+3. `RestoreScript` inlines its own psql flags instead of `RestoreCommandPrefix()` → change one flag in the prefix; `TestDumpAndRestoreAreCompressed` fails.
+4. `watchFileGrowth` is given `r.dataSize` again → `TestCompressedDumpProgressIsIndeterminate` fails.
+5. `dumpFile` loses its `.gz` → `TestEveryRungsDumpIsCompressed` fails.
+
+- [ ] **Step 7: Prove it on real containers**
+
+Run: `go test -tags integration ./internal/daemon/ -run TestIntegration_Postgres17To18 -v -timeout 30m`
+Expected: PASS. Under rootless Docker prefix with `unshare --user --map-auto --map-root-user` (postgres runs as uid 999; see AGENTS.md). Record in the report the dump's compressed size against the cluster size — that ratio is the whole justification for this task and belongs in the commit message.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add internal/deps/migrate/
+git commit -m "feat(migrate): write and read the migration dump compressed"
+```
+
+---
+
+### Task 9: A real-Docker integration test of a three-rung qdrant walk
 
 **Files:**
 - Modify: `internal/daemon/deps_copy_integration_test.go` (add `TestIntegration_QdrantLadder114To116`)
@@ -2006,7 +2206,7 @@ git commit -m "test(deps): a three-rung qdrant walk on real containers, on one c
 
 ---
 
-### Task 9: The 1.x launcher does not break on a list
+### Task 10: The 1.x launcher does not break on a list
 
 **Files:**
 - Modify: `citeck-launcher-1x/src/main/kotlin/ru/citeck/launcher/core/bundle/BundleUtils.kt:103-127`
@@ -2144,7 +2344,7 @@ git commit -m "fix(bundle): read an image written as a list, taking its first el
 
 ---
 
-### Task 10: Documentation
+### Task 11: Documentation
 
 **Files:**
 - Modify: `AGENTS.md` (the `dependencies:` section bullet, and the copy-upgrade bullet)
@@ -2210,7 +2410,7 @@ git commit -m "docs: image ladders, and why a rung is never skipped"
 
 ## Self-review notes
 
-**Spec coverage:** §3.1 → Task 1 Step 3. §3.2 → Tasks 1 and 2. §3.3 → Task 10 Step 1 (documented; no code — it is a property of the released parsers). §4 → Tasks 3 and 4. §5 → Task 5. §6 → Task 6. §7 → the Global Constraints plus Task 4's `routeVerdict` (no collapse exists anywhere in the plan). §7.1 → Task 7. §7.2 → Task 7 Steps 5–6 (the requirement provably does not move, and the step order that makes that true is pinned) and Task 6 Step 6 (same, for the copy plan). §8 → Task 9. §9 → the test steps of every task plus Task 8. §10 → nothing to build; the open `deps.msg.pair.vendorPath` item stays open and is restated in the spec.
+**Spec coverage:** §3.1 → Task 1 Step 3. §3.2 → Tasks 1 and 2. §3.3 → Task 10 Step 1 (documented; no code — it is a property of the released parsers). §4 → Tasks 3 and 4. §5 → Task 5. §6 → Task 6. §7 → the Global Constraints plus Task 4's `routeVerdict` (no collapse exists anywhere in the plan). §7.1 → Task 7. §7.3 → Task 8. §7.2 → Task 7 Steps 5–6 (the requirement provably does not move, and the step order that makes that true is pinned) and Task 6 Step 6 (same, for the copy plan). §8 → Task 10. §9 → the test steps of every task plus Task 9. §10 → nothing to build; the open `deps.msg.pair.vendorPath` item stays open and is restated in the spec.
 
 **Type consistency:** `decodeImageValues` (Task 1) is used by `ImageRef` (Task 2). `DependencyEntry.Images` / `AppDef.Images` (Task 1) are read by `resolveAppImageChain` (Task 4). `deps.UpgradeRoute` (Task 3) is called by `routeVerdict` (Task 4). `DependencyUpgrade.Path` (Task 4) becomes `migrate.Path` (Task 5) in `resolveMigration`. `Path.Rungs()` (Task 5) drives both plans (Tasks 6, 7). `deps.ScratchVolumeName` and `MigrationJournal.ScratchVolume` (Task 7) are read by `volumesToRemove` (Task 7).
 
