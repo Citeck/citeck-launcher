@@ -204,6 +204,10 @@ type NamespaceDto struct {
 	// reload; empty on a namespace with no data yet, since the first
 	// generation simply adopts the bundle's versions.
 	DependencyUpgrades []DependencyUpgradeDto `json:"dependencyUpgrades,omitempty"`
+	// NewerBundle is set when this namespace's bundle repo has a version above
+	// the one it runs. Computed on load/reload/pull (see activeNamespace), so
+	// it reflects what has been synced.
+	NewerBundle *NewerBundleDto `json:"newerBundle,omitempty"`
 	// DependencyMigration is set while a dependency migration runs for THIS
 	// namespace, so a client that connects or reloads mid-way still sees it
 	// (the deps_migration_* events only reach clients already listening). It
@@ -429,6 +433,18 @@ type DependenciesDto struct {
 	// runtime's RUNNING re-pin hook stands aside while a journal exists) and
 	// no new migration is accepted.
 	RollbackPending string `json:"rollbackPending,omitempty"`
+}
+
+// NewerBundleDto tells the client that the namespace's bundle repo has a
+// version above the one it runs. Absent when it does not.
+type NewerBundleDto struct {
+	// Version is the newest version key above the running one, in the same
+	// scope (an archive/ namespace is not told about mainline).
+	Version string `json:"version"`
+	// RequiresLauncher is the minLauncherVersion of that bundle when this
+	// launcher cannot run it, and "" when it can. Empty means the operator can
+	// switch right now; set means the next move is updating the launcher.
+	RequiresLauncher string `json:"requiresLauncher,omitempty"`
 }
 
 // DependencyUpgradeDto is one held-back upgrade, as carried by NamespaceDto.

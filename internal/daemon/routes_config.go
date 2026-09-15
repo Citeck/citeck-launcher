@@ -221,6 +221,12 @@ func (d *Daemon) handleGetNamespace(w http.ResponseWriter, r *http.Request) {
 	if bundleErr != "" {
 		dto.BundleError = bundleErr
 	}
+	if nb := act.newerBundle; nb != nil {
+		dto.NewerBundle = &api.NewerBundleDto{
+			Version:          nb.Version,
+			RequiresLauncher: nb.RequiresLauncher,
+		}
+	}
 	// Dependency state is the daemon's, not the runtime's: the held-back
 	// upgrades come from the last generation (activeNamespace) and the running
 	// migration is a daemon-global, namespace-pinned field — reported here only
