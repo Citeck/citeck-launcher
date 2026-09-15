@@ -666,6 +666,8 @@ const de = {
   'namespace.form.submit': 'Erstellen',
   'namespace.form.save': 'Speichern',
   'namespace.form.createSuccess': 'Namespace erstellt',
+  'namespace.newerBundle.tooltip': 'Ein neuerer Bundle ist verfügbar: {version}. Öffnen Sie die Namespace-Einstellungen, um dorthin zu wechseln.',
+  'namespace.newerBundle.needsLauncher.tooltip': 'Ein neuerer Bundle ist verfügbar ({version}), erfordert aber Launcher {min} oder neuer. Aktualisieren Sie den Launcher.',
 
   // -- Snapshot import warning --
   'snapshots.import.confirm.title': 'Snapshot importieren?',

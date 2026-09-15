@@ -673,6 +673,8 @@ const en = {
   'namespace.form.submit': 'Submit',
   'namespace.form.save': 'Save',
   'namespace.form.createSuccess': 'Namespace created',
+  'namespace.newerBundle.tooltip': 'A newer bundle is available: {version}. Open the namespace settings to switch to it.',
+  'namespace.newerBundle.needsLauncher.tooltip': 'A newer bundle is available ({version}), but it needs launcher {min} or newer. Update the launcher.',
 
   // -- Snapshot import warning --
   'snapshots.import.confirm.title': 'Import snapshot?',

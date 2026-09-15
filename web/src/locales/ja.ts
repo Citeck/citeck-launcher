@@ -666,6 +666,8 @@ const ja = {
   'namespace.form.submit': '作成',
   'namespace.form.save': '保存',
   'namespace.form.createSuccess': 'ネームスペースが作成されました',
+  'namespace.newerBundle.tooltip': '新しいバンドルが利用可能です: {version}。ネームスペース設定を開いて切り替えてください。',
+  'namespace.newerBundle.needsLauncher.tooltip': '新しいバンドルが利用可能です（{version}）。ただしランチャー {min} 以降が必要です。ランチャーを更新してください。',
 
   // -- Snapshot import warning --
   'snapshots.import.confirm.title': 'スナップショットをインポートしますか？',
