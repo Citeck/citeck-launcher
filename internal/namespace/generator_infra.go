@@ -44,10 +44,11 @@ func generateMongoDB(ctx *NsGenContext) {
 	if !ctx.Config.MongoEnabled() {
 		return
 	}
-	img := resolveAppImage(ctx, appdef.AppMongodb, ctx.Config.MongoDB.Image, "mongo:4.0.2")
-	// mongo's image has no ladder source (no bundle dependencies entry, no
-	// workspace chain) — the one-element form is the whole chain there is.
-	img = resolveDependencyImage(ctx, deps.MongoDB, []string{img})
+	// Mongo goes through the same chain-aware gate as every other registered
+	// dependency: a bundle or workspace `dependencies:` entry for it names a
+	// ladder exactly like qdrant/postgres/zookeeper/rabbitmq/keycloak do.
+	chain := resolveAppImageChain(ctx, appdef.AppMongodb, ctx.Config.MongoDB.Image, "mongo:4.0.2")
+	img := resolveDependencyImage(ctx, deps.MongoDB, chain)
 	app := ctx.GetOrCreateApp(appdef.AppMongodb)
 	app.Image = img
 	app.Kind = appdef.KindThirdParty

@@ -3,6 +3,7 @@ package namespace
 import (
 	"testing"
 
+	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/bundle"
 	"github.com/citeck/citeck-launcher/internal/deps"
 	"github.com/stretchr/testify/assert"
@@ -125,4 +126,26 @@ func TestRehomeChainCarriesThePinsPrivateRegistryToEveryRung(t *testing.T) {
 		"registry.example.com/qdrant/qdrant:v1.15.5",
 		"registry.example.com/qdrant/qdrant:v1.16.1",
 	}, out)
+}
+
+// Mongo goes through the identical chain-aware gate every other registered
+// dependency does: a bundle `dependencies:` ladder for it must produce the
+// FULL route, not the single pin/target pair a one-element chain collapses it
+// to. Mongo's own UpgradeSupport never refuses a forward hop
+// (forwardOnlySupport), so VendorBlocked stays false either way — a
+// route-collapsing regression here is invisible to every other assertion and
+// shows up only in Path, which is exactly why this needs its own test rather
+// than riding along on TestMongoMajorBumpIsHeldByThePin.
+func TestAMongoLadderIsNotCollapsedToJustThePinAndTarget(t *testing.T) {
+	bun := &bundle.Def{Dependencies: map[string]bundle.AppDef{
+		appdef.AppMongodb: {
+			Image:  "mongo:7.0.0",
+			Images: []string{"mongo:5.0.0", "mongo:6.0.0", "mongo:7.0.0"},
+		},
+	}}
+	resp := generateWithPins(t, bun, map[deps.ID]string{deps.MongoDB: "mongo:4.0.2"})
+	up := upgradeFor(t, resp, deps.MongoDB)
+	require.NotNil(t, up)
+	assert.Equal(t, []string{"mongo:4.0.2", "mongo:5.0.0", "mongo:6.0.0", "mongo:7.0.0"}, up.Path,
+		"every rung the bundle wrote must survive the gate, not just the pin and the target")
 }
