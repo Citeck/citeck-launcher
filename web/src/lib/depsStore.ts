@@ -15,6 +15,12 @@ export interface DepsMigrationView {
   message: string
   /** Step ids completed so far, in order — drives the checkmark list. */
   done: string[]
+  /** The running plan's ACTUAL step list, in order — including repeats
+   *  (see api.DependencyMigrationDto.StepIDs). Empty when the daemon has not
+   *  sent one (an older daemon, or before the first start/progress event),
+   *  which is how the dialog tells "render the hardcoded single-hop
+   *  vocabulary" from "render the real ladder". */
+  stepIds: string[]
   /** Last few distinct progress messages, oldest first. */
   messages: string[]
   /**
@@ -48,6 +54,9 @@ export interface DepsProgressEvent {
   total: number
   percent: number
   after: string
+  /** The running plan's real step list — see DepsMigrationView.stepIds.
+   *  Undefined/empty on an older daemon. */
+  stepIds?: string[]
 }
 
 interface DepsState {
@@ -77,7 +86,7 @@ interface DepsState {
    * poll — which only starts once the alarm is already up.
    */
   rollbackPending: string
-  onStart: (id: string, stepCount: number, kind?: string) => void
+  onStart: (id: string, stepCount: number, kind?: string, stepIds?: string[]) => void
   onProgress: (e: DepsProgressEvent) => void
   onComplete: (id: string, message: string) => void
   onError: (id: string, message: string) => void
@@ -118,7 +127,7 @@ export const useDepsStore = create<DepsState>((set, get) => ({
   data: null,
   rollbackPending: '',
 
-  onStart: (id, stepCount, kind = '') => {
+  onStart: (id, stepCount, kind = '', stepIds = []) => {
     const cur = get().migration
     if (cur && cur.id === id) {
       // The daemon broadcasts `deps_migration_start` from the goroutine it
@@ -126,15 +135,23 @@ export const useDepsStore = create<DepsState>((set, get) => ({
       // the POST's answer) can land after real progress has been recorded.
       // Take the better step count and keep everything already seen.
       // The daemon's own `deps_migration_start` carries no kind, so an
-      // already-known one is never downgraded to "" by it.
+      // already-known one is never downgraded to "" by it. Same rule for
+      // stepIds: the optimistic start never has one (the plan does not exist
+      // yet on the client's own click), so it must never blank out one the
+      // real event already delivered.
       set({
-        migration: { ...cur, stepCount: Math.max(cur.stepCount, stepCount), kind: cur.kind || kind },
+        migration: {
+          ...cur, stepCount: Math.max(cur.stepCount, stepCount), kind: cur.kind || kind,
+          stepIds: stepIds.length ? stepIds : cur.stepIds,
+        },
         result: null,
       })
       return
     }
     set({
-      migration: { id, step: '', stepIndex: 0, stepCount, percent: 0, message: '', done: [], messages: [], kind },
+      migration: {
+        id, step: '', stepIndex: 0, stepCount, percent: 0, message: '', done: [], messages: [], kind, stepIds,
+      },
       result: null,
     })
   },
@@ -155,6 +172,11 @@ export const useDepsStore = create<DepsState>((set, get) => ({
         done,
         messages: pushMessage(cur?.messages ?? [], e.after),
         kind: cur?.kind ?? '',
+        // Every progress event after the plan exists carries it, but never
+        // BLANK it on an event that happens not to (there is none today, but
+        // nothing enforces that at the type level) — the row list must not
+        // flicker back to the hardcoded vocabulary mid-run.
+        stepIds: e.stepIds && e.stepIds.length ? e.stepIds : (cur?.stepIds ?? []),
       },
     })
   },
@@ -187,7 +209,14 @@ export const useDepsStore = create<DepsState>((set, get) => ({
     // is the exception: it is constant for a whole run and the events never
     // carry it, so a run this client did not start learns it here.
     if (same && cur!.step === dto.step) {
-      if (cur!.kind !== (dto.kind ?? '')) set({ migration: { ...cur!, kind: dto.kind ?? '' } })
+      // stepIds is constant for the whole run too, and a fetch answered
+      // before the first progress event can carry it when the client's own
+      // state does not yet — the same reason kind is patched in here rather
+      // than left for the next step change.
+      const stepIds = dto.stepIds && dto.stepIds.length ? dto.stepIds : cur!.stepIds
+      if (cur!.kind !== (dto.kind ?? '') || stepIds !== cur!.stepIds) {
+        set({ migration: { ...cur!, kind: dto.kind ?? '', stepIds } })
+      }
       return
     }
     set({
@@ -200,6 +229,7 @@ export const useDepsStore = create<DepsState>((set, get) => ({
         message: dto.message ?? '',
         done: same ? cur!.done : [],
         messages: same ? cur!.messages : [],
+        stepIds: dto.stepIds && dto.stepIds.length ? dto.stepIds : (same ? cur!.stepIds : []),
         kind: dto.kind ?? '',
       },
     })

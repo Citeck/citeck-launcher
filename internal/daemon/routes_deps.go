@@ -648,8 +648,20 @@ func (d *Daemon) handleDependencyMigrate(w http.ResponseWriter, r *http.Request)
 		writeInternalError(w, fmt.Errorf("no migrator wired for dependency %q", id))
 		return
 	}
+	// stepIDs is the plan's real step list, filled in once the plan is built
+	// below. evt closes over it (a pointer to the same variable, not a copy at
+	// definition time) so the ONE "preparing" event it builds before that —
+	// where there is no plan to name — carries none, and every event from the
+	// plan onward carries the whole thing. See api.DependencyMigrationDto.StepIDs
+	// for why a client needs this rather than a hardcoded vocabulary: a
+	// multi-hop copy upgrade repeats step ids (an intermediate rung's own stop
+	// shares "stop-new" with the plan's FINAL cleanup step), and only the
+	// daemon that built the plan knows which occurrence is which.
+	var stepIDs []string
 	evt := func(typ, phase string, cur, total int, pct float64, m msg.Message) api.EventDto {
-		return depsEvent(typ, nsID, id, phase, cur, total, pct, m)
+		e := depsEvent(typ, nsID, id, phase, cur, total, pct, m)
+		e.StepIDs = stepIDs
+		return e
 	}
 	// Building the plan runs the whole preflight — including a `du` of the data
 	// volume, which on a real cluster is minutes — and it happens AFTER the
@@ -683,7 +695,11 @@ func (d *Daemon) handleDependencyMigrate(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	steps := len(plan.Steps)
-	d.setDepsMigration(nsID, &api.DependencyMigrationDto{ID: string(id), StepCount: steps})
+	stepIDs = make([]string, steps)
+	for i, st := range plan.Steps {
+		stepIDs[i] = st.ID
+	}
+	d.setDepsMigration(nsID, &api.DependencyMigrationDto{ID: string(id), StepCount: steps, StepIDs: stepIDs})
 	rt := act.runtime
 	// No recover() in here, and that is a decision rather than an oversight: it
 	// is parity with every other bgWg goroutine (both snapshot paths, the
@@ -703,6 +719,7 @@ func (d *Daemon) handleDependencyMigrate(w http.ResponseWriter, r *http.Request)
 		progress := func(step string, i, n int, pct float64, m msg.Message) {
 			d.setDepsMigration(nsID, &api.DependencyMigrationDto{
 				ID: string(id), Step: step, StepIndex: i, StepCount: n, Percent: pct, MessageMsg: m,
+				StepIDs: stepIDs,
 			})
 			d.broadcastEvent(evt(api.EventDepsMigrationProgress, step, i, n, pct, m))
 		}

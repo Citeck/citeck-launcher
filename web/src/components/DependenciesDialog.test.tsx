@@ -502,6 +502,98 @@ describe('DependenciesDialog', () => {
       .not.toContain('Preparing (checking the data and free space)')
   })
 
+  // A ladder repeats step ids: pre-upgrade/start-new/post-upgrade once per
+  // rung, and — critically — an INTERMEDIATE rung's own node-stop shares the
+  // id "stop-new" with the plan's FINAL cleanup step, which sits at the last
+  // position of the known vocabulary. A client that locates a row by
+  // `ids.indexOf(migration.step)` finds that id's ONLY listed position (the
+  // LAST one) and marks every row before it done — the data-integrity
+  // `verify` step included — the moment the FIRST rung's own stop-new runs,
+  // 8 steps and two more rungs before verify has executed even once. The
+  // fix is to position a row by StepIndex/StepCount against the plan's REAL
+  // step list (StepIDs, published by the daemon once the plan is built),
+  // never by matching an id.
+  it('never marks verify done before it has run, on a multi-rung ladder', async () => {
+    render(<DependenciesDialog open onClose={() => {}} />)
+    await screen.findByTestId('dep-postgres')
+    // The real 19-step plan a 3-rung RabbitMQ ladder produces (captured
+    // verbatim from BuildCopyUpgrade's own step list — see
+    // internal/deps/migrate/copy_upgrade_ladder_test.go).
+    const ladderSteps = [
+      'stop-namespace', 'pull-image', 'create-volume', 'copy-volume', 'start-old',
+      'pre-upgrade', 'stop-old', 'start-new', 'post-upgrade',
+      'pre-upgrade', 'stop-new', 'start-new', 'post-upgrade',
+      'pre-upgrade', 'stop-new', 'start-new', 'post-upgrade',
+      'verify', 'stop-new',
+    ]
+    act(() => {
+      useDepsStore.getState().onStart('rabbitmq', ladderSteps.length, undefined, ladderSteps)
+      // The FIRST rung's own stop — an INTERMEDIATE one, position 11 of 19 —
+      // not the plan's final cleanup step.
+      useDepsStore.getState().onProgress({
+        appName: 'rabbitmq', phase: 'stop-new', current: 11, total: 19, percent: 0, after: '',
+      })
+    })
+    let verify = await screen.findByTestId('deps-step-verify')
+    expect(verify).toHaveAttribute('data-state', 'todo')
+
+    // The SECOND rung's own stop — position 15 of 19 — must not mark it
+    // done either.
+    act(() => useDepsStore.getState().onProgress({
+      appName: 'rabbitmq', phase: 'stop-new', current: 15, total: 19, percent: 0, after: '',
+    }))
+    expect(screen.getByTestId('deps-step-verify')).toHaveAttribute('data-state', 'todo')
+
+    // verify itself, running — position 18.
+    act(() => useDepsStore.getState().onProgress({
+      appName: 'rabbitmq', phase: 'verify', current: 18, total: 19, percent: 0, after: '',
+    }))
+    verify = screen.getByTestId('deps-step-verify')
+    expect(verify).toHaveAttribute('data-state', 'active')
+
+    // Only the plan's FINAL stop-new (position 19, after verify) may mark it
+    // done.
+    act(() => useDepsStore.getState().onProgress({
+      appName: 'rabbitmq', phase: 'stop-new', current: 19, total: 19, percent: 0, after: '',
+    }))
+    expect(screen.getByTestId('deps-step-verify')).toHaveAttribute('data-state', 'done')
+  })
+
+  // The other half of the same defect: `pre-upgrade` runs once per rung, so
+  // once rung 1's occurrence finishes it must not read as checked off FOREVER
+  // — rungs 2 and 3 run that exact work again, on their own images, and a
+  // checkmark sitting on it while it runs a second and third time is exactly
+  // as misleading as `verify` ticking early. Both occurrences share one id;
+  // only their POSITION in the plan tells them apart.
+  it('does not mark a later rung of a repeated step done just because an earlier rung finished it', async () => {
+    render(<DependenciesDialog open onClose={() => {}} />)
+    await screen.findByTestId('dep-postgres')
+    const ladderSteps = [
+      'stop-namespace', 'pull-image', 'create-volume', 'copy-volume', 'start-old',
+      'pre-upgrade', 'stop-old', 'start-new', 'post-upgrade',
+      'pre-upgrade', 'stop-new', 'start-new', 'post-upgrade',
+      'pre-upgrade', 'stop-new', 'start-new', 'post-upgrade',
+      'verify', 'stop-new',
+    ]
+    act(() => {
+      useDepsStore.getState().onStart('rabbitmq', ladderSteps.length, undefined, ladderSteps)
+      // Rung 1's own pre-upgrade, running — position 6 of 19.
+      useDepsStore.getState().onProgress({
+        appName: 'rabbitmq', phase: 'pre-upgrade', current: 6, total: 19, percent: 0, after: '',
+      })
+    })
+    expect(screen.getByTestId('deps-step-pre-upgrade')).toHaveAttribute('data-state', 'active')
+
+    // Rung 1 finishes and rung 2's OWN pre-upgrade starts — position 10. The
+    // first occurrence (rung 1's) is now genuinely done; the second (rung
+    // 2's, same id) is the one running now, not a rerun of a finished row.
+    act(() => useDepsStore.getState().onProgress({
+      appName: 'rabbitmq', phase: 'pre-upgrade', current: 10, total: 19, percent: 0, after: '',
+    }))
+    expect(screen.getByTestId('deps-step-pre-upgrade')).toHaveAttribute('data-state', 'done')
+    expect(screen.getByTestId('deps-step-pre-upgrade-9')).toHaveAttribute('data-state', 'active')
+  })
+
   // A migration can vanish WITHOUT a verdict — the daemon died mid-migration
   // and its restart's recovery rolled it back silently. The dialog used to sit
   // on a progress screen with nothing in it: a blank modal body.

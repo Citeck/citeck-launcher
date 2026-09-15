@@ -767,11 +767,84 @@ func TestMigrateAcceptsRunsAndBroadcasts(t *testing.T) {
 	assert.Equal(t, 1, prog.Total)
 	assert.Equal(t, "ns1", prog.NamespaceID)
 	assert.InDelta(t, 50.0, prog.Percent, 0.001)
+	// StepIDs is the plan's real step list, published from the plan alone —
+	// the web dialog positions a row by StepIndex against exactly this,
+	// never by matching an id (see api.DependencyMigrationDto.StepIDs).
+	assert.Equal(t, []string{"only"}, prog.StepIDs)
+	assert.Equal(t, []string{"only"}, byType["deps_migration_start"].StepIDs)
 	// The broadcast event carries the MESSAGE; After is filled in per
 	// subscriber by writeSSEEvent, in that subscriber's language.
 	assert.Equal(t, "analyzing", englishForLogs.Render(prog.AfterMsg))
 
 	assert.Nil(t, d.currentDepsMigration("ns1"), "progress state is cleared when the pass ends")
+}
+
+// A ladder repeats step ids on purpose (BuildCopyUpgrade: pre-upgrade,
+// start-new and post-upgrade once per rung, an intermediate rung's own stop
+// sharing "stop-new" with the plan's FINAL cleanup step) — StepIDs has to
+// carry the plan's ids VERBATIM, repeats included, or the web dialog has no
+// way to tell an intermediate rung's step from the plan's last one. Deduping
+// here would silently reintroduce the exact bug this field exists to fix.
+func TestMigrateProgressPublishesTheRealStepListIncludingRepeats(t *testing.T) {
+	d, mux, rt := newDepsRoutesDaemon(t)
+	d.activeNs.dockerClient = &docker.Client{}
+	d.bgCtx, d.bgCancel = context.WithCancel(context.Background())
+	t.Cleanup(d.bgCancel)
+	_ = rt
+
+	finalized := make(chan struct{})
+	d.depsMigratorFn = func(deps.ID) migrate.Migrator {
+		return fakeMigrator{
+			pre: migrate.PreflightResult{OK: true, From: "postgres:17.5", To: "postgres:18"},
+			plan: &migrate.Plan{
+				Steps: []migrate.Step{
+					{ID: "a", Run: func(context.Context, *migrate.Journal, migrate.StepProgress) error { return nil }},
+					{ID: "b", Run: func(context.Context, *migrate.Journal, migrate.StepProgress) error { return nil }},
+					{ID: "a", Run: func(context.Context, *migrate.Journal, migrate.StepProgress) error { return nil }},
+				},
+				Rollback: func(context.Context, *deps.MigrationJournal) error { return nil },
+				Result: func(j *deps.MigrationJournal) deps.MigrationResult {
+					return deps.MigrationResult{ID: j.ID}
+				},
+				Finalize: func(context.Context, *deps.MigrationJournal) error { close(finalized); return nil },
+			},
+		}
+	}
+	events, _, ok := d.addSubscriber()
+	require.True(t, ok)
+	defer d.removeSubscriber(events)
+
+	rec := depsPost(mux, api.DependencyMigratePath("postgres"), `{}`)
+	require.Equal(t, http.StatusAccepted, rec.Code, rec.Body.String())
+	select {
+	case <-finalized:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the migration never reached its finalize step")
+	}
+	d.bgWg.Wait()
+
+	want := []string{"a", "b", "a"}
+	var sawStart, sawLastProgress bool
+	for len(events) > 0 {
+		e := <-events
+		switch e.Type {
+		case "deps_migration_start":
+			assert.Equal(t, want, e.StepIDs, "the start event names the whole plan up front")
+			sawStart = true
+		case "deps_migration_progress":
+			if e.Phase == api.DependencyMigrationStepPreparing {
+				// Before the plan exists there is nothing to name — see
+				// api.EventDto.StepIDs.
+				continue
+			}
+			assert.Equal(t, want, e.StepIDs, "every progress event carries the same, unchanging list")
+			if e.Phase == "a" && e.Current == 3 {
+				sawLastProgress = true
+			}
+		}
+	}
+	assert.True(t, sawStart)
+	assert.True(t, sawLastProgress, "the THIRD step, id \"a\" again, must still publish its own real position")
 }
 
 func TestMigrateReportsAFailedRunAsAnErrorEvent(t *testing.T) {
