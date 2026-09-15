@@ -1325,9 +1325,9 @@ func TestApplyEmailConfig_NoAuthWhenUsernameEmpty(t *testing.T) {
 
 	assert.Equal(t, "false", envGet(app.Environments, "SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH"),
 		"an empty username means an unauthenticated relay; AUTH=true would make Jakarta Mail refuse to connect")
-	assert.NotContains(t, app.Environments, "SPRING_MAIL_USERNAME")
-	assert.NotContains(t, app.Environments, "SPRING_MAIL_PASSWORD")
-	assert.NotContains(t, app.Environments, "SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE")
+	assert.False(t, app.Environments.Has("SPRING_MAIL_USERNAME"))
+	assert.False(t, app.Environments.Has("SPRING_MAIL_PASSWORD"))
+	assert.False(t, app.Environments.Has("SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE"))
 }
 
 // TestApplyEmailConfig_StartupNotificationEnabled pins the env-vars the
