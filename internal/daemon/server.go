@@ -809,12 +809,15 @@ func (d *Daemon) doReloadEx(forceGitPull, startNotRegenerate, refreshImages bool
 	a.newerBundle = nil
 	if a.workspaceConfig != nil && a.bundleDef != nil && a.nsConfig != nil {
 		repoEntry := bundleRepoByID(a.workspaceConfig, a.nsConfig.BundleRef.Repo)
-		// Must use the package-level resolveBundleRepoDir with the workspace
-		// id already in hand, NOT the d.resolveBundleDir method: that method
-		// calls d.activeWorkspaceID() -> d.active() -> d.configMu.RLock(),
-		// and we are inside a d.configMu.Lock() write-lock right here.
-		// sync.RWMutex is not reentrant, so that would deadlock the daemon
-		// on every successful reload. See TestDoReloadEx_NewerBundleLookupDoesNotDeadlock.
+		// This fill runs under the d.configMu.Lock() taken just above, so
+		// nothing it calls may re-acquire configMu: sync.RWMutex is not
+		// reentrant, and a second acquisition on the goroutine already holding
+		// the write lock blocks forever, bricking the daemon on the first
+		// reload after start. Hence the package-level resolveBundleRepoDir
+		// with the workspace id already in hand, and NOT the d.resolveBundleDir
+		// method, which re-derives it via d.activeWorkspaceID() -> d.active()
+		// -> d.configMu.RLock(). Guarded by
+		// TestNewerBundleFillNeverReacquiresConfigMu (newer_bundle_lock_test.go).
 		a.newerBundle = bundle.FindNewerBundle(
 			resolveBundleRepoDir(act.workspaceID, repoEntry), a.bundleDef.Key.Version, d.version)
 	}

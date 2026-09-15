@@ -1199,12 +1199,17 @@ func (d *Daemon) handleBundleRepoPull(w http.ResponseWriter, r *http.Request) {
 	if a.workspaceConfig != nil && a.bundleDef != nil && a.nsConfig != nil &&
 		a.nsConfig.BundleRef.Repo == repoID {
 		repoEntry := bundleRepoByID(a.workspaceConfig, a.nsConfig.BundleRef.Repo)
-		// Package-level resolveBundleRepoDir with the workspace id already in
-		// hand, NOT d.resolveBundleDir: that method re-reads the workspace id
-		// via d.activeWorkspaceID() -> d.active() -> d.configMu.RLock(), and
-		// we are inside a d.configMu.Lock() write-lock right here.
-		// sync.RWMutex is not reentrant, so that would deadlock the daemon.
-		// See TestDoReloadEx_NewerBundleLookupDoesNotDeadlock.
+		// This fill runs under the d.configMu.Lock() taken just above, so
+		// nothing it calls may re-acquire configMu: sync.RWMutex is not
+		// reentrant, and a second acquisition on the goroutine already holding
+		// the write lock blocks forever — here that hangs the repo-refresh
+		// request and every later configMu reader with it. Hence the
+		// package-level resolveBundleRepoDir with the workspace id already in
+		// hand, and NOT d.resolveBundleDir, which re-derives it via
+		// d.activeWorkspaceID() -> d.active() -> d.configMu.RLock(). Guarded by
+		// TestBundleRepoPullDoesNotDeadlockOnTheNewerBundleFill, which drives
+		// this handler for real, and by
+		// TestNewerBundleFillNeverReacquiresConfigMu (newer_bundle_lock_test.go).
 		a.newerBundle = bundle.FindNewerBundle(
 			resolveBundleRepoDir(act.workspaceID, repoEntry), a.bundleDef.Key.Version, d.version)
 	}
