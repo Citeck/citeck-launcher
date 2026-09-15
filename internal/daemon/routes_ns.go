@@ -1199,8 +1199,14 @@ func (d *Daemon) handleBundleRepoPull(w http.ResponseWriter, r *http.Request) {
 	if a.workspaceConfig != nil && a.bundleDef != nil && a.nsConfig != nil &&
 		a.nsConfig.BundleRef.Repo == repoID {
 		repoEntry := bundleRepoByID(a.workspaceConfig, a.nsConfig.BundleRef.Repo)
+		// Package-level resolveBundleRepoDir with the workspace id already in
+		// hand, NOT d.resolveBundleDir: that method re-reads the workspace id
+		// via d.activeWorkspaceID() -> d.active() -> d.configMu.RLock(), and
+		// we are inside a d.configMu.Lock() write-lock right here.
+		// sync.RWMutex is not reentrant, so that would deadlock the daemon.
+		// See TestDoReloadEx_NewerBundleLookupDoesNotDeadlock.
 		a.newerBundle = bundle.FindNewerBundle(
-			d.resolveBundleDir(repoEntry), a.bundleDef.Key.Version, d.version)
+			resolveBundleRepoDir(act.workspaceID, repoEntry), a.bundleDef.Key.Version, d.version)
 	}
 	d.configMu.Unlock()
 

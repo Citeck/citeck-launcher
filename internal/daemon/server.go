@@ -809,8 +809,14 @@ func (d *Daemon) doReloadEx(forceGitPull, startNotRegenerate, refreshImages bool
 	a.newerBundle = nil
 	if a.workspaceConfig != nil && a.bundleDef != nil && a.nsConfig != nil {
 		repoEntry := bundleRepoByID(a.workspaceConfig, a.nsConfig.BundleRef.Repo)
+		// Must use the package-level resolveBundleRepoDir with the workspace
+		// id already in hand, NOT the d.resolveBundleDir method: that method
+		// calls d.activeWorkspaceID() -> d.active() -> d.configMu.RLock(),
+		// and we are inside a d.configMu.Lock() write-lock right here.
+		// sync.RWMutex is not reentrant, so that would deadlock the daemon
+		// on every successful reload. See TestDoReloadEx_NewerBundleLookupDoesNotDeadlock.
 		a.newerBundle = bundle.FindNewerBundle(
-			d.resolveBundleDir(repoEntry), a.bundleDef.Key.Version, d.version)
+			resolveBundleRepoDir(act.workspaceID, repoEntry), a.bundleDef.Key.Version, d.version)
 	}
 	// Reload succeeded with a freshly-resolved bundle — clear any boot-time
 	// bundle resolution error so the UI banner doesn't survive a successful
