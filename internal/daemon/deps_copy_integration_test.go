@@ -1360,6 +1360,22 @@ func itListVolumeDirs(t *testing.T, e *itEnv, prefix string) []string {
 	return names
 }
 
+// itCountStep counts how many times id appears in steps — the executed step
+// sequence a stepTimer recorded. It is a local copy of countID
+// (internal/deps/migrate/copy_upgrade_ladder_test.go), which is unexported in
+// that package: the idiom is the same (count occurrences of a step id in an
+// ordered list) but there is no shared symbol to import across the package
+// boundary, so it is spelled out here rather than reached for.
+func itCountStep(steps []string, id string) int {
+	n := 0
+	for _, s := range steps {
+		if s == id {
+			n++
+		}
+	}
+	return n
+}
+
 // TestIntegration_QdrantLadder114To116 is the multi-hop counterpart of
 // TestIntegration_Qdrant114To115: the SAME real Qdrant store, walked through
 // a bundle-named ladder of THREE images — v1.14.1 -> v1.15.5 -> v1.16.1 —
@@ -1392,6 +1408,57 @@ func TestIntegration_QdrantLadder114To116(t *testing.T) {
 
 	plan, journal, err := migrate.QdrantMigrator{}.Plan(ctx, e.env, path, migrate.PlanOptions{})
 	require.NoError(t, err)
+
+	// --- observe the middle rung while it is actually running ---------------
+	//
+	// Every assertion below the run depends only on the path's two ENDPOINTS:
+	// the final image, the final generation, the volume-dir list, the source
+	// manifest, container cleanup, and the final version/collections/alias
+	// would all read identically if the plan silently collapsed to a single
+	// hop straight from the v1.14.1 data onto the v1.16.1 image — skipping
+	// Qdrant's one-minor storage-compatibility guarantee on real production
+	// data. This block is the one thing only a REAL run can give: proof that
+	// a real container really booted the MIDDLE rung (v1.15.5) on the real
+	// copy, and really served the data the bottom rung wrote to it.
+	//
+	// It WRAPS rather than replaces the plan's own "start-new" step for the
+	// FIRST rung (startRung(path.Rungs()[0]) in copy_upgrade.go is the only
+	// "start-new" that ever lands v1.15.5): the real Run still executes in
+	// full, including the plan's own WaitReady, and only AFTER it succeeds
+	// does the wrapper read the container it left running. Nothing about the
+	// migration's own behavior is altered — the same override-a-step idiom
+	// TestIntegration_CopyRollbackOnBadTarget uses to watch mid-migration
+	// state, but wrapping instead of substituting, since this run has to
+	// succeed rather than fail.
+	var (
+		midRunObserved bool
+		midVersionBody string
+		midDocsBody    string
+	)
+	startNewSeen := 0
+	wrapped := false
+	for i := range plan.Steps {
+		if plan.Steps[i].ID != "start-new" {
+			continue
+		}
+		startNewSeen++
+		if startNewSeen != 1 {
+			continue // the SECOND start-new lands v1.16.1, not the rung this proves
+		}
+		wrapped = true
+		realRun := plan.Steps[i].Run
+		plan.Steps[i].Run = func(ctx context.Context, j *migrate.Journal, p migrate.StepProgress) error {
+			if err := realRun(ctx, j, p); err != nil {
+				return err
+			}
+			midRunObserved = true
+			midVersionBody = e.qdrantGET(ctx, t, migrate.DstContainer, "/")
+			midDocsBody = e.qdrantGET(ctx, t, migrate.DstContainer, "/collections/"+itQdrantCollections[0].name)
+			return nil
+		}
+	}
+	require.True(t, wrapped, "the plan has no start-new step to observe the middle rung on")
+
 	timer := newStepTimer()
 	started := time.Now()
 	runErr := migrate.Run(ctx, e.rt, journal, plan, timer.progress)
@@ -1400,6 +1467,42 @@ func TestIntegration_QdrantLadder114To116(t *testing.T) {
 	require.NoError(t, runErr)
 	t.Logf("ladder migration %s -> %s -> %s took %s (%d step invocations)",
 		itQdrantFrom, itQdrantTo, itQdrantLadderTop, total.Round(time.Millisecond), len(steps))
+
+	// The middle rung genuinely ran and genuinely served the data the bottom
+	// rung wrote — not v1.14.1 (the bottom), not v1.16.1 (the top skipped
+	// ahead to).
+	require.True(t, midRunObserved, "the wrapped start-new step never ran — the middle rung was skipped")
+	assert.Contains(t, midVersionBody, `"version":"1.15.5"`,
+		"the intermediate container must report the MIDDLE rung's version")
+	assert.NotContains(t, midVersionBody, `"version":"1.14.1"`, "the intermediate container is not still the bottom rung")
+	assert.NotContains(t, midVersionBody, `"version":"1.16.1"`, "the intermediate container has not skipped to the top rung")
+	assert.Containsf(t, midDocsBody, fmt.Sprintf(`"points_count":%d`, itQdrantCollections[0].points),
+		"the intermediate container must serve the data the bottom rung wrote, not an empty collection: %s", midDocsBody)
+
+	// The shape of the REAL run — not a plan built from the same Path in
+	// isolation, but what migrate.Run actually executed — must show TWO
+	// rungs climbed, not one. If Path.Rungs() ever regressed to return only
+	// the final element while Path.Hops() stayed correct, BuildCopyUpgrade
+	// would silently produce the ordinary 11-step single-hop plan
+	// (CopyStepIDs()) straight from the v1.14.1 data to the v1.16.1 image,
+	// and every endpoint-only assertion in this test would still pass. This
+	// is the one that would not: TestASingleHopPlanIsUnchanged and
+	// TestAThreeRungPlanClimbsOneCopy (internal/deps/migrate/copy_upgrade_ladder_test.go)
+	// already pin this shape against a fake plan; this pins it against the
+	// REAL step sequence a real engine.Run just executed.
+	assert.Equal(t, 1, itCountStep(steps, "stop-namespace"))
+	assert.Equal(t, 1, itCountStep(steps, "pull-image"))
+	assert.Equal(t, 1, itCountStep(steps, "create-volume"), "one generation, whatever the ladder's length")
+	assert.Equal(t, 1, itCountStep(steps, "copy-volume"), "one copy, whatever the ladder's length")
+	assert.Equal(t, 1, itCountStep(steps, "start-old"))
+	assert.Equal(t, 1, itCountStep(steps, "stop-old"))
+	assert.Equal(t, 2, itCountStep(steps, "start-new"), "one start per rung — TWO rungs were climbed, not one")
+	assert.Equal(t, 2, itCountStep(steps, "post-upgrade"), "one per rung")
+	assert.Equal(t, 2, itCountStep(steps, "pre-upgrade"), "before every rung, whatever the ladder's length")
+	assert.Equal(t, 2, itCountStep(steps, "stop-new"), "one intermediate stop plus the final cleanup")
+	assert.Equal(t, 1, itCountStep(steps, "verify"), "the inventory is compared once, at the top")
+	assert.Len(t, steps, 15, "stop-namespace, pull-image, create-volume, copy-volume, start-old, "+
+		"then pre-upgrade/stop/start-new/post-upgrade once per rung (x2), plus verify and the final stop-new")
 
 	// One copy, one generation, whatever the ladder's length.
 	st := e.rt.DependencyStates()[deps.Qdrant]
