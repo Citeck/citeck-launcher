@@ -1291,7 +1291,7 @@ git commit -m "refactor(migrate): a migrator takes the whole route, not a versio
 
 **Interfaces:**
 - Consumes: `migrate.Path` (Task 5).
-- Produces: a plan whose step ids repeat — `start-new`, `post-upgrade`, `stop-new` once per rung, with `pre-upgrade` repeated before every rung but the last. `CopyStepIDs()` is unchanged: it is the id VOCABULARY, not the plan's length.
+- Produces: a plan whose step ids repeat — `pre-upgrade`, `start-new`, `post-upgrade` once per rung (never after the top one), plus `stop-old`/`stop-new`. `CopyStepIDs()` is unchanged: it is the id VOCABULARY, not the plan's length.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2363,7 +2363,7 @@ Add, after the existing rule (5) about the workspace section, a rule (6):
 
 Add:
 
-> **A ladder is walked on ONE copy.** The copy is taken once and raised through every rung: `start-new → post-upgrade → stop-new` per rung, with `pre-upgrade` before every rung but the last — not for symmetry, but because RabbitMQ's `PreUpgrade` enables the feature flags the NEXT node needs, so 4.1 → 4.2 → 4.3 needs it twice. The generation grows by exactly **one** whatever the ladder's length, the source volume is still only ever read, and the rollback is still "delete the copy". The inventory is captured once at the bottom and compared once at the top; comparing at an intermediate rung would measure work a rung legitimately did. **PostgreSQL walks the ladder in one migration too**, but by its own means: it needs a LIVE cluster of each version, so it dumps and restores per rung and reuses ONE scratch volume (`<next generation>-hop`, journalled as `ScratchVolume` so the rollback removes it) for every intermediate — the peak on disk is source + one cluster + one dump, and only the final cluster lands in the next generation.
+> **A ladder is walked on ONE copy.** The copy is taken once and raised through every rung: `pre-upgrade → stop-old|stop-new → start-new → post-upgrade` per rung, with `pre-upgrade` running before EVERY rung and never AFTER the top one — not for symmetry, but because RabbitMQ's `PreUpgrade` enables the feature flags the node about to start refuses to boot without, so it has to run on the node BELOW each rung: 4.1 → 4.2 → 4.3 runs it twice, once on 4.1 and once on 4.2, and never on 4.3 itself, since there is no rung above it left to prepare for. The generation grows by exactly **one** whatever the ladder's length, the source volume is still only ever read, and the rollback is still "delete the copy". The inventory is captured once at the bottom and compared once at the top; comparing at an intermediate rung would measure work a rung legitimately did. **PostgreSQL walks the ladder in one migration too**, but by its own means: it needs a LIVE cluster of each version, so it dumps and restores per rung and reuses ONE scratch volume (`<next generation>-hop`, journalled as `ScratchVolume` so the rollback removes it) for every intermediate — the peak on disk is source + one cluster + one dump, and only the final cluster lands in the next generation.
 
 - [ ] **Step 3: Add the release note to all 8 changelog files**
 
