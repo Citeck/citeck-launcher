@@ -24,7 +24,7 @@ func TestNeedsNewerLauncher(t *testing.T) {
 		{"floor below the launcher", "2.12.2", "2.13.0", false},
 		{"a two-part floor means .0", "2.13", "2.12.2", true},
 		{"a two-part floor is cleared by a patch above it", "2.13", "2.13.5", false},
-		{"the v prefix is normalised on both sides", "v2.13.0", "2.12.2", true},
+		{"the v prefix is normalized on both sides", "v2.13.0", "2.12.2", true},
 		{"a dev build is never refused", "2.13.0", "dev-20260915-124919", false},
 		{"an unreadable floor refuses a release", "nonsense", "2.12.2", true},
 		{"an unreadable floor still spares a dev build", "nonsense", "dev-20260915", false},

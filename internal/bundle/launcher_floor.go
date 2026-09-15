@@ -13,7 +13,7 @@ import (
 // drift from the one the auto-updater uses, and then "your launcher is too old"
 // and "an update is available" could disagree about the same two strings.
 //
-// Two behaviours are inherited rather than written, and both are wanted:
+// Two behaviors are inherited rather than written, and both are wanted:
 //
 //   - A DEV BUILD is never refused. `make` stamps a non-semver version
 //     ("dev-20260915-124919"), which sorts highest, so no floor is above it.
