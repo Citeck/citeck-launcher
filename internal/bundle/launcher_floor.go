@@ -89,7 +89,11 @@ func LatestRunnableBundle(bundlesDir, launcherVersion string, log *slog.Logger) 
 	if strings.TrimSpace(launcherVersion) == "" {
 		return versions[0], nil
 	}
-	var highestFloor string
+	// versions is newest-first (ListBundleVersions), and the walk below never
+	// stops early, so this holds the floor of the FIRST (i.e. NEWEST) skipped
+	// version encountered — not the numerically highest floor among all
+	// skipped versions, which a name like "highestFloor" would wrongly imply.
+	var newestSkippedFloor string
 	for _, key := range versions {
 		// ReadMinLauncherVersion answers "" for a missing file too — a bundle
 		// this walk cannot even find has no floor to enforce, so it is treated
@@ -98,8 +102,8 @@ func LatestRunnableBundle(bundlesDir, launcherVersion string, log *slog.Logger) 
 		if !NeedsNewerLauncher(floor, launcherVersion) {
 			return key, nil
 		}
-		if highestFloor == "" {
-			highestFloor = floor
+		if newestSkippedFloor == "" {
+			newestSkippedFloor = floor
 		}
 		log.Warn("Skipping a bundle this launcher is too old for",
 			"version", key, "needs", floor, "launcher", launcherVersion)
@@ -111,7 +115,7 @@ func LatestRunnableBundle(bundlesDir, launcherVersion string, log *slog.Logger) 
 	// once, where it belongs: the config WRITE gate refuses the result and says
 	// which launcher version to update to.
 	log.Warn("No bundle in this repo clears this launcher's floor; taking the newest",
-		"version", versions[0], "newestFloor", highestFloor, "launcher", launcherVersion)
+		"version", versions[0], "newestFloor", newestSkippedFloor, "launcher", launcherVersion)
 	return versions[0], nil
 }
 

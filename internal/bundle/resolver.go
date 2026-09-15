@@ -1940,37 +1940,6 @@ func ListBundleVersions(bundlesDir string) []string {
 	return versions
 }
 
-func findLatestBundle(bundlesDir string) (string, error) {
-	if _, err := os.Stat(bundlesDir); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			// Directory doesn't exist — repo layout is likely different
-			// (e.g. bundles live elsewhere or are not yet published). This
-			// is benign for callers that only probe Resolve(LATEST); wrap
-			// with ErrNoBundles so they can detect and demote the warning.
-			return "", fmt.Errorf("list bundles in %s: %w", bundlesDir, ErrNoBundles)
-		}
-		return "", fmt.Errorf("list bundles in %s: %w", bundlesDir, err)
-	}
-
-	var latest string
-	for entry := range walkBundles(bundlesDir) {
-		final := entry.Key
-		if idx := strings.LastIndex(final, "/"); idx >= 0 {
-			final = final[idx+1:]
-		}
-		if !isVersionString(final) {
-			continue
-		}
-		if latest == "" || compareBundleVersions(entry.Key, latest) > 0 {
-			latest = entry.Key
-		}
-	}
-	if latest == "" {
-		return "", fmt.Errorf("%w in %s", ErrNoBundles, bundlesDir)
-	}
-	return latest, nil
-}
-
 // compareBundleVersions compares version strings matching Kotlin BundleKey.compareTo:
 // 1. Parse scope (path before last '/'), version parts, and suffix
 // 2. Compare scope (prefer no scope), then version parts, then suffix parts
