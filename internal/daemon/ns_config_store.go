@@ -52,7 +52,23 @@ func (d *Daemon) launcherFloorRefusal(wsID string, cfg *namespace.Config) *errLa
 	if cfg == nil || cfg.BundleRef.IsEmpty() || d.version == "" {
 		return nil
 	}
+	// A symbolic LATEST is a policy, not a choice of bundle: the launcher
+	// already resolves it to the best bundle it can run
+	// (bundle.LatestRunnableBundle), and in the degenerate case where NOTHING
+	// in the repo clears the floor, that function deliberately hands back the
+	// newest version anyway (with a warning) rather than leaving the
+	// namespace unopenable. Gating the WRITE on that resolved version would
+	// then refuse a namespace stored as LATEST from ever being touched again —
+	// not even renamed — until someone pins a concrete key, which is worse
+	// than the write gate this key exists to enforce. Every real bundle
+	// SELECTION (create, `citeck install`, the dropdown) already pins a
+	// concrete key before it is written, so this branch does not weaken what
+	// the gate exists for.
+	if strings.EqualFold(strings.TrimSpace(cfg.BundleRef.Key), "LATEST") {
+		return nil
+	}
 	resolver := bundle.NewResolverWithAuth(config.BundlesDataDir(wsID), makeTokenLookup(d.secretReaderFunc())).
+		WithWorkspaceOverlay(workspaceConfigOverlay(d.store, wsID)).
 		WithLauncherVersion(d.version)
 	resolver.SetOffline(true)
 	res, err := resolver.Resolve(cfg.BundleRef)

@@ -1,7 +1,7 @@
 package daemon
 
 import (
-	"errors"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -120,6 +120,66 @@ func TestPersistNamespaceConfig_UnresolvableBundleIsNotARefusal(t *testing.T) {
 		nsConfigYAML(t, "X", "2099.1")))
 }
 
+// RULING: a symbolic LATEST is a policy, not a choice of bundle, so the write
+// gate must never refuse it — not even in the degenerate case where NOTHING in
+// the repo clears the floor and bundle.LatestRunnableBundle deliberately hands
+// back the newest version anyway. Without this, a legacy namespace stored with
+// LATEST could not even be RENAMED until someone pinned a concrete version.
+func TestPersistNamespaceConfig_LatestIsNeverRefusedEvenWhenNothingClearsTheFloor(t *testing.T) {
+	config.SetDesktopMode(true)
+	t.Cleanup(config.ResetDesktopMode)
+	t.Setenv("CITECK_HOME", t.TempDir())
+	d, _ := newNsCrudTestDaemon(t)
+	d.version = "2.12.2"
+	writeFlooredWorkspace(t, "ws1", map[string]string{"2026.2": "2.13.0", "2026.3": "2.14.0"})
+
+	assert.NoError(t, d.persistNamespaceConfig("ws1", "ns1",
+		nsConfigYAML(t, "X", "LATEST")),
+		"a symbolic LATEST must never be refused by the floor gate")
+}
+
+// The gate must resolve through the operator's manual workspace-config delta,
+// not just the git baseline — every OTHER resolver construction in the daemon
+// chains .WithWorkspaceOverlay, and launcherFloorRefusal used to be the one
+// that did not. Here the git baseline names no "community" bundleRepos entry
+// at all; only the operator's stored delta adds it. Without the overlay,
+// findBundleRepo fails, Resolve errors, and launcherFloorRefusal's
+// `if err != nil { return nil }` reads that as "no refusal" — silently
+// allowing the exact write the gate exists to stop. With the overlay chained,
+// the delta is re-applied, the repo resolves, and the floor fires.
+func TestPersistNamespaceConfig_ResolvesThroughTheOperatorWorkspaceDelta(t *testing.T) {
+	config.SetDesktopMode(true)
+	t.Cleanup(config.ResetDesktopMode)
+	t.Setenv("CITECK_HOME", t.TempDir())
+	d, _ := newNsCrudTestDaemon(t)
+	d.version = "2.12.2"
+
+	// Bundle files live under repo/community/ regardless of whether any
+	// bundleRepos entry names that path yet.
+	writeFlooredWorkspace(t, "ws1", map[string]string{"2026.3": "2.13.0"})
+	// Overwrite the baseline written by writeFlooredWorkspace with one that
+	// does NOT declare the "community" bundleRepos entry — that entry exists
+	// only in the operator's delta, computed below.
+	repoDir := config.WorkspaceRepoDir("ws1")
+	baseline := "quickStartVariants: []\n"
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, "workspace-v1.yml"), []byte(baseline), 0o600))
+
+	edited := "quickStartVariants: []\n" +
+		"bundleRepos:\n  - id: community\n    name: Community\n    path: community\n"
+	edit, err := namespace.MakeFileEdit(workspaceConfigFile, []byte(baseline), []byte(edited))
+	require.NoError(t, err)
+	deltaJSON, err := json.Marshal(edit)
+	require.NoError(t, err)
+	require.NoError(t, d.store.SetStateValue(wsConfigDeltaKey("ws1"), string(deltaJSON)))
+
+	err = d.persistNamespaceConfig("ws1", "ns1", nsConfigYAML(t, "X", "2026.3"))
+
+	var floor *errLauncherTooOld
+	require.ErrorAs(t, err, &floor,
+		"the delta-only bundleRepos entry must still be seen by the gate")
+	assert.Equal(t, "2.13.0", floor.needs)
+}
+
 // The HTTP shape of the refusal, and the promise that nothing is persisted.
 // Modeled on TestCreateNamespace_LatestUnsyncedRepoRefused.
 func TestCreateNamespace_PinnedTooNewBundleRefusedAndNothingPersisted(t *testing.T) {
@@ -166,5 +226,3 @@ func TestGetNamespaceEdit_StillOpensOnATooNewBundle(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 	assert.NotContains(t, rec.Body.String(), api.ErrCodeLauncherTooOld)
 }
-
-var _ = errors.Is // keep the import if the final file does not need it
