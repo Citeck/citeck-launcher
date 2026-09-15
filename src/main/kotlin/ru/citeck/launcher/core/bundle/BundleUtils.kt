@@ -101,6 +101,41 @@ object BundleUtils {
             return "$realRepository:$tag"
         }
 
+        // The 2.x launcher accepts an image written as a single value (a plain
+        // "repo:tag" string, or a {repository, tag} map) or as a LIST of either
+        // shape. Outside its `dependencies:` section a list has no route to
+        // walk - there is no pin, no hold and no migration out here, and none
+        // of that exists in THIS launcher at all - so the first element is
+        // taken: the most conservative rung, the one most likely to already
+        // match what is on the volume. An empty list, or a shape that can't be
+        // read, resolves to "" - the same as a missing image today.
+        fun readImage(value: DataValue): String {
+            val imageNode = value["/image"]
+            val node = if (imageNode.isArray()) {
+                if (imageNode.size() == 0) {
+                    return ""
+                }
+                imageNode[0]
+            } else {
+                imageNode
+            }
+            return if (node.isTextual()) {
+                // A plain "repo/name:tag" string. The tag delimiter is the
+                // last ':' that comes after the last '/', so a registry
+                // "host:port" prefix isn't mistaken for one.
+                val text = node.asText()
+                val slashIdx = text.lastIndexOf('/')
+                val colonIdx = text.lastIndexOf(':')
+                if (colonIdx <= slashIdx) {
+                    ""
+                } else {
+                    getImageUrl(text.substring(0, colonIdx), text.substring(colonIdx + 1))
+                }
+            } else {
+                getImageUrl(node["repository"].asText(), node["tag"].asText())
+            }
+        }
+
         fun processApp(appName: String, value: DataValue) {
             if (appName.isBlank()) {
                 return
@@ -113,7 +148,7 @@ object BundleUtils {
                     }
                 }
             } else {
-                val image = getImageUrl(value["/image/repository"].asText(), value["/image/tag"].asText())
+                val image = readImage(value)
                 if (image.isNotBlank()) {
                     applications[appNameByAliases[appName] ?: appName] = BundleAppDef(image)
                 }
