@@ -532,6 +532,36 @@ func TestADowngradeGetsItsOwnMessageNotALauncherUpdate(t *testing.T) {
 	assert.Contains(t, renderProblems(englishForLogs, pre.Problems), "does not migrate data backwards")
 }
 
+// A migratable dependency whose held-back upgrade carries an EMPTY route:
+// the gate's own no-route case, produced when a rung's tag cannot be parsed
+// (see TestAnUnreadableRungLeavesNoRoute and
+// TestAMalformedLadderOnAPinnedStandStillHoldsThePinAndIsReported in
+// internal/namespace/generator_deps_ladder_test.go — both leave held.Path
+// empty for a Migratable() dependency). There is nothing to plan a migration
+// FROM, so both routes must refuse it with the same code an unmigratable
+// dependency gets, and — this is the part a revert to [upgrade.From,
+// upgrade.To] would break silently — the refusal must not name a fabricated
+// pair: the operator already has the tag-level detail through the list
+// route's StatusDetail.
+func TestBothMigrationRoutesRefuseAnUpgradeWithNoRouteAtAll(t *testing.T) {
+	d, mux, _ := newDepsRoutesDaemon(t)
+	d.activeNs.dependencyUpgrades[0] = namespace.DependencyUpgrade{
+		ID: deps.Postgres, App: "postgres", From: "postgres:17.5", To: "postgres:18", Migratable: true,
+		// Path is deliberately left unset (nil): the gate's EMPTY-route case.
+	}
+
+	for _, rec := range []*httptest.ResponseRecorder{
+		depsGet(mux, api.DependencyPreflightPath("postgres")),
+		depsPost(mux, api.DependencyMigratePath("postgres"), "{}"),
+	} {
+		require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+		assert.Contains(t, rec.Body.String(), api.ErrCodeDependencyNotMigratable)
+		assert.NotContains(t, rec.Body.String(), "17.5",
+			"no route means nothing to name; a fabricated [From, To] pair would leak the version here")
+		assert.NotContains(t, rec.Body.String(), "postgres:18")
+	}
+}
+
 // The pair the launcher WAS built for stays offered — the guard above must not
 // swallow the feature it guards.
 func TestTheSupportedPairIsStillOffered(t *testing.T) {
