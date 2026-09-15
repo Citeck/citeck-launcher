@@ -113,6 +113,12 @@ type FakeEnv struct {
 	// observed, in order — what TestPostgresLadderDeletesEachDumpBeforeTakingTheNext
 	// walks to prove the peak never exceeds one dump plus one cluster.
 	trace []TraceEvent
+	// execCmds is every argv Exec was asked to run, in order — the raw slice,
+	// not the joined string ExecFn receives. Bookkeeping over a call the fake
+	// already receives: it exists so a test can inspect the SHAPE of a command
+	// (e.g. that a dump ran as `bash -c "…"` and not a bare argv) without
+	// reconstructing it from the call log's joined strings.
+	execCmds [][]string
 }
 
 // TraceEvent is one creation or removal of a dump file or a data volume, in
@@ -223,6 +229,39 @@ func (f *FakeEnv) LiveDumps() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return slices.Sorted(maps.Keys(f.dumps))
+}
+
+// DumpsWritten returns the host path of every dump write this fake has ever
+// observed, in order — including one that was later removed. Unlike
+// LiveDumps, which answers "still on disk right now", this is what a test
+// asserting every RUNG's dump was compressed needs: an intermediate rung's
+// dump is gone (restored and removed) by the time a multi-hop migration
+// finishes, and by then LiveDumps would report nothing at all.
+func (f *FakeEnv) DumpsWritten() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []string
+	for _, ev := range f.trace {
+		if ev.Kind == "dump" && ev.Created {
+			out = append(out, ev.Name)
+		}
+	}
+	return out
+}
+
+// ExecutedCommands returns every argv Exec was asked to run, in order — the
+// raw command slice, not the joined string ExecFn receives. A test that needs
+// to inspect the SHAPE of a command (e.g. that the dump step ran `bash -c
+// "…gzip…"` rather than a bare `pg_dumpall` argv) reads this instead of
+// reconstructing it from the joined call log.
+func (f *FakeEnv) ExecutedCommands() [][]string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([][]string, len(f.execCmds))
+	for i, c := range f.execCmds {
+		out[i] = append([]string(nil), c...)
+	}
+	return out
 }
 
 // Trace returns a copy of every dump and cluster-volume creation/removal this
@@ -342,6 +381,7 @@ func (f *FakeEnv) ContainerRunning(_ context.Context, name string) (bool, error)
 // RunAppDef recorded for this container.
 func (f *FakeEnv) Exec(_ context.Context, name string, cmd []string) (stdout, stderr string, exitCode int, err error) {
 	f.mu.Lock()
+	f.execCmds = append(f.execCmds, append([]string(nil), cmd...))
 	_, ok := f.Containers[name]
 	fn := f.ExecFn
 	binds := append([]string(nil), f.runOpts[name].Binds...)
@@ -372,21 +412,26 @@ func (f *FakeEnv) Exec(_ context.Context, name string, cmd []string) (stdout, st
 // Files directly and never go through this path.
 const dumpPlaceholderSize = 1 << 10
 
-// dumpWritePath recognizes a pg_dumpall command that writes to a bind-mounted
-// path and resolves the in-container target to a host path through binds —
-// the extra binds RunAppDef recorded for the container this command ran in.
-// ok=false for every other command, or one with no matching bind.
+// dumpWritePath recognizes a DumpScript-shaped command — `bash -c "set -o
+// pipefail; pg_dumpall … | gzip -N > '<path>'"` — and resolves the
+// in-container redirect target to a host path through binds — the extra
+// binds RunAppDef recorded for the container this command ran in. ok=false
+// for every other command, or one with no matching bind.
+//
+// The command is no longer a bare `pg_dumpall …` argv (that shape predates
+// the dump being piped into gzip through bash -c — see DumpScript in
+// postgres_restore.go), so recognition can no longer key on cmd[0] or scan for
+// a "-f" flag: it has to read the redirect target out of the script string.
 func dumpWritePath(cmd, binds []string) (hostPath string, ok bool) {
-	if len(cmd) == 0 || cmd[0] != "pg_dumpall" {
+	if len(cmd) != 3 || cmd[0] != "bash" || cmd[1] != "-c" {
 		return "", false
 	}
-	var inContainer string
-	for i, a := range cmd {
-		if a == "-f" && i+1 < len(cmd) {
-			inContainer = cmd[i+1]
-		}
+	script := cmd[2]
+	if !strings.Contains(script, "pg_dumpall") {
+		return "", false
 	}
-	if inContainer == "" {
+	inContainer, ok := dumpRedirectTarget(script)
+	if !ok {
 		return "", false
 	}
 	for _, b := range binds {
@@ -402,6 +447,21 @@ func dumpWritePath(cmd, binds []string) (hostPath string, ok bool) {
 		}
 	}
 	return "", false
+}
+
+// dumpRedirectTarget extracts the single-quoted path following "> " at the
+// end of a DumpScript-shaped command line — the in-container path gzip's
+// stdout was redirected to.
+func dumpRedirectTarget(script string) (string, bool) {
+	idx := strings.LastIndex(script, "> '")
+	if idx == -1 {
+		return "", false
+	}
+	rest := script[idx+len("> '"):]
+	if !strings.HasSuffix(rest, "'") {
+		return "", false
+	}
+	return strings.TrimSuffix(rest, "'"), true
 }
 
 // StopRemove forgets the container; removing an unknown one succeeds.

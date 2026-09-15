@@ -169,13 +169,19 @@ func (o *observedEnv) recordedCommands() []string {
 	return out
 }
 
-// stderrFor returns the recorded stderr of the last command whose line starts
-// with prefix ("pg_dumpall", "psql -h …").
-func (o *observedEnv) stderrFor(prefix string) (execLog, bool) {
+// stderrFor returns the recorded stderr of the last command whose line
+// CONTAINS needle ("pg_dumpall", "psql -h …"). It used to require needle as a
+// leading PREFIX, which held while the restore ran as a bare psql argv; since
+// the dump and restore steps now run as `bash -c "…gzip…"` / `bash -c
+// "…gunzip -c … | psql …"` (see DumpScript/RestoreScript in
+// internal/deps/migrate/postgres_restore.go), RestoreCommandPrefix's words
+// appear after the pipe rather than at the start of the recorded command
+// line, so the match has to be a substring.
+func (o *observedEnv) stderrFor(needle string) (execLog, bool) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	for i := len(o.logs) - 1; i >= 0; i-- {
-		if strings.HasPrefix(o.logs[i].cmd, prefix) {
+		if strings.Contains(o.logs[i].cmd, needle) {
 			return o.logs[i], true
 		}
 	}
@@ -553,22 +559,30 @@ func (e *itEnv) psql(ctx context.Context, t *testing.T, container, db, sql strin
 }
 
 // stepTimer records how long every plan step took — the numbers a manual
-// upgrade drill needs.
+// upgrade drill needs. It also keeps the LAST progress message reported for
+// each step: the dump and restore steps report the dump file's size (see
+// watchFileGrowth / restoreAt in internal/deps/migrate/postgres.go), which is
+// what lets a run of this test show the compressed dump's size next to the
+// cluster size logged from the preflight — the ratio Task 8 exists for.
 type stepTimer struct {
-	mu      sync.Mutex
-	order   []string
-	elapsed map[string]time.Duration
-	current string
-	since   time.Time
+	mu       sync.Mutex
+	order    []string
+	elapsed  map[string]time.Duration
+	lastSize map[string]string
+	current  string
+	since    time.Time
 }
 
 func newStepTimer() *stepTimer {
-	return &stepTimer{elapsed: map[string]time.Duration{}, since: time.Now()}
+	return &stepTimer{elapsed: map[string]time.Duration{}, lastSize: map[string]string{}, since: time.Now()}
 }
 
-func (s *stepTimer) progress(step string, _, _ int, _ float64, _ msg.Message) {
+func (s *stepTimer) progress(step string, _, _ int, _ float64, m msg.Message) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if size, ok := msgArg(m, "size"); ok {
+		s.lastSize[step] = size
+	}
 	if step == s.current {
 		return
 	}
@@ -576,6 +590,19 @@ func (s *stepTimer) progress(step string, _, _ int, _ float64, _ msg.Message) {
 	s.current = step
 	s.order = append(s.order, step)
 	s.since = time.Now()
+}
+
+// msgArg reads one "key","value" pair out of a msg.Message's flat Args —
+// deps.msg.progress.dumped and deps.msg.progress.restoring both carry a
+// "size" arg (see fsutil.FormatBytes in postgres.go), and reading it here
+// avoids pulling in a locale renderer just to log a human-readable size.
+func msgArg(m msg.Message, key string) (string, bool) {
+	for i := 0; i+1 < len(m.Args); i += 2 {
+		if m.Args[i] == key {
+			return m.Args[i+1], true
+		}
+	}
+	return "", false
 }
 
 func (s *stepTimer) closeCurrentLocked() {
@@ -590,7 +617,11 @@ func (s *stepTimer) report(t *testing.T) []string {
 	s.closeCurrentLocked()
 	s.current = ""
 	for _, step := range s.order {
-		t.Logf("step %-16s %s", step, s.elapsed[step].Round(time.Millisecond))
+		if sz, ok := s.lastSize[step]; ok {
+			t.Logf("step %-16s %s (last progress size: %s)", step, s.elapsed[step].Round(time.Millisecond), sz)
+		} else {
+			t.Logf("step %-16s %s", step, s.elapsed[step].Round(time.Millisecond))
+		}
 	}
 	return append([]string(nil), s.order...)
 }

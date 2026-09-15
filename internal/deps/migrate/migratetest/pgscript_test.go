@@ -44,8 +44,10 @@ func TestScriptedPostgresAnswersOnTheRealStreams(t *testing.T) {
 	assert.Equal(t, "91\n", out, "the count follows the -d database")
 
 	// The restore's errors arrive on stderr with an exit code of 0 — the exact
-	// shape that makes scanning stderr necessary.
-	out, errOut, code = exec("psql", "-U", "postgres", "-f", "/citeck/depsmig/dump.sql")
+	// shape that makes scanning stderr necessary. Shaped like RestoreScript's
+	// actual output: bash -c wrapping gunzip piped into psql.
+	out, errOut, code = exec("bash", "-c", "set -o pipefail; gunzip -c '/citeck/depsmig/dump.sql.gz' | "+
+		"psql -h 127.0.0.1 -U postgres -d postgres -q -o /dev/null")
 	assert.Empty(t, out)
 	assert.Equal(t, ToleratedRestoreError, errOut)
 	assert.Zero(t, code)

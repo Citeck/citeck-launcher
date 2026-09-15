@@ -3,6 +3,7 @@ package migrate
 import (
 	"context"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/citeck/citeck-launcher/internal/deps"
@@ -181,4 +182,22 @@ func TestPostgresLadderDeletesEachDumpBeforeTakingTheNext(t *testing.T) {
 	// And nothing is left behind by the successful walk except the final one.
 	assert.Equal(t, []string{"postgres3"}, env.LiveVolumes())
 	assert.Empty(t, env.LiveDumps())
+}
+
+// Every rung's dump is compressed, not just the first.
+func TestEveryRungsDumpIsCompressed(t *testing.T) {
+	env := newPostgresFakeEnv(t, "postgres:17.5", 1)
+	path := Path{"postgres:17.5", "postgres:18.6", "postgres:19.2"}
+	plan, j, err := PostgresMigrator{}.Plan(context.Background(), env, path, PlanOptions{})
+	require.NoError(t, err)
+	require.NoError(t, runPlanAgainstFake(t, j, plan))
+
+	for _, cmd := range env.ExecutedCommands() {
+		if len(cmd) == 3 && strings.Contains(cmd[2], "pg_dumpall") {
+			assert.Contains(t, cmd[2], "gzip -1")
+		}
+	}
+	for _, name := range env.DumpsWritten() {
+		assert.True(t, strings.HasSuffix(name, ".sql.gz"), "dump %q is not compressed", name)
+	}
 }

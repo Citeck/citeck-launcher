@@ -24,15 +24,25 @@ const (
 	SrcContainer = "depsmig-src"
 	DstContainer = "depsmig-dst"
 	dumpMount    = "/citeck/depsmig"
-	dumpFile     = "dump.sql"
+	// dumpFile carries the .gz suffix so both the single-hop plan and every
+	// rung of a ladder migration write and read a COMPRESSED dump — see
+	// DumpScript/RestoreScript in postgres_restore.go.
+	dumpFile = "dump.sql.gz"
 
 	// readyTimeout bounds waiting for a temp server. A first-time init on a
 	// slow disk (initdb plus the image's entrypoint) is minutes, not seconds.
 	readyTimeout = 5 * time.Minute
 	readyPoll    = 2 * time.Second
-	// dumpProgressPoll is how often the dump's growth is reported.
-	dumpProgressPoll = 2 * time.Second
 )
+
+// dumpProgressPoll is how often the dump's growth is reported. A var, not a
+// const, so a test can shrink it (save, reassign, defer-restore) and observe
+// the real runDump call site's progress reports within milliseconds instead
+// of waiting on the production cadence — the only way to prove that call
+// site still passes 0 rather than merely proving watchFileGrowth draws a
+// literal 0 as indeterminate, which a test that calls it directly (bypassing
+// runDump entirely) cannot do.
+var dumpProgressPoll = 2 * time.Second
 
 // PostgresMigrator moves a namespace's PostgreSQL data to a new major with a
 // logical dump into a NEW volume: pg_dumpall out of a temp container on the
@@ -149,7 +159,6 @@ type pgRun struct {
 	dumpHostPath    string
 	dumpInContainer string
 	dumpBind        string
-	dataSize        int64
 
 	source pgInventory
 }
@@ -201,7 +210,6 @@ func (m PostgresMigrator) Plan(ctx context.Context, env Env, route Path, opts Pl
 		dumpHostPath:    filepath.Join(dumpDir, dumpFile),
 		dumpInContainer: path.Join(dumpMount, dumpFile),
 		dumpBind:        dumpDir + ":" + dumpMount,
-		dataSize:        pre.DataSizeBytes,
 	}
 	j := deps.MigrationJournal{
 		ID: deps.Postgres, From: route.From(), To: route.To(), DumpDir: dumpDir,
@@ -366,9 +374,13 @@ func (r *pgRun) dumpFromCurrent(ctx context.Context, _ *Journal, p StepProgress)
 }
 
 func (r *pgRun) runDump(ctx context.Context, container string, p StepProgress) error {
-	stop := watchFileGrowth(ctx, r.env, r.dumpHostPath, r.dataSize, dumpProgressPoll, p)
-	_, stderr, code, err := r.env.Exec(ctx, container,
-		[]string{"pg_dumpall", "-h", "127.0.0.1", "-U", "postgres", "-f", r.dumpInContainer})
+	// 0, not the cluster's data size: the file this watches is compressed, so
+	// its size is not a fraction of the cluster's. A percentage computed from
+	// it creeps to ~15% and then jumps to done, which reads as a stall; both
+	// renderers already draw 0 as indeterminate — the same choice the
+	// volume-copy step makes.
+	stop := watchFileGrowth(ctx, r.env, r.dumpHostPath, 0, dumpProgressPoll, p)
+	_, stderr, code, err := r.env.Exec(ctx, container, DumpScript(r.dumpInContainer))
 	stop()
 	if err != nil {
 		return fmt.Errorf("pg_dumpall: %w", err)
@@ -464,8 +476,7 @@ func (r *pgRun) restoreAt(i int) func(context.Context, *Journal, StepProgress) e
 	return func(ctx context.Context, _ *Journal, p StepProgress) error {
 		size, _ := r.env.FileSize(r.dumpHostPath)
 		p(0, msg.New("deps.msg.progress.restoring", "size", fsutil.FormatBytes(size)))
-		_, stderr, code, err := r.env.Exec(ctx, DstContainer,
-			append(RestoreCommandPrefix(), "-f", r.dumpInContainer))
+		_, stderr, code, err := r.env.Exec(ctx, DstContainer, RestoreScript(r.dumpInContainer))
 		if err != nil {
 			return fmt.Errorf("psql: %w", err)
 		}

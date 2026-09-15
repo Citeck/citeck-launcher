@@ -398,17 +398,21 @@ func TestVolumeIsJournaledBeforeItIsCreated(t *testing.T) {
 	require.Len(t, st.failures, 1)
 }
 
-// The restore's command line must BE the exported prefix, not merely resemble
-// it: the integration test picks the restore's stderr out of every command the
-// migration ran by matching RestoreCommandPrefix, and a step that quietly
-// stopped using it would leave that lookup matching nothing — which reads as
-// "the restore printed nothing", not as a failure.
+// The restore's command line must CONTAIN the exported prefix, not merely
+// resemble it: the integration test picks the restore's stderr out of every
+// command the migration ran by matching RestoreCommandPrefix, and a step that
+// quietly stopped using it would leave that lookup matching nothing — which
+// reads as "the restore printed nothing", not as a failure. It is a substring
+// rather than a leading prefix of the whole command because the restore now
+// runs inside a `bash -c "gunzip -c … | psql …"` pipeline (see
+// TestDumpAndRestoreAreCompressed), so RestoreCommandPrefix's words appear
+// after the pipe rather than at cmd[0].
 func TestRestoreRunsTheExportedCommandPrefix(t *testing.T) {
 	env := envWith17Data()
 	base := env.ExecFn
 	var restoreCmd string
 	env.ExecFn = func(c, cmd string) (string, string, int, error) {
-		if strings.HasPrefix(cmd, "psql") && strings.Contains(cmd, " -f ") {
+		if strings.Contains(cmd, "gunzip -c") {
 			restoreCmd = cmd
 		}
 		return base(c, cmd)
@@ -416,19 +420,21 @@ func TestRestoreRunsTheExportedCommandPrefix(t *testing.T) {
 	_, err := runPlan(t, env, PlanOptions{})
 	require.NoError(t, err)
 	require.NotEmpty(t, restoreCmd, "the plan ran no restore")
-	assert.True(t, strings.HasPrefix(restoreCmd, strings.Join(RestoreCommandPrefix(), " ")),
-		"restore ran %q, which does not start with the exported prefix %q",
+	assert.True(t, strings.HasPrefix(restoreCmd, "bash -c "), "the restore runs via bash -c, not sh -c: %q", restoreCmd)
+	assert.Contains(t, restoreCmd, strings.Join(RestoreCommandPrefix(), " "),
+		"restore ran %q, which does not contain the exported prefix %q",
 		restoreCmd, strings.Join(RestoreCommandPrefix(), " "))
-	assert.True(t, strings.HasSuffix(restoreCmd, " -f /citeck/depsmig/dump.sql"),
-		"the prefix carries everything but the dump: %q", restoreCmd)
+	assert.Contains(t, restoreCmd, "gunzip -c '/citeck/depsmig/dump.sql.gz'",
+		"the dump is decompressed straight into the psql invocation above: %q", restoreCmd)
+	assert.NotContains(t, restoreCmd, "-f ", "psql reads the pipe, not a file: %q", restoreCmd)
 }
 
 func TestRestoreErrorRollsBackEverything(t *testing.T) {
 	env := envWith17Data()
 	base := env.ExecFn
 	env.ExecFn = func(c, cmd string) (string, string, int, error) {
-		if strings.HasPrefix(cmd, "psql") && strings.Contains(cmd, " -f ") {
-			return "", `psql:/citeck/depsmig/dump.sql:9: ERROR:  syntax error at or near "BOGUS"`, 0, nil
+		if strings.Contains(cmd, "gunzip -c") {
+			return "", `psql:<stdin>:9: ERROR:  syntax error at or near "BOGUS"`, 0, nil
 		}
 		return base(c, cmd)
 	}
@@ -449,7 +455,7 @@ func TestRestoreFailsOnANonZeroExitWithoutAnErrorLine(t *testing.T) {
 	env := envWith17Data()
 	base := env.ExecFn
 	env.ExecFn = func(c, cmd string) (string, string, int, error) {
-		if strings.HasPrefix(cmd, "psql") && strings.Contains(cmd, " -f ") {
+		if strings.Contains(cmd, "gunzip -c") {
 			return "", "psql: could not open file", 1, nil
 		}
 		return base(c, cmd)
@@ -712,11 +718,11 @@ func TestTheTargetContainerMountsTheVolumeThePlanCreated(t *testing.T) {
 	base := env.ExecFn
 	env.ExecFn = func(c, cmd string) (string, string, int, error) {
 		switch {
-		case c == SrcContainer && strings.HasPrefix(cmd, "pg_dumpall"):
+		case c == SrcContainer && strings.Contains(cmd, "pg_dumpall"):
 			if def, ok := env.ContainerDef(SrcContainer); ok {
 				srcMounts = def.Volumes
 			}
-		case c == DstContainer && strings.Contains(cmd, " -f "):
+		case c == DstContainer && strings.Contains(cmd, "gunzip -c"):
 			if def, ok := env.ContainerDef(DstContainer); ok {
 				dstMounts = def.Volumes
 			}
@@ -848,5 +854,153 @@ func TestDumpProgressStopWaitsForTheReporterToReturn(t *testing.T) {
 	case <-returned:
 	case <-time.After(5 * time.Second):
 		t.Fatal("stop() never returned after the callback finished")
+	}
+}
+
+// The dump is compressed on the way out and decompressed on the way in. A
+// cluster's SQL text compresses several-fold, so this is both less disk and
+// less I/O — and at gzip -1 the CPU cost is small enough that reading the
+// smaller file back can pay for it.
+func TestDumpAndRestoreAreCompressed(t *testing.T) {
+	dump := DumpScript("/dump/hop0-dump.sql.gz")
+	assert.Equal(t, "bash", dump[0])
+	assert.Equal(t, "-c", dump[1])
+	assert.Contains(t, dump[2], "pg_dumpall")
+	assert.Contains(t, dump[2], "gzip -1")
+	assert.Contains(t, dump[2], "/dump/hop0-dump.sql.gz")
+
+	restore := RestoreScript("/dump/hop0-dump.sql.gz")
+	assert.Equal(t, "bash", restore[0])
+	assert.Equal(t, "-c", restore[1])
+	// The brief's own draft of this assertion checked for the path
+	// unquoted, but DumpScript/RestoreScript deliberately shellQuote it (a
+	// dump directory under a user's home can contain a space) — so the
+	// literal substring is quoted too.
+	assert.Contains(t, restore[2], "gunzip -c '/dump/hop0-dump.sql.gz'")
+	// The psql invocation is the SAME one RestoreCommandPrefix names, so the
+	// integration test's identification of the restore's stderr keeps working
+	// and the flags have one source.
+	assert.Contains(t, restore[2], strings.Join(RestoreCommandPrefix(), " "))
+	assert.NotContains(t, restore[2], "-f ", "psql reads the pipe, not a file")
+}
+
+// A pipe hides the failure of everything but its last command. Without
+// pipefail a pg_dumpall that died halfway is followed by a gzip that exits 0,
+// and the migration proceeds to restore a truncated cluster and call it
+// verified. Same on the way back: a corrupt archive makes gunzip fail while
+// psql exits 0 on the empty input it got.
+func TestBothScriptsFailOnAnyStageOfThePipe(t *testing.T) {
+	for _, script := range [][]string{
+		DumpScript("/dump/d.sql.gz"),
+		RestoreScript("/dump/d.sql.gz"),
+	} {
+		assert.Contains(t, script[2], "set -o pipefail")
+		assert.Equal(t, "bash", script[0],
+			"dash only grew pipefail in 0.5.12; bash is in every postgres image and is 5.2 there")
+	}
+}
+
+// newFakeEnvWithFileSize is a FakeEnv whose FileSize answers size for the one
+// path TestCompressedDumpProgressIsIndeterminate watches — bookkeeping over a
+// field the fake already exposes (Files), not a new capability.
+func newFakeEnvWithFileSize(t *testing.T, size int64) *migratetest.FakeEnv {
+	t.Helper()
+	env := migratetest.New()
+	env.Files["/dump/d.sql.gz"] = size
+	return env
+}
+
+// The dump's progress is reported as an absolute size with NO percentage: the
+// file is compressed, so its size against the cluster's size is not a
+// fraction of anything, and a bar that creeps to 15% and then jumps to done
+// reads as a stall. Both renderers already draw percent 0 as indeterminate —
+// the same choice the copy step makes.
+func TestCompressedDumpProgressIsIndeterminate(t *testing.T) {
+	// watchFileGrowth reports from its own goroutine (see
+	// TestDumpProgressStopWaitsForTheReporterToReturn above), and
+	// assert.Eventually polls from another — both touch seen, so it needs a
+	// mutex. The brief's own draft of this test read and wrote it unguarded,
+	// which -race catches as a data race even though the assertions
+	// themselves are correct.
+	var mu sync.Mutex
+	var seen []float64
+	p := func(pct float64, _ msg.Message) {
+		mu.Lock()
+		defer mu.Unlock()
+		seen = append(seen, pct)
+	}
+	env := newFakeEnvWithFileSize(t, 4096)
+	stop := watchFileGrowth(t.Context(), env, "/dump/d.sql.gz", 0, time.Millisecond, p)
+	assert.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(seen) > 0
+	}, time.Second, time.Millisecond)
+	stop()
+	mu.Lock()
+	defer mu.Unlock()
+	for _, pct := range seen {
+		assert.Zero(t, pct)
+	}
+}
+
+// The test above proves watchFileGrowth draws a LITERAL 0 as indeterminate —
+// it never calls runDump, so a mutation that made runDump pass the cluster's
+// data size again (as it did before this task) is invisible to it. This one
+// runs the REAL plan against a fake with a non-trivial cluster size
+// (envWith17Data sets 2<<30) and watches what the "dump" step itself reports,
+// which is what actually catches that regression.
+func TestRealDumpStepReportsIndeterminateProgress(t *testing.T) {
+	orig := dumpProgressPoll
+	dumpProgressPoll = time.Millisecond
+	t.Cleanup(func() { dumpProgressPoll = orig })
+
+	env := envWith17Data()
+	// Seed the dump file with a size BEFORE the step runs: the fake only
+	// records the dump's real size from inside Exec, after pg_dumpall's
+	// command has already been scripted to "succeed" — so a tick that lands
+	// while Exec is still running would read size 0 regardless of what
+	// runDump passed as "expected", masking the very mutation this test
+	// exists to catch. Seeding it here means even the earliest tick sees a
+	// realistic size and a fraction-of-cluster mutation has something nonzero
+	// to divide into a nonzero percentage.
+	env.Files["/host/deps-migration/postgres/dump.sql.gz"] = 1 << 20
+	// The engine itself emits ONE synthetic "step started" progress event at
+	// percent 0 before running any step (see Run in engine.go) — that alone
+	// would make this test pass vacuously even against the mutation it exists
+	// to catch, since the fake's pg_dumpall "runs" in microseconds and the
+	// 1ms ticker would never get a real tick in. Slow it down so several real
+	// ticks land while the dump step is in flight.
+	base := env.ExecFn
+	env.ExecFn = func(c, cmd string) (string, string, int, error) {
+		if strings.Contains(cmd, "pg_dumpall") {
+			time.Sleep(20 * time.Millisecond)
+		}
+		return base(c, cmd)
+	}
+
+	plan, j, err := PostgresMigrator{}.Plan(context.Background(), env, Path{from17, to18}, PlanOptions{})
+	require.NoError(t, err)
+
+	var mu sync.Mutex
+	var dumpPcts []float64
+	progress := func(stepID string, _, _ int, pct float64, _ msg.Message) {
+		if stepID != "dump" {
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		dumpPcts = append(dumpPcts, pct)
+	}
+	require.NoError(t, Run(context.Background(), &fakeStore{}, j, plan, progress))
+
+	mu.Lock()
+	defer mu.Unlock()
+	// More than the engine's own synthetic "step started" event (always
+	// exactly one 0) proves a REAL tick from watchFileGrowth landed too.
+	require.Greater(t, len(dumpPcts), 1,
+		"no real tick from watchFileGrowth landed; the mutation this test exists to catch would be invisible")
+	for _, pct := range dumpPcts {
+		assert.Zero(t, pct, "the dump step must report indeterminate progress, not a fraction of the cluster size")
 	}
 }
