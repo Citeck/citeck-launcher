@@ -1,6 +1,7 @@
 package ru.citeck.launcher.core.config.bundle
 
 import org.assertj.core.api.Assertions.*
+import org.assertj.core.api.SoftAssertions
 import ru.citeck.launcher.core.bundle.BundleDef
 import ru.citeck.launcher.core.bundle.BundleKey
 import ru.citeck.launcher.core.bundle.BundleUtils
@@ -36,11 +37,14 @@ class BundleDefTest {
     // and citeckApps are both empty (that's how a bundle file with nothing
     // readable in it is already handled), so callers whose YAML resolves to
     // nothing get BundleDef.EMPTY back instead of null.
-    private fun readBundle(yaml: String): BundleDef {
+    private fun readBundle(
+        yaml: String,
+        imageRepos: List<WorkspaceConfig.ImageRepo> = emptyList()
+    ): BundleDef {
         val tempDir = createTempDirectory("bundle-def-test").toFile()
         File(tempDir, "bundle.yml").writeText(yaml)
         val workspaceConfig = WorkspaceConfig(
-            imageRepos = emptyList(),
+            imageRepos = imageRepos,
             bundleRepos = emptyList(),
             webapps = emptyList()
         )
@@ -99,5 +103,97 @@ class BundleDefTest {
             """.trimIndent()
         )
         assertThat(bundle.applications).doesNotContainKey("eapps")
+    }
+
+    // Every row here was checked against the 2.x launcher's
+    // resolveImageRefWithRepos (internal/bundle/resolver.go) by running the
+    // same inputs through both parsers. The two that matter most are the
+    // untagged ones ("busybox", "registry:5000/image"): Go does NOT treat
+    // "no tag" as unreadable - it returns the string verbatim - and an
+    // earlier version of this fix got that wrong, blanking the image and
+    // silently dropping the app instead.
+    private data class ImageRefCase(
+        val label: String,
+        val input: String,
+        val expected: String,
+        val imageRepos: List<WorkspaceConfig.ImageRepo> = emptyList()
+    )
+
+    private val imageRefParityCases = listOf(
+        ImageRefCase(
+            label = "a bare Docker Hub reference with no tag is passed through unchanged",
+            input = "busybox",
+            expected = "busybox"
+        ),
+        ImageRefCase(
+            label = "a registry host:port with no tag is passed through unchanged",
+            input = "registry:5000/image",
+            expected = "registry:5000/image"
+        ),
+        ImageRefCase(
+            label = "a registry host:port with a tag is passed through unchanged",
+            input = "registry:5000/image:tag",
+            expected = "registry:5000/image:tag"
+        ),
+        ImageRefCase(
+            label = "repo/name:tag with an unmapped prefix is passed through unchanged",
+            input = "repo/name:tag",
+            expected = "repo/name:tag"
+        ),
+        ImageRefCase(
+            label = "a digest reference with an unmapped prefix is passed through unchanged",
+            input = "repo/name@sha256:abc123",
+            expected = "repo/name@sha256:abc123"
+        ),
+        ImageRefCase(
+            label = "a mapped prefix rewrites the registry and keeps the tag",
+            input = "core/thing:1.2",
+            expected = "nexus.citeck.ru/thing:1.2",
+            imageRepos = listOf(WorkspaceConfig.ImageRepo("core", "nexus.citeck.ru"))
+        ),
+        ImageRefCase(
+            label = "a mapped prefix rewrites the registry and keeps the digest",
+            input = "core/thing@sha256:abc123",
+            expected = "nexus.citeck.ru/thing@sha256:abc123",
+            imageRepos = listOf(WorkspaceConfig.ImageRepo("core", "nexus.citeck.ru"))
+        )
+    )
+
+    @Test
+    fun `a scalar image matches the 2x launcher's registry-prefix rewrite for every shape`() {
+        val softly = SoftAssertions()
+        imageRefParityCases.forEach { case ->
+            val bundle = readBundle(
+                """
+                eapps:
+                  image: ${case.input}
+                """.trimIndent(),
+                case.imageRepos
+            )
+            softly.assertThat(bundle.applications["eapps"]?.image)
+                .`as`(case.label)
+                .isEqualTo(case.expected)
+        }
+        softly.assertAll()
+    }
+
+    @Test
+    fun `the first element of an image list matches the 2x launcher's registry-prefix rewrite for every shape`() {
+        val softly = SoftAssertions()
+        imageRefParityCases.forEach { case ->
+            val bundle = readBundle(
+                """
+                eapps:
+                  image:
+                    - ${case.input}
+                    - some-other/unused-second-element:9.9.9
+                """.trimIndent(),
+                case.imageRepos
+            )
+            softly.assertThat(bundle.applications["eapps"]?.image)
+                .`as`(case.label)
+                .isEqualTo(case.expected)
+        }
+        softly.assertAll()
     }
 }

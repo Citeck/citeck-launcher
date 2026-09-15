@@ -101,6 +101,50 @@ object BundleUtils {
             return "$realRepository:$tag"
         }
 
+        // Mirrors the 2.x launcher's resolveImageRefWithRepos exactly (see
+        // internal/bundle/resolver.go): rewrites a plain "repo:tag" /
+        // "repo@sha256:..." string whose first path segment is a known
+        // imageRepos ID, and otherwise - no such segment, or it isn't a
+        // known ID - returns the string verbatim, tag/digest and all. A
+        // "host:port" registry prefix is NOT a tag delimiter: a ':' only
+        // introduces a tag/digest when nothing after it contains a '/'.
+        // This is deliberately NOT built on top of getImageUrl(repository,
+        // tag): getImageUrl always appends ":$tag" and so has no way to
+        // return a reference that carries no tag at all (e.g. "busybox",
+        // "registry:5000/image") unchanged - which is exactly what Go does
+        // for those shapes instead of treating them as unreadable.
+        fun resolveImageRef(image: String): String {
+            val trimmed = image.trim()
+            if (trimmed.isEmpty()) {
+                return trimmed
+            }
+            var repository = trimmed
+            var suffix = ""
+            val atIdx = repository.lastIndexOf('@')
+            if (atIdx >= 0) {
+                suffix = repository.substring(atIdx)
+                repository = repository.substring(0, atIdx)
+            }
+            val colonIdx = repository.lastIndexOf(':')
+            if (colonIdx >= 0 && !repository.substring(colonIdx).contains('/')) {
+                suffix = repository.substring(colonIdx) + suffix
+                repository = repository.substring(0, colonIdx)
+            }
+            val slashIdx = repository.indexOf('/')
+            if (slashIdx < 0) {
+                // No prefix segment to map - nothing to rewrite.
+                return trimmed
+            }
+            val prefix = repository.substring(0, slashIdx)
+            val rest = repository.substring(slashIdx + 1)
+            val imageRepoInfo = workspaceConfig.imageReposById[prefix]
+            return if (imageRepoInfo != null) {
+                imageRepoInfo.url + "/" + rest + suffix
+            } else {
+                trimmed
+            }
+        }
+
         // The 2.x launcher accepts an image written as a single value (a plain
         // "repo:tag" string, or a {repository, tag} map) or as a LIST of either
         // shape. Outside its `dependencies:` section a list has no route to
@@ -120,17 +164,7 @@ object BundleUtils {
                 imageNode
             }
             return if (node.isTextual()) {
-                // A plain "repo/name:tag" string. The tag delimiter is the
-                // last ':' that comes after the last '/', so a registry
-                // "host:port" prefix isn't mistaken for one.
-                val text = node.asText()
-                val slashIdx = text.lastIndexOf('/')
-                val colonIdx = text.lastIndexOf(':')
-                if (colonIdx <= slashIdx) {
-                    ""
-                } else {
-                    getImageUrl(text.substring(0, colonIdx), text.substring(colonIdx + 1))
-                }
+                resolveImageRef(node.asText())
             } else {
                 getImageUrl(node["repository"].asText(), node["tag"].asText())
             }
