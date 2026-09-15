@@ -1283,6 +1283,7 @@ func parseBundleFile(path, version string, aliasMap, imageRepoMap map[string]str
 	applications := make(map[string]AppDef)
 	dependencies := parseBundleDependencies(data, imageRepoMap, logger)
 	var citeckApps []AppDef
+	minLauncherVersion := parseBundleMinLauncherVersion(documentRoot(&rootNode))
 
 	// processApp handles one bundle entry. When appName is "ecos", it recurses
 	// into sub-entries (Helm charts group core apps under an ecos: key).
@@ -1332,24 +1333,24 @@ func parseBundleFile(path, version string, aliasMap, imageRepoMap map[string]str
 
 	for _, top := range mappingEntries(documentRoot(&rootNode)) {
 		appName := top.key
-		// The dependencies section is a SECTION, not an app, and it is read
-		// separately (see parseBundleDependencies). The skip is structural, not
-		// cosmetic: this loop hands every top-level key to processApp, so
-		// without it an entry id colliding with the entry schema's own key
-		// ("dependencies.image") would be read as an application named
-		// "dependencies".
-		if appName == bundleDependenciesKey {
+		// Neither of these is an application. `dependencies` MUST be skipped
+		// (an entry id colliding with the entry schema's own key would be read
+		// as an app named "dependencies"); `minLauncherVersion` is a scalar and
+		// would be ignored anyway — it is named here so the non-application
+		// keys are one list rather than an inference from a type switch.
+		if appName == bundleDependenciesKey || appName == bundleMinLauncherVersionKey {
 			continue
 		}
 		processApp(appName, top.node)
 	}
 
 	def := &Def{
-		Key:          Key{Version: version},
-		Applications: applications,
-		Dependencies: dependencies,
-		CiteckApps:   citeckApps,
-		Content:      raw,
+		Key:                Key{Version: version},
+		Applications:       applications,
+		Dependencies:       dependencies,
+		CiteckApps:         citeckApps,
+		MinLauncherVersion: minLauncherVersion,
+		Content:            raw,
 	}
 
 	logger.Debug("Resolved bundle", "version", version,
@@ -1375,6 +1376,39 @@ func parseBundleFile(path, version string, aliasMap, imageRepoMap map[string]str
 // Citeck apps stay at the top level for exactly the mirror-image reason — an
 // old launcher must keep seeing those.
 const bundleDependenciesKey = "dependencies"
+
+// bundleMinLauncherVersionKey is the top-level bundle key carrying the launcher
+// floor. Named here rather than inlined so the list of top-level keys that are
+// NOT applications is readable in one place (the other is
+// bundleDependenciesKey).
+const bundleMinLauncherVersionKey = "minLauncherVersion"
+
+// parseBundleMinLauncherVersion reads the floor from the YAML text.
+//
+// From the text, not from the generic map, for the same reason the image tags
+// are: `minLauncherVersion: 2.10` is a YAML float, and a map decode hands back
+// 2.1 — a floor the author never wrote, one patch release too low, silently.
+//
+// A shape that is not a scalar answers "" and costs the key alone. The bundle
+// keeps its applications: a launcher that cannot read the floor is in no worse
+// a position than one that predates the key entirely.
+func parseBundleMinLauncherVersion(root *yaml.Node) string {
+	node := followAlias(root)
+	if node == nil || node.Kind != yaml.MappingNode {
+		return ""
+	}
+	for _, e := range mappingEntries(node) {
+		if e.key != bundleMinLauncherVersionKey {
+			continue
+		}
+		v := followAlias(e.node)
+		if v == nil || v.Kind != yaml.ScalarNode {
+			return ""
+		}
+		return strings.TrimSpace(v.Value)
+	}
+	return ""
+}
 
 // parseBundleDependencies reads the `dependencies:` section, from the YAML
 // itself rather than from the generic map the rest of parseBundleFile walks.
