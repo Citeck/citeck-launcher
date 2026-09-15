@@ -50,8 +50,8 @@ func generateQdrant(ctx *NsGenContext) {
 		memoryLimit = qdrantDefaultMemory
 	}
 
-	image := resolveAppImage(ctx, appdef.AppQdrant, "", "")
-	if image == "" {
+	chain := resolveAppImageChain(ctx, appdef.AppQdrant, "", "")
+	if len(chain) == 0 {
 		slog.Error("Bundle has no qdrant image; rag will start without a vector store",
 			"app", appdef.AppQdrant)
 		return
@@ -62,7 +62,7 @@ func generateQdrant(ctx *NsGenContext) {
 	// held back and reported rather than applied to data the new version may
 	// not read. With no pin — a namespace that has never started rag — the
 	// candidate applies unchanged.
-	image = resolveDependencyImage(ctx, deps.Qdrant, image)
+	image := resolveDependencyImage(ctx, deps.Qdrant, chain)
 
 	qdrant := ctx.GetOrCreateApp(appdef.AppQdrant)
 	qdrant.Image = image

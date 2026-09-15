@@ -45,7 +45,9 @@ func generateMongoDB(ctx *NsGenContext) {
 		return
 	}
 	img := resolveAppImage(ctx, appdef.AppMongodb, ctx.Config.MongoDB.Image, "mongo:4.0.2")
-	img = resolveDependencyImage(ctx, deps.MongoDB, img)
+	// mongo's image has no ladder source (no bundle dependencies entry, no
+	// workspace chain) — the one-element form is the whole chain there is.
+	img = resolveDependencyImage(ctx, deps.MongoDB, []string{img})
 	app := ctx.GetOrCreateApp(appdef.AppMongodb)
 	app.Image = img
 	app.Kind = appdef.KindThirdParty
@@ -134,7 +136,7 @@ func generatePostgres(ctx *NsGenContext) {
 	if ctx.WorkspaceConfig != nil && ctx.WorkspaceConfig.Postgres.Image != "" {
 		fallback = string(ctx.WorkspaceConfig.Postgres.Image)
 	}
-	img := resolveDependencyImage(ctx, deps.Postgres, bundleImageOr(ctx, appdef.AppPostgres, fallback))
+	img := resolveDependencyImage(ctx, deps.Postgres, bundleImageChainOr(ctx, appdef.AppPostgres, fallback))
 	// The data layout follows the major of the image that will RUN — never the
 	// candidate's. For a pinned namespace that is the pin, so an existing 17
 	// keeps postgres2 and its explicit PGDATA byte for byte
@@ -193,7 +195,7 @@ func generateZookeeper(ctx *NsGenContext) {
 	if ctx.WorkspaceConfig != nil && ctx.WorkspaceConfig.Zookeeper.Image != "" {
 		fallback = string(ctx.WorkspaceConfig.Zookeeper.Image)
 	}
-	img := resolveDependencyImage(ctx, deps.Zookeeper, bundleImageOr(ctx, appdef.AppZookeeper, fallback))
+	img := resolveDependencyImage(ctx, deps.Zookeeper, bundleImageChainOr(ctx, appdef.AppZookeeper, fallback))
 	app := ctx.GetOrCreateApp(appdef.AppZookeeper)
 	app.Image = img
 	app.Kind = appdef.KindThirdParty
@@ -266,7 +268,7 @@ func rabbitmqMemoryConf(memLimit string) string {
 }
 
 func generateRabbitMQ(ctx *NsGenContext) {
-	img := resolveDependencyImage(ctx, deps.RabbitMQ, bundleImageOr(ctx, appdef.AppRabbitmq, "rabbitmq:4.1.2-management"))
+	img := resolveDependencyImage(ctx, deps.RabbitMQ, bundleImageChainOr(ctx, appdef.AppRabbitmq, "rabbitmq:4.1.2-management"))
 	app := ctx.GetOrCreateApp(appdef.AppRabbitmq)
 	app.Image = img
 	app.Kind = appdef.KindThirdParty

@@ -183,7 +183,10 @@ func TestPinHoldsBreakingCandidateAndReportsUpgrade(t *testing.T) {
 	require.Len(t, resp.DependencyUpgrades, 1, "nothing else may be held back")
 	up := upgradeFor(t, resp, deps.Postgres)
 	require.NotNil(t, up)
-	assert.Equal(t, DependencyUpgrade{ID: deps.Postgres, App: "postgres", From: "postgres:17.5", To: "postgres:18", Migratable: true}, *up)
+	assert.Equal(t, DependencyUpgrade{
+		ID: deps.Postgres, App: "postgres", From: "postgres:17.5", To: "postgres:18", Migratable: true,
+		Path: []string{"postgres:17.5", "postgres:18"},
+	}, *up)
 	assert.Equal(t, DependencyGen{Effective: "postgres:17.5", Candidate: "postgres:18"}, resp.Dependencies[deps.Postgres])
 }
 
@@ -314,7 +317,9 @@ func TestKeycloakMajorBumpIsHeldByThePin(t *testing.T) {
 	up := upgradeFor(t, resp, deps.Keycloak)
 	require.NotNil(t, up)
 	assert.Equal(t, DependencyUpgrade{ID: deps.Keycloak, App: appdef.AppKeycloak,
-		From: "keycloak/keycloak:26.4.5", To: "keycloak/keycloak:27.0.1", Migratable: false}, *up)
+		From: "keycloak/keycloak:26.4.5", To: "keycloak/keycloak:27.0.1", Migratable: false,
+		Path: []string{"keycloak/keycloak:26.4.5", "keycloak/keycloak:27.0.1"},
+	}, *up)
 }
 
 // A Mongo image from namespace fallback still passes through the data gate.

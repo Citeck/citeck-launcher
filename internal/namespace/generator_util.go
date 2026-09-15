@@ -69,24 +69,51 @@ func bundleImageOr(ctx *NsGenContext, name, fallback string) string {
 // resolveAppImage keeps the release selected by the bundle above namespace
 // and workspace defaults. Explicit citeck edit patches are applied later by
 // Generate. Dependency data pins are also handled separately by their gate.
+//
+// It keeps its signature and its meaning: ONE image, the last rung of
+// whatever layer won. Every non-dependency caller uses it unchanged.
 func resolveAppImage(ctx *NsGenContext, name, namespaceImage, fallback string) string {
+	chain := resolveAppImageChain(ctx, name, namespaceImage, fallback)
+	if len(chain) == 0 {
+		return ""
+	}
+	return chain[len(chain)-1]
+}
+
+// resolveAppImageChain is resolveAppImage's ladder-aware form: it answers the
+// WINNING layer's whole list, so the ladder and the image it resolves to can
+// never come from two different layers.
+func resolveAppImageChain(ctx *NsGenContext, name, namespaceImage, fallback string) []string {
 	if ctx.Bundle != nil {
-		image := ctx.Bundle.Dependencies[name].Image
-		if image == "" {
-			image = ctx.Bundle.Applications[name].Image
+		if dep := ctx.Bundle.Dependencies[name]; dep.Image != "" {
+			warnDiscardedImageLayers(ctx, name, dep.Image, namespaceImage)
+			if len(dep.Images) > 0 {
+				return dep.Images
+			}
+			return []string{dep.Image}
 		}
-		if image != "" {
+		if image := ctx.Bundle.Applications[name].Image; image != "" {
 			warnDiscardedImageLayers(ctx, name, image, namespaceImage)
-			return image
+			return []string{image}
 		}
 	}
 	if namespaceImage != "" {
-		return namespaceImage
+		return []string{namespaceImage}
 	}
-	if image := workspaceDependencyImage(ctx, name); image != "" {
-		return image
+	if chain := ctx.WorkspaceConfig.DependencyImageChain(name); len(chain) > 0 {
+		return chain
 	}
-	return fallback
+	if fallback != "" {
+		return []string{fallback}
+	}
+	return nil
+}
+
+// bundleImageChainOr is bundleImageOr's ladder-aware form: the gate's chain
+// input, so a dependency's whole ladder reaches resolveDependencyImage rather
+// than only its last rung.
+func bundleImageChainOr(ctx *NsGenContext, name, fallback string) []string {
+	return resolveAppImageChain(ctx, name, "", fallback)
 }
 
 // warnDiscardedImageLayers names every configured image the bundle's choice has
