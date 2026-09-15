@@ -1145,6 +1145,21 @@ func (e *depsEnv) GenerateDefForVolume(id deps.ID, st deps.DependencyState, moun
 					"the generator gave %s the volumes %v, not the expected %q", d.AppName(), a.Volumes, ordinary)
 			}
 			a.Volumes = retargetVolume(a.Volumes, ordinary, mountVolume)
+			// retargetVolume's own correctness is not enough to rest the
+			// "source is only ever read" invariant on: it substitutes every
+			// entry whose source matches ordinary today, but nothing upstream
+			// of this line would notice if a future change to it (or to
+			// whatever the generator emits) left a SECOND bind — a WAL-archive
+			// mount, a PGDATA subdirectory, anything a bundle adds — still
+			// pointing at ordinary. So the postcondition is proven directly,
+			// not assumed: after retargeting, the def must not mount ordinary
+			// at all. A def that still does is refused rather than handed to a
+			// migration plan that promises the source is only ever read.
+			if mountsVolume(a, ordinary) {
+				return appdef.ApplicationDef{}, fmt.Errorf(
+					"the generator still gave %s a bind to %q after retargeting it to %q: %v",
+					d.AppName(), ordinary, mountVolume, a.Volumes)
+			}
 		}
 		// The same guard for the other half of the pin, and it is the one a
 		// copy-upgrade plan (and a multi-rung postgres walk) rests on: every

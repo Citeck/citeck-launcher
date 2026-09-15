@@ -317,6 +317,16 @@ func (r *pgRun) startTemp(ctx context.Context, image string, gen int, name strin
 // rather than GenerateDefFor. This is the ONLY place this plan asks for a
 // volume that is not the namespace's source or its final target.
 func (r *pgRun) startTempOnVolume(ctx context.Context, image, volume, name string, p StepProgress) error {
+	// VolumeGen is deliberately left unset (so Gen() clamps it to 1): the
+	// volume this container mounts comes ONLY from the volume argument below,
+	// never from st.Gen(). GenerateDefForVolume reads st.Gen() only to know
+	// which mount the generator's OWN pin logic would ordinarily pick (so it
+	// can retarget away from exactly that one and verify it is gone
+	// afterwards) — it is not a second, competing way to name this
+	// container's volume, so whatever value it holds here cannot make this
+	// land on the source: ordinary and the generator's own
+	// resolveDependencyVolume read the same st.Gen() off the same struct and
+	// so can never disagree.
 	def, err := r.env.GenerateDefForVolume(deps.Postgres, deps.DependencyState{Image: image}, volume)
 	if err != nil {
 		return fmt.Errorf("generate the %s definition: %w", image, err)
