@@ -117,6 +117,35 @@ func bundleRepoByID(wsCfg *bundle.WorkspaceConfig, id string) bundle.BundlesRepo
 	return bundle.BundlesRepo{}
 }
 
+// resolveBundleRepoDir reconstructs the on-disk directory for a bundle repo:
+// {dataDir}/bundles/workspace in desktop mode against a known workspace,
+// config.DataDir() as dataDir otherwise, handed to the shared
+// bundle.ResolveBundleRepoDir for the offline-import / workspace-repo /
+// cloned-repo priority order. Both `resolveBundleDir` (the daemon method used
+// by handleListBundles and the newer-bundle fill sites) and loadNamespace
+// (which has no *Daemon to call that method on) go through this one function,
+// so the two cannot silently diverge again.
+//
+// KNOWN LIMITATION, deliberately not fixed here: this reconstructs the path
+// the resolver would have chosen for a HEALTHY git clone. bundle.Resolver's
+// own resolveWorkspace() also has an offline-ZIP-import branch and a
+// stale-1.x-migrated-clone branch, both of which land on {dataDir}/repo
+// instead — and for a workspace-EMBEDDED bundle repo (BundlesRepo.URL == "")
+// backed by either of those, this function names the WRONG directory.
+// handleListBundles has the identical limitation, because it reads this same
+// reconstruction to populate the bundle-repo dropdown; the two must stay
+// consistent with EACH OTHER even while both are wrong about that one case —
+// fixing one without the other would make the namespace dialog and the
+// newer-bundle indicator disagree about which versions of a repo exist.
+func resolveBundleRepoDir(wsID string, repo bundle.BundlesRepo) string {
+	dataDir := config.DataDir()
+	if config.IsDesktopMode() && wsID != "" {
+		dataDir = config.WorkspaceDir(wsID)
+	}
+	wsRepoDir := filepath.Join(dataDir, "bundles", "workspace")
+	return bundle.ResolveBundleRepoDir(dataDir, wsRepoDir, repo)
+}
+
 // resolveBundleWithCacheFallback resolves `ref` via the prepared resolver; when
 // resolution fails (git pull error, missing bundle file) it falls back to the
 // namespace's persisted cached bundle. Shared by loadNamespace (initial load /
@@ -354,16 +383,13 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 	// "Is there a newer bundle" — guarded rather than assumed, even though
 	// bundleDef/wsCfg are non-nil on every path reaching here: this walk must
 	// never be the reason the load path panics. loadNamespace is a package
-	// function (not a *Daemon method), so it cannot call d.resolveBundleDir;
-	// config.BundlesDataDir(wsID) is the same dataDir that function derives
-	// from the active workspace, reused here the same way the resolver above
-	// already does.
+	// function (not a *Daemon method), so it goes through the standalone
+	// resolveBundleRepoDir rather than d.resolveBundleDir — same function
+	// either way (see its doc for the one case it gets wrong).
 	var newerBundle *bundle.NewerBundle
 	if wsCfg != nil && bundleDef != nil {
 		repoEntry := bundleRepoByID(wsCfg, nsCfg.BundleRef.Repo)
-		dataDir := config.BundlesDataDir(wsID)
-		wsRepoDir := filepath.Join(dataDir, "bundles", "workspace")
-		bundlesDir := bundle.ResolveBundleRepoDir(dataDir, wsRepoDir, repoEntry)
+		bundlesDir := resolveBundleRepoDir(wsID, repoEntry)
 		newerBundle = bundle.FindNewerBundle(bundlesDir, bundleDef.Key.Version, in.LauncherVersion)
 	}
 

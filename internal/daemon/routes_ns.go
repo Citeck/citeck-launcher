@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -1208,19 +1207,9 @@ func (d *Daemon) handleBundleRepoPull(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, api.ActionResultDto{Success: true, Message: "bundle repo synced"})
 }
 
-// resolveBundleDir returns the on-disk directory for a bundle repo.
-// Delegates to the shared ResolveBundleRepoDir which handles offline import,
-// workspace repo, and cloned repo priorities. In desktop mode bundles live
-// under ~/.citeck/launcher/ws/{wsID}/, mirroring the path the namespace
-// loader (namespace_loader.go) uses to feed `bundle.NewResolverWithAuth` —
-// without this branch `versions[]` came back empty in desktop mode and the
-// bundle dropdown in the namespace-edit dialog only showed the currently
-// selected key as a stale fallback.
+// resolveBundleDir returns the on-disk directory for a bundle repo, scoped to
+// the ACTIVE workspace. See resolveBundleRepoDir (namespace_loader.go) for
+// what this reconstructs and — more importantly — what it gets wrong.
 func (d *Daemon) resolveBundleDir(repo bundle.BundlesRepo) string {
-	dataDir := config.DataDir()
-	if wsID := d.activeWorkspaceID(); config.IsDesktopMode() && wsID != "" {
-		dataDir = config.WorkspaceDir(wsID)
-	}
-	wsRepoDir := filepath.Join(dataDir, "bundles", "workspace")
-	return bundle.ResolveBundleRepoDir(dataDir, wsRepoDir, repo)
+	return resolveBundleRepoDir(d.activeWorkspaceID(), repo)
 }
