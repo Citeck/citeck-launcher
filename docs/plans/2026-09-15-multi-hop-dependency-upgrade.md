@@ -16,7 +16,7 @@
 - **`dependencies:` takes the WHOLE list, target = LAST element. Everything else takes `[0]`.** Spec §3.2.
 - **One migration = one journal = one generation increment = rollback to the original.** True for all four migratable dependencies. Spec §6, §7.1.
 - **The source volume is only ever READ**, on every rung. Spec §6, §7.1.
-- **A ladder costs a copy upgrade NOTHING extra on disk** (one copy whatever the length) and costs PostgreSQL **one more dump** — at the peak one cluster and TWO dumps coexist. Over-requiring refuses a migration that would have fit and says the number; under-requiring is ENOSPC on an already-stopped namespace. Spec §7.2.
+- **A ladder needs NO more disk than a single hop, in either plan — and for PostgreSQL that is true only because of the STEP ORDER.** A dump is removed as soon as the restore that consumed it succeeded, and an intermediate cluster as soon as the next dump has been taken from it; the peak stays `source + one dump + one cluster`, which is today's single-hop peak. Do NOT raise the preflight's requirement: that would refuse a migration that fits. Spec §7.2.
 - **An unreadable rung invalidates the whole ladder** — the dependency stays on its pin; no rung is silently skipped. Spec §4.
 - **A ladder makes the entry invisible to launchers 2.12.0–2.12.2** (they skip an entry whose `image:` is a sequence). Never write a ladder for `rabbitmq` in a shipped bundle while those versions are in the field. Spec §3.3.
 - Locale keys go in **all 8 files** of `internal/i18n/locales/` (en, ru, zh, es, de, fr, pt, ja) with real translations; `internal/cli/i18n_test.go` `TestLocaleCompleteness` enforces parity.
@@ -1810,77 +1810,107 @@ The plan:
 
 `dumpAt(i)` is today's `dump` with `r.dumpPathsFor(i)` and the container chosen by `i` (`SrcContainer` for 0, `DstContainer` after); it captures `r.source` only when `i == 0`.
 
-- [ ] **Step 5: Make the preflight ask for the second dump**
+- [ ] **Step 5: Pin the step order that keeps the peak where it is**
 
-Add the failing test to `internal/deps/migrate/postgres_ladder_test.go`:
+The disk-space property of this whole task is a consequence of WHEN things are deleted, so
+that is what gets tested — not the numbers, which must not move at all.
+
+Add to `internal/deps/migrate/postgres_ladder_test.go`:
 
 ```go
-// A walk keeps ONE cluster at a time but TWO dumps: d(i-1) is still needed
-// while d(i) is taken from the rung just raised. That second dump is the whole
-// of the ladder's extra cost, and a preflight that misses it is an ENOSPC in
-// the middle of `restore`, on an already-stopped namespace.
-func TestPostgresLadderAsksForOneMoreDump(t *testing.T) {
+// The requirement must NOT grow with the ladder. It stays at
+// `source + one dump + one cluster` — today's single-hop peak — because each
+// dump is removed as soon as the restore that consumed it succeeded and each
+// intermediate cluster as soon as the next dump has been taken from it.
+// Raising the requirement instead would refuse a migration that fits.
+func TestPostgresLadderAsksForNoMoreDiskThanOneHop(t *testing.T) {
 	env := newPostgresFakeEnv(t, "postgres:17.5", 1)
 	one := PostgresMigrator{}.Preflight(t.Context(), env, Path{"postgres:17.5", "postgres:18.6"})
 	many := PostgresMigrator{}.Preflight(t.Context(), env,
-		Path{"postgres:17.5", "postgres:18.6", "postgres:19.2"})
+		Path{"postgres:17.5", "postgres:18.6", "postgres:19.2", "postgres:20.1"})
 
-	assert.Equal(t, one.RequiredVolumeBytes, many.RequiredVolumeBytes,
-		"one cluster at a time, whatever the ladder's length")
-	assert.Equal(t, 2*one.RequiredHostBytes, many.RequiredHostBytes,
-		"two dumps coexist on a ladder")
-	if many.SharedFilesystem {
-		assert.Equal(t, many.RequiredHostBytes+many.RequiredVolumeBytes, many.RequiredTotalBytes)
-	}
+	assert.Equal(t, one.RequiredHostBytes, many.RequiredHostBytes)
+	assert.Equal(t, one.RequiredVolumeBytes, many.RequiredVolumeBytes)
+	assert.Equal(t, one.RequiredTotalBytes, many.RequiredTotalBytes)
+}
+
+// …and the order that makes it true. A dump must be gone BEFORE the next one
+// is taken, and an intermediate cluster BEFORE the next is created — put the
+// deletions at the end of the migration instead and the peak becomes two dumps
+// plus a cluster, i.e. the preflight under-requires and the walk dies of
+// ENOSPC on an already-stopped namespace.
+func TestPostgresLadderDeletesEachDumpBeforeTakingTheNext(t *testing.T) {
+	env := newPostgresFakeEnv(t, "postgres:17.5", 1)
+	path := Path{"postgres:17.5", "postgres:18.6", "postgres:19.2", "postgres:20.1"}
+	plan, _, err := PostgresMigrator{}.Plan(t.Context(), env, path, PlanOptions{})
+	require.NoError(t, err)
+
+	require.NoError(t, runPlanAgainstFake(t, plan, env))
+
+	// The fake records every dump written, every dump removed, every volume
+	// created and every volume removed, in order, on one trace.
+	assertNeverCoexist(t, env.Trace(), "dump", "dump")
+	assertNeverCoexist(t, env.Trace(), "cluster", "cluster")
+	// And nothing is left behind by the successful walk except the final one.
+	assert.Equal(t, []string{"postgres3"}, env.LiveVolumes())
+	assert.Empty(t, env.LiveDumps())
 }
 ```
 
-Run: `go test ./internal/deps/migrate/ -run TestPostgresLadderAsksForOneMoreDump -v`
-Expected: FAIL — the requirement is the single-hop one.
+`assertNeverCoexist(t, trace, kindA, kindB)` walks the trace keeping a live count per kind
+and fails the moment a count exceeds one, naming the step that did it. `runPlanAgainstFake`,
+`Trace()`, `LiveVolumes()` and `LiveDumps()` are test seams on `migratetest.FakeEnv` — add
+whatever of them does not exist yet. They are bookkeeping over the calls the fake already
+receives, not new production behaviour.
 
-Then give `checkSpace` the count. In `internal/deps/migrate/preflight.go:245`:
+- [ ] **Step 6: Order the steps so the test passes**
+
+In the plan loop of Task 7 Step 4, the deletions move EARLIER:
 
 ```go
-// checkSpace measures both filesystems and records what the migration needs.
-//
-// dumpCopies is how many dumps coexist at the peak: ONE for a single hop, TWO
-// for a ladder, because the dump a rung was restored from is still needed
-// while the next one is taken from that rung. The cluster count is not a
-// parameter — a walk reuses one scratch volume, so exactly one cluster exists
-// at any moment however long the ladder is.
-//
-// The second dump is estimated at the SOURCE data's size, like the first,
-// although an intermediate dump is usually smaller: there is nothing to
-// measure it with before the walk starts, and the two errors are not
-// symmetric. Over-requiring refuses a migration that would have fit and names
-// the number it wanted; under-requiring is ENOSPC in the middle of a restore,
-// on a namespace this plan has already stopped.
-func (res *PreflightResult) checkSpace(ctx context.Context, env Env, volume string, dumpCopies int) {
-	// … unchanged up to the two assignments:
-	res.RequiredHostBytes = int64(dumpCopies) * (size + SpaceMargin)
-	res.RequiredVolumeBytes = size + SpaceMargin
-	// … the rest unchanged
-}
-```
-
-`PostgresMigrator.Preflight` passes `dumpCopiesFor(path)`:
-
-```go
-// dumpCopiesFor answers how many dumps a route keeps on disk at once.
-func dumpCopiesFor(path Path) int {
-	if path.Len() > 2 {
-		return 2
+	for i := range rungs {
+		last := i == len(rungs)-1
+		steps = append(steps,
+			Step{ID: "create-volume", Run: r.createVolumeFor(i)},
+			Step{ID: "start-target", Run: r.startTargetAt(i)},
+			Step{ID: "restore", Run: r.restoreAt(i)},
+			// The dump this rung was restored from is dead the moment the
+			// restore succeeded: a failure anywhere later rolls back to the
+			// untouched source, so no dump is ever needed twice. Removing it
+			// HERE rather than at the end of the migration is what keeps the
+			// peak at one dump plus one cluster. See spec §7.2.
+			Step{ID: "restore", Run: r.discardDumpBelow(i)},
+		)
+		if last {
+			steps = append(steps,
+				Step{ID: "verify", Run: r.verify},
+				Step{ID: "stop-target", Run: r.stopTarget},
+			)
+			break
+		}
+		// The container running rung i is the source of the next dump: it is
+		// already up and already holds the data. Dumping from it rather than
+		// starting a second container is what keeps the peak at ONE cluster.
+		steps = append(steps,
+			Step{ID: "dump", Run: r.dumpAt(i + 1)},
+			Step{ID: "stop-target", Run: r.stopTarget},
+			// …and the cluster it came from goes as soon as it has been
+			// dumped, before the next create-volume.
+			Step{ID: "create-volume", Run: r.discardScratch(i)},
+		)
 	}
-	return 1
-}
 ```
 
-`copySpace` (the copy plan's own measurement) is NOT given this parameter: it writes no dump at all, and a ladder does not change what it needs.
+`discardDumpBelow(i)` removes the dump produced below rung i and nothing else; it reuses the
+`restore` id because it is the tail of that step's work and the operator does not distinguish
+them — a new id would be a new locale key for a step nobody reads separately.
 
-Run: `go test ./internal/deps/migrate/ -run TestPostgresLadderAsksForOneMoreDump -v`
+`discardScratch(i)` now removes only the scratch VOLUME.
+
+Run: `go test ./internal/deps/migrate/ -run TestPostgresLadder -v`
 Expected: PASS.
 
-- [ ] **Step 6: Make the rollback remove both volumes**
+- [ ] **Step 7: Make the rollback remove both volumes**
 
 In `RollbackPostgres`, wherever it removes `j.CreatedVolume`, remove the union:
 
@@ -1902,22 +1932,23 @@ func volumesToRemove(j *deps.MigrationJournal) []string {
 
 Keep the existing "report every failure rather than stopping at the first" behaviour.
 
-- [ ] **Step 7: Run the tests**
+- [ ] **Step 8: Run the tests**
 
 Run: `go test ./internal/deps/... 2>&1 | tail -20`
 Expected: PASS.
 
-- [ ] **Step 8: Mutation check**
+- [ ] **Step 9: Mutation check**
 
 1. `volumeForRung` returns `r.dstVolume` for every rung → `TestPostgresThreeRungPlanReusesOneScratchVolume` fails on `ScratchVolume`.
 2. `discardScratch` is dropped from the loop → assert the fake env recorded a scratch removal per intermediate; it must fail.
 3. `volumesToRemove` returns only `j.CreatedVolume` → `TestPostgresRollbackRemovesTheScratchVolumeToo` fails.
 4. `dumpAt` always uses `SrcContainer` → assert the second dump ran against `DstContainer`; it must fail.
 5. `toGen` computed as `fromGen + len(rungs)` → `TestPostgresThreeRungPlanReusesOneScratchVolume` fails on `ToVolumeGen`.
-6. `dumpCopiesFor` always answers 1 → `TestPostgresLadderAsksForOneMoreDump` fails.
-7. `checkSpace` multiplies `RequiredVolumeBytes` by `dumpCopies` too → the first assertion of the same test fails.
+6. `discardDumpBelow` is moved to the end of the plan → `TestPostgresLadderDeletesEachDumpBeforeTakingTheNext` fails on the dump count.
+7. `discardScratch` is moved to the end of the plan → the same test fails on the cluster count.
+8. `checkSpace` is given a per-rung multiplier → `TestPostgresLadderAsksForNoMoreDiskThanOneHop` fails.
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 10: Commit**
 
 ```bash
 git add internal/deps/ internal/daemon/
@@ -2179,7 +2210,7 @@ git commit -m "docs: image ladders, and why a rung is never skipped"
 
 ## Self-review notes
 
-**Spec coverage:** §3.1 → Task 1 Step 3. §3.2 → Tasks 1 and 2. §3.3 → Task 10 Step 1 (documented; no code — it is a property of the released parsers). §4 → Tasks 3 and 4. §5 → Task 5. §6 → Task 6. §7 → the Global Constraints plus Task 4's `routeVerdict` (no collapse exists anywhere in the plan). §7.1 → Task 7. §7.2 → Task 7 Step 5 (postgres asks for the second dump) and Task 6 Step 6 (the copy plan's requirement provably does not move). §8 → Task 9. §9 → the test steps of every task plus Task 8. §10 → nothing to build; the open `deps.msg.pair.vendorPath` item stays open and is restated in the spec.
+**Spec coverage:** §3.1 → Task 1 Step 3. §3.2 → Tasks 1 and 2. §3.3 → Task 10 Step 1 (documented; no code — it is a property of the released parsers). §4 → Tasks 3 and 4. §5 → Task 5. §6 → Task 6. §7 → the Global Constraints plus Task 4's `routeVerdict` (no collapse exists anywhere in the plan). §7.1 → Task 7. §7.2 → Task 7 Steps 5–6 (the requirement provably does not move, and the step order that makes that true is pinned) and Task 6 Step 6 (same, for the copy plan). §8 → Task 9. §9 → the test steps of every task plus Task 8. §10 → nothing to build; the open `deps.msg.pair.vendorPath` item stays open and is restated in the spec.
 
 **Type consistency:** `decodeImageValues` (Task 1) is used by `ImageRef` (Task 2). `DependencyEntry.Images` / `AppDef.Images` (Task 1) are read by `resolveAppImageChain` (Task 4). `deps.UpgradeRoute` (Task 3) is called by `routeVerdict` (Task 4). `DependencyUpgrade.Path` (Task 4) becomes `migrate.Path` (Task 5) in `resolveMigration`. `Path.Rungs()` (Task 5) drives both plans (Tasks 6, 7). `deps.ScratchVolumeName` and `MigrationJournal.ScratchVolume` (Task 7) are read by `volumesToRemove` (Task 7).
 
