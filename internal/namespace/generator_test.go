@@ -1285,7 +1285,9 @@ func TestApplyEmailConfig_SetsSpringRelaxedBindingEnvVars(t *testing.T) {
 			assert.Equal(t, "noreply@example.com", envGet(app.Environments, "ECOS_NOTIFICATIONS_EMAIL_FROM_DEFAULT"))
 			assert.Equal(t, "noreply@example.com", envGet(app.Environments, "ECOS_NOTIFICATIONS_EMAIL_FROM_FIXED"))
 			// Relaxed-binding keys for spring.mail.properties.mail.smtp.{auth,starttls.enable}.
-			// Renaming either key breaks SMTP authentication silently.
+			// Renaming either key breaks SMTP authentication silently. AUTH=true
+			// here because a username is configured (see
+			// TestApplyEmailConfig_NoAuthWhenUsernameEmpty for the other branch).
 			assert.Equal(t, "true", envGet(app.Environments, "SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH"))
 			if c.starttlsPresent {
 				assert.Equal(t, "true", envGet(app.Environments, "SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE"))
@@ -1301,6 +1303,31 @@ func TestApplyEmailConfig_SetsSpringRelaxedBindingEnvVars(t *testing.T) {
 			assert.NotContains(t, app.Environments, "ECOS_NOTIFICATIONS_STARTUP_NOTIFICATION_RECIPIENT")
 		})
 	}
+}
+
+// TestApplyEmailConfig_NoAuthWhenUsernameEmpty pins the unauthenticated-relay
+// path the setup wizard advertises ("leave the username empty for SMTP without
+// authentication"). Jakarta Mail with mail.smtp.auth=true and no credentials
+// refuses to connect before ever talking to the server ("failed to connect,
+// no password specified?"), so a hardcoded AUTH=true turned that wizard hint
+// into a guaranteed startup failure of the notifications service.
+func TestApplyEmailConfig_NoAuthWhenUsernameEmpty(t *testing.T) {
+	ctx := NewNsGenContext(&Config{
+		Email: &EmailConfig{
+			Host: "relay.corp.local",
+			Port: 25,
+			From: "noreply@example.com",
+		},
+	}, nil)
+	app := ctx.GetOrCreateApp("notifications")
+
+	applyEmailConfig(app, ctx)
+
+	assert.Equal(t, "false", envGet(app.Environments, "SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH"),
+		"an empty username means an unauthenticated relay; AUTH=true would make Jakarta Mail refuse to connect")
+	assert.NotContains(t, app.Environments, "SPRING_MAIL_USERNAME")
+	assert.NotContains(t, app.Environments, "SPRING_MAIL_PASSWORD")
+	assert.NotContains(t, app.Environments, "SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE")
 }
 
 // TestApplyEmailConfig_StartupNotificationEnabled pins the env-vars the
