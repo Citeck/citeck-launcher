@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 )
 
@@ -13,7 +14,7 @@ func decodeOne(t *testing.T, doc string) []string {
 	t.Helper()
 	var root yaml.Node
 	err := yaml.Unmarshal([]byte(doc), &root)
-	assert.NoError(t, err) //nolint:testifylint // deliberate: this helper's failure mode is a clear test failure either way
+	require.NoError(t, err)
 	// root is a document node; its content[0] is the mapping, whose content[1]
 	// is the value of the single key.
 	return decodeImageValues(root.Content[0].Content[1])
