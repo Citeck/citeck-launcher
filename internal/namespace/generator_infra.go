@@ -93,7 +93,7 @@ func generatePgAdmin(ctx *NsGenContext) {
 	// Upstream publishes minor tags (9.17), not patch tags (9.17.0).
 	fallback := "dpage/pgadmin4:9.17"
 	if ctx.WorkspaceConfig != nil && ctx.WorkspaceConfig.PgAdmin.Image != "" {
-		fallback = ctx.WorkspaceConfig.PgAdmin.Image
+		fallback = string(ctx.WorkspaceConfig.PgAdmin.Image)
 	}
 	img := resolveAppImage(ctx, appdef.AppPgadmin, ctx.Config.PgAdmin.Image, fallback)
 	app := ctx.GetOrCreateApp(appdef.AppPgadmin)
@@ -132,7 +132,7 @@ func generatePostgres(ctx *NsGenContext) {
 	// See TestInfraImageDefaults.
 	fallback := "postgres:17.5"
 	if ctx.WorkspaceConfig != nil && ctx.WorkspaceConfig.Postgres.Image != "" {
-		fallback = ctx.WorkspaceConfig.Postgres.Image
+		fallback = string(ctx.WorkspaceConfig.Postgres.Image)
 	}
 	img := resolveDependencyImage(ctx, deps.Postgres, bundleImageOr(ctx, appdef.AppPostgres, fallback))
 	// The data layout follows the major of the image that will RUN — never the
@@ -191,7 +191,7 @@ func generatePostgres(ctx *NsGenContext) {
 func generateZookeeper(ctx *NsGenContext) {
 	fallback := "zookeeper:3.9.5"
 	if ctx.WorkspaceConfig != nil && ctx.WorkspaceConfig.Zookeeper.Image != "" {
-		fallback = ctx.WorkspaceConfig.Zookeeper.Image
+		fallback = string(ctx.WorkspaceConfig.Zookeeper.Image)
 	}
 	img := resolveDependencyImage(ctx, deps.Zookeeper, bundleImageOr(ctx, appdef.AppZookeeper, fallback))
 	app := ctx.GetOrCreateApp(appdef.AppZookeeper)

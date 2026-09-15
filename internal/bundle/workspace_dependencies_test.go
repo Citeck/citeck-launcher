@@ -106,7 +106,7 @@ webapps:
 	assert.Empty(t, cfg.Dependencies, "no dependencies section ⇒ no dependencies")
 	assert.Empty(t, cfg.DependencyImage("postgres"),
 		"the typed block is NOT the section; reading it here would invert the chain")
-	assert.Equal(t, "postgres:17.9", cfg.Postgres.Image, "the typed block still parses as before")
+	assert.Equal(t, "postgres:17.9", string(cfg.Postgres.Image), "the typed block still parses as before")
 
 	var nilCfg *WorkspaceConfig
 	assert.Empty(t, nilCfg.DependencyImage("postgres"), "nil receiver answers nothing")

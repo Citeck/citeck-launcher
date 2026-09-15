@@ -985,7 +985,7 @@ func generateSttSidecar(ctx *NsGenContext) {
 		memoryLimit = sttSidecarDefaultMemory
 	}
 
-	image := bundleImageOr(ctx, appdef.AppSttSidecar, props.Image)
+	image := bundleImageOr(ctx, appdef.AppSttSidecar, string(props.Image))
 	if image == "" {
 		// Nothing to deploy. AI keeps running; the env var simply isn't set
 		// (the AI app falls back to its built-in defaults, same as Kotlin).
@@ -1030,7 +1030,7 @@ func generateOnlyOffice(ctx *NsGenContext) {
 	memLimit := "3g"
 	if ctx.WorkspaceConfig != nil {
 		if ctx.WorkspaceConfig.OnlyOffice.Image != "" {
-			fallback = ctx.WorkspaceConfig.OnlyOffice.Image
+			fallback = string(ctx.WorkspaceConfig.OnlyOffice.Image)
 		}
 		if ctx.WorkspaceConfig.OnlyOffice.MemoryLimit != "" {
 			memLimit = ctx.WorkspaceConfig.OnlyOffice.MemoryLimit

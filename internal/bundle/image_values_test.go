@@ -1,6 +1,7 @@
 package bundle
 
 import (
+	"log/slog"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -71,4 +72,26 @@ func TestImageValuesReadsNothingOutOfAnEmptySequence(t *testing.T) {
 
 func TestImageValuesReadsNothingOutOfAShapeItDoesNotKnow(t *testing.T) {
 	assert.Nil(t, decodeOne(t, "image:\n  nested:\n    deeper: 1\n"))
+}
+
+// A typed block has no ladder to walk either, so a list there takes the first
+// element — and it must keep working for the two shapes that already existed.
+func TestTypedWorkspaceBlocksAcceptAList(t *testing.T) {
+	ws := parseWorkspaceConfig([]byte(`
+imageRepos: []
+webapps: []
+postgres:
+  image:
+    - postgres:17.5
+    - postgres:18.6
+keycloak:
+  image: keycloak/keycloak:26.4.5
+zookeeper:
+  image:
+    repository: zookeeper
+    tag: "3.9.4"
+`), "ws.yml", slog.Default())
+	assert.Equal(t, "postgres:17.5", string(ws.Postgres.Image))
+	assert.Equal(t, "keycloak/keycloak:26.4.5", string(ws.Keycloak.Image))
+	assert.Equal(t, "zookeeper:3.9.4", string(ws.Zookeeper.Image))
 }

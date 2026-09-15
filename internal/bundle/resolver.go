@@ -135,28 +135,28 @@ type SnapshotDef struct {
 
 // PostgresProps holds workspace-level overrides for the PostgreSQL container.
 type PostgresProps struct {
-	Image string `yaml:"image,omitempty"`
+	Image ImageRef `yaml:"image,omitempty"`
 }
 
 // KeycloakProps holds workspace-level overrides for the Keycloak container.
 type KeycloakProps struct {
-	Image string `yaml:"image,omitempty"`
+	Image ImageRef `yaml:"image,omitempty"`
 }
 
 // ZookeeperProps holds workspace-level overrides for the Zookeeper container.
 type ZookeeperProps struct {
-	Image string `yaml:"image,omitempty"`
+	Image ImageRef `yaml:"image,omitempty"`
 }
 
 // OnlyOfficeProps holds workspace-level overrides for the OnlyOffice container.
 type OnlyOfficeProps struct {
-	Image       string `yaml:"image,omitempty"`
-	MemoryLimit string `yaml:"memoryLimit,omitempty"`
+	Image       ImageRef `yaml:"image,omitempty"`
+	MemoryLimit string   `yaml:"memoryLimit,omitempty"`
 }
 
 // PgAdminWsProps holds workspace-level overrides for the PgAdmin container.
 type PgAdminWsProps struct {
-	Image string `yaml:"image,omitempty"`
+	Image ImageRef `yaml:"image,omitempty"`
 }
 
 // AlfrescoProps holds workspace-level overrides for the Alfresco container.
@@ -257,9 +257,9 @@ func decodeBinaryNode(n *yaml.Node) ([]byte, error) {
 // 17020+ dynamic webapp ports). MemoryLimit default 2g matches the Kotlin
 // reference (the gigaam model footprint).
 type SttSidecarProps struct {
-	Image       string `yaml:"image,omitempty"`
-	MemoryLimit string `yaml:"memoryLimit,omitempty"`
-	Port        int    `yaml:"port,omitempty"`
+	Image       ImageRef `yaml:"image,omitempty"`
+	MemoryLimit string   `yaml:"memoryLimit,omitempty"`
+	Port        int      `yaml:"port,omitempty"`
 }
 
 // QdrantProps configures the Qdrant vector store that backs the rag webapp.
@@ -362,6 +362,28 @@ func decodeImageValues(node *yaml.Node) []string {
 	default:
 		return nil
 	}
+}
+
+// ImageRef is an image reference in a TYPED config block. It accepts the same
+// three shapes decodeImageValues does, and resolves a list to its FIRST
+// element: a typed block is read by launchers with no dependency gate, so the
+// only honest reading of a list there is the most conservative rung.
+//
+// It is a named string rather than a struct so that every existing reader
+// stays a one-word conversion away, and so the value keeps marshaling back
+// out as the plain string it always was.
+type ImageRef string
+
+// UnmarshalYAML decodes an ImageRef from any shape decodeImageValues knows,
+// taking the first element of a list (see the type doc comment).
+func (r *ImageRef) UnmarshalYAML(node *yaml.Node) error {
+	values := decodeImageValues(node)
+	if len(values) == 0 {
+		*r = ""
+		return nil
+	}
+	*r = ImageRef(values[0])
+	return nil
 }
 
 // DependencyEntry is one entry of the workspace config's `dependencies:`
