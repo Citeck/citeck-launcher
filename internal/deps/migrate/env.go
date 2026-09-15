@@ -134,9 +134,9 @@ type Env interface {
 	// can write into it once it is bind-mounted: mode 1777, sticky and
 	// world-writable, the same rule as EnsureExportDir. The daemon runs as
 	// root while an image runs as its own uid (postgres is 999), so a
-	// directory left with the daemon's ownership makes
-	// `pg_dumpall -f /citeck/depsmig/dump.sql` die with Permission denied —
-	// after the namespace has already been stopped.
+	// directory left with the daemon's ownership makes the dump step's
+	// `gzip -1 > /citeck/depsmig/dump.sql.gz` redirect die with Permission
+	// denied — after the namespace has already been stopped.
 	//
 	// World-writable is the part that does the work; the sticky bit is what
 	// makes world-writable safe, by restricting unlinking inside the directory
