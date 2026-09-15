@@ -42,14 +42,14 @@ func TestParseBundleFile_MinLauncherVersionAbsentOrBlank(t *testing.T) {
 EcosModelApp:
   image: core/ecos-model:1.0
 `)
-	assert.Equal(t, "", absent.MinLauncherVersion)
+	assert.Empty(t, absent.MinLauncherVersion)
 
 	blank := parseTestBundle(t, `
 minLauncherVersion: "   "
 EcosModelApp:
   image: core/ecos-model:1.0
 `)
-	assert.Equal(t, "", blank.MinLauncherVersion, "a blank floor is no floor")
+	assert.Empty(t, blank.MinLauncherVersion, "a blank floor is no floor")
 }
 
 // A shape that is not a scalar is not a version. It costs the key, never the
@@ -61,6 +61,6 @@ minLauncherVersion:
 EcosModelApp:
   image: core/ecos-model:1.0
 `)
-	assert.Equal(t, "", def.MinLauncherVersion)
+	assert.Empty(t, def.MinLauncherVersion)
 	assert.Contains(t, def.Applications, "EcosModelApp")
 }

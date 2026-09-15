@@ -100,7 +100,7 @@ type Def struct {
 	// Only launchers from the release that introduced the check enforce it;
 	// every older launcher, Go and Kotlin alike, ignores the key. So it guards
 	// nothing retroactively — see AGENTS.md.
-	MinLauncherVersion string `json:"minLauncherVersion,omitempty" yaml:"minLauncherVersion,omitempty"`
+	MinLauncherVersion string         `json:"minLauncherVersion,omitempty" yaml:"minLauncherVersion,omitempty"`
 	Content            map[string]any `json:"content,omitempty" yaml:"content,omitempty"` // raw bundle YAML as map
 }
 
