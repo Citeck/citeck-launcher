@@ -90,7 +90,7 @@ func NewRootCmd(info BuildInfo) *cobra.Command {
 		newSnapshotCmd(),
 		newDepsCmd(),
 		newConfigCmd(),
-		setup.NewSetupCmd(),
+		setup.NewSetupCmd(info.Version),
 		newDumpSystemInfoCmd(info),
 		newCompletionCmd(),
 	)

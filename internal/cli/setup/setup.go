@@ -28,13 +28,15 @@ import (
 // `citeck setup admin-password` is operator-typed. There is deliberately no
 // "reveal stored password" verb — a forgotten password is recovered by
 // rotating it, not by reading it back off the machine.
-func NewSetupCmd() *cobra.Command {
+func NewSetupCmd(launcherVersion string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "setup [setting]",
 		Short: "Interactive configuration editor",
 		Long:  "Opens an interactive menu to edit namespace or daemon settings. Pass a setting name to edit it directly.",
 		Args:  cobra.MaximumNArgs(1),
-		RunE:  runSetup,
+		RunE: func(_ *cobra.Command, args []string) error {
+			return runSetup(launcherVersion, args)
+		},
 	}
 
 	cmd.AddCommand(newHistoryCmd())
@@ -64,7 +66,7 @@ func newHistoryCmd() *cobra.Command {
 }
 
 // runSetup is the main entry point for `citeck setup`.
-func runSetup(_ *cobra.Command, args []string) error {
+func runSetup(launcherVersion string, args []string) error {
 	i18n.EnsureI18n()
 
 	nsPath := config.NamespaceConfigPath()
@@ -85,7 +87,7 @@ func runSetup(_ *cobra.Command, args []string) error {
 	// Create setup context with resolved app list.
 	sctx := &setupContext{
 		PendingSecrets: make(map[string]string),
-		CurrentApps:    resolveAppList(nsCfg),
+		CurrentApps:    resolveAppList(launcherVersion, nsCfg),
 	}
 
 	if len(args) > 0 {
@@ -97,9 +99,16 @@ func runSetup(_ *cobra.Command, args []string) error {
 // resolveAppList resolves the list of app names from the bundle, falling back to namespace config keys.
 // Uses a WARN-level logger on the resolver so bundle-resolver bookkeeping does not
 // break the TUI initial render (the logged lines would never be cleared).
-func resolveAppList(nsCfg *namespace.Config) []string {
+//
+// WithLauncherVersion(launcherVersion) matters specifically for a namespace
+// stored as LATEST: without it this resolver picks the newest EXISTING
+// bundle, while the daemon (which does carry its own version into every
+// resolver it builds) resolves LATEST to the newest RUNNABLE one. Left to
+// diverge, this menu could offer settings for apps a bundle too new for this
+// launcher declares — apps the running bundle does not actually contain.
+func resolveAppList(launcherVersion string, nsCfg *namespace.Config) []string {
 	quiet := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
-	resolver := bundle.NewResolver(config.DataDir()).WithLogger(quiet)
+	resolver := bundle.NewResolver(config.DataDir()).WithLogger(quiet).WithLauncherVersion(launcherVersion)
 	resolver.SetOffline(true)
 
 	result, err := resolver.Resolve(nsCfg.BundleRef)
