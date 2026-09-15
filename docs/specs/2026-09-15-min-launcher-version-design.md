@@ -146,27 +146,31 @@ The gate needs the bundle and the launcher version:
   the CLI. Both gates have it in hand; no `internal/version` package needs inventing, and adding
   one is a bigger change than this feature justifies.
 
-## The open question: what `LATEST` should mean
+## `LATEST` means the newest bundle this launcher can run
 
-`LATEST` is resolved to a concrete version at create time and stored concrete
-(`findLatestBundle` picks the newest by filename; `ListBundleVersions` never opens the files).
-When the newest bundle in a repo declares a `minLauncherVersion` this launcher does not meet,
-there are two coherent answers:
+Decided by the owner («давай второе»). `LATEST` is resolved to a concrete version at create time
+and stored concrete (`findLatestBundle` picks the newest by filename; `ListBundleVersions` never
+opens the files). When the newest bundle declares a `minLauncherVersion` this launcher does not
+meet, `LATEST` walks the version list from the newest DOWN and takes the first one that fits.
+An explicitly PINNED version still refuses loudly — asking for a specific bundle and getting a
+different one silently would be a different bug.
 
-- **(A) Refuse, like any other selection.** One rule, no surprise about which version you got.
-  But it means an old launcher can create NO namespace at all from a repo that has moved on —
-  including through Quick Start, which always uses `LATEST`. That is the bricking the design
-  avoids at load time, reappearing at create time.
-- **(B) `LATEST` means the newest bundle this launcher can run.** Walk the version list from the
-  newest down, skip the ones that require more, take the first that fits; log a warning naming
-  what was skipped. An explicitly PINNED version still refuses loudly. Costs a bundle parse per
-  skipped version, only at create.
+The alternative — refusing `LATEST` like any other selection — was rejected because it leaves an
+old launcher unable to create ANY namespace from a repo that has moved on, Quick Start included
+(it always uses `LATEST`). That is the bricking this design avoids at load time, transplanted to
+create time.
 
-**Recommendation: (B).** `LATEST` is a request for "the current one", and the honest current one
-for a launcher is the newest it can actually run. (A) turns a compatibility fence into a wall.
-The counter-argument is real — the operator asked for LATEST and got 2026.2 without looking —
-and it is answered by the warning plus the fact that the resolved version is what gets stored
-and displayed. **This is the one decision I would like confirmed before the plan is written.**
+Two obligations follow from the choice, and both are part of this feature rather than nice-to-haves:
+
+1. **Say what was skipped.** Resolving `LATEST` past a rung logs a warning naming the versions
+   passed over and the launcher version each one wanted. Silence here is what makes the operator
+   think the repo has not moved.
+2. **Show that a newer bundle exists.** Otherwise the operator asked for LATEST, got 2026.2, and
+   nothing on the screen ever says 2026.3 is out. This is the indicator described below — the
+   owner asked for it in the same breath as the decision, and it is the honest half of (B).
+
+Cost: one bundle parse per skipped version, only at create. The skipped set is normally empty and
+is bounded by however many versions the repo has published above this launcher's floor.
 
 ## Error surface
 
@@ -185,11 +189,119 @@ and displayed. **This is the one decision I would like confirmed before the plan
     and it needs no front-end work.
   - **CLI** — the message as a line in the terminal. `client.APIError` has no `Code` field at
     all, so the CLI cannot branch on the code even if it wanted to.
-  - Marking the offending version in the dropdown is **out of scope** and should stay out: it
-    would require parsing every bundle file during `handleListBundles` (which today only lists
-    filenames), plus a new field on `BundleInfoDto`, plus per-option disabling in `Select`
-    (whose option type is `{label, value}`). The refusal on confirm is enough for a feature
-    nobody uses yet.
+  - Marking every offending version **inside the dropdown** stays out of scope: it would mean
+    parsing every bundle file during `handleListBundles` (which today only lists filenames),
+    a new field on `BundleInfoDto`, and per-option disabling in `Select` (whose option type is
+    `{label, value}`). The refusal on confirm is enough there. Note this is NOT the same as the
+    indicator below, which parses at most a handful of files — only the versions above the one
+    the namespace runs, and only until one of them fits.
+
+## The indicator: "there is a newer bundle"
+
+Asked for by the owner in the same breath as the `LATEST` decision («какой-нибудь индикатор мб на
+шестерёнке настройки NS или рядом, который бы говорил "есть бандл свежее"»), and it is the honest
+half of that decision: `LATEST` may now quietly hand back an older bundle, so something on the
+screen has to say the repo has moved on.
+
+### What it says
+
+Three states, on the per-namespace settings gear in the top bar (`web/src/components/TabBar.tsx`,
+the `Settings` button that opens `NamespaceEditDialog` — the control the operator would use to act
+on it):
+
+| state | dot | hover text |
+|---|---|---|
+| the namespace runs the newest version its repo has | none | unchanged — the gear keeps `dashboard.nsConfig` |
+| a newer version exists and this launcher can run it | emerald | "A newer bundle is available: `<version>`. Open the namespace settings to switch to it." |
+| a newer version exists, but every newer one wants a newer launcher | amber | "A newer bundle is available (`<version>`), but it needs launcher `<min>` or newer. Update the launcher." |
+
+The dot is the SAME 6×6 corner dot `UpdateNotification` already uses for the launcher's own
+auto-update (`absolute right-1 top-1 h-1.5 w-1.5 rounded-full`). That component already carries two
+colours for two meanings (emerald available, red rolled back), so a third case in the same visual
+language costs nothing to learn. The wording of the third state mirrors the dependency feature,
+which already draws exactly this (a)/(b) distinction — `deps.status.upgradeAvailable` vs
+`deps.status.requiresLauncherUpdate`, `deps.banner.needLauncher`, and the `LauncherUpdateHint`
+component. Reuse that vocabulary rather than inventing a second one for bundles.
+
+**The hover text, and the collision it has to resolve.** The owner asked for a tooltip that says
+what the dot means. The app's tooltip mechanism is the native `title` attribute — there is no
+Tooltip component anywhere in `web/src`, and the i18n convention for it already exists
+(`table.cog.tooltip`, `table.initStep.tooltip`, `imageDetails.tooltip`). Use it; adding a styled
+tooltip primitive for one dot is scope nobody asked for.
+
+But the gear button **already has a `title`** (`dashboard.nsConfig`, "Namespace config"), and an
+element has only one. So: while the dot is showing, the gear's `title` IS the indicator sentence —
+including the clause about what to do — and it returns to `dashboard.nsConfig` when the dot is
+gone. One hover target, one message, no two titles fighting over the same pixel. The alternative,
+a separate hoverable element beside the gear with its own title, was rejected: a 6px dot is a poor
+hover target on its own, and the operator hovering the gear is the one who needs the message.
+
+Because the sentence is now the only place the meaning lives, it has to carry the action, not just
+the fact — "a newer bundle exists" leaves the operator with nowhere to go, while "…open the
+namespace settings to switch" and "…update the launcher" each name the next move.
+
+### What "newer" means
+
+- **Same repo only.** `community` and `community-rc` are separate `bundleRepos` entries, so a
+  namespace on `community` is never told about a release candidate. Nothing extra to do — the
+  comparison simply never leaves the namespace's own repo.
+- **Same scope only.** `ListBundleVersions` also returns nested keys (`archive/2025.5`), and
+  `compareBundleVersions` ranks EVERY unscoped version above EVERY scoped one, so a namespace
+  pinned inside `archive/` would otherwise be told that all of mainline is "newer". Compare only
+  within the scope the current version is in.
+- **Against the RESOLVED version, not the config string.** A config may still say `LATEST`
+  (legacy, YAML-edited, or a workspace template); the version the namespace actually runs is
+  `bundleDef.Key.Version`. With no resolved bundle yet there is nothing to compare and no
+  indicator. `ResolveDisplayBundleRef` already encodes this rule for display; the indicator obeys
+  the same one.
+- Ordering is `compareBundleVersions`, not string order. (`internal/cli/upgrade.go` sorts its
+  version lists lexicographically today, which puts `2026.10` below `2026.9`; if the indicator
+  ever reuses those lists, that has to be fixed there, not worked around here.)
+
+### What it costs, and when it is computed
+
+Finding out whether a newer version EXISTS is free of file I/O: `ListBundleVersions` is a
+directory walk that never opens a bundle (the key comes from the filename), and the answer is the
+first entry that compares above the current one.
+
+Telling state 2 from state 3 does need the file — but only for versions ABOVE the current one, and
+only until one of them fits. That is the same downward walk `LATEST` resolution performs, so it is
+ONE function used twice, not two rules that can drift: *the newest version in this repo, at or
+above X, that this launcher can run*. In the field the set above a namespace's pin is normally
+empty or one or two files.
+
+**Computed where the bundle is already resolved** — namespace load and reload
+(`loadNamespace`, `doReloadEx`) and after an explicit bundle-repo pull — and cached on
+`activeNamespace` next to `bundleError`, which has the same lifetime. NOT in `handleGetNamespace`:
+that runs on every SSE-triggered refetch, and a directory walk per refetch buys nothing, because
+the answer can only change when the repo is synced. A consequence worth stating plainly: **the
+indicator reflects what has been synced, not what exists upstream.** It appears after the next
+sync (bundle repos honour a one-hour pull period) or immediately after the ↻ button. It must never
+trigger a sync of its own — a namespace list that waits on git is a worse bug than a late dot.
+
+### Carried to the front end
+
+- A field on `NamespaceDto` (`internal/api/dto.go`), e.g.
+  `newerBundle?: { version: string; ref: string; requiresLauncher?: string }` — absent when there
+  is nothing to say. `requiresLauncher` present is exactly state 3.
+- Filled in `handleGetNamespace` from the cached value, alongside `DependencyUpgrades` and
+  `BundleError`, which it resembles in every way.
+- No new SSE event type. The existing debounced refetch already runs on reload and on
+  `namespace_updating`, which is when the value can change.
+- New i18n keys in all 8 locale files (`web/src/locales/*.ts` — `locales.test.ts` fails on a key
+  present in one locale and missing in another, and also flags untranslated English). Prefix: the
+  existing `namespace.*` group, since `bundle.*` does not exist yet and this is a property of a
+  namespace as the operator sees it. Two keys, both with `{version}` (and `{min}` on the second),
+  named `.tooltip` after the existing convention:
+  `namespace.newerBundle.tooltip`, `namespace.newerBundle.needsLauncher.tooltip`.
+
+### Deliberately not in this feature
+
+- The CLI. `citeck upgrade` already lists versions with `(latest)` and `(current)` markers; adding
+  "you are N behind" there is a separate, CLI-shaped question. The gate still refuses a pinned
+  too-new bundle from the CLI — that is a refusal, not an indicator.
+- Per-version annotation in the bundle dropdown (see the note under Error surface).
+- Any notion of "dismiss" or "remind me later". A dot with no state is a dot that cannot go stale.
 
 ## What older launchers do
 
@@ -220,6 +332,13 @@ anyone until launchers that enforce it are in the field. That is the same shape 
 - `citeck install` refuses, and writes no config file.
 - Parsing: the key read from the node tree keeps `2.10` as `2.10`; a blank value means no
   requirement; a bundle without the key is unchanged.
+- The gear's `title` is the indicator sentence while the dot shows and `dashboard.nsConfig` when
+  it does not — the one assertion that catches the two-titles collision.
+- Indicator: newest version equals the current one → no indicator; a newer runnable version →
+  state 2; a newer version that wants more launcher, with nothing runnable above the current one →
+  state 3; a newer version that wants more launcher WITH a runnable one between → state 2 naming
+  the runnable one, not the blocked one. Scoped (`archive/…`) versions never make an unscoped
+  namespace look behind, and a config still saying `LATEST` compares against the resolved version.
 - Mutation checks for each new guard, since a green test after a mutation means the mutation
   broke something else, not that the rule is uncovered.
 
