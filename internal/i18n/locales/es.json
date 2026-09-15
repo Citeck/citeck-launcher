@@ -488,6 +488,7 @@
   "deps.msg.zk.dataTooOld": "los datos de ZooKeeper escritos por {from} pueden ser anteriores a zookeeper.snapshot.trust.empty, con lo que un servidor más nuevo puede leer una instantánea vacía como estado válido; el lanzador no los moverá. ZooKeeper guarda los marcadores de resultado de parches de cada aplicación web y el marcador permanente de mongo desactivado de eproc, así que un árbol vacío con aspecto correcto es el peor resultado posible. El espacio de nombres sigue funcionando con {from}.",
   "deps.msg.progress.waiting": "esperando a {what} en {container}",
   "deps.msg.progress.pulling": "descargando {image}",
+  "deps.msg.progress.starting": "iniciando {image}",
   "deps.msg.progress.copying": "copiando {size}",
   "deps.msg.progress.dumped": "volcados {size}",
   "deps.msg.progress.restoring": "restaurando un volcado de {size}",
