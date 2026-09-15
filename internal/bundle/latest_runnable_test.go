@@ -76,15 +76,16 @@ func TestLatestRunnableBundle_NoLauncherVersionTakesTheNewest(t *testing.T) {
 	assert.Equal(t, "2026.3", got)
 }
 
-// Nothing runnable at all is not "no bundles" — the repo HAS bundles, this
-// launcher just cannot run any of them. The error has to say so, because
-// "no bundles found" would send the operator to look at a repo that is fine.
-func TestLatestRunnableBundle_NothingRunnable(t *testing.T) {
+// Nothing runnable is NOT an error. This walk runs on the load and reload paths
+// too, and an error there would stop the operator from opening the namespace —
+// the one thing the design forbids. It answers the newest version, and the
+// config WRITE gate is what refuses it, once, with an actionable message.
+func TestLatestRunnableBundle_NothingRunnableTakesTheNewestAnyway(t *testing.T) {
 	dir := writeBundleDir(t, map[string]string{
-		"2026.3": floored("2.13.0"),
+		"2026.2": floored("2.13.0"),
+		"2026.3": floored("2.14.0"),
 	})
-	_, err := LatestRunnableBundle(dir, "2.12.2", nil)
-	require.Error(t, err)
-	require.ErrorIs(t, err, ErrLauncherTooOldForAllBundles)
-	assert.Contains(t, err.Error(), "2.13.0", "the error must name the floor to update to")
+	got, err := LatestRunnableBundle(dir, "2.12.2", nil)
+	require.NoError(t, err, "a floor must never fail a resolve — only a write")
+	assert.Equal(t, "2026.3", got)
 }

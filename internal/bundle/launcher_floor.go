@@ -47,13 +47,6 @@ func (d *Def) NeedsNewerLauncher(launcherVersion string) bool {
 	return NeedsNewerLauncher(d.MinLauncherVersion, launcherVersion)
 }
 
-// ErrLauncherTooOldForAllBundles is returned when a bundles directory HAS
-// versions but every one of them declares a floor above this launcher. It is
-// deliberately distinct from ErrNoBundles: "no bundles found" would send the
-// operator to inspect a repository that is perfectly fine, when the thing to
-// change is the launcher.
-var ErrLauncherTooOldForAllBundles = errors.New("every bundle requires a newer launcher")
-
 // LatestRunnableBundle answers the newest version key in bundlesDir that this
 // launcher can run: the list is already newest-first, so it walks down and
 // takes the first bundle whose floor is cleared.
@@ -62,11 +55,32 @@ var ErrLauncherTooOldForAllBundles = errors.New("every bundle requires a newer l
 // publish a newer bundle with a LOWER floor than the one below it, and stopping
 // early would hide a version that fits.
 //
-// Every skipped version is logged with the floor it wanted. Silence here is
-// what makes an operator believe the repo has not moved on.
+// A floor NEVER fails this call. This function runs on the load and reload
+// paths (namespace_loader.go, server.go's doReloadEx, routes_reloadplan.go) as
+// well as the create path — a namespace whose persisted BundleRef.Key is the
+// literal string "LATEST" is a real, tested state, and refusing to resolve it
+// here would leave the operator unable to open a namespace at all, which is
+// exactly what this feature's design forbids. When nothing clears the floor,
+// the newest version is returned anyway, with a warning logged; the floor
+// still bites, once, on the config WRITE path (a later task), where the
+// message can name the launcher version to update to.
+//
+// A missing/unreadable bundles directory is a different class of problem (not
+// a floor question at all) and still surfaces as ErrNoBundles / a plain error,
+// exactly as findLatestBundle did.
 func LatestRunnableBundle(bundlesDir, launcherVersion string, log *slog.Logger) (string, error) {
 	if log == nil {
 		log = slog.Default()
+	}
+	if _, err := os.Stat(bundlesDir); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", fmt.Errorf("%w in %s", ErrNoBundles, bundlesDir)
+		}
+		// A genuine I/O error (e.g. permission denied) must not be swallowed
+		// into "no versions found" — ListBundleVersions itself would return an
+		// empty slice for both, and this caller loses the distinction unless
+		// it stats first.
+		return "", fmt.Errorf("list bundles in %s: %w", bundlesDir, err)
 	}
 	versions := ListBundleVersions(bundlesDir)
 	if len(versions) == 0 {
@@ -77,11 +91,10 @@ func LatestRunnableBundle(bundlesDir, launcherVersion string, log *slog.Logger) 
 	}
 	var highestFloor string
 	for _, key := range versions {
-		path := findBundleFile(bundlesDir, key)
-		if path == "" {
-			continue
-		}
-		floor := readBundleMinLauncherVersion(path)
+		// ReadMinLauncherVersion answers "" for a missing file too — a bundle
+		// this walk cannot even find has no floor to enforce, so it is treated
+		// as runnable rather than skipped.
+		floor := ReadMinLauncherVersion(bundlesDir, key)
 		if !NeedsNewerLauncher(floor, launcherVersion) {
 			return key, nil
 		}
@@ -91,8 +104,15 @@ func LatestRunnableBundle(bundlesDir, launcherVersion string, log *slog.Logger) 
 		log.Warn("Skipping a bundle this launcher is too old for",
 			"version", key, "needs", floor, "launcher", launcherVersion)
 	}
-	return "", fmt.Errorf("%w (newest needs %s, this launcher is %s)",
-		ErrLauncherTooOldForAllBundles, highestFloor, launcherVersion)
+	// Nothing cleared the floor. Answer the NEWEST version anyway rather than
+	// an error: this function runs on the load and reload paths too, and a
+	// refusal there would leave the operator unable to open the namespace at
+	// all — the one thing this feature's design forbids. The floor still bites,
+	// once, where it belongs: the config WRITE gate refuses the result and says
+	// which launcher version to update to.
+	log.Warn("No bundle in this repo clears this launcher's floor; taking the newest",
+		"version", versions[0], "newestFloor", highestFloor, "launcher", launcherVersion)
+	return versions[0], nil
 }
 
 // ReadMinLauncherVersion answers the floor declared by one version key in a
