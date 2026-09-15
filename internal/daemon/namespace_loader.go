@@ -43,6 +43,10 @@ type loadNamespaceInput struct {
 	NamespaceID   string
 	Offline       bool
 	Desktop       bool
+	// LauncherVersion is this build's version, threaded into the bundle
+	// resolver so LATEST resolves to the newest bundle this launcher can
+	// actually run rather than the newest one that exists.
+	LauncherVersion string
 }
 
 // context is the load's context, or Background when the caller had none.
@@ -254,7 +258,8 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 	// Resolve workspace config first — needed by wizard even without a namespace.
 	resolver := bundle.NewResolverWithAuth(config.BundlesDataDir(wsID), makeTokenLookup(in.SecretService)).
 		WithWorkspaceRepo(lookupWorkspaceRepoOpts(in.Store, in.SecretService, wsID)).
-		WithWorkspaceOverlay(workspaceConfigOverlay(in.Store, wsID))
+		WithWorkspaceOverlay(workspaceConfigOverlay(in.Store, wsID)).
+		WithLauncherVersion(in.LauncherVersion)
 	// Server mode: never auto-pull git repos (use 'citeck workspace update' for manual sync).
 	// Desktop mode: auto-pull with throttling. --offline flag: skip git entirely.
 	if in.Offline || !config.IsDesktopMode() {

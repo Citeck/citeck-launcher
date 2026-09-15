@@ -241,15 +241,16 @@ func constructDaemon(opts StartOptions, daemonCfg config.DaemonConfig, socketPat
 		// No Ctx: the daemon — and its bgCtx — is built BELOW, out of what this
 		// call returns. The load's own I/O stays bounded by the seeding
 		// deadline, and a shutdown cannot arrive before the daemon exists.
-		Store:         store,
-		SecretService: secretSvc,
-		DockerClient:  dockerClient,
-		DaemonCfg:     daemonCfg,
-		Licenses:      license.NewService(secretSvc),
-		WorkspaceID:   wsID,
-		NamespaceID:   nsID,
-		Offline:       opts.Offline,
-		Desktop:       opts.Desktop,
+		Store:           store,
+		SecretService:   secretSvc,
+		DockerClient:    dockerClient,
+		DaemonCfg:       daemonCfg,
+		Licenses:        license.NewService(secretSvc),
+		WorkspaceID:     wsID,
+		NamespaceID:     nsID,
+		Offline:         opts.Offline,
+		Desktop:         opts.Desktop,
+		LauncherVersion: opts.Version,
 	})
 	if err != nil {
 		return nil, err

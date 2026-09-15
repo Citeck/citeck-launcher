@@ -127,7 +127,8 @@ func (d *Daemon) resolveReloadPlanInputs(act activeNamespace) (*reloadPlanInputs
 
 	resolver := bundle.NewResolverWithAuth(config.BundlesDataDir(act.workspaceID), makeTokenLookup(d.secretReaderFunc())).
 		WithWorkspaceRepo(d.resolveActiveWorkspaceRepoOpts()).
-		WithWorkspaceOverlay(workspaceConfigOverlay(d.store, act.workspaceID))
+		WithWorkspaceOverlay(workspaceConfigOverlay(d.store, act.workspaceID)).
+		WithLauncherVersion(d.version)
 	resolveResult, bundleFallback, resolveErr := resolveBundleWithCacheFallback(
 		resolver, nsCfg.BundleRef, d.store, act.workspaceID, nsID, act.workspaceConfig, "on reload plan", true)
 	if resolveErr != nil {

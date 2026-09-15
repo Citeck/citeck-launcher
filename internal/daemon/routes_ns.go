@@ -315,7 +315,8 @@ func (d *Daemon) resolveLatestBundleKey(wsID, repo string, offline bool) (string
 	}
 	resolver := bundle.NewResolverWithAuth(config.BundlesDataDir(wsID), makeTokenLookup(d.secretService)).
 		WithWorkspaceRepo(lookupWorkspaceRepoOpts(d.store, d.secretService, wsID)).
-		WithWorkspaceOverlay(workspaceConfigOverlay(d.store, wsID))
+		WithWorkspaceOverlay(workspaceConfigOverlay(d.store, wsID)).
+		WithLauncherVersion(d.version)
 	// Server mode never auto-pulls git; desktop may pull to find the latest tag,
 	// throttled by the repo's pullPeriod (a clone synced within the period is read
 	// without network). offline=true forces a no-pull read even on desktop.
@@ -399,15 +400,16 @@ func (d *Daemon) handleActivateNamespace(w http.ResponseWriter, r *http.Request)
 	// tearing down current state — if loading fails, the daemon stays on
 	// the previous namespace and the user can retry without a restart.
 	loaded, err := loadNamespace(loadNamespaceInput{
-		Ctx:           d.bgCtx,
-		Store:         d.store,
-		SecretService: d.secretService,
-		DockerClient:  nil, // build a fresh client scoped to this ns (loadNamespace)
-		DaemonCfg:     d.daemonCfg,
-		Licenses:      d.licenses,
-		WorkspaceID:   wsID,
-		NamespaceID:   nsID,
-		Desktop:       d.desktop,
+		Ctx:             d.bgCtx,
+		Store:           d.store,
+		SecretService:   d.secretService,
+		DockerClient:    nil, // build a fresh client scoped to this ns (loadNamespace)
+		DaemonCfg:       d.daemonCfg,
+		Licenses:        d.licenses,
+		WorkspaceID:     wsID,
+		NamespaceID:     nsID,
+		Desktop:         d.desktop,
+		LauncherVersion: d.version,
 	})
 	if err != nil {
 		writeInternalError(w, fmt.Errorf("load namespace %q: %w", nsID, err))
@@ -853,12 +855,13 @@ func (d *Daemon) autoActivateAfterCreate(wsID, nsID string) {
 		// nil → loadNamespace builds the runtime client scoped to
 		// nsID. Never inject the active dockerClient: it is scoped to the
 		// previously-active namespace (the wrong-namespace bug).
-		DockerClient: nil,
-		DaemonCfg:    d.daemonCfg,
-		Licenses:     d.licenses,
-		WorkspaceID:  activeWsID,
-		NamespaceID:  nsID,
-		Desktop:      d.desktop,
+		DockerClient:    nil,
+		DaemonCfg:       d.daemonCfg,
+		Licenses:        d.licenses,
+		WorkspaceID:     activeWsID,
+		NamespaceID:     nsID,
+		Desktop:         d.desktop,
+		LauncherVersion: d.version,
 	})
 	if loadErr != nil {
 		slog.Warn("Auto-activate after create failed (load)", "nsID", nsID, "err", loadErr)
@@ -1164,7 +1167,8 @@ func (d *Daemon) handleBundleRepoPull(w http.ResponseWriter, r *http.Request) {
 	// disk yet. No background pulling either way.
 	resolver := bundle.NewResolverWithAuth(config.BundlesDataDir(act.workspaceID), makeTokenLookup(d.secretReaderFunc())).
 		WithWorkspaceRepo(d.resolveActiveWorkspaceRepoOpts()).
-		WithWorkspaceOverlay(workspaceConfigOverlay(d.store, act.workspaceID))
+		WithWorkspaceOverlay(workspaceConfigOverlay(d.store, act.workspaceID)).
+		WithLauncherVersion(d.version)
 	if r.URL.Query().Get("force") == "true" {
 		resolver = resolver.WithForcePull()
 	}

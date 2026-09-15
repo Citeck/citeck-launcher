@@ -696,7 +696,8 @@ func (d *Daemon) doReloadEx(forceGitPull, startNotRegenerate, refreshImages bool
 
 	resolver := bundle.NewResolverWithAuth(config.BundlesDataDir(act.workspaceID), makeTokenLookup(d.secretReaderFunc())).
 		WithWorkspaceRepo(d.resolveActiveWorkspaceRepoOpts()).
-		WithWorkspaceOverlay(workspaceConfigOverlay(d.store, act.workspaceID))
+		WithWorkspaceOverlay(workspaceConfigOverlay(d.store, act.workspaceID)).
+		WithLauncherVersion(d.version)
 	if forceGitPull {
 		resolver = resolver.WithForcePull()
 	}

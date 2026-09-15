@@ -567,6 +567,15 @@ type Resolver struct {
 	// config was loaded — a stale-but-present clone keeps things graceful.
 	// Surfaced to callers via WorkspaceSyncError.
 	wsSyncErr error
+	// launcherVersion is this build's version, used ONLY to resolve LATEST to
+	// the newest bundle this launcher can run. Empty (the default) keeps the
+	// historical behavior: LATEST is the newest version, full stop.
+	//
+	// It is not a safety mechanism and must not become one — a construction
+	// site that forgets WithLauncherVersion loses the convenience, never the
+	// refusal. The refusal lives on the config WRITE paths, which do not go
+	// through the resolver.
+	launcherVersion string
 }
 
 // NewResolver creates a resolver without auth support.
@@ -595,6 +604,14 @@ func (r *Resolver) WithWorkspaceRepo(opts WorkspaceRepoOpts) *Resolver {
 // (the default) preserves the historical no-overlay behavior. Chainable.
 func (r *Resolver) WithWorkspaceOverlay(fn func(raw []byte) ([]byte, error)) *Resolver {
 	r.wsOverlay = fn
+	return r
+}
+
+// WithLauncherVersion tells the resolver which launcher it is running inside,
+// so LATEST can skip bundles that declare a higher minLauncherVersion.
+// Chainable.
+func (r *Resolver) WithLauncherVersion(v string) *Resolver {
+	r.launcherVersion = v
 	return r
 }
 
@@ -836,7 +853,7 @@ func (r *Resolver) Resolve(ref Ref) (*ResolveResult, error) {
 	}
 	key := ref.Key
 	if strings.EqualFold(key, "LATEST") {
-		latest, latestErr := findLatestBundle(bundlesDir)
+		latest, latestErr := LatestRunnableBundle(bundlesDir, r.launcherVersion, r.log())
 		if latestErr != nil {
 			return nil, latestErr
 		}
