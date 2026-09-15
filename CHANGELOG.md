@@ -8,6 +8,7 @@
 ## Fixes
 
 * Fixed a blank `image` (and app silently dropped) when a bundle's `image:` was written as a list or as a plain `repo:tag` string — both are shapes the 2.x launcher already accepts. A list now resolves to its first element, matching the conservative rung the 2.x launcher takes for the same file outside its `dependencies:` section.
+* Fixed the workspace config failing to load entirely — not just one entry, the WHOLE config — when `postgres`, `keycloak`, `zookeeper`, `onlyoffice`, `pgadmin`, or `sttSidecar` named their `image:` as a list or a `{repository, tag}` map, both shapes the 2.x launcher already accepts for the same fields. A list now resolves to its first element, the same conservative reading the bundle-image fix above already gives the same file.
 
 # Release 1.4.1
 

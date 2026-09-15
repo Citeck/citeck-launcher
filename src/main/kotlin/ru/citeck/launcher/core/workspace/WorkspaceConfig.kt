@@ -1,8 +1,10 @@
 package ru.citeck.launcher.core.workspace
 
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import ru.citeck.launcher.core.bundle.BundleRef
 import ru.citeck.launcher.core.license.LicenseInstance
 import ru.citeck.launcher.core.namespace.NamespaceConfig
+import ru.citeck.launcher.core.utils.json.serialization.TypedBlockImageDeserializer
 import java.time.Duration
 
 data class WorkspaceConfig(
@@ -50,7 +52,17 @@ data class WorkspaceConfig(
         }
     }
 
+    // The image fields below accept a plain "repo:tag" string, a
+    // {repository, tag} map, or a LIST of either — a list resolves to its
+    // FIRST element, the same reading the 2.x launcher's `bundle.ImageRef`
+    // gives the same field in the same file (see
+    // TypedBlockImageDeserializer's doc comment and AGENTS.md rule (6)).
+    // Without the annotation a sequence here is a plain Jackson type
+    // mismatch on a `String` field, and it costs the WHOLE workspace config,
+    // not just this one entry.
+
     class PostgresProps(
+        @param:JsonDeserialize(using = TypedBlockImageDeserializer::class)
         val image: String = "postgres:17.5"
     ) {
         companion object {
@@ -59,6 +71,7 @@ data class WorkspaceConfig(
     }
 
     class KeycloakProps(
+        @param:JsonDeserialize(using = TypedBlockImageDeserializer::class)
         val image: String = "keycloak/keycloak:26.4.5"
     ) {
         companion object {
@@ -66,6 +79,7 @@ data class WorkspaceConfig(
         }
     }
     class ZookeeperProps(
+        @param:JsonDeserialize(using = TypedBlockImageDeserializer::class)
         val image: String = "zookeeper:3.9.4"
     ) {
         companion object {
@@ -74,6 +88,7 @@ data class WorkspaceConfig(
     }
 
     class PgAdminProps(
+        @param:JsonDeserialize(using = TypedBlockImageDeserializer::class)
         val image: String = "dpage/pgadmin4:9.10.0"
     ) {
         companion object {
@@ -82,6 +97,7 @@ data class WorkspaceConfig(
     }
 
     class OnlyOfficeProps(
+        @param:JsonDeserialize(using = TypedBlockImageDeserializer::class)
         val image: String = "onlyoffice/documentserver:9.1.0.1",
         val memoryLimit: String = "3g"
     ) {
@@ -91,6 +107,7 @@ data class WorkspaceConfig(
     }
 
     class SttSidecarProps(
+        @param:JsonDeserialize(using = TypedBlockImageDeserializer::class)
         val image: String = "",
         val memoryLimit: String = "2g",
         val port: Int = 14080
