@@ -7,7 +7,6 @@ import ru.citeck.launcher.core.entity.EntitiesService
 import ru.citeck.launcher.core.git.GitRepoProps
 import ru.citeck.launcher.core.git.GitRepoService
 import ru.citeck.launcher.core.git.GitUpdatePolicy
-import ru.citeck.launcher.core.utils.json.Yaml
 import java.nio.file.Path
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.io.path.exists
@@ -129,6 +128,6 @@ class WorkspacesService {
                     "is less than minimal supported $CONFIG_VERSION_MIN"
             )
         }
-        return Yaml.read(configFile, WorkspaceConfig::class)
+        return WorkspaceConfig.read(configFile)
     }
 }

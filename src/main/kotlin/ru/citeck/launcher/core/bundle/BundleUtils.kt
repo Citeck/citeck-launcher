@@ -1,10 +1,14 @@
 package ru.citeck.launcher.core.bundle
 
 import io.github.oshai.kotlinlogging.KotlinLogging
+import org.snakeyaml.engine.v2.nodes.Node
+import org.snakeyaml.engine.v2.nodes.NodeType
+import org.snakeyaml.engine.v2.nodes.SequenceNode
 import ru.citeck.launcher.core.bundle.BundleDef.BundleAppDef
 import ru.citeck.launcher.core.namespace.AppName
 import ru.citeck.launcher.core.utils.data.DataValue
 import ru.citeck.launcher.core.utils.json.Yaml
+import ru.citeck.launcher.core.utils.json.serialization.RawImageValues
 import ru.citeck.launcher.core.workspace.WorkspaceConfig
 import java.io.File
 import java.nio.file.Path
@@ -69,6 +73,16 @@ object BundleUtils {
         if (!rawData.isObject()) {
             return BundleDef.EMPTY
         }
+
+        // A SECOND parse of the same file, stopped before SnakeYAML's
+        // Construct stage (see RawImageValues) - `rawData` above already
+        // went through Construct, so an unquoted `tag: 17.10` in it is
+        // already the Double 17.1. `rawRoot`'s scalars still hold the exact
+        // source text. Null (a malformed file `Yaml.read` above would
+        // already have thrown on, or a stream `Yaml.read(File, ...)` doesn't
+        // expose the text of) just means every image/tag lookup below falls
+        // back to `rawData`, unchanged from before this fix.
+        val rawRoot = runCatching { Yaml.composeNode(file.readText()) }.getOrNull()
 
         val applications = LinkedHashMap<String, BundleAppDef>()
         val citeckApps = ArrayList<BundleAppDef>()
@@ -153,7 +167,15 @@ object BundleUtils {
         // taken: the most conservative rung, the one most likely to already
         // match what is on the volume. An empty list, or a shape that can't be
         // read, resolves to "" - the same as a missing image today.
-        fun readImage(value: DataValue): String {
+        //
+        // `rawValue` is `value`'s counterpart in the raw-text parse (see
+        // `rawRoot` above) - null when there is none (a raw-parse failure, or
+        // a structural mismatch this function does not expect). Every raw
+        // lookup below falls back to the `value`-derived (Construct-stage,
+        // precision-losing for an unquoted numeric tag) text when `rawValue`
+        // has nothing usable, so a raw-parse miss only ever costs precision on
+        // an edge case, never the read itself.
+        fun readImage(value: DataValue, rawValue: Node?): String {
             val imageNode = value["/image"]
             val node = if (imageNode.isArray()) {
                 if (imageNode.size() == 0) {
@@ -163,14 +185,17 @@ object BundleUtils {
             } else {
                 imageNode
             }
+            val rawImageNode = rawValue?.let { RawImageValues.mappingChild(it, "image") }
             return if (node.isTextual()) {
-                resolveImageRef(node.asText())
+                val text = rawImageNode?.let { RawImageValues.firstScalarText(it) } ?: node.asText()
+                resolveImageRef(text)
             } else {
-                getImageUrl(node["repository"].asText(), node["tag"].asText())
+                val pair = rawImageNode?.let { RawImageValues.firstRepositoryAndTag(it) }
+                getImageUrl(pair?.first ?: node["repository"].asText(), pair?.second ?: node["tag"].asText())
             }
         }
 
-        fun processApp(appName: String, value: DataValue) {
+        fun processApp(appName: String, value: DataValue, rawValue: Node?) {
             if (appName.isBlank()) {
                 return
             }
@@ -178,17 +203,29 @@ object BundleUtils {
                 if (value.isObject()) {
                     // some helm charts have core version under ecos key in kit
                     value.forEach { ecosScopeAppName, ecosScopeAppValue ->
-                        processApp(ecosScopeAppName, ecosScopeAppValue)
+                        val rawEcosScope = rawValue?.let { RawImageValues.mappingChild(it, ecosScopeAppName) }
+                        processApp(ecosScopeAppName, ecosScopeAppValue, rawEcosScope)
                     }
                 }
             } else {
-                val image = readImage(value)
+                val image = readImage(value, rawValue)
                 if (image.isNotBlank()) {
                     applications[appNameByAliases[appName] ?: appName] = BundleAppDef(image)
                 }
                 if (eappsAppNames.contains(appName)) {
-                    for (app in value["/ecosAppsImages"]) {
-                        val citeckAppImage = getImageUrl(app["repository"].asText(), app["tag"].asText())
+                    val rawEcosAppsImages = rawValue?.let { RawImageValues.mappingChild(it, "ecosAppsImages") }
+                    val rawEcosAppsImagesList = if (rawEcosAppsImages?.nodeType == NodeType.SEQUENCE) {
+                        (rawEcosAppsImages as SequenceNode).value
+                    } else {
+                        emptyList()
+                    }
+                    value["/ecosAppsImages"].forEachIndexed { index, app ->
+                        val rawApp = rawEcosAppsImagesList.getOrNull(index)
+                        val pair = rawApp?.let { RawImageValues.firstRepositoryAndTag(it) }
+                        val citeckAppImage = getImageUrl(
+                            pair?.first ?: app["repository"].asText(),
+                            pair?.second ?: app["tag"].asText()
+                        )
                         if (citeckAppImage.isNotBlank()) {
                             citeckApps.add(BundleAppDef(citeckAppImage))
                         }
@@ -197,7 +234,8 @@ object BundleUtils {
             }
         }
         rawData.forEach { appName, value ->
-            processApp(appName, value)
+            val rawValue = rawRoot?.let { RawImageValues.mappingChild(it, appName) }
+            processApp(appName, value, rawValue)
         }
         return BundleDef(key, applications, citeckApps, rawData)
     }

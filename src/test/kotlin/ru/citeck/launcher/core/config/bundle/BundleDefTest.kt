@@ -83,6 +83,71 @@ class BundleDefTest {
         assertThat(bundle.applications["eapps"]!!.image).isEqualTo("harbor/ecos-eapps:1.0.0")
     }
 
+    // Same root cause as WorkspaceConfigImageListTest's typed-block coverage:
+    // `Yaml.read(file, DataValue::class)` parses via SnakeYAML's `Load`,
+    // which resolves an unquoted `tag: 17.10` to the Java Double 17.1 BEFORE
+    // this code ever sees it - 17.10 and 17.1 are the same double, so nothing
+    // downstream of that Double can recover the trailing zero. Measured
+    // directly before this fix: `harbor/ecos-eapps:17.1`, not `...:17.10`.
+    @Test
+    fun `an unquoted tag with a trailing zero keeps its exact text - image map form`() {
+        val bundle = readBundle(
+            """
+            eapps:
+              image:
+                repository: harbor/ecos-eapps
+                tag: 17.10
+            """.trimIndent()
+        )
+        assertThat(bundle.applications["eapps"]!!.image).isEqualTo("harbor/ecos-eapps:17.10")
+    }
+
+    @Test
+    fun `an unquoted tag with a trailing zero keeps its exact text - first element of an image list`() {
+        val bundle = readBundle(
+            """
+            eapps:
+              image:
+                - repository: harbor/ecos-eapps
+                  tag: 17.10
+                - repository: harbor/ecos-eapps
+                  tag: 18.6
+            """.trimIndent()
+        )
+        assertThat(bundle.applications["eapps"]!!.image).isEqualTo("harbor/ecos-eapps:17.10")
+    }
+
+    // ecosAppsImages goes through a separate repository/tag read than the
+    // app's own `image:` (BundleUtils.readImage vs. the ecosAppsImages loop
+    // in processApp) - covered separately so a fix to one cannot leave the
+    // other still lossy.
+    @Test
+    fun `an unquoted tag with a trailing zero keeps its exact text - ecosAppsImages`() {
+        val bundle = readBundle(
+            """
+            eapps:
+              image: harbor/ecos-eapps:1.0.0
+              ecosAppsImages:
+                - repository: harbor/some-app
+                  tag: 17.10
+            """.trimIndent()
+        )
+        assertThat(bundle.citeckApps).containsExactly(BundleDef.BundleAppDef("harbor/some-app:17.10"))
+    }
+
+    @Test
+    fun `a quoted tag is still read unchanged - image map form`() {
+        val bundle = readBundle(
+            """
+            eapps:
+              image:
+                repository: harbor/ecos-eapps
+                tag: "17.9"
+            """.trimIndent()
+        )
+        assertThat(bundle.applications["eapps"]!!.image).isEqualTo("harbor/ecos-eapps:17.9")
+    }
+
     @Test
     fun `a plain string image is read`() {
         val bundle = readBundle(

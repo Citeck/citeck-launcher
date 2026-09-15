@@ -4,7 +4,9 @@ import org.snakeyaml.engine.v2.api.Dump
 import org.snakeyaml.engine.v2.api.DumpSettings
 import org.snakeyaml.engine.v2.api.Load
 import org.snakeyaml.engine.v2.api.LoadSettings
+import org.snakeyaml.engine.v2.api.lowlevel.Compose
 import org.snakeyaml.engine.v2.common.FlowStyle
+import org.snakeyaml.engine.v2.nodes.Node
 import java.io.File
 import java.io.InputStream
 import java.nio.file.Path
@@ -16,6 +18,22 @@ object Yaml {
         val yamlLoad = Load(LoadSettings.builder().build())
         val value = yamlLoad.loadFromString(text)
         return Json.convert(value, type)
+    }
+
+    /**
+     * Parses YAML through only the Parse+Compose stages — no `Construct` —
+     * and hands back the raw `Node` tree: a scalar's `.value` is still the
+     * literal source text (an unquoted `17.10` is NOT yet the `Double` 17.1),
+     * the same guarantee Go's `yaml.Node` makes. `read` above cannot offer
+     * this: it runs `Construct` (`Load.loadFromString`) before Jackson sees
+     * anything, and that step is exactly where a trailing zero like `17.10`'s
+     * is lost for good. Callers that need a field's exact text (see
+     * `RawImageValues`) compose the same source text a second time here,
+     * rather than trying to recover it from the already-lossy object `read`
+     * produces.
+     */
+    fun composeNode(text: String): Node? {
+        return Compose(LoadSettings.builder().build()).composeString(text).orElse(null)
     }
 
     fun <T : Any> read(file: Path, type: KClass<T>): T {

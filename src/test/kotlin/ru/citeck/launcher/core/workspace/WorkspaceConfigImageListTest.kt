@@ -1,7 +1,6 @@
 package ru.citeck.launcher.core.workspace
 
 import org.assertj.core.api.Assertions.assertThat
-import ru.citeck.launcher.core.utils.json.Yaml
 import kotlin.test.Test
 
 /**
@@ -30,8 +29,12 @@ class WorkspaceConfigImageListTest {
         webapps: []
     """.trimIndent()
 
+    // Goes through WorkspaceConfig.read, the same entry point production uses
+    // (WorkspacesService.loadWorkspaceConfig) since the raw-text fixup for
+    // the six typed blocks' `image` fields lives there, not in the generic
+    // Yaml.read every other type still uses unchanged.
     private fun readConfig(extra: String): WorkspaceConfig {
-        return Yaml.read("$requiredFields\n$extra", WorkspaceConfig::class)
+        return WorkspaceConfig.read("$requiredFields\n$extra")
     }
 
     @Test
@@ -165,5 +168,128 @@ class WorkspaceConfigImageListTest {
             """.trimIndent()
         )
         assertThat(cfg.sttSidecar.image).isEqualTo("harbor/citeck/stt-sidecar:1.0.0")
+    }
+
+    // Go's decodeImageValues (internal/bundle/resolver.go) reads a map's `tag`
+    // from the raw yaml.Node, so an UNQUOTED tag keeps its literal text no
+    // matter what it looks like numerically. Measured directly against Go
+    // (see image_values_test.go in the 2.x tree):
+    //   tag: 17.10 -> "postgres:17.10"   tag: 17.9  -> "postgres:17.9"
+    //   tag: 18    -> "postgres:18"      tag: latest -> "postgres:latest"
+    //   tag: "17.9" (quoted) -> "postgres:17.9"
+    // Every case here must equal Go's answer, or the two launchers pin two
+    // different images off the same workspace-v1.yml.
+    @Test
+    fun `an unquoted tag with a trailing zero keeps its exact text - map form`() {
+        val cfg = readConfig(
+            """
+            postgres:
+              image:
+                repository: postgres
+                tag: 17.10
+            """.trimIndent()
+        )
+        assertThat(cfg.postgres.image).isEqualTo("postgres:17.10")
+    }
+
+    @Test
+    fun `an unquoted two-component tag keeps its exact text - map form`() {
+        val cfg = readConfig(
+            """
+            postgres:
+              image:
+                repository: postgres
+                tag: 17.9
+            """.trimIndent()
+        )
+        assertThat(cfg.postgres.image).isEqualTo("postgres:17.9")
+    }
+
+    @Test
+    fun `an unquoted single-component numeric tag keeps its exact text - map form`() {
+        val cfg = readConfig(
+            """
+            postgres:
+              image:
+                repository: postgres
+                tag: 18
+            """.trimIndent()
+        )
+        assertThat(cfg.postgres.image).isEqualTo("postgres:18")
+    }
+
+    @Test
+    fun `a quoted tag is read unchanged - map form`() {
+        val cfg = readConfig(
+            """
+            postgres:
+              image:
+                repository: postgres
+                tag: "17.9"
+            """.trimIndent()
+        )
+        assertThat(cfg.postgres.image).isEqualTo("postgres:17.9")
+    }
+
+    @Test
+    fun `a non-numeric tag is read unchanged - map form`() {
+        val cfg = readConfig(
+            """
+            postgres:
+              image:
+                repository: postgres
+                tag: latest
+            """.trimIndent()
+        )
+        assertThat(cfg.postgres.image).isEqualTo("postgres:latest")
+    }
+
+    // Same shapes again, as the FIRST element of a list, since the typed
+    // blocks take the first rung of a list independently of the map decoding.
+    @Test
+    fun `an unquoted tag with a trailing zero keeps its exact text - first element of a list`() {
+        val cfg = readConfig(
+            """
+            postgres:
+              image:
+                - repository: postgres
+                  tag: 17.10
+                - repository: postgres
+                  tag: 18.6
+            """.trimIndent()
+        )
+        assertThat(cfg.postgres.image).isEqualTo("postgres:17.10")
+    }
+
+    @Test
+    fun `an unquoted single-component numeric tag keeps its exact text - first element of a list`() {
+        val cfg = readConfig(
+            """
+            postgres:
+              image:
+                - repository: postgres
+                  tag: 18
+                - repository: postgres
+                  tag: 19
+            """.trimIndent()
+        )
+        assertThat(cfg.postgres.image).isEqualTo("postgres:18")
+    }
+
+    // Go's decodeImageValues reads a bare scalar `image:` value from the raw
+    // node text, so a non-string scalar still names a version: `image: 123`
+    // resolves to "postgres:" is wrong shorthand here - the whole `image:`
+    // value itself is the scalar, not a repository/tag pair, so the correct
+    // reading is the literal text "123" (matching Go's ScalarNode case),
+    // exactly as measured against decodeImageValues.
+    @Test
+    fun `a bare non-string scalar image value keeps its exact text`() {
+        val cfg = readConfig(
+            """
+            postgres:
+              image: 123
+            """.trimIndent()
+        )
+        assertThat(cfg.postgres.image).isEqualTo("123")
     }
 }
