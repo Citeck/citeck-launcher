@@ -15,8 +15,13 @@ import (
 //
 // applications (Map<String, BundleAppDef>), citeckApps (List<BundleAppDef>),
 // and content (DataValue → JSON object) line up byte-for-byte between Kotlin
-// and Go because BundleAppDef has the single `image` field on both sides and
-// DataValue.createObj() serializes as a plain JSON object.
+// and Go: Kotlin's BundleAppDef has the single `image` field, DataValue.
+// createObj() serializes as a plain JSON object, and Go's bundle.AppDef
+// decodes both cleanly. Go's AppDef also carries `Images` (the dependency
+// ladder), which Kotlin's BundleAppDef has no equivalent of — harmless here
+// because the Kotlin JSON never has an `images` key, so it decodes as nil,
+// but the two types are no longer a byte-for-byte match; only their `image`
+// field is.
 //
 // We keep bundle.Def's field shape unchanged (it is the runtime contract that
 // the resolver + state machine + persisted state all agree on) and translate

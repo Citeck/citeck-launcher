@@ -2,6 +2,12 @@
 - **Busca semântica RAG.** Os bundles enterprise agora oferecem uma aplicação `rag` para busca semântica na sua base de conhecimento, desativada por padrão. Ao iniciá-la, um banco de dados vetorial Qdrant é levantado automaticamente e o acesso à base de conhecimento é ativado para o assistente de IA; uma `rag` desativada continua sem consumir memória extra — o Qdrant nem chega a ser criado. Os bundles community não são afetados: nem `rag` nem Qdrant aparecem neles.
 - **O Qdrant agora é uma dependência gerenciada, com migração própria.** O launcher fixa a versão em que o seu índice vetorial realmente roda, então um bundle que oferece um minor mais novo fica retido e é reportado em vez de ser aplicado em silêncio: o Qdrant garante a leitura do próprio armazenamento por apenas UM minor, e pular um minor não é suportado. O `citeck deps upgrade qdrant` então move o índice: copia o volume de dados, atualiza a CÓPIA, confere cada coleção, alias e contagem de pontos, e só depois faz a troca — o seu volume original nunca é escrito, e o `citeck deps rollback qdrant` retorna a ele. Uma consequência a conhecer: o volume de dados agora se chama `qdrant2` em vez de `qdrant_storage`, então um stand onde o `rag` já rodou a partir de uma build pré-lançamento inicia com o índice vazio e precisa ser reindexado.
 - **Dependências de webapp configuráveis.** O `dependsOn` de uma webapp agora pode ser estendido via `webapps[].defaultProps.dependsOn` do workspace e `webapps.<id>.dependsOn` de um namespace — as dependências configuradas se somam às incorporadas, sem substituí-las. Um ciclo em `dependsOn` agora faz a geração falhar com um erro claro, em vez de deixar as aplicações envolvidas esperando para sempre.
+- Uma imagem de infraestrutura na seção `dependencies:` de um bundle agora pode ser escrita
+  como uma lista de versões. A última é o destino, e as anteriores são os passos que o
+  launcher percorre para alcançá-lo, tudo em uma única migração — assim, uma atualização
+  que o fornecedor não suporta em um único passo passa a ser alcançável sem editar nada
+  manualmente. O volume de dados é copiado uma vez e elevado a cada passo; o original
+  permanece intacto e o rollback continua o mesmo.
 
 ## Alterações
 - **Uma dependência parada não deixa mais a aplicação dependente iniciar sem ela.** Antes, uma aplicação cuja dependência havia sido parada manualmente iniciava mesmo assim e depois falhava nas verificações de saúde. Agora ela espera, mostrando no status o que está esperando, e prossegue assim que a dependência é iniciada.
