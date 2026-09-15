@@ -30,6 +30,7 @@ func writeInstallBundles(t *testing.T, floors map[string]string) string {
 // bypassing the daemon, so the floor has to be checked here or the CLI can
 // create exactly the namespace the daemon's gate exists to prevent.
 func TestCheckReleaseFloor_RefusesABundleAboveTheFloor(t *testing.T) {
+	ensureI18n()
 	dir := writeInstallBundles(t, map[string]string{"2026.3": "9.9.9"})
 
 	err := checkReleaseFloor(dir, bundle.Ref{Repo: "community", Key: "2026.3"}, "2.12.2")
@@ -40,11 +41,13 @@ func TestCheckReleaseFloor_RefusesABundleAboveTheFloor(t *testing.T) {
 }
 
 func TestCheckReleaseFloor_AcceptsABundleAtTheFloor(t *testing.T) {
+	ensureI18n()
 	dir := writeInstallBundles(t, map[string]string{"2026.3": "2.12.2"})
 	assert.NoError(t, checkReleaseFloor(dir, bundle.Ref{Repo: "community", Key: "2026.3"}, "2.12.2"))
 }
 
 func TestCheckReleaseFloor_NoFloorNoRefusal(t *testing.T) {
+	ensureI18n()
 	dir := writeInstallBundles(t, map[string]string{"2026.3": ""})
 	assert.NoError(t, checkReleaseFloor(dir, bundle.Ref{Repo: "community", Key: "2026.3"}, "2.12.2"))
 }
@@ -53,6 +56,7 @@ func TestCheckReleaseFloor_NoFloorNoRefusal(t *testing.T) {
 // have offered it from a listing, and a missing file is the repo's problem, not
 // the launcher's floor.
 func TestCheckReleaseFloor_MissingFileIsNotARefusal(t *testing.T) {
+	ensureI18n()
 	dir := writeInstallBundles(t, map[string]string{"2026.3": ""})
 	assert.NoError(t, checkReleaseFloor(dir, bundle.Ref{Repo: "community", Key: "2099.1"}, "2.12.2"))
 }
