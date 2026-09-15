@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/deps"
 	"github.com/citeck/citeck-launcher/internal/fsutil"
 
@@ -123,14 +124,28 @@ func (res *PreflightResult) checkDataVersion(ctx context.Context, env Env, layou
 // step compares against. The engine runs steps sequentially on one goroutine,
 // which is what makes that hand-off safe.
 type pgRun struct {
-	env             Env
-	from, to        string
-	opts            PlanOptions
-	fromGen         int
-	toGen           int
-	srcVolume       string
-	dstVolume       string
-	dumpDir         string
+	env  Env
+	path Path
+	opts PlanOptions
+	// fromGen is the generation the SOURCE cluster lives in — always the
+	// namespace's own pin, read once. toGen is the generation the FINAL
+	// cluster lands in; every intermediate rung lives in scratchVolume
+	// instead and consumes no generation at all.
+	fromGen, toGen int
+	srcVolume      string
+	dstVolume      string
+	// scratchVolume is the ONE reusable intermediate cluster a multi-rung walk
+	// climbs through — "" for a single-hop migration, where it is never
+	// created at all.
+	scratchVolume string
+	dumpDir       string
+	// dumpHostPath/dumpInContainer/dumpBind name ONE dump file, reused by
+	// every rung: it is written, restored and removed before the next rung's
+	// dump is ever taken (see restoreAt), so there is never more than one on
+	// disk and nothing is gained by giving each rung's dump a distinct name.
+	// Single-hop tests pin this exact path
+	// (TestRestoreRunsTheExportedCommandPrefix), which is the other reason it
+	// stays fixed rather than becoming per-rung.
 	dumpHostPath    string
 	dumpInContainer string
 	dumpBind        string
@@ -139,11 +154,23 @@ type pgRun struct {
 	source pgInventory
 }
 
-// Plan builds the major-upgrade plan. It refuses an existing target volume
-// unless opts.ReplaceExistingVolume is set (the confirm dialog's checkbox /
-// the CLI's --replace-existing).
+// isLastRung reports whether rung i (0-based over path.Rungs()) is the top of
+// the ladder — the one that lands in the FINAL generation rather than the
+// reusable scratch volume.
+func (r *pgRun) isLastRung(i int) bool {
+	return i == len(r.path.Rungs())-1
+}
+
+// Plan builds the upgrade plan, walking every rung of route in ONE migration
+// with one journal and one generation increment. It refuses an existing
+// target volume unless opts.ReplaceExistingVolume is set (the confirm
+// dialog's checkbox / the CLI's --replace-existing).
+//
+// At route.Len() == 2 (the ordinary single-hop case) this produces exactly
+// today's 10 steps, step for step: the loop below runs once, with i == 0 the
+// only and therefore the LAST rung, so every "not last" branch is simply never
+// taken.
 func (m PostgresMigrator) Plan(ctx context.Context, env Env, route Path, opts PlanOptions) (*Plan, deps.MigrationJournal, error) {
-	from, to := route.From(), route.To()
 	pre := m.Preflight(ctx, env, route)
 	if !pre.OK {
 		return nil, deps.MigrationJournal{}, refusePlan(pre.Problems...)
@@ -158,16 +185,18 @@ func (m PostgresMigrator) Plan(ctx context.Context, env Env, route Path, opts Pl
 	// The pin is read ONCE, here, and both volume names and the generation the
 	// commit will move to are derived from that one reading — the journal then
 	// carries them, so nothing later has to re-derive them from a world the
-	// migration is rewriting.
+	// migration is rewriting. The scratch volume is a function of toGen alone
+	// (see deps.ScratchVolumeName) and does not vary with the ladder's length.
 	state := env.DependencyState(deps.Postgres)
 	srcVolume, dstVolume, toGen := migrationVolumes(d, state)
 	dumpDir := env.DumpDir(deps.Postgres)
 	r := &pgRun{
-		env: env, from: from, to: to, opts: opts,
+		env: env, path: route, opts: opts,
 		fromGen:         state.Gen(),
 		toGen:           toGen,
 		srcVolume:       srcVolume,
 		dstVolume:       dstVolume,
+		scratchVolume:   deps.ScratchVolumeName(d, toGen),
 		dumpDir:         dumpDir,
 		dumpHostPath:    filepath.Join(dumpDir, dumpFile),
 		dumpInContainer: path.Join(dumpMount, dumpFile),
@@ -175,23 +204,45 @@ func (m PostgresMigrator) Plan(ctx context.Context, env Env, route Path, opts Pl
 		dataSize:        pre.DataSizeBytes,
 	}
 	j := deps.MigrationJournal{
-		ID: deps.Postgres, From: from, To: to, DumpDir: dumpDir,
+		ID: deps.Postgres, From: route.From(), To: route.To(), DumpDir: dumpDir,
 		ToVolumeGen: toGen, SourceVolume: srcVolume,
 		WasRunning: env.IsRunning(), StartedAt: time.Now(),
 	}
+	steps := []Step{
+		{ID: "stop-namespace", Run: r.stopNamespace},
+		{ID: "pull-image", Run: r.pullImages},
+		{ID: "start-source", Run: r.startSource},
+		{ID: "dump", Run: r.dumpFromSource},
+		{ID: "stop-source", Run: r.stopSource},
+	}
+	rungs := route.Rungs()
+	for i, image := range rungs {
+		last := r.isLastRung(i)
+		steps = append(steps,
+			Step{ID: "create-volume", Run: r.createVolumeFor(i)},
+			Step{ID: "start-target", Run: r.startTargetAt(i, image)},
+			Step{ID: "restore", Run: r.restoreAt(i)},
+		)
+		if last {
+			steps = append(steps,
+				Step{ID: "verify", Run: r.verify},
+				Step{ID: "stop-target", Run: r.stopTarget},
+			)
+			break
+		}
+		// The container running rung i is the source of rung i+1's dump: it is
+		// already up and already holds the data. Dumping from it rather than
+		// starting a second container is what keeps the peak at one cluster.
+		steps = append(steps,
+			Step{ID: "dump", Run: r.dumpFromCurrent},
+			Step{ID: "stop-target", Run: r.stopTarget},
+			// The cluster this rung ran on goes as soon as it has been dumped,
+			// before the next create-volume recreates it: see discardScratch.
+			Step{ID: "create-volume", Run: r.discardScratch},
+		)
+	}
 	plan := &Plan{
-		Steps: []Step{
-			{ID: "stop-namespace", Run: r.stopNamespace},
-			{ID: "pull-image", Run: r.pullImage},
-			{ID: "start-source", Run: r.startSource},
-			{ID: "dump", Run: r.dump},
-			{ID: "stop-source", Run: r.stopSource},
-			{ID: "create-volume", Run: r.createVolume},
-			{ID: "start-target", Run: r.startTarget},
-			{ID: "restore", Run: r.restore},
-			{ID: "verify", Run: r.verify},
-			{ID: "stop-target", Run: r.stopTarget},
-		},
+		Steps:    steps,
 		Rollback: func(ctx context.Context, j *deps.MigrationJournal) error { return RollbackPostgres(ctx, env, j) },
 		// Only OldVolume, and it is read from the JOURNAL rather than from the
 		// run: the engine fills the identity (id, from, to) from there too,
@@ -208,8 +259,17 @@ func (r *pgRun) stopNamespace(ctx context.Context, _ *Journal, _ StepProgress) e
 	return stopNamespaceStep(ctx, r.env)
 }
 
-func (r *pgRun) pullImage(ctx context.Context, _ *Journal, p StepProgress) error {
-	return pullImageStep(ctx, r.env, r.to, p)
+// pullImages pulls EVERY rung before anything irreversible happens: an
+// unreachable registry then costs a stopped namespace and nothing else,
+// whatever rung it is on. At a single hop this pulls exactly r.path.To(), as
+// pullImage always did.
+func (r *pgRun) pullImages(ctx context.Context, _ *Journal, p StepProgress) error {
+	for _, image := range r.path.Rungs() {
+		if err := pullImageStep(ctx, r.env, image, p); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // startSource runs the OLD image on the generation the pin names — the
@@ -220,12 +280,19 @@ func (r *pgRun) startSource(ctx context.Context, _ *Journal, p StepProgress) err
 	if err := r.env.EnsureDir(r.dumpDir); err != nil {
 		return fmt.Errorf("create %s: %w", r.dumpDir, err)
 	}
-	return r.startTemp(ctx, r.from, r.fromGen, SrcContainer, p)
+	return r.startTemp(ctx, r.path.From(), r.fromGen, SrcContainer, p)
 }
 
-// startTarget runs the NEW image on the generation the migration creates.
-func (r *pgRun) startTarget(ctx context.Context, _ *Journal, p StepProgress) error {
-	return r.startTemp(ctx, r.to, r.toGen, DstContainer, p)
+// startTargetAt starts rung i's container: on the FINAL generation for the
+// top rung, on the reusable scratch volume for every intermediate one.
+func (r *pgRun) startTargetAt(i int, image string) func(context.Context, *Journal, StepProgress) error {
+	last := r.isLastRung(i)
+	return func(ctx context.Context, _ *Journal, p StepProgress) error {
+		if last {
+			return r.startTemp(ctx, image, r.toGen, DstContainer, p)
+		}
+		return r.startTempOnVolume(ctx, image, r.scratchVolume, DstContainer, p)
+	}
 }
 
 // startTemp runs one temp container from the namespace's REAL generated def
@@ -241,6 +308,23 @@ func (r *pgRun) startTemp(ctx context.Context, image string, gen int, name strin
 	if err != nil {
 		return fmt.Errorf("generate the %s definition: %w", image, err)
 	}
+	return r.runTemp(ctx, def, name, p)
+}
+
+// startTempOnVolume is startTemp's counterpart for an intermediate rung: the
+// container mounts VOLUME — the reusable scratch cluster — which cannot be
+// expressed as a generation at all, so it goes through GenerateDefForVolume
+// rather than GenerateDefFor. This is the ONLY place this plan asks for a
+// volume that is not the namespace's source or its final target.
+func (r *pgRun) startTempOnVolume(ctx context.Context, image, volume, name string, p StepProgress) error {
+	def, err := r.env.GenerateDefForVolume(deps.Postgres, deps.DependencyState{Image: image}, volume)
+	if err != nil {
+		return fmt.Errorf("generate the %s definition: %w", image, err)
+	}
+	return r.runTemp(ctx, def, name, p)
+}
+
+func (r *pgRun) runTemp(ctx context.Context, def appdef.ApplicationDef, name string, p StepProgress) error {
 	if _, err := r.env.RunAppDef(ctx, def, deps.TempContainerOpts{
 		Name: name, ExtraBinds: []string{r.dumpBind},
 	}); err != nil {
@@ -249,7 +333,9 @@ func (r *pgRun) startTemp(ctx context.Context, image string, gen int, name strin
 	return waitReady(ctx, r.env, name, readyTimeout, readyPoll, p)
 }
 
-func (r *pgRun) dump(ctx context.Context, _ *Journal, p StepProgress) error {
+// dumpFromSource is the bottom dump: it also captures the "before" inventory,
+// since the SOURCE server is read here and nowhere else in the plan.
+func (r *pgRun) dumpFromSource(ctx context.Context, _ *Journal, p StepProgress) error {
 	// The source inventory is read from the SOURCE SERVER, not from the dump:
 	// it is the "before" half of the verify, and reading it here means the
 	// comparison is between two live clusters, not between a file and a guess.
@@ -258,9 +344,20 @@ func (r *pgRun) dump(ctx context.Context, _ *Journal, p StepProgress) error {
 		return fmt.Errorf("read the source inventory: %w", err)
 	}
 	r.source = inv
+	return r.runDump(ctx, SrcContainer, p)
+}
 
+// dumpFromCurrent dumps the node an intermediate rung just raised the data
+// to, so the NEXT rung has something to restore. The container running rung i
+// is already up and already holds the data — dumping from it is what keeps
+// the peak at one cluster instead of starting a second one.
+func (r *pgRun) dumpFromCurrent(ctx context.Context, _ *Journal, p StepProgress) error {
+	return r.runDump(ctx, DstContainer, p)
+}
+
+func (r *pgRun) runDump(ctx context.Context, container string, p StepProgress) error {
 	stop := watchFileGrowth(ctx, r.env, r.dumpHostPath, r.dataSize, dumpProgressPoll, p)
-	_, stderr, code, err := r.env.Exec(ctx, SrcContainer,
+	_, stderr, code, err := r.env.Exec(ctx, container,
 		[]string{"pg_dumpall", "-h", "127.0.0.1", "-U", "postgres", "-f", r.dumpInContainer})
 	stop()
 	if err != nil {
@@ -286,32 +383,96 @@ func (r *pgRun) stopTarget(ctx context.Context, _ *Journal, _ StepProgress) erro
 	return nil
 }
 
-// createVolume makes the volume this plan writes into; the write-ahead
-// discipline and the refusal of a volume that appeared after the preflight are
-// shared with the other plan (createTargetVolume).
-func (r *pgRun) createVolume(ctx context.Context, j *Journal, _ StepProgress) error {
-	return createTargetVolume(ctx, r.env, j, r.dstVolume, r.opts.ReplaceExistingVolume)
+// createVolumeFor makes the volume rung i is restored into: the FINAL target
+// (write-ahead discipline shared with the other plan, via createTargetVolume)
+// for the top rung, the reusable scratch cluster for every intermediate one.
+func (r *pgRun) createVolumeFor(i int) func(context.Context, *Journal, StepProgress) error {
+	last := r.isLastRung(i)
+	return func(ctx context.Context, j *Journal, _ StepProgress) error {
+		if last {
+			return createTargetVolume(ctx, r.env, j, r.dstVolume, r.opts.ReplaceExistingVolume)
+		}
+		return createScratchVolume(ctx, r.env, j, r.scratchVolume)
+	}
 }
 
-// restore replays the dump. psql runs WITHOUT ON_ERROR_STOP (see
-// restoreErrors) and reports its errors on stderr even when it exits 0, so
-// both the stream and the code have to be judged: an exit code with no ERROR
-// line (could not connect, unreadable file) is a failure too.
-func (r *pgRun) restore(ctx context.Context, _ *Journal, p StepProgress) error {
-	size, _ := r.env.FileSize(r.dumpHostPath)
-	p(0, msg.New("deps.msg.progress.restoring", "size", fsutil.FormatBytes(size)))
-	_, stderr, code, err := r.env.Exec(ctx, DstContainer,
-		append(RestoreCommandPrefix(), "-f", r.dumpInContainer))
+// createScratchVolume makes (or remakes) the ONE intermediate cluster a
+// multi-rung walk reuses, journaling it as ScratchVolume — not CreatedVolume,
+// which names the FINAL cluster only — before creating it, exactly as
+// createTargetVolume journals CreatedVolume before creating the target. It
+// always replaces whatever is already there: unlike an ordinary target
+// volume, the scratch volume never holds anything an operator asked to keep,
+// so its reuse needs no confirmation.
+func createScratchVolume(ctx context.Context, env Env, j *Journal, volume string) error {
+	exists, err := env.VolumeExists(ctx, volume)
 	if err != nil {
-		return fmt.Errorf("psql: %w", err)
+		return fmt.Errorf("check volume %s: %w", volume, err)
 	}
-	if errs := restoreErrors(stderr); len(errs) > 0 {
-		return fmt.Errorf("restore reported %d error(s): %s", len(errs), strings.Join(errs, " | "))
+	j.ScratchVolume = volume
+	if err := j.Persist(); err != nil {
+		return fmt.Errorf("journal the scratch volume: %w", err)
 	}
-	if code != 0 {
-		return fmt.Errorf("psql: exit %d: %s", code, tail(stderr))
+	if exists {
+		if err := env.RemoveVolume(ctx, volume); err != nil {
+			return fmt.Errorf("remove the existing scratch volume %s: %w", volume, err)
+		}
+	}
+	if err := env.CreateVolume(ctx, volume); err != nil {
+		return fmt.Errorf("create volume %s: %w", volume, err)
 	}
 	return nil
+}
+
+// discardScratch removes the reusable intermediate cluster once its data has
+// been dumped out of it — before the next create-volume recreates it under
+// the same name. Removing it HERE, rather than at the end of the migration,
+// is what keeps the peak at one cluster whatever the ladder's length: two
+// clusters would otherwise coexist for the rest of the walk.
+func (r *pgRun) discardScratch(ctx context.Context, _ *Journal, _ StepProgress) error {
+	if err := r.env.RemoveVolume(ctx, r.scratchVolume); err != nil {
+		return fmt.Errorf("remove scratch volume %s: %w", r.scratchVolume, err)
+	}
+	return nil
+}
+
+// restoreAt replays the ONE dump file into rung i's container. psql runs
+// WITHOUT ON_ERROR_STOP (see restoreErrors) and reports its errors on stderr
+// even when it exits 0, so both the stream and the code have to be judged: an
+// exit code with no ERROR line (could not connect, unreadable file) is a
+// failure too.
+//
+// For every rung but the last, it also removes the dump it just restored, in
+// the TAIL of this same step. The dump is dead the instant the restore
+// succeeds: any failure from here on rolls back to the untouched SOURCE, so
+// no dump is ever needed twice, and removing it here — before the next dump
+// is taken — is what keeps the peak at one dump plus one cluster. The top
+// rung's dump is left for Finalize's removeScratch to clear along with the
+// rest of the scratch directory, exactly as the single-hop plan has always
+// done, which is what keeps a single-hop migration's call log unchanged.
+func (r *pgRun) restoreAt(i int) func(context.Context, *Journal, StepProgress) error {
+	last := r.isLastRung(i)
+	return func(ctx context.Context, _ *Journal, p StepProgress) error {
+		size, _ := r.env.FileSize(r.dumpHostPath)
+		p(0, msg.New("deps.msg.progress.restoring", "size", fsutil.FormatBytes(size)))
+		_, stderr, code, err := r.env.Exec(ctx, DstContainer,
+			append(RestoreCommandPrefix(), "-f", r.dumpInContainer))
+		if err != nil {
+			return fmt.Errorf("psql: %w", err)
+		}
+		if errs := restoreErrors(stderr); len(errs) > 0 {
+			return fmt.Errorf("restore reported %d error(s): %s", len(errs), strings.Join(errs, " | "))
+		}
+		if code != 0 {
+			return fmt.Errorf("psql: exit %d: %s", code, tail(stderr))
+		}
+		if last {
+			return nil
+		}
+		if err := r.env.RemoveDir(r.dumpHostPath); err != nil {
+			return fmt.Errorf("remove dump %s: %w", r.dumpHostPath, err)
+		}
+		return nil
+	}
 }
 
 // verify compares the two live clusters and then ANALYZEs the new one: a
@@ -393,9 +554,9 @@ func RollbackPostgres(ctx context.Context, env Env, j *deps.MigrationJournal) er
 			errs = append(errs, fmt.Errorf("remove %s: %w", c, err))
 		}
 	}
-	if j.CreatedVolume != "" {
-		if err := env.RemoveVolume(ctx, j.CreatedVolume); err != nil {
-			errs = append(errs, fmt.Errorf("remove volume %s: %w", j.CreatedVolume, err))
+	for _, v := range volumesToRemove(j) {
+		if err := env.RemoveVolume(ctx, v); err != nil {
+			errs = append(errs, fmt.Errorf("remove volume %s: %w", v, err))
 		}
 	}
 	if err := removeScratch(env, j.DumpDir); err != nil {
@@ -413,6 +574,21 @@ func RollbackPostgres(ctx context.Context, env Env, j *deps.MigrationJournal) er
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// volumesToRemove is every volume this migration created: the FINAL target,
+// plus the reusable intermediate a multi-rung walk left behind. A journal
+// written by an older launcher — before ScratchVolume existed — has that
+// field empty, so the union is also what keeps this correct for a journal
+// this build did not write: it simply contributes nothing.
+func volumesToRemove(j *deps.MigrationJournal) []string {
+	out := make([]string, 0, 2)
+	for _, v := range []string{j.CreatedVolume, j.ScratchVolume} {
+		if v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 // waitReady waits for the REAL server in container.

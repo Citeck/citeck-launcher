@@ -212,6 +212,28 @@ func VolumeName(d Descriptor, gen int) string {
 	return base + strconv.Itoa(gen+volumeGenOffset)
 }
 
+// ScratchVolumeName is the reusable intermediate volume a multi-rung
+// PostgreSQL walk climbs through: the FINAL generation's volume name with a
+// "-hop" suffix. It never varies with which rung is currently being climbed —
+// ONE name is created and discarded, rung by rung, for every intermediate
+// cluster (see the postgres migrator's plan) — so it is a function of the
+// migration's TARGET generation alone, not of any particular rung.
+//
+// The suffix is what keeps it OUT of the generation counter: ParseVolumeName
+// round-trips through VolumeName, and no generation VolumeName produces ends
+// in "-hop", so a leftover scratch volume can never be misread as a real
+// generation by the descending existence walk that seeds a pin from an
+// unpinned namespace.
+//
+// "" when the dependency has no volume of its own, matching VolumeName.
+func ScratchVolumeName(d Descriptor, gen int) string {
+	name := VolumeName(d, gen)
+	if name == "" {
+		return ""
+	}
+	return name + "-hop"
+}
+
 // ParseVolumeName is the inverse of VolumeName, for the pin-seeding probe and
 // the snapshot re-seed: "postgres3" → (Postgres, 2). It is deliberately
 // implemented by round-tripping through VolumeName rather than by re-deriving
