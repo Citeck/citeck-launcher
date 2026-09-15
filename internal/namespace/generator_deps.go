@@ -84,6 +84,23 @@ func resolveDependencyImage(ctx *NsGenContext, id deps.ID, chain []string) strin
 	if !ok {
 		return candidate
 	}
+	// A malformed ladder (rungs out of order, a duplicate, one nobody can
+	// parse) is refused by deps.UpgradeRoute wherever a pin exists to route
+	// from — but on a FRESH stand nothing calls UpgradeRoute at all, so
+	// nothing would otherwise say anything: the candidate above is already
+	// just chain's last element, taken as written, regardless of whether the
+	// rest of the chain makes sense. Checking here, before the two paths
+	// diverge, covers both: a fresh stand still gets the candidate it always
+	// got (this is a diagnostic, not a behavior change), and a pinned stand
+	// whose route later comes back empty now has a reason on record instead
+	// of a bare "held back".
+	if deps.MalformedLadder(d, chain) {
+		slog.Warn("Bundle ladder is malformed (a rung is unreadable, or the "+
+			"rungs do not strictly ascend, as written); using its last rung "+
+			"as written, and no multi-step route can be computed through it "+
+			"until the ladder is fixed",
+			"dependency", id, "ladder", chain)
+	}
 	// deps.Breaking already answers false for pinned == candidate and true for
 	// an unparsable tag on either side, so only the "no pin at all" case needs
 	// its own arm here — and a dependency absent from the map reads as the zero

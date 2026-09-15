@@ -149,3 +149,61 @@ func TestAMongoLadderIsNotCollapsedToJustThePinAndTarget(t *testing.T) {
 	assert.Equal(t, []string{"mongo:4.0.2", "mongo:5.0.0", "mongo:6.0.0", "mongo:7.0.0"}, up.Path,
 		"every rung the bundle wrote must survive the gate, not just the pin and the target")
 }
+
+// freshLadderCtx is ladderCtx without a pin — a namespace that has never run
+// this dependency yet, so resolveDependencyImage takes the "no data to
+// protect" branch and returns the candidate unconditionally.
+func freshLadderCtx(ladder []string) *NsGenContext {
+	cfg := DefaultNamespaceConfig()
+	bun := &bundle.Def{
+		Dependencies: map[string]bundle.AppDef{
+			"qdrant": {Image: ladder[len(ladder)-1], Images: ladder},
+		},
+	}
+	return NewNsGenContext(&cfg, bun)
+}
+
+// A malformed ladder must be SAID OUT LOUD, not silently obeyed on the
+// fresh-stand path. Before this, a ladder written out of order created the
+// first volume at whatever happened to be last, with nothing on record — and
+// that silence is exactly what later makes the SAME ladder impassable once a
+// pin exists to route from.
+func TestAMalformedLadderOnAFreshStandStillEmitsTheLastRungAndIsReported(t *testing.T) {
+	buf := captureLogs(t)
+	ctx := freshLadderCtx([]string{"qdrant/qdrant:v1.19.1", "qdrant/qdrant:v1.15.5"}) // written out of order
+	effective := resolveDependencyImage(ctx, deps.Qdrant, ctx.Bundle.Dependencies["qdrant"].Images)
+	assert.Equal(t, "qdrant/qdrant:v1.15.5", effective,
+		"no pin yet: still the candidate, i.e. the chain's last element exactly as written — a diagnostic, not a behavior change")
+	assert.Contains(t, buf.String(), "is malformed")
+	assert.Contains(t, buf.String(), string(deps.Qdrant))
+}
+
+// The mirror image on the pinned path: the ladder is refused as a route (so
+// the pin is held, same as always), but until this change nothing said WHY —
+// the operator saw only an empty Path and "held back".
+func TestAMalformedLadderOnAPinnedStandStillHoldsThePinAndIsReported(t *testing.T) {
+	buf := captureLogs(t)
+	ctx := ladderCtx("qdrant/qdrant:v1.14.1", []string{"qdrant/qdrant:v1.19.1", "qdrant/qdrant:v1.15.5"}) // out of order
+	effective := resolveDependencyImage(ctx, deps.Qdrant, ctx.Bundle.Dependencies["qdrant"].Images)
+	assert.Equal(t, "qdrant/qdrant:v1.14.1", effective, "held back: the pin, unchanged")
+	held := heldQdrant(t, ctx)
+	assert.Empty(t, held.Path, "no route can be computed through a malformed ladder")
+	assert.Contains(t, buf.String(), "is malformed")
+	assert.Contains(t, buf.String(), string(deps.Qdrant))
+}
+
+// An ordinary single image and a well-formed ladder of any length must never
+// trigger the warning — otherwise every namespace generation emits noise.
+func TestAWellFormedLadderOfAnyLengthIsSilentAboutBeingMalformed(t *testing.T) {
+	buf := captureLogs(t)
+	multi := ladderCtx("qdrant/qdrant:v1.14.1", []string{
+		"qdrant/qdrant:v1.15.5", "qdrant/qdrant:v1.16.1",
+		"qdrant/qdrant:v1.17.1", "qdrant/qdrant:v1.18.3", "qdrant/qdrant:v1.19.1",
+	})
+	resolveDependencyImage(multi, deps.Qdrant, multi.Bundle.Dependencies["qdrant"].Images)
+
+	single := ladderCtx("qdrant/qdrant:v1.14.1", []string{"qdrant/qdrant:v1.15.5"})
+	resolveDependencyImage(single, deps.Qdrant, single.Bundle.Dependencies["qdrant"].Images)
+
+	assert.NotContains(t, buf.String(), "is malformed")
+}

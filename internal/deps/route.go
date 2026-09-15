@@ -20,23 +20,22 @@ func UpgradeRoute(d Descriptor, pinned string, ladder []string) ([]string, bool)
 	if len(ladder) == 0 {
 		return nil, false
 	}
+	// The ladder's own shape — independent of the pin — is refused as a whole
+	// by MalformedLadder; this is the same check a pin-less caller runs to
+	// decide whether to say something about a ladder it is about to use
+	// anyway (see resolveDependencyImage), so it is factored out rather than
+	// duplicated here.
+	if MalformedLadder(d, ladder) {
+		return nil, false
+	}
 	pinV, ok := d.ParseVersion(pinned)
 	if !ok {
 		return nil, false
 	}
 	route := []string{pinned}
 	prev := pinV
-	var ascending Version
-	var haveAscending bool
 	for _, image := range ladder {
-		v, ok := d.ParseVersion(image)
-		if !ok {
-			return nil, false
-		}
-		if haveAscending && compareForRoute(ascending, v) >= 0 {
-			return nil, false
-		}
-		ascending, haveAscending = v, true
+		v, _ := d.ParseVersion(image) // MalformedLadder already proved every rung parses
 		// Rungs at or below the pin are behind the operator; the route starts
 		// where they are standing.
 		if compareForRoute(v, prev) <= 0 {
@@ -46,6 +45,38 @@ func UpgradeRoute(d Descriptor, pinned string, ladder []string) ([]string, bool)
 		prev = v
 	}
 	return route, true
+}
+
+// MalformedLadder reports whether ladder's OWN rungs — independent of any
+// pin — fail to parse, or fail to strictly ascend in the order the author
+// wrote them. This is exactly the shape UpgradeRoute refuses to route
+// through, factored out so a caller can learn a bundle's ladder is malformed
+// even before it has a pin to route from: a fresh stand runs the ladder's
+// last rung unconditionally (there is nothing to hold back yet), and without
+// this check a ladder written out of order, or with a duplicate rung, would
+// create the namespace's first volume at whatever happens to be last with
+// nothing said about it — and that silence is exactly what later makes the
+// SAME ladder impassable once there is a pin to route from.
+//
+// A ladder of zero or one rung is never malformed: there is nothing for a
+// single, ordinary image to be out of order WITH.
+func MalformedLadder(d Descriptor, ladder []string) bool {
+	if len(ladder) <= 1 {
+		return false
+	}
+	var ascending Version
+	var haveAscending bool
+	for _, image := range ladder {
+		v, ok := d.ParseVersion(image)
+		if !ok {
+			return true
+		}
+		if haveAscending && compareForRoute(ascending, v) >= 0 {
+			return true
+		}
+		ascending, haveAscending = v, true
+	}
+	return false
 }
 
 // compareForRoute orders two versions by (major, minor, patch), returning >0
