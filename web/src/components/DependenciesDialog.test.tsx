@@ -781,6 +781,27 @@ describe('DependenciesDialog', () => {
     ])
   })
 
+  // Qdrant shares the same copy-upgrade plan as rabbitmq/zookeeper (M4 of the
+  // final-branch review: PLAN_STEPS had no `qdrant` entry, so on a daemon
+  // that carries a qdrant migration but predates `stepIds` — the fallback is
+  // positional against PLAN_STEPS — the step list would render nothing at
+  // all instead of the real 11-step copy plan).
+  it('renders the copy plan for qdrant', async () => {
+    render(<DependenciesDialog open onClose={() => {}} />)
+    await screen.findByTestId('dep-postgres')
+
+    act(() => {
+      useDepsStore.getState().onStart('qdrant', 11)
+      useDepsStore.getState().onProgress({ appName: 'qdrant', phase: 'copy-volume', current: 4, total: 11, percent: 0, after: '' })
+    })
+    expect(screen.getAllByTestId(/^deps-step-/).map((li) => li.getAttribute('data-testid'))).toEqual([
+      'deps-step-stop-namespace', 'deps-step-pull-image', 'deps-step-create-volume',
+      'deps-step-copy-volume', 'deps-step-start-old', 'deps-step-pre-upgrade',
+      'deps-step-stop-old', 'deps-step-start-new', 'deps-step-post-upgrade',
+      'deps-step-verify', 'deps-step-stop-new',
+    ])
+  })
+
   // Neither of these is "update the launcher": a vendor-forbidden hop is not
   // lifted by a newer launcher, and a bundle that offers something OLDER is
   // not an upgrade being held back at all. Both carry the daemon's own

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/deps"
 	"github.com/citeck/citeck-launcher/internal/deps/migrate/migratetest"
 	"github.com/stretchr/testify/assert"
@@ -200,4 +201,99 @@ func TestEveryRungsDumpIsCompressed(t *testing.T) {
 	for _, name := range env.DumpsWritten() {
 		assert.True(t, strings.HasSuffix(name, ".sql.gz"), "dump %q is not compressed", name)
 	}
+}
+
+// genRecordingEnv wraps a FakeEnv and records, per image, the def
+// GenerateDefForVolume actually returned — the same def RunAppDef then
+// starts a container from. Only GenerateDefForVolume is overridden; every
+// other call is the embedded FakeEnv's, unchanged.
+//
+// It exists to close a coverage hole: every other test in this file observes
+// only the WALK'S END STATE (which volumes survive, what the journal says).
+// None of them asks what volume a specific rung's container was actually
+// generated to mount while the walk was running — which is exactly the
+// question a plan that named the wrong volume for one rung, but still ended
+// up in a consistent final state, would dodge.
+type genRecordingEnv struct {
+	*migratetest.FakeEnv
+	defsByImage map[string]appdef.ApplicationDef
+}
+
+func newGenRecordingEnv(f *migratetest.FakeEnv) *genRecordingEnv {
+	return &genRecordingEnv{FakeEnv: f, defsByImage: map[string]appdef.ApplicationDef{}}
+}
+
+func (g *genRecordingEnv) GenerateDefForVolume(
+	id deps.ID, st deps.DependencyState, volume string,
+) (appdef.ApplicationDef, error) {
+	def, err := g.FakeEnv.GenerateDefForVolume(id, st, volume)
+	if err == nil {
+		g.defsByImage[st.Image] = def
+	}
+	return def, err //nolint:wrapcheck // a decorator must return the fake's error verbatim
+}
+
+// defMountsVolume mirrors the daemon's own mountsVolume: a volume entry is
+// "<source>:<container path>[:opts]" and only the source half is compared.
+func defMountsVolume(def appdef.ApplicationDef, name string) bool {
+	for _, v := range def.Volumes {
+		if src, _, ok := strings.Cut(v, ":"); ok && src == name {
+			return true
+		}
+	}
+	return false
+}
+
+// Rung 1's container must be generated for the SCRATCH volume, never the
+// source — the gap C1 found: startTempOnVolume passes VolumeGen unset, so on
+// a never-migrated namespace GenerateDefForVolume's own "ordinary" mount for
+// generation 1 IS the source volume, and if the plan ever named the source
+// as VOLUME there, the retarget guard would see mountVolume == ordinary and
+// skip itself as a no-op — the def would "correctly" mount the source and
+// every end-state assertion in this file would still pass. Asserting rung 1's
+// def directly is the only way to catch that.
+func TestPostgresLadderRung1MountsScratchVolumeNotSource(t *testing.T) {
+	base := newPostgresFakeEnv(t, "postgres:17.5", 1)
+	env := newGenRecordingEnv(base)
+	path := Path{"postgres:17.5", "postgres:18.6", "postgres:19.2", "postgres:20.1"}
+	plan, j, err := PostgresMigrator{}.Plan(context.Background(), env, path, PlanOptions{})
+	require.NoError(t, err)
+	// ScratchVolume/CreatedVolume are write-ahead fields, journalled by the
+	// STEP that is about to create them — see TestPostgresThreeRungPlanReusesOneScratchVolume
+	// — so Plan()'s own returned journal has neither yet. ToVolumeGen and
+	// SourceVolume ARE set at Plan() time, so the expected scratch volume is
+	// computed the same way pgRun itself does, independent of the run.
+	d, ok := deps.Lookup(deps.Postgres)
+	require.True(t, ok)
+	expectedScratch := deps.ScratchVolumeName(d, j.ToVolumeGen)
+	require.NotEmpty(t, expectedScratch, "a 3-rung ladder must have a scratch volume to assert against")
+
+	require.NoError(t, runPlanAgainstFake(t, j, plan))
+
+	def, ok := env.defsByImage["postgres:18.6"]
+	require.True(t, ok, "rung 1 (postgres:18.6) never asked GenerateDefForVolume for a def")
+	assert.True(t, defMountsVolume(def, expectedScratch),
+		"rung 1's container must mount the scratch volume %q, got %v", expectedScratch, def.Volumes)
+	assert.False(t, defMountsVolume(def, j.SourceVolume),
+		"rung 1's container must NOT mount the source volume %q, got %v", j.SourceVolume, def.Volumes)
+}
+
+// A same-major rung in the middle of an otherwise major-crossing ladder must
+// not be refused: SupportsPair's only rule (to.Major > from.Major) is a
+// statement about the PLAN's own capability, not a vendor per-hop
+// restriction, so Preflight asks it of the route's ENDPOINTS (17.5 → 18.6,
+// a real forward major move) rather than of every hop the way CopyPreflight
+// does for RabbitMQ/ZooKeeper. Applying it per hop would refuse the hop
+// 17.5 → 17.9 (same major, to.Major > from.Major is false) even though the
+// bundle author sanctioned that exact rung and the logical dump plan handles
+// a same-major republish with no extra risk at all — see the comment on
+// Preflight and spec §7 ("a rung is never skipped").
+func TestPostgresLadderToleratesASameMajorIntermediateRung(t *testing.T) {
+	env := newPostgresFakeEnv(t, "postgres:17.5", 1)
+	route := Path{"postgres:17.5", "postgres:17.9", "postgres:18.6"}
+
+	res := PostgresMigrator{}.Preflight(context.Background(), env, route)
+
+	assert.True(t, res.OK, "a same-major rung inside a forward ladder must not be refused: %v", res.Problems)
+	assert.Empty(t, res.Problems)
 }

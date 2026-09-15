@@ -69,6 +69,16 @@ const PLAN_STEPS: Record<string, readonly string[]> = {
   postgres: POSTGRES_STEPS,
   rabbitmq: COPY_STEPS,
   zookeeper: COPY_STEPS,
+  // Qdrant shares the same copy-upgrade plan as rabbitmq/zookeeper (Go:
+  // migrate.registry.go's `migrators`/`rollbacks` map it to
+  // QdrantMigrator{}/RollbackCopyUpgrade) — same 11 step ids, even though its
+  // CopySpec sets no PreUpgrade/PostUpgrade hook: the engine still runs steps
+  // named "pre-upgrade"/"post-upgrade", they just no-op. Only reachable today
+  // on a daemon that has qdrant migration but no `stepIds` (this UI's
+  // fallback is positional against PLAN_STEPS), but the fallback exists
+  // precisely for an older/newer daemon mismatch, so a missing entry here is
+  // a real gap, not a hypothetical one.
+  qdrant: COPY_STEPS,
 }
 
 /** The dependencies whose plan COPIES the data volume instead of dumping it —

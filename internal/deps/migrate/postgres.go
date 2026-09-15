@@ -59,6 +59,33 @@ type PostgresMigrator struct{}
 // and the web dialog maps over both, so a nil slice — the ordinary happy path
 // — would marshal as `null` and crash the confirm screen into the error
 // boundary. See NewPreflightResult.
+// SupportsPair is asked about the route's ENDPOINTS here, deliberately NOT
+// per-hop the way CopyPreflight asks it of every adjacent pair
+// (path.Hops()). The two differ because the QUESTION SupportsPair answers is
+// a different kind of question for the two plans:
+//
+//   - For RabbitMQ/ZooKeeper, SupportsPair (via UpgradeSupport) is the
+//     VENDOR's own per-hop compatibility table — 4.1 → 4.3 is refused
+//     because the vendor never documented that exact jump, whatever the
+//     endpoints are. That is inherently a per-hop question, and CopyPreflight
+//     asks it of every hop for exactly that reason.
+//   - For PostgreSQL, SupportsPair has exactly one rule left — "the move must
+//     go forwards" (to.Major > from.Major) — and it is not a vendor
+//     restriction on any particular hop at all. The plan is a logical dump
+//     (pg_dumpall / psql) that can carry data across ANY forward gap,
+//     including a same-major one: nothing about pg_dumpall cares whether the
+//     rung it is restoring into is a major bump or a same-major republish.
+//     Applying the forwards-only rule per hop would refuse a same-major rung
+//     the bundle author deliberately wrote into the ladder (pin 17.5, ladder
+//     [17.9, 18.6]: the hop 17.5 → 17.9 shares a major and would fail
+//     to.Major > from.Major even though the endpoint move 17.5 → 18.6 is a
+//     perfectly good forward major bump the logical dump handles without any
+//     extra risk) — which is exactly the "a rung is never skipped, but a
+//     rung the author sanctioned is never REFUSED either" balance spec §7
+//     insists on. So this checks the ENDPOINTS: is the route as a whole a
+//     forward move. Each individual rung is still walked in full by Plan
+//     below (nothing here collapses the ladder) — this only decides whether
+//     the plan exists at all.
 func (m PostgresMigrator) Preflight(ctx context.Context, env Env, route Path) PreflightResult {
 	from, to := route.From(), route.To()
 	res := NewPreflightResult(from, to)
@@ -324,17 +351,28 @@ func (r *pgRun) startTemp(ctx context.Context, image string, gen int, name strin
 // expressed as a generation at all, so it goes through GenerateDefForVolume
 // rather than GenerateDefFor. This is the ONLY place this plan asks for a
 // volume that is not the namespace's source or its final target.
+//
+// The refusal below is load-bearing, not decorative. VolumeGen is left unset
+// on the DependencyState passed to GenerateDefForVolume (so Gen() clamps it
+// to 1), which means GenerateDefForVolume's own "ordinary" mount — the one
+// its retarget/verify guards compare against — is generation 1's volume. On a
+// namespace that has never migrated, generation 1 IS the source volume. If
+// VOLUME here were ever the source too (a caller bug: passing r.srcVolume
+// instead of r.scratchVolume), mountVolume would equal ordinary, the whole
+// retarget branch in GenerateDefForVolume — and both of its post-conditions —
+// would be skipped as a no-op, and the trailing mountsVolume(a, mountVolume)
+// check would pass trivially, because the def already mounts the source by
+// construction. Those guards were built to catch a misbehaving GENERATOR;
+// they cannot catch a PLAN that names the source on purpose. So this function
+// checks the one thing they structurally cannot: refuse outright if asked to
+// mount the source, before GenerateDefForVolume is ever called.
 func (r *pgRun) startTempOnVolume(ctx context.Context, image, volume, name string, p StepProgress) error {
-	// VolumeGen is deliberately left unset (so Gen() clamps it to 1): the
-	// volume this container mounts comes ONLY from the volume argument below,
-	// never from st.Gen(). GenerateDefForVolume reads st.Gen() only to know
-	// which mount the generator's OWN pin logic would ordinarily pick (so it
-	// can retarget away from exactly that one and verify it is gone
-	// afterwards) — it is not a second, competing way to name this
-	// container's volume, so whatever value it holds here cannot make this
-	// land on the source: ordinary and the generator's own
-	// resolveDependencyVolume read the same st.Gen() off the same struct and
-	// so can never disagree.
+	if volume != "" && volume == r.srcVolume {
+		return fmt.Errorf(
+			"refusing to start %s for an intermediate rung on %q: that is the SOURCE volume — "+
+				"an intermediate rung must run on the scratch volume, never on the data this plan promises only to read",
+			name, volume)
+	}
 	def, err := r.env.GenerateDefForVolume(deps.Postgres, deps.DependencyState{Image: image}, volume)
 	if err != nil {
 		return fmt.Errorf("generate the %s definition: %w", image, err)

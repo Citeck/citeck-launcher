@@ -1198,6 +1198,16 @@ func retargetVolume(vols []string, from, to string) []string {
 // volume entry is "<source>:<container path>[:opts]", and only the SOURCE is
 // compared: a bind of a host file that happens to end in the same word is not
 // this dependency's data.
+//
+// It scans def.Volumes ONLY — never def.InitContainers[].Volumes — which is
+// narrower than "does the def mount X" and is worth stating rather than
+// leaving to be assumed: the two callers above use this to prove a migration
+// temp container cannot touch the source, and that proof is sound only
+// because RunAppDef (the one caller that starts a container from a def this
+// function checked) runs a single container from the def and never runs its
+// init containers at all — see runTemp/RunAppDef. If a future caller ever ran
+// init containers from one of these defs, an init-container-only bind would
+// be invisible here.
 func mountsVolume(def appdef.ApplicationDef, name string) bool {
 	for _, v := range def.Volumes {
 		if src, _, ok := strings.Cut(v, ":"); ok && src == name {
