@@ -142,3 +142,61 @@ func readBundleMinLauncherVersion(path string) string {
 	}
 	return parseBundleMinLauncherVersion(documentRoot(&root))
 }
+
+// NewerBundle describes a version above the one a namespace runs.
+type NewerBundle struct {
+	Version string // the newest version key above Current
+	// RequiresLauncher is the floor of that version when this launcher cannot
+	// run it, and "" when it can. Empty means "you can switch to it now".
+	RequiresLauncher string
+}
+
+// FindNewerBundle reports the newest version above currentKey in the same
+// scope, or nil when the namespace already runs the newest one.
+//
+// Answering "is there a newer one" costs no file I/O: ListBundleVersions is a
+// directory walk and the key comes from the filename. Only telling "you can
+// switch" from "update the launcher first" opens files, and only the versions
+// ABOVE the current one, stopping at the first that fits — the same downward
+// walk LATEST does.
+//
+// When a runnable version sits between the current one and a blocked one, the
+// RUNNABLE one is reported: it is the one the operator can act on today.
+func FindNewerBundle(bundlesDir, currentKey, launcherVersion string) *NewerBundle {
+	currentKey = strings.TrimSpace(currentKey)
+	if currentKey == "" || strings.EqualFold(currentKey, "LATEST") {
+		return nil
+	}
+	scope := bundleScopeOf(currentKey)
+	var blocked *NewerBundle
+	for _, key := range ListBundleVersions(bundlesDir) {
+		if bundleScopeOf(key) != scope {
+			continue
+		}
+		if compareBundleVersions(key, currentKey) <= 0 {
+			break // the list is newest-first: everything below is older
+		}
+		path := findBundleFile(bundlesDir, key)
+		if path == "" {
+			continue
+		}
+		floor := readBundleMinLauncherVersion(path)
+		if !NeedsNewerLauncher(floor, launcherVersion) {
+			return &NewerBundle{Version: key}
+		}
+		if blocked == nil {
+			blocked = &NewerBundle{Version: key, RequiresLauncher: floor}
+		}
+	}
+	return blocked
+}
+
+// bundleScopeOf is the path before the last '/' ("archive/2025.5" → "archive",
+// "2026.2" → ""). compareBundleVersions ranks every unscoped version above
+// every scoped one, so comparisons only make sense inside one scope.
+func bundleScopeOf(key string) string {
+	if idx := strings.LastIndex(key, "/"); idx >= 0 {
+		return key[:idx]
+	}
+	return ""
+}

@@ -289,6 +289,7 @@ func constructDaemon(opts StartOptions, daemonCfg config.DaemonConfig, socketPat
 			deferredForSecrets: loaded.DeferredForSecrets,
 			dependencyUpgrades: loaded.DependencyUpgrades,
 			dependencies:       loaded.Dependencies,
+			newerBundle:        loaded.NewerBundle,
 		},
 		store:         store,
 		secretService: secretSvc,

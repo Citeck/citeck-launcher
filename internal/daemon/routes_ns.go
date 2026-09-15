@@ -1190,6 +1190,21 @@ func (d *Daemon) handleBundleRepoPull(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+
+	// Refresh "is there a newer bundle" when the repo just synced is the one
+	// the active namespace's bundle comes from — a pull of a DIFFERENT repo
+	// (e.g. selecting a not-yet-cloned "release" repo while running on
+	// "community") cannot have changed the answer for this namespace.
+	d.configMu.Lock()
+	a := d.activeLocked()
+	if a.workspaceConfig != nil && a.bundleDef != nil && a.nsConfig != nil &&
+		a.nsConfig.BundleRef.Repo == repoID {
+		repoEntry := bundleRepoByID(a.workspaceConfig, a.nsConfig.BundleRef.Repo)
+		a.newerBundle = bundle.FindNewerBundle(
+			d.resolveBundleDir(repoEntry), a.bundleDef.Key.Version, d.version)
+	}
+	d.configMu.Unlock()
+
 	writeJSON(w, api.ActionResultDto{Success: true, Message: "bundle repo synced"})
 }
 

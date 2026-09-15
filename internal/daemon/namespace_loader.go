@@ -94,6 +94,27 @@ type loadedNamespace struct {
 	// dependency. Both are recomputed by every generation (load and reload).
 	DependencyUpgrades []namespace.DependencyUpgrade
 	Dependencies       map[deps.ID]namespace.DependencyGen
+	// NewerBundle is the newest version above the one this generation resolved
+	// to, in the same repo — nil when there is none. Same recomputed-every-
+	// generation rule as DependencyUpgrades.
+	NewerBundle *bundle.NewerBundle
+}
+
+// bundleRepoByID looks up a declared BundlesRepo by id in a workspace config.
+// bundle.findBundleRepo does the same lookup but is unexported, and this is
+// the only caller of it outside that package. A wsCfg with no matching id
+// (or a nil wsCfg) answers the zero value, which resolveBundleDir/
+// ResolveBundleRepoDir treat as "nothing declared" rather than panicking.
+func bundleRepoByID(wsCfg *bundle.WorkspaceConfig, id string) bundle.BundlesRepo {
+	if wsCfg == nil {
+		return bundle.BundlesRepo{}
+	}
+	for _, br := range wsCfg.BundleRepos {
+		if br.ID == id {
+			return br
+		}
+	}
+	return bundle.BundlesRepo{}
 }
 
 // resolveBundleWithCacheFallback resolves `ref` via the prepared resolver; when
@@ -328,6 +349,22 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 	// the paths that "succeed" with nothing, chiefly an empty bundle ref.
 	if bundleError == "" {
 		bundleError = emptyBundleError(bundleDef, nsCfg.BundleRef, nsID)
+	}
+
+	// "Is there a newer bundle" — guarded rather than assumed, even though
+	// bundleDef/wsCfg are non-nil on every path reaching here: this walk must
+	// never be the reason the load path panics. loadNamespace is a package
+	// function (not a *Daemon method), so it cannot call d.resolveBundleDir;
+	// config.BundlesDataDir(wsID) is the same dataDir that function derives
+	// from the active workspace, reused here the same way the resolver above
+	// already does.
+	var newerBundle *bundle.NewerBundle
+	if wsCfg != nil && bundleDef != nil {
+		repoEntry := bundleRepoByID(wsCfg, nsCfg.BundleRef.Repo)
+		dataDir := config.BundlesDataDir(wsID)
+		wsRepoDir := filepath.Join(dataDir, "bundles", "workspace")
+		bundlesDir := bundle.ResolveBundleRepoDir(dataDir, wsRepoDir, repoEntry)
+		newerBundle = bundle.FindNewerBundle(bundlesDir, bundleDef.Key.Version, in.LauncherVersion)
 	}
 
 	// Certs (self-signed when TLS is on without LE; Let's Encrypt obtain when
@@ -664,6 +701,7 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 		DeferredForSecrets: deferredForSecrets,
 		DependencyUpgrades: genResp.DependencyUpgrades,
 		Dependencies:       genResp.Dependencies,
+		NewerBundle:        newerBundle,
 	}, nil
 }
 
@@ -781,6 +819,7 @@ func (d *Daemon) installLoadedNamespace(loaded *loadedNamespace, wsID, nsID stri
 		// just ran, so it must travel with it.
 		dependencyUpgrades: loaded.DependencyUpgrades,
 		dependencies:       loaded.Dependencies,
+		newerBundle:        loaded.NewerBundle,
 		acmeRenewal:        nil,
 		// deferredForSecrets always false here: installLoadedNamespace serves
 		// namespace switch / auto-activate-after-create, both user-initiated —
