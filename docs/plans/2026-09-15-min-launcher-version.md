@@ -14,7 +14,7 @@ the namespace DTO.
 
 **Safety split, deliberate:** the REFUSAL lives in the write paths and needs nothing from the
 resolver. The `LATEST` walk needs the launcher version threaded into `bundle.Resolver`, and a
-construction site that forgets `WithLauncherVersion` degrades to today's behaviour (take the
+construction site that forgets `WithLauncherVersion` degrades to today's behavior (take the
 newest, full stop) — it can never let a too-new bundle be written, because that is the write
 path's job. Convenience is best-effort per call site; safety is in one place.
 
@@ -106,14 +106,14 @@ func TestParseBundleFile_MinLauncherVersionAbsentOrBlank(t *testing.T) {
 EcosModelApp:
   image: core/ecos-model:1.0
 `)
-	assert.Equal(t, "", absent.MinLauncherVersion)
+	assert.Empty(t, absent.MinLauncherVersion)
 
 	blank := parseTestBundle(t, `
 minLauncherVersion: "   "
 EcosModelApp:
   image: core/ecos-model:1.0
 `)
-	assert.Equal(t, "", blank.MinLauncherVersion, "a blank floor is no floor")
+	assert.Empty(t, blank.MinLauncherVersion, "a blank floor is no floor")
 }
 
 // A shape that is not a scalar is not a version. It costs the key, never the
@@ -125,7 +125,7 @@ minLauncherVersion:
 EcosModelApp:
   image: core/ecos-model:1.0
 `)
-	assert.Equal(t, "", def.MinLauncherVersion)
+	assert.Empty(t, def.MinLauncherVersion)
 	assert.Contains(t, def.Applications, "EcosModelApp")
 }
 ```
@@ -152,7 +152,7 @@ In `internal/bundle/bundle.go`, inside `type Def struct`, after `CiteckApps`:
 	MinLauncherVersion string `json:"minLauncherVersion,omitempty" yaml:"minLauncherVersion,omitempty"`
 ```
 
-`omitempty` matters: `Def` is serialised into the namespace's `CachedBundle`
+`omitempty` matters: `Def` is serialized into the namespace's `CachedBundle`
 (`internal/namespace/state.go`) and read by `internal/h2migrate`.
 
 - [ ] **Step 4: Read the key**
@@ -300,7 +300,7 @@ func TestNeedsNewerLauncher(t *testing.T) {
 		{"floor below the launcher", "2.12.2", "2.13.0", false},
 		{"a two-part floor means .0", "2.13", "2.12.2", true},
 		{"a two-part floor is cleared by a patch above it", "2.13", "2.13.5", false},
-		{"the v prefix is normalised on both sides", "v2.13.0", "2.12.2", true},
+		{"the v prefix is normalized on both sides", "v2.13.0", "2.12.2", true},
 		{"a dev build is never refused", "2.13.0", "dev-20260915-124919", false},
 		{"an unreadable floor refuses a release", "nonsense", "2.12.2", true},
 		{"an unreadable floor still spares a dev build", "nonsense", "dev-20260915", false},
@@ -347,7 +347,7 @@ import (
 // drift from the one the auto-updater uses, and then "your launcher is too old"
 // and "an update is available" could disagree about the same two strings.
 //
-// Two behaviours are inherited rather than written, and both are wanted:
+// Two behaviors are inherited rather than written, and both are wanted:
 //
 //   - A DEV BUILD is never refused. `make` stamps a non-semver version
 //     ("dev-20260915-124919"), which sorts highest, so no floor is above it.
@@ -413,7 +413,7 @@ git commit -m "feat(bundle): one comparison for the launcher floor, measured"
 - Consumes: `NeedsNewerLauncher` (Task 2), `Def.MinLauncherVersion` (Task 1).
 - Produces:
   - `func (r *Resolver) WithLauncherVersion(v string) *Resolver` — chainable, like
-    `WithWorkspaceRepo`. Unset (the default) keeps today's behaviour exactly.
+    `WithWorkspaceRepo`. Unset (the default) keeps today's behavior exactly.
   - `func LatestRunnableBundle(bundlesDir, launcherVersion string, log *slog.Logger) (string, error)` —
     the newest version key in `bundlesDir` that this launcher can run. Used again in Task 6.
   - `func ReadMinLauncherVersion(bundlesDir, key string) string` — the floor of one version key,
@@ -502,37 +502,31 @@ func TestLatestRunnableBundle_NoLauncherVersionTakesTheNewest(t *testing.T) {
 	assert.Equal(t, "2026.3", got)
 }
 
-// Nothing runnable at all is not "no bundles" — the repo HAS bundles, this
-// launcher just cannot run any of them. The error has to say so, because
-// "no bundles found" would send the operator to look at a repo that is fine.
-func TestLatestRunnableBundle_NothingRunnable(t *testing.T) {
+// Nothing runnable is NOT an error. This walk runs on the load and reload paths
+// too, and an error there would stop the operator from opening the namespace —
+// the one thing the design forbids. It answers the newest version, and the
+// config WRITE gate is what refuses it, once, with an actionable message.
+func TestLatestRunnableBundle_NothingRunnableTakesTheNewestAnyway(t *testing.T) {
 	dir := writeBundleDir(t, map[string]string{
-		"2026.3": floored("2.13.0"),
+		"2026.2": floored("2.13.0"),
+		"2026.3": floored("2.14.0"),
 	})
-	_, err := LatestRunnableBundle(dir, "2.12.2", nil)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrLauncherTooOldForAllBundles)
-	assert.Contains(t, err.Error(), "2.13.0", "the error must name the floor to update to")
+	got, err := LatestRunnableBundle(dir, "2.12.2", nil)
+	require.NoError(t, err, "a floor must never fail a resolve — only a write")
+	assert.Equal(t, "2026.3", got)
 }
 ```
 
 - [ ] **Step 2: Run the test and watch it fail**
 
 Run: `go test ./internal/bundle/ -run TestLatestRunnableBundle -v`
-Expected: compile error — `LatestRunnableBundle` and `ErrLauncherTooOldForAllBundles` undefined.
+Expected: compile error — `LatestRunnableBundle` undefined.
 
 - [ ] **Step 3: Implement the walk**
 
 In `internal/bundle/launcher_floor.go`:
 
 ```go
-// ErrLauncherTooOldForAllBundles is returned when a bundles directory HAS
-// versions but every one of them declares a floor above this launcher. It is
-// deliberately distinct from ErrNoBundles: "no bundles found" would send the
-// operator to inspect a repository that is perfectly fine, when the thing to
-// change is the launcher.
-var ErrLauncherTooOldForAllBundles = errors.New("every bundle requires a newer launcher")
-
 // LatestRunnableBundle answers the newest version key in bundlesDir that this
 // launcher can run: the list is already newest-first, so it walks down and
 // takes the first bundle whose floor is cleared.
@@ -570,8 +564,15 @@ func LatestRunnableBundle(bundlesDir, launcherVersion string, log *slog.Logger) 
 		log.Warn("Skipping a bundle this launcher is too old for",
 			"version", key, "needs", floor, "launcher", launcherVersion)
 	}
-	return "", fmt.Errorf("%w (newest needs %s, this launcher is %s)",
-		ErrLauncherTooOldForAllBundles, highestFloor, launcherVersion)
+	// Nothing cleared the floor. Answer the NEWEST version anyway rather than
+	// an error: this function runs on the load and reload paths too, and a
+	// refusal there would leave the operator unable to open the namespace at
+	// all — the one thing this feature's design forbids. The floor still bites,
+	// once, where it belongs: the config WRITE gate refuses the result and says
+	// which launcher version to update to.
+	log.Warn("No bundle in this repo clears this launcher's floor; taking the newest",
+		"version", versions[0], "newestFloor", highestFloor, "launcher", launcherVersion)
+	return versions[0], nil
 }
 
 // ReadMinLauncherVersion answers the floor declared by one version key in a
@@ -615,7 +616,7 @@ In `internal/bundle/resolver.go`, add to `type Resolver struct`:
 ```go
 	// launcherVersion is this build's version, used ONLY to resolve LATEST to
 	// the newest bundle this launcher can run. Empty (the default) keeps the
-	// historical behaviour: LATEST is the newest version, full stop.
+	// historical behavior: LATEST is the newest version, full stop.
 	//
 	// It is not a safety mechanism and must not become one — a construction
 	// site that forgets WithLauncherVersion loses the convenience, never the
@@ -1210,7 +1211,7 @@ func TestFindNewerBundle_NewerAndRunnable(t *testing.T) {
 	got := FindNewerBundle(dir, "2026.2", "2.12.2")
 	require.NotNil(t, got)
 	assert.Equal(t, "2026.3", got.Version)
-	assert.Equal(t, "", got.RequiresLauncher, "we can run it — nothing to ask the operator for")
+	assert.Empty(t, got.RequiresLauncher, "we can run it — nothing to ask the operator for")
 }
 
 func TestFindNewerBundle_NewerButNeedsANewerLauncher(t *testing.T) {
@@ -1233,7 +1234,7 @@ func TestFindNewerBundle_PrefersTheRunnableOneBelowABlockedOne(t *testing.T) {
 	got := FindNewerBundle(dir, "2026.2", "2.12.2")
 	require.NotNil(t, got)
 	assert.Equal(t, "2026.3", got.Version)
-	assert.Equal(t, "", got.RequiresLauncher)
+	assert.Empty(t, got.RequiresLauncher)
 }
 
 // compareBundleVersions ranks EVERY unscoped version above EVERY scoped one, so
@@ -1432,7 +1433,7 @@ func TestGetNamespace_CarriesTheNewerBundle(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &dto))
 	require.NotNil(t, dto.NewerBundle)
 	assert.Equal(t, "2026.3", dto.NewerBundle.Version)
-	assert.Equal(t, "", dto.NewerBundle.RequiresLauncher,
+	assert.Empty(t, dto.NewerBundle.RequiresLauncher,
 		"empty means the operator can switch to it right now")
 }
 
@@ -1705,7 +1706,7 @@ git commit -m "feat(web): a dot on the namespace gear when a newer bundle exists
 
 **Files:**
 - Modify: `AGENTS.md` (a new rule in **Key Technical Decisions**, beside the `dependencies:` rule)
-- Create: `changelog/<next-version>/{en,ru,zh,es,de,fr,pt,ja}.md`; modify `changelog/index.json`
+- Create: `changelog/2.13.0/{en,ru,zh,es,de,fr,pt,ja}.md`; modify `changelog/index.json`
 - Modify: `docs/config-layers.md` (one line)
 
 **Interfaces:** none.
@@ -1717,7 +1718,7 @@ rule — they are the two halves of one forward-compatibility story. It must say
 that it is read from the YAML text and why; that the gate is on the WRITE and never on load, and
 that this is what keeps the way back open; that `LATEST` resolves to the newest runnable bundle
 while a pinned version refuses; that the floor comparison is `update.Greater` and inherits both
-the dev-build exemption and the fail-closed-on-garbage behaviour from the same clause; and that
+the dev-build exemption and the fail-closed-on-garbage behavior from the same clause; and that
 launchers older than the release adding the check ignore the key entirely, so it protects nobody
 retroactively.
 
@@ -1725,7 +1726,12 @@ retroactively.
 
 Follow `changelog/AGENTS.md`: no version heading, `##` section groups, one bullet per change,
 user-visible effect first. Two bullets — the floor and the indicator. Register the release in
-`changelog/index.json`.
+`changelog/index.json` as `{ "version": "2.13.0", "date": "2026-09-15" }`.
+
+The directory is **2.13.0, not 2.12.3**, and that is a decision rather than an accident:
+`changelog/2.12.3/` belongs to the unreleased image-ladder work this branch is stacked on, whose
+tag may be cut before this feature merges. Advertising a feature that is not in that tag would
+make those release notes lie.
 
 - [ ] **Step 3: One line in `docs/config-layers.md`**
 
