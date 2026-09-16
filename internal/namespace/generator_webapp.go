@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"maps"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/citeck/citeck-launcher/internal/appdef"
@@ -238,12 +239,15 @@ func applyEmailConfig(app *AppBuilder, ctx *NsGenContext) {
 	app.AddEnv("SPRING_MAIL_PORT", fmt.Sprintf("%d", email.Port))
 	app.AddEnv("SPRING_MAIL_PROTOCOL", protocol)
 	// Relaxed-binding equivalents of:
-	//   spring.mail.properties.mail.smtp.auth: true
+	//   spring.mail.properties.mail.smtp.auth: <username set>
 	//   spring.mail.properties.mail.smtp.starttls.enable: true
-	// AUTH=true assumes credentials are configured; the setup wizard enforces
-	// this for external SMTP. An open-relay scenario (no credentials) would
-	// need this turned off — not supported here.
-	app.AddEnv("SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH", "true")
+	// AUTH follows the username: the setup wizard lets the user leave it
+	// empty for an unauthenticated relay (see setup.email.username_hint), and
+	// Jakarta Mail with mail.smtp.auth=true and no credentials refuses to
+	// connect at all ("failed to connect, no password specified?") before
+	// ever talking to the server. So AUTH=true is only correct when a
+	// username is configured; with an empty username it must be false.
+	app.AddEnv("SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH", strconv.FormatBool(email.Username != ""))
 	// STARTTLS is only meaningful on an encrypted connection. Forcing it on a
 	// plain-text session would break delivery on ports/providers that don't
 	// negotiate TLS. With TLS=true we enable it unconditionally — harmless on
