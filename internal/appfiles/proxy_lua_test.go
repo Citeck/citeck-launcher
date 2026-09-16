@@ -121,13 +121,26 @@ func TestProxyLuaMatchesTheRoutedPathAndNothingElse(t *testing.T) {
 // granted `service_healthcheck`, which ecos-gateway auto-provisions as a real
 // user with GROUP_EVERYONE + ROLE_USER.
 func TestProxyLuaHandsOutNoInfrastructureIdentity(t *testing.T) {
-	code := proxyLuaCode(t)
+	// Checked against the RAW file, comments included: after a security
+	// advisory the way an operator verifies a host got the fix is to grep the
+	// deployed /etc/nginx/includes/lua_oidc_full_access.lua for one of these
+	// names, and a comment that merely explains their removal answers that
+	// grep with a false positive. Name them in AGENTS.md and tests/proxy-lua/
+	// instead.
+	files, err := GetFiles()
+	require.NoError(t, err)
+	raw, ok := files[proxyLuaKey]
+	require.True(t, ok, "%s must be embedded", proxyLuaKey)
+	// Lua patterns escape a literal "-" as "%-", so the same marker has two
+	// spellings: the one an operator greps for and the one a re-added rule
+	// would be written in. Fold them together and catch both.
+	src := strings.ReplaceAll(string(raw), "%-", "-")
 
-	if strings.Contains(code, "service_healthcheck") {
-		t.Error("the handler must not mint an identity for /healthcheck/")
+	if strings.Contains(src, "service_healthcheck") {
+		t.Error("the handler must not name, or mint, the healthcheck identity")
 	}
-	for _, marker := range []string{"/healthcheck/", "/rabbitmq", "/node%-exporter", "/postgres%-exporter", "/cadvisor/"} {
-		if strings.Contains(code, `"`+marker+`"`) {
+	for _, marker := range []string{"/healthcheck/", "/rabbitmq", "/node-exporter", "/postgres-exporter", "/cadvisor/"} {
+		if strings.Contains(src, marker) {
 			t.Errorf("%s is authenticated by its own location, not by this handler", marker)
 		}
 	}

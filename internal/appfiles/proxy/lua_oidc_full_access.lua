@@ -177,12 +177,13 @@ local opts = {
     userName = "guest";
   end
 
-  -- /healthcheck/, /rabbitmq, /node-exporter, /postgres-exporter and /cadvisor/
-  -- used to be handed an identity here. They are not: those locations carry
-  -- their own authentication and do not run this handler, so the only thing the
-  -- rules did was let the markers be smuggled into a protected request. In
-  -- particular "/healthcheck/" granted the "service_healthcheck" identity, which
-  -- ecos-gateway auto-provisions as a real user.
+  -- The healthcheck and infrastructure-metrics exceptions that used to sit here
+  -- are gone. Those locations carry their own authentication and never run this
+  -- handler, so the rules granted nothing and only widened the set of markers
+  -- that could be smuggled into a protected request. The removed identities are
+  -- named in the launcher repo (AGENTS.md, tests/proxy-lua/) and deliberately
+  -- not repeated here, so that grepping a deployed copy for one of them is a
+  -- straight answer to "did this host get the fix".
 
   if string.find(reqPath, "^/alfresco/monitoring") then
     userName = "guest";
