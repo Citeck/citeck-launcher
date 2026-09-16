@@ -21,9 +21,11 @@ const (
 // generateSttSidecar. Behavior:
 //   - No rag in the generated set → no qdrant (this is what keeps qdrant off
 //     community stands: rag itself only exists when the bundle carries EcosRagApp).
-//   - rag detached → no qdrant at all, so a switched-off RAG costs no memory.
-//     Starting rag regenerates the namespace (rag is marked as a gating app) and
-//     qdrant appears with it.
+//   - rag detached → qdrant is still generated, but marked auto-detached: the
+//     spec stays in the namespace (a rag run from an IDE needs a qdrant on
+//     localhost) while the runtime never starts it by itself, so a switched-off
+//     RAG still costs no memory. An explicit `citeck start qdrant` runs it and
+//     it keeps running. Re-attaching rag clears the mark and both come up.
 //   - Image comes from the bundle only; the version is pinned by the release.
 func generateQdrant(ctx *NsGenContext) {
 	ragApp, ok := ctx.Applications[appdef.AppRag]

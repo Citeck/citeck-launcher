@@ -955,7 +955,9 @@ const (
 // for the AI app. Kotlin parity, see SttSidecarProps + NamespaceGenerator
 // .generateSttSidecar in v1.4+. Behavior:
 //   - No AI app in the generated set → no STT (it only serves AI).
-//   - AI detached → no STT at all; the AI runtime stays put.
+//   - AI detached → the STT spec is still generated, but marked auto-detached:
+//     the runtime never starts it by itself, while an explicit start works (the
+//     sidecar is what an AI run from an IDE has to reach).
 //   - STT detached → the STT spec is still generated (so the user can re-attach
 //     it from the UI without losing the AppRuntime), but the AI app does NOT
 //     get the env var or dependency so AI keeps starting without the sidecar.
