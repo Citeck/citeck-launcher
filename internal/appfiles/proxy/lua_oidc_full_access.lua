@@ -20,6 +20,42 @@ local opts = {
   local tokenIss;
   local tokenFromSession = true;
 
+  -- Build the path nginx actually routed, for the access decisions below:
+  -- request_uri with the query string removed, percent-decoded the way nginx
+  -- decodes a path, and with ".", ".." and duplicate slashes resolved. Matching
+  -- the service-exception markers against the raw ngx.var.request_uri instead
+  -- lets an unauthenticated client smuggle a marker through the query string
+  -- (?probe=/alfresco/monitoring), through a middle path segment, or behind
+  -- traversal (/alfresco/monitoring/..%2f..%2fgateway/...) and be handed the
+  -- "guest" identity on an arbitrary gateway endpoint. Every marker match below
+  -- is anchored with "^" against this normalized path.
+  local function getRequestPath()
+
+    local path = (ngx.var.request_uri or ""):gsub("%?.*$", "")
+
+    -- decode %XX the way nginx decodes a path ("+" is not a space there); this
+    -- also turns an encoded slash (%2f) into a real separator, so traversal is
+    -- resolved rather than hidden
+    path = path:gsub("%%(%x%x)", function(hex)
+      return string.char(tonumber(hex, 16))
+    end)
+
+    local segments = {}
+    for segment in path:gmatch("[^/]+") do
+      if segment == ".." then
+        table.remove(segments)
+      elseif segment ~= "." then
+        segments[#segments + 1] = segment
+      end
+    end
+
+    local normalized = "/" .. table.concat(segments, "/")
+    if #segments > 0 and path:sub(-1) == "/" then
+      normalized = normalized .. "/"
+    end
+    return normalized
+  end
+
   local function isStaticResUri(uri)
 
     if (not uri or uri == "") then return false end
@@ -133,38 +169,26 @@ local opts = {
 
   local userName;
 
-  if isStaticResUri(ngx.var.request_uri:lower()) then
+  -- Normalized request path used for all the shortcut checks below (see
+  -- getRequestPath). Never match ngx.var.request_uri directly here.
+  local reqPath = getRequestPath()
+
+  if isStaticResUri(reqPath:lower()) then
     userName = "guest";
   end
 
-  -- TODO: remove this checks
-  -- this checks doesn't required now because this locations doesn't protected by oidc
-  if string.find(ngx.var.request_uri, "/healthcheck/") then
-    userName = "service_healthcheck";
-  end
+  -- /healthcheck/, /rabbitmq, /node-exporter, /postgres-exporter and /cadvisor/
+  -- used to be handed an identity here. They are not: those locations carry
+  -- their own authentication and do not run this handler, so the only thing the
+  -- rules did was let the markers be smuggled into a protected request. In
+  -- particular "/healthcheck/" granted the "service_healthcheck" identity, which
+  -- ecos-gateway auto-provisions as a real user.
 
-  if string.find(ngx.var.request_uri, "/rabbitmq") then
+  if string.find(reqPath, "^/alfresco/monitoring") then
     userName = "guest";
   end
 
-  if string.find(ngx.var.request_uri, "/node%-exporter") then
-    userName = "guest";
-  end
-
-  if string.find(ngx.var.request_uri, "/postgres%-exporter") then
-    userName = "guest";
-  end
-
-  if string.find(ngx.var.request_uri, "/cadvisor/") then
-    userName = "guest";
-  end
-  -- END TODO: remove this checks
-
-  if string.find(ngx.var.request_uri, "/alfresco/monitoring") then
-    userName = "guest";
-  end
-
-  if string.find(ngx.var.request_uri, "/logout") then
+  if string.find(reqPath, "^/logout") then
     ngx.header["Set-Cookie"] = "JSESSIONID=; Path=/share/; HttpOnly";
   end
 
