@@ -27,22 +27,11 @@ func (c *Client) PurgeNamespace(ctx context.Context, nsID, wsID string) {
 		return make(client.Filters).Add("label", LabelNamespace+"="+nsID)
 	}
 	wsMatch := func(labels map[string]string) bool {
-		return strings.EqualFold(labels[LabelWorkspace], wsID)
+		return labelsMatchPair(labels, nsID, wsID)
 	}
 
 	// Containers (running or stopped) — force-remove with their anonymous volumes.
-	if cs, err := c.cli.ContainerList(ctx, client.ContainerListOptions{All: true, Filters: nsFilter()}); err != nil {
-		slog.Warn("PurgeNamespace: list containers failed", "ns", nsID, "err", err)
-	} else {
-		for _, ct := range cs.Items {
-			if !wsMatch(ct.Labels) {
-				continue
-			}
-			if _, rmErr := c.cli.ContainerRemove(ctx, ct.ID, client.ContainerRemoveOptions{Force: true, RemoveVolumes: true}); rmErr != nil {
-				slog.Warn("PurgeNamespace: remove container failed", "ns", nsID, "container", ct.ID, "err", rmErr)
-			}
-		}
-	}
+	c.removeNamespaceContainers(ctx, nsID, wsID, "PurgeNamespace", true, nil)
 
 	// Named volumes — the actual namespace data.
 	if vl, err := c.cli.VolumeList(ctx, client.VolumeListOptions{Filters: nsFilter()}); err != nil {
@@ -116,10 +105,10 @@ type OrphanTarget struct {
 }
 
 // FindOrphans is the sweep's DECIDING phase: it enumerates every launcher
-// container, named volume and network on the host and reduces them to the
-// distinct (namespace, workspace) pairs that are NOT in keep — leftovers from
-// namespaces that were deleted or whose storage was wiped (the migration-test
-// churn) while their containers kept running (detach leaves them up). keep is
+// CONTAINER on the host and reduces them to the distinct (namespace, workspace)
+// pairs that are NOT in keep — leftovers from namespaces that were deleted or
+// whose storage was wiped (the migration-test churn) while their containers
+// kept running (detach leaves them up). keep is
 // built from storage via OrphanKey for every (workspace, namespace) that still
 // exists, so the active namespace and every stored namespace are protected.
 //
@@ -130,28 +119,18 @@ type OrphanTarget struct {
 // budgets, and sharing one made an unreachable Docker cost the removal budget
 // before the daemon could get on with the namespace.
 func (c *Client) FindOrphans(ctx context.Context, keep map[string]bool) []OrphanTarget {
-	launcherFilter := make(client.Filters).Add("label", LabelLauncher+"=true")
 	var labelSets []map[string]string
 
+	// CONTAINERS ONLY, because containers are all the removing phase acts on.
+	// It used to enumerate named volumes and networks as well — which was right
+	// while the sweep purged them — and a pair whose containers are already gone
+	// now yields a target that removes nothing and logs nothing. Two host-wide
+	// Docker calls on every desktop start, for a decision that cannot change.
 	if cs, err := c.ListAllLauncherContainers(ctx); err != nil {
 		slog.Warn("SweepOrphans: list containers failed", "err", err)
 	} else {
 		for _, ct := range cs {
 			labelSets = append(labelSets, ct.Labels)
-		}
-	}
-	if vl, err := c.cli.VolumeList(ctx, client.VolumeListOptions{Filters: launcherFilter}); err != nil {
-		slog.Warn("SweepOrphans: list volumes failed", "err", err)
-	} else {
-		for _, v := range vl.Items {
-			labelSets = append(labelSets, v.Labels)
-		}
-	}
-	if nets, err := c.cli.NetworkList(ctx, client.NetworkListOptions{Filters: launcherFilter}); err != nil {
-		slog.Warn("SweepOrphans: list networks failed", "err", err)
-	} else {
-		for _, n := range nets.Items {
-			labelSets = append(labelSets, n.Labels)
 		}
 	}
 
@@ -177,32 +156,69 @@ func (c *Client) FindOrphans(ctx context.Context, keep map[string]bool) []Orphan
 func (c *Client) RemoveOrphanContainers(ctx context.Context, targets []OrphanTarget) []string {
 	removed := make([]string, 0, len(targets))
 	for _, t := range targets {
-		nsFilter := make(client.Filters).Add("label", LabelNamespace+"="+t.NS)
-		cs, err := c.cli.ContainerList(ctx, client.ContainerListOptions{All: true, Filters: nsFilter})
-		if err != nil {
-			slog.Warn("SweepOrphans: list containers failed", "ns", t.NS, "err", err)
-			continue
-		}
-		acted := false
-		for _, ct := range cs.Items {
-			if !strings.EqualFold(ct.Labels[LabelWorkspace], t.WS) {
-				continue
-			}
-			if !acted {
-				slog.Info("SweepOrphans: removing containers of an orphaned namespace "+
-					"(its volumes and network are kept)", "ns", t.NS, "ws", t.WS)
-				acted = true
-			}
-			if _, rmErr := c.cli.ContainerRemove(ctx, ct.ID,
-				client.ContainerRemoveOptions{Force: true, RemoveVolumes: false}); rmErr != nil {
-				slog.Warn("SweepOrphans: remove container failed", "ns", t.NS, "container", ct.ID, "err", rmErr)
-			}
-		}
+		acted := c.removeNamespaceContainers(ctx, t.NS, t.WS, "SweepOrphans", false, func() {
+			slog.Info("SweepOrphans: removing containers of an orphaned namespace "+
+				"(its volumes and network are kept)", "ns", t.NS, "ws", t.WS)
+		})
 		if acted {
 			removed = append(removed, t.NS)
 		}
 	}
 	return removed
+}
+
+// removeNamespaceContainers force-removes every container labeled with nsID
+// whose WORKSPACE label matches wsID, and reports whether it removed any.
+//
+// It is the ONE spelling of "which containers belong to this pair". The match
+// on the workspace is case-insensitive because that is what orphanKey
+// lower-cases to compare, and the sweep and the purge disagreeing about it
+// would mean one of them acting on a container the other considers somebody
+// else's — so the rule may not exist twice.
+//
+// removeVolumes is the callers' only real difference: a purge takes the
+// container's anonymous volumes with it (its data is being deleted on purpose),
+// the startup sweep does not (it is only freeing ports). onFirst, when set,
+// runs once before the first removal, which is how a caller keeps its own
+// "here is what I am about to do" line without this function guessing at it.
+func (c *Client) removeNamespaceContainers(
+	ctx context.Context, nsID, wsID, logPrefix string, removeVolumes bool, onFirst func(),
+) bool {
+	nsFilter := make(client.Filters).Add("label", LabelNamespace+"="+nsID)
+	cs, err := c.cli.ContainerList(ctx, client.ContainerListOptions{All: true, Filters: nsFilter})
+	if err != nil {
+		slog.Warn(logPrefix+": list containers failed", "ns", nsID, "err", err)
+		return false
+	}
+	acted := false
+	for _, ct := range cs.Items {
+		if !labelsMatchPair(ct.Labels, nsID, wsID) {
+			continue
+		}
+		if !acted {
+			if onFirst != nil {
+				onFirst()
+			}
+			acted = true
+		}
+		if _, rmErr := c.cli.ContainerRemove(ctx, ct.ID,
+			client.ContainerRemoveOptions{Force: true, RemoveVolumes: removeVolumes}); rmErr != nil {
+			slog.Warn(logPrefix+": remove container failed", "ns", nsID, "container", ct.ID, "err", rmErr)
+		}
+	}
+	return acted
+}
+
+// labelsMatchPair is the ONE membership rule: do these resource labels name
+// this (namespace, workspace) pair? The namespace is matched exactly — labels
+// carry the raw id — and the WORKSPACE is folded, because orphanKey lower-cases
+// it to build the keep set, so a pair that matches in the keep set and not here
+// (or the reverse) is the sweep and the purge disagreeing about whose container
+// they are looking at. The Docker-side label filter already narrows by
+// namespace; re-asserting it here costs nothing and keeps the whole rule
+// readable — and testable — in one place.
+func labelsMatchPair(labels map[string]string, nsID, wsID string) bool {
+	return labels[LabelNamespace] == nsID && strings.EqualFold(labels[LabelWorkspace], wsID)
 }
 
 // OrphanKey builds the keep-set key for a (namespace, workspace) that still

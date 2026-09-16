@@ -201,6 +201,79 @@ func HeldDeps(apps []api.AppDto) []string {
 	return out
 }
 
+// HeldRootsForApp answers the same question as HeldDeps for ONE app: which
+// detached apps the operator has to start to release THIS one. Sorted, distinct.
+//
+// It exists because the two questions only look identical while a namespace has
+// a single detached root. With two independent ones — `citeck stop postgres`
+// and `citeck stop onlyoffice` — the namespace-wide answer sends somebody
+// waiting on emodel off to start onlyoffice, which has nothing to do with
+// emodel's hold.
+//
+// It is a WALK and not a read of app.WaitingFor, for the reason that put the
+// namespace-wide call there in the first place: on a transitive hold this app's
+// own WaitingFor names an INTERMEDIATE held app, which the operator never
+// stopped and cannot start (RestartApp is a no-op on DEPS_WAITING). So the walk
+// follows unmet dependencies through held apps and keeps only what it comes out
+// at. The visiting set is what keeps a hand-edited state file describing a cycle
+// from hanging the CLI, the same guard the runtime's own walk carries.
+//
+// An app that is not held (or not in the list) answers nil: there is no hold to
+// name roots for.
+func HeldRootsForApp(apps []api.AppDto, appName string) []string {
+	byName := make(map[string]api.AppDto, len(apps))
+	for _, a := range apps {
+		byName[a.Name] = a
+	}
+	start, ok := byName[appName]
+	if !ok || !start.Held {
+		return nil
+	}
+	set := map[string]bool{}
+	visiting := map[string]bool{appName: true}
+	queue := []api.AppDto{start}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		// Which of this app's unmet dependencies are ROOTS is heldRootsOf's
+		// rule and is asked of it, not re-spelled here — the same reason
+		// FormatAppTable stopped re-spelling HeldDeps.
+		for _, root := range heldRootsOf(cur) {
+			set[root] = true
+		}
+		// Everything else it waits on is another app parked in DEPS_WAITING:
+		// walk through it, because the operator never stopped it and cannot
+		// start it.
+		for _, dep := range cur.WaitingFor {
+			if dep.Status != "DEPS_WAITING" {
+				continue // already counted as a root by heldRootsOf above
+			}
+			next, known := byName[dep.App]
+			if !known {
+				// An id the DTO does not carry is nothing to walk THROUGH, and
+				// heldRootsOf did not count it either — its status says
+				// DEPS_WAITING. Name it rather than drop it: the operator gets
+				// an id they can at least look up, instead of a hold with no
+				// stated cause. The web walk answers this shape the same way
+				// (web/src/lib/waitingForDeps.ts), and the two must not differ.
+				set[dep.App] = true
+				continue
+			}
+			if visiting[next.Name] {
+				continue
+			}
+			visiting[next.Name] = true
+			queue = append(queue, next)
+		}
+	}
+	out := make([]string, 0, len(set))
+	for name := range set {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // heldRootsOf picks, out of one held app's unmet dependencies, the ones the
 // operator can actually start.
 //
@@ -252,7 +325,6 @@ func FormatAppTable(apps []api.AppDto) AppTableResult {
 	var running, failed, stopped int
 
 	var held int
-	heldDepSet := map[string]bool{}
 	for _, app := range apps {
 		switch app.Status {
 		case "RUNNING":
@@ -264,17 +336,14 @@ func FormatAppTable(apps []api.AppDto) AppTableResult {
 		case "DEPS_WAITING":
 			if app.Held {
 				held++
-				for _, dep := range heldRootsOf(app) {
-					heldDepSet[dep] = true
-				}
 			}
 		}
 	}
-	heldDeps := make([]string, 0, len(heldDepSet))
-	for name := range heldDepSet {
-		heldDeps = append(heldDeps, name)
-	}
-	sort.Strings(heldDeps)
+	// The set of detached roots comes from HeldDeps, never from a second copy
+	// of its collect/dedupe/sort rule here: the single-app wait words the same
+	// sentence from it, and two spellings of "which apps must the operator
+	// start" is two chances for the table and the wait to disagree.
+	heldDeps := HeldDeps(apps)
 
 	// Group apps by kind, sort alphabetically within each group.
 	groups := make(map[string][]api.AppDto, len(kindOrder))

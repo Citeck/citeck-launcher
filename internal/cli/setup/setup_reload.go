@@ -5,7 +5,6 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -111,17 +110,11 @@ func waitForServices(c *client.DaemonClient) {
 			// not hide one behind the other.
 			switch {
 			case failed > 0:
-				line := fmt.Sprintf("%d/%d running, %d failed", running, total, failed)
-				if held > 0 {
-					line += fmt.Sprintf(", %d held by %s", held, strings.Join(r.HeldDeps, ", "))
-				}
-				fmt.Printf("\n%s\n", output.Colorize(output.Yellow, line)) //nolint:forbidigo // CLI result
+				fmt.Printf("\n%s\n", output.Colorize(output.Yellow, //nolint:forbidigo // CLI result
+					output.FailedSummary("cli.reloadFailedSummary", running, total, failed, held, r.HeldDeps)))
 			case held > 0:
 				fmt.Printf("\n%s\n", output.Colorize(output.Yellow, //nolint:forbidigo // CLI result
-					i18n.T("cli.appsHeldByStoppedDeps",
-						"held", strconv.Itoa(held),
-						"total", strconv.Itoa(total),
-						"deps", strings.Join(r.HeldDeps, ", "))))
+					output.HeldSummary(held, total, r.HeldDeps)))
 			default:
 				fmt.Printf("\n%s\n", output.Colorize(output.Green, i18n.T("setup.reload_complete"))) //nolint:forbidigo // success
 			}

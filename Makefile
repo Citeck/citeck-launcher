@@ -163,8 +163,13 @@ test-integration:
 # the subuid range; with a ROOTFUL daemon, run it as root:
 #   unshare --user --map-auto --map-root-user make test-integration-deps
 #   sudo make test-integration-deps
+# -run stays BROAD and the sweep test is excluded with -skip: narrowing this to
+# the prefixes of the day silently orphans every integration test added later —
+# it happened once already (the RabbitMQ/ZooKeeper copy-upgrade set and the
+# temp-container tests ran under no target at all), and nothing in `make check`
+# notices, because they still compile under the integration-tag vet.
 test-integration-deps:
-	go test -tags integration -run 'TestIntegration_Postgres|TestIntegration_Rollback' -timeout 30m -v ./internal/daemon/
+	go test -tags integration -run 'TestIntegration_' -skip 'TestIntegration_OrphanSweep' -timeout 30m -v ./internal/daemon/
 
 # Real-Docker proof that the startup orphan-sweep removes a leftover namespace's
 # containers and leaves its named volumes (and the data in them) alone. Cheap:

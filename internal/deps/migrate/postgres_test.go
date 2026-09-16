@@ -660,6 +660,14 @@ func TestDumpProgressFollowsTheGrowingFile(t *testing.T) {
 	stop := watchFileGrowth(context.Background(), env, path, 1<<30, time.Millisecond, report)
 	assert.Equal(t, "50|dumped 512.0 MiB", <-reports)
 	stop()
+	// The 1 ms ticker keeps filling the buffer between that receive and stop(),
+	// so without draining here the SECOND phase's receive below can be answered
+	// by a leftover "50|..." from this one — a flake, not a race (FakeEnv is
+	// mutex-guarded and stop() joins the reporter), which is why it shows up
+	// once in a full -race run and never in a hundred reruns of this package.
+	for len(reports) > 0 {
+		<-reports
+	}
 
 	// A dump bigger than the data it came from must not report 137%.
 	env.Files[path] = 4 << 30

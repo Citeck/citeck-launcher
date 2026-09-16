@@ -98,7 +98,8 @@ export function AppTable({ apps, highlightedApp }: AppTableProps) {
         </colgroup>
         <tbody>
           {groups.map((g) => (
-            <GroupRows key={g.kind} labelKey={g.labelKey} apps={g.apps} onAction={runAction} highlightedApp={highlightedApp} />
+            <GroupRows key={g.kind} labelKey={g.labelKey} apps={g.apps} allApps={apps}
+              onAction={runAction} highlightedApp={highlightedApp} />
           ))}
         </tbody>
       </table>
@@ -106,7 +107,12 @@ export function AppTable({ apps, highlightedApp }: AppTableProps) {
   )
 }
 
-function GroupRows({ labelKey, apps, onAction, highlightedApp }: { labelKey: string; apps: AppDto[]; onAction: (a: NonNullable<AppAction>) => void; highlightedApp?: string | null }) {
+// allApps is the WHOLE namespace list and is NOT the same thing as apps, which
+// is this Kind group's rows. Only the rows come from the group; anything that
+// has to follow a relationship BETWEEN apps — the held-dependency walk below —
+// needs the full list, because a hold routinely crosses groups (proxy is core,
+// alfresco is additional, alfresco-postgres is third-party).
+function GroupRows({ labelKey, apps, allApps, onAction, highlightedApp }: { labelKey: string; apps: AppDto[]; allApps: AppDto[]; onAction: (a: NonNullable<AppAction>) => void; highlightedApp?: string | null }) {
   const { openDrawer } = usePanelStore()
   // Where the press started — a row click only counts when mouseup lands near
   // mousedown, so a press-here / release-there drag doesn't open the drawer.
@@ -197,7 +203,7 @@ function GroupRows({ labelKey, apps, onAction, highlightedApp }: { labelKey: str
         // The DEPS_WAITING sentence is worded here, from the {app, status}
         // pairs the daemon sends — it outranks statusText, which for a held
         // app carries at most a stale line from the phase before the hold.
-        const statusDetail = waitingForDepsText(app, t, tDynamic) ?? app.statusText
+        const statusDetail = waitingForDepsText(app, t, tDynamic, allApps) ?? app.statusText
         return (
           // Whole row opens the inspect drawer; the actions cell and the
           // tag-copy cell stop propagation so their own clicks still win.

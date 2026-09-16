@@ -175,7 +175,7 @@ export function Dashboard() {
   // A namespace STALLED because the operator detached a dependency reads the
   // same as one stalled by a crash, but the remedy is the opposite — see
   // openInBrowserTooltip.
-  const anyAppHeld = namespace.apps.some((a) => a.held)
+  const anyAppHeld = apps.some((a) => a.held)
   const links = namespace.links ? [...namespace.links].sort((a, b) => a.order - b.order) : []
   const proxyUrl = links.find((l) => l.name === 'Citeck UI')?.url
   const serviceLinks = links.filter((l) => l.name !== 'Citeck UI')

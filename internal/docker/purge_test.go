@@ -88,3 +88,29 @@ func TestPairsWithoutAWorkspaceLabelAreNeverTargeted(t *testing.T) {
 		t.Fatalf("orphan targets = %+v, want only the desktop pair {gone default}", got)
 	}
 }
+
+// The workspace half of the membership rule is FOLDED and the namespace half is
+// not, and that asymmetry is load-bearing: orphanKey lower-cases the workspace
+// to build the keep set, so a pair kept there must be recognized here, or the
+// sweep removes containers the keep set was protecting. Mutating either half of
+// this function used to change nothing — both copies of the rule were reached
+// only through the Docker client, which no test in this package has.
+func TestLabelsMatchPairFoldsTheWorkspaceButNotTheNamespace(t *testing.T) {
+	labels := map[string]string{LabelNamespace: "txzupma", LabelWorkspace: "Default"}
+
+	if !labelsMatchPair(labels, "txzupma", "default") {
+		t.Fatalf("a workspace label written as %q must match a stored %q", "Default", "default")
+	}
+	if !labelsMatchPair(labels, "txzupma", "DEFAULT") {
+		t.Fatalf("folding must work from either side")
+	}
+	if labelsMatchPair(labels, "TXZUPMA", "default") {
+		t.Fatalf("the namespace id is matched exactly — labels carry the raw id")
+	}
+	if labelsMatchPair(labels, "txzupma", "other") {
+		t.Fatalf("a different workspace is a different pair")
+	}
+	if labelsMatchPair(map[string]string{LabelNamespace: "txzupma"}, "txzupma", "default") {
+		t.Fatalf("a missing workspace label is not a match for a named workspace")
+	}
+}

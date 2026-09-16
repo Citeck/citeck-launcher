@@ -350,3 +350,35 @@ func TestTheDtoCarriesTheHeldVerdict(t *testing.T) {
 	assert.True(t, appDtoByName(t, dto, "proxy").Held, "решение должно быть транзитивным и на проводе")
 	assert.False(t, appDtoByName(t, dto, "zookeeper").Held, "сам отцепленный апп не «удерживается»")
 }
+
+// appsDepsSatisfied (the gate that parks an app in DEPS_WAITING) and unmetDeps
+// (what the DTO tells the operator it is waiting on) were two loops with the
+// same condition spelled twice. They must agree in BOTH directions: a stricter
+// gate parks an app while the UI says it waits for nothing, a stricter report
+// names a dependency for an app that already started. This pins the
+// equivalence over every shape the rule distinguishes — absent from the
+// generation, RUNNING, and each non-running status.
+func TestTheDepsGateAndTheDepsReportAnswerTheSameQuestion(t *testing.T) {
+	statuses := []AppRuntimeStatus{
+		AppStatusRunning, AppStatusStopped, AppStatusStarting,
+		AppStatusDepsWaiting, AppStatusStartFailed, AppStatusPulling,
+	}
+	for _, st := range statuses {
+		r := &Runtime{apps: map[string]*AppRuntime{
+			"present": {Name: "present", Status: st},
+		}}
+		app := &AppRuntime{Name: "dependent", Def: appdef.ApplicationDef{
+			DependsOn: []string{"present", "absent-from-this-generation"},
+		}}
+
+		satisfied := r.appsDepsSatisfied(app)
+		reported := r.unmetDeps(app)
+
+		require.Equal(t, satisfied, len(reported) == 0,
+			"статус %s: гейт и отчёт разошлись — %v против %v", st, satisfied, reported)
+		for _, d := range reported {
+			require.NotEqual(t, "absent-from-this-generation", d.App,
+				"зависимости вне поколения не ждут — она не часть этого неймспейса")
+		}
+	}
+}

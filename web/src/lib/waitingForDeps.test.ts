@@ -23,18 +23,18 @@ const ruT = translatorFor(ru)
 describe('waitingForDepsText', () => {
   it('names the dependency and TRANSLATES its status', () => {
     const app = { waitingFor: [{ app: 'qdrant', status: 'STOPPED' }] }
-    expect(waitingForDepsText(app, enT.t, enT.tDynamic)).toBe('Waiting for: qdrant (Stopped)')
+    expect(waitingForDepsText(app, enT.t, enT.tDynamic, [])).toBe('Waiting for: qdrant (Stopped)')
   })
 
   it('words the whole sentence in the READER’s locale, not the daemon’s', () => {
     const app = { waitingFor: [{ app: 'qdrant', status: 'STOPPED' }] }
     // The daemon sent the same payload in both cases: the raw status constant.
-    expect(waitingForDepsText(app, ruT.t, ruT.tDynamic)).toBe('Ожидает: qdrant (Остановлен)')
+    expect(waitingForDepsText(app, ruT.t, ruT.tDynamic, [])).toBe('Ожидает: qdrant (Остановлен)')
   })
 
   it('never leaks the raw status constant for a status the UI knows', () => {
     const app = { waitingFor: [{ app: 'qdrant', status: 'STARTING' }] }
-    const text = waitingForDepsText(app, ruT.t, ruT.tDynamic)
+    const text = waitingForDepsText(app, ruT.t, ruT.tDynamic, [])
     expect(text).toBe('Ожидает: qdrant (Запуск)')
     expect(text).not.toContain('STARTING')
   })
@@ -46,19 +46,19 @@ describe('waitingForDepsText', () => {
         { app: 'postgres', status: 'STARTING' },
       ],
     }
-    expect(waitingForDepsText(app, enT.t, enT.tDynamic))
+    expect(waitingForDepsText(app, enT.t, enT.tDynamic, []))
       .toBe('Waiting for: qdrant (Stopped), postgres (Starting)')
   })
 
   it('falls back to the raw key for a status this UI does not know, rather than dropping it', () => {
     const app = { waitingFor: [{ app: 'qdrant', status: 'TELEPORTING' }] }
-    expect(waitingForDepsText(app, enT.t, enT.tDynamic))
+    expect(waitingForDepsText(app, enT.t, enT.tDynamic, []))
       .toBe('Waiting for: qdrant (status.TELEPORTING)')
   })
 
   it('says nothing when the daemon reports no hold', () => {
-    expect(waitingForDepsText({}, enT.t, enT.tDynamic)).toBeNull()
-    expect(waitingForDepsText({ waitingFor: [] }, enT.t, enT.tDynamic)).toBeNull()
+    expect(waitingForDepsText({}, enT.t, enT.tDynamic, [])).toBeNull()
+    expect(waitingForDepsText({ waitingFor: [] }, enT.t, enT.tDynamic, [])).toBeNull()
   })
 })
 
@@ -79,9 +79,21 @@ describe('waitingForDepsText on a held app', () => {
         { app: 'gateway', status: 'DEPS_WAITING' },
       ],
     }
-    expect(waitingForDepsText(gateway, enT.t, enT.tDynamic)).toBe('Waiting for: zookeeper (Stopped)')
-    // Nothing but intermediate links: say what we have rather than nothing.
-    expect(waitingForDepsText(proxy, enT.t, enT.tDynamic)).toContain('gateway')
+    const apps = [
+      { name: 'zookeeper', status: 'STOPPED' },
+      { name: 'gateway', ...gateway },
+      { name: 'proxy', ...proxy },
+    ]
+    expect(waitingForDepsText({ name: 'gateway', ...gateway }, enT.t, enT.tDynamic, apps))
+      .toBe('Waiting for: zookeeper (Stopped)')
+    // Through the intermediate hold: gateway is an app the operator never
+    // stopped and cannot start, so naming it sends them after the wrong thing.
+    expect(waitingForDepsText({ name: 'proxy', ...proxy }, enT.t, enT.tDynamic, apps))
+      .toBe('Waiting for: zookeeper (Stopped)')
+    // With no app list there is nothing to walk: say what we have rather than
+    // nothing, which is what the caller-less case degrades to.
+    expect(waitingForDepsText({ name: 'proxy', ...proxy }, enT.t, enT.tDynamic, []))
+      .toContain('gateway')
   })
 
   // Without the daemon's verdict the list is untouched: an app waiting on a
@@ -94,6 +106,32 @@ describe('waitingForDepsText on a held app', () => {
         { app: 'rabbitmq', status: 'DEPS_WAITING' },
       ],
     }
-    expect(waitingForDepsText(app, enT.t, enT.tDynamic)).toContain('rabbitmq')
+    expect(waitingForDepsText(app, enT.t, enT.tDynamic, [])).toContain('rabbitmq')
+  })
+
+  // A cycle is refused at generation, but a hand-edited state file must not hang
+  // the UI thread — the same guard the runtime's and the CLI's walks carry.
+  it('terminates on a cycle and falls back to the app’s own list', () => {
+    const a = { name: 'a', held: true, waitingFor: [{ app: 'b', status: 'DEPS_WAITING' }] }
+    const b = { name: 'b', held: true, waitingFor: [{ app: 'a', status: 'DEPS_WAITING' }] }
+
+    expect(waitingForDepsText(a, enT.t, enT.tDynamic, [a, b])).toContain('b')
+  })
+
+  // Two independent detached roots: each held app names its own, not both.
+  it('names only the roots behind THIS app', () => {
+    const apps = [
+      { name: 'postgres', status: 'STOPPED' },
+      { name: 'onlyoffice', status: 'STOPPED' },
+      { name: 'emodel', status: 'DEPS_WAITING', held: true,
+        waitingFor: [{ app: 'postgres', status: 'STOPPED' }] },
+      { name: 'proxy', status: 'DEPS_WAITING', held: true,
+        waitingFor: [{ app: 'onlyoffice', status: 'STOPPED' }] },
+    ]
+
+    expect(waitingForDepsText(apps[2], enT.t, enT.tDynamic, apps))
+      .toBe('Waiting for: postgres (Stopped)')
+    expect(waitingForDepsText(apps[3], enT.t, enT.tDynamic, apps))
+      .toBe('Waiting for: onlyoffice (Stopped)')
   })
 })

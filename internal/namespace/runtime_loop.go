@@ -345,20 +345,34 @@ func buildInitContainerDef(appName string, initC appdef.InitContainerDef) appdef
 // r.mu (read or write).
 func (r *Runtime) appsDepsSatisfied(app *AppRuntime) bool {
 	for _, dep := range app.Def.DependsOn {
-		depApp, ok := r.apps[dep]
-		if !ok {
-			// Dep is not part of the current generation — treated as
-			// satisfied so dependents don't stall (mirrors the historical
-			// behavior in waitForDeps for cross-mode dep sets like
-			// keycloak-in-BASIC-auth-mode).
-			continue
+		if _, unmet := r.depUnmet(dep); unmet {
+			return false
 		}
-		if depApp.Status == AppStatusRunning {
-			continue
-		}
-		return false
 	}
 	return true
+}
+
+// depUnmet is the ONE rule behind both the gate above and the report below: a
+// dependency is unmet when it is part of the current generation AND not
+// RUNNING. It answers the status too, because the report needs it and deriving
+// it a second time is how the two would drift.
+//
+// The two MUST agree. If the gate were the stricter one, an app would park in
+// DEPS_WAITING while the DTO said it was waiting on nothing — a stand that
+// looks stuck for no stated reason. If the report were, an app would start with
+// the UI still naming what it waits for. They were written as two loops with
+// the same condition spelled twice; this is that condition, spelled once.
+//
+// A dependency ABSENT from the current generation is NOT unmet — it is not part
+// of this namespace at all (the historical waitForDeps behavior for cross-mode
+// dep sets like keycloak under BASIC auth), so dependents do not stall on it.
+// Caller must hold r.mu.
+func (r *Runtime) depUnmet(dep string) (AppRuntimeStatus, bool) {
+	depApp, ok := r.apps[dep]
+	if !ok || depApp.Status == AppStatusRunning {
+		return "", false
+	}
+	return depApp.Status, true
 }
 
 // unmetDeps lists the dependencies that are keeping app out of STARTING, each
@@ -372,17 +386,14 @@ func (r *Runtime) appsDepsSatisfied(app *AppRuntime) bool {
 // sentence is assembled by the reader, from the reader's own asset; see
 // api.WaitingDepDto.
 //
-// A dependency ABSENT from the current generation is not unmet — it is not part
-// of this namespace at all, which is the same rule appsDepsSatisfied applies.
-// Caller must hold r.mu.
+// It asks depUnmet, the same rule appsDepsSatisfied asks, so the two cannot
+// disagree about which dependencies are unmet. Caller must hold r.mu.
 func (r *Runtime) unmetDeps(app *AppRuntime) []api.WaitingDepDto {
 	var unmet []api.WaitingDepDto
 	for _, dep := range app.Def.DependsOn {
-		depApp, ok := r.apps[dep]
-		if !ok || depApp.Status == AppStatusRunning {
-			continue
+		if status, u := r.depUnmet(dep); u {
+			unmet = append(unmet, api.WaitingDepDto{App: dep, Status: string(status)})
 		}
-		unmet = append(unmet, api.WaitingDepDto{App: dep, Status: string(depApp.Status)})
 	}
 	return unmet
 }

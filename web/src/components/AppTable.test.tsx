@@ -105,6 +105,30 @@ describe('AppTable', () => {
     expect(screen.getByText('Waiting for: qdrant (Stopped)')).toBeInTheDocument()
   })
 
+  // A hold routinely crosses Kind groups — proxy is rendered from the core
+  // group, alfresco from the additional one — and the row is rendered by
+  // GroupRows, which only has ITS group's apps. Handing the walk that narrow
+  // list makes it fail to resolve the intermediate app and report IT as the
+  // root: exactly the "start an app you cannot start" sentence the walk exists
+  // to remove, and one that contradicts what the drawer says about the same app.
+  it('names the detached root even when the hold crosses Kind groups', () => {
+    const apps: AppDto[] = [
+      { name: 'alfresco-postgres', status: 'STOPPED', image: 'postgres:9.4', cpu: '', memory: '',
+        kind: 'THIRD_PARTY', edited: false, locked: false },
+      { name: 'alfresco', status: 'DEPS_WAITING', image: 'alfresco:7', cpu: '', memory: '',
+        kind: 'CITECK_ADDITIONAL', edited: false, locked: false, held: true,
+        waitingFor: [{ app: 'alfresco-postgres', status: 'STOPPED' }] },
+      { name: 'proxy', status: 'DEPS_WAITING', image: 'ecos-proxy:2.25', cpu: '', memory: '',
+        kind: 'CITECK_CORE', edited: false, locked: false, held: true,
+        waitingFor: [{ app: 'alfresco', status: 'DEPS_WAITING' }] },
+    ]
+
+    renderWithRouter(<AppTable apps={apps} />)
+
+    expect(screen.getAllByText('Waiting for: alfresco-postgres (Stopped)')).toHaveLength(2)
+    expect(screen.queryByText(/Waiting for: alfresco \(/)).not.toBeInTheDocument()
+  })
+
   it('falls back to statusText when nothing is holding the app', () => {
     const failed: AppDto = {
       name: 'rag', status: 'START_FAILED', image: 'rag:1', cpu: '', memory: '',

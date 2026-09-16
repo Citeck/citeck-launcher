@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -479,5 +480,80 @@ func TestFormatAppTable_HeldDepsCoverADetachedRootThatFailedToStop(t *testing.T)
 
 	if len(r.HeldDeps) != 1 || r.HeldDeps[0] != "zookeeper" {
 		t.Errorf("heldDeps = %v, want [zookeeper] — отцепленный корень остаётся корнем, как бы ни закончилась остановка", r.HeldDeps)
+	}
+}
+
+// The namespace-wide answer and the per-app one only look alike while there is
+// ONE detached root. With two independent ones, `citeck start emodel` used to
+// name onlyoffice as well — an app that has nothing to do with emodel's hold,
+// and starting it releases nothing.
+func TestHeldRootsForApp_NamesOnlyTheRootsBehindThatApp(t *testing.T) {
+	apps := []api.AppDto{
+		{Name: "postgres", Status: "STOPPED"},
+		{Name: "onlyoffice", Status: "STOPPED"},
+		{Name: "emodel", Status: "DEPS_WAITING", Held: true,
+			WaitingFor: []api.WaitingDepDto{{App: "postgres", Status: "STOPPED"}}},
+		{Name: "proxy", Status: "DEPS_WAITING", Held: true,
+			WaitingFor: []api.WaitingDepDto{{App: "onlyoffice", Status: "STOPPED"}}},
+	}
+
+	if got := HeldRootsForApp(apps, "emodel"); !slices.Equal(got, []string{"postgres"}) {
+		t.Errorf("roots(emodel) = %v, want [postgres] — onlyoffice держит другое приложение", got)
+	}
+	if got := HeldRootsForApp(apps, "proxy"); !slices.Equal(got, []string{"onlyoffice"}) {
+		t.Errorf("roots(proxy) = %v, want [onlyoffice]", got)
+	}
+	if got := HeldDeps(apps); !slices.Equal(got, []string{"onlyoffice", "postgres"}) {
+		t.Errorf("HeldDeps = %v, want [onlyoffice postgres] — у неймспейсного вопроса ответ другой", got)
+	}
+}
+
+// The reason the single-app wait reached for the namespace-wide answer in the
+// first place: on a transitive hold the app's OWN WaitingFor names an
+// intermediate held app, which the operator never stopped and cannot start
+// (RestartApp is a no-op on DEPS_WAITING). The walk must come out at the root.
+func TestHeldRootsForApp_WalksThroughIntermediateHeldApps(t *testing.T) {
+	apps := []api.AppDto{
+		{Name: "zookeeper", Status: "STOPPED"},
+		{Name: "gateway", Status: "DEPS_WAITING", Held: true,
+			WaitingFor: []api.WaitingDepDto{{App: "zookeeper", Status: "STOPPED"}}},
+		{Name: "proxy", Status: "DEPS_WAITING", Held: true,
+			WaitingFor: []api.WaitingDepDto{{App: "gateway", Status: "DEPS_WAITING"}}},
+	}
+
+	if got := HeldRootsForApp(apps, "proxy"); !slices.Equal(got, []string{"zookeeper"}) {
+		t.Errorf("roots(proxy) = %v, want [zookeeper] — gateway оператор не останавливал и запустить не может", got)
+	}
+}
+
+// A cycle is refused at generation, but a hand-edited state file must not hang
+// the CLI — the same guard the runtime's own walk carries.
+func TestHeldRootsForApp_TerminatesOnACycle(t *testing.T) {
+	apps := []api.AppDto{
+		{Name: "a", Status: "DEPS_WAITING", Held: true,
+			WaitingFor: []api.WaitingDepDto{{App: "b", Status: "DEPS_WAITING"}}},
+		{Name: "b", Status: "DEPS_WAITING", Held: true,
+			WaitingFor: []api.WaitingDepDto{{App: "a", Status: "DEPS_WAITING"}}},
+	}
+
+	if got := HeldRootsForApp(apps, "a"); len(got) != 0 {
+		t.Errorf("roots(a) = %v, want [] — у цикла нет корня, который можно назвать", got)
+	}
+}
+
+// An app nobody is holding has no roots to name, and neither has one the DTO
+// does not carry.
+func TestHeldRootsForApp_AnswersNothingForAnAppThatIsNotHeld(t *testing.T) {
+	apps := []api.AppDto{
+		{Name: "postgres", Status: "STOPPED"},
+		{Name: "emodel", Status: "DEPS_WAITING",
+			WaitingFor: []api.WaitingDepDto{{App: "postgres", Status: "STOPPED"}}},
+	}
+
+	if got := HeldRootsForApp(apps, "emodel"); got != nil {
+		t.Errorf("roots(emodel) = %v, want nil — один DEPS_WAITING удержанием не является", got)
+	}
+	if got := HeldRootsForApp(apps, "nosuchapp"); got != nil {
+		t.Errorf("roots(nosuchapp) = %v, want nil", got)
 	}
 }
