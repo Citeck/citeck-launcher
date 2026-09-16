@@ -69,6 +69,18 @@ type AppDto struct {
 	// dependency graph, and a second implementation of that in every reader
 	// would be a second chance to get it subtly wrong.
 	Held bool `json:"held,omitempty"`
+	// Detached marks an app the operator switched OFF (`citeck stop <app>` /
+	// the row's stop button): user-intent STOPPED, excluded from the namespace
+	// start and never advanced by the state machine until it is attached again.
+	//
+	// It is on the wire because "STOPPED" alone cannot be acted on: attaching a
+	// detached app is a persisted change of intent (plus a regeneration when it
+	// gates the composition, e.g. rag deciding whether qdrant exists), and that
+	// works with the namespace stopped — while starting an app that is merely
+	// stopped needs the runtime loop, which is not running then. The client
+	// cannot tell those two apart without this, and the daemon refuses the
+	// second with NAMESPACE_NOT_RUNNING.
+	Detached bool `json:"detached,omitempty"`
 }
 
 // WaitingDepDto is ONE dependency an app is held on: its name, and the app
@@ -811,6 +823,15 @@ const (
 	ErrCodeWorkspaceNotFound  = "WORKSPACE_NOT_FOUND"
 	ErrCodeNamespaceNotFound  = "NAMESPACE_NOT_FOUND"
 	ErrCodeWorkspaceInUse     = "WORKSPACE_IN_USE"
+	// ErrCodeNamespaceNotRunning is returned (HTTP 409) by the per-app start
+	// and restart routes while the namespace is not running. The runtime's app
+	// registry is built by doStart and the loop that drives a per-app
+	// transition exits with the namespace, so on a namespace that has not been
+	// started these routes could only answer APP_NOT_FOUND (the registry is
+	// empty) or accept the request and do nothing (the status moves and no
+	// loop acts on it). Both were indistinguishable from success; this says
+	// what to do instead — start the namespace.
+	ErrCodeNamespaceNotRunning = "NAMESPACE_NOT_RUNNING"
 	// ErrCodeDaemonStarting is returned (HTTP 503, with a Retry-After header)
 	// by every route except GET /health while the daemon is still booting. The
 	// socket is bound before the slow boot phase so a client — and above all

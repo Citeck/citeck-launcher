@@ -538,5 +538,6 @@
   "deps.msg.event.rolledBack": "{id} ramené à {image}",
   "deps.msg.event.rolledBackWithWarning": "{id} ramené à {image} ; {error}",
   "deps.msg.action.migrationStarted": "Migration de {id} vers {image} démarrée",
-  "deps.msg.action.rollbackStarted": "Retour arrière de {id} vers {image} démarré"
+  "deps.msg.action.rollbackStarted": "Retour arrière de {id} vers {image} démarré",
+  "apps.msg.namespaceNotRunning": "Le namespace n'est pas démarré — démarrez-le d'abord, puis lancez cette application seule."
 }

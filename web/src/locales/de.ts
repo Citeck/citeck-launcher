@@ -296,6 +296,7 @@ const de = {
   'table.action.restart': 'Neustarten',
   'table.action.stop.rmbRestart': 'Stopp (Rechtsklick: Neustart)',
   'table.action.restart.disabledHint': 'App starten, um sie neu zu starten',
+  'table.action.start.disabledHint': 'Der Namespace läuft nicht — starten Sie ihn zuerst, danach lässt sich die einzelne Anwendung starten.',
   'table.toast.success': '{action} für {name} angefordert',
   'table.cpu.throttled': 'CPU gedrosselt',
   'table.memory.warning': 'Hohe Speicherauslastung',

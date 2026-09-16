@@ -538,5 +538,6 @@
   "deps.msg.event.rolledBack": "{id} 已回滚到 {image}",
   "deps.msg.event.rolledBackWithWarning": "{id} 已回滚到 {image}；{error}",
   "deps.msg.action.migrationStarted": "已开始将 {id} 迁移到 {image}",
-  "deps.msg.action.rollbackStarted": "已开始将 {id} 回滚到 {image}"
+  "deps.msg.action.rollbackStarted": "已开始将 {id} 回滚到 {image}",
+  "apps.msg.namespaceNotRunning": "命名空间未运行——请先启动命名空间，然后再单独启动该应用。"
 }

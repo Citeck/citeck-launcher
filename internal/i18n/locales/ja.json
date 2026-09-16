@@ -538,5 +538,6 @@
   "deps.msg.event.rolledBack": "{id} を {image} へロールバックしました",
   "deps.msg.event.rolledBackWithWarning": "{id} を {image} へロールバックしました。{error}",
   "deps.msg.action.migrationStarted": "{id} の {image} への移行を開始しました",
-  "deps.msg.action.rollbackStarted": "{id} の {image} へのロールバックを開始しました"
+  "deps.msg.action.rollbackStarted": "{id} の {image} へのロールバックを開始しました",
+  "apps.msg.namespaceNotRunning": "名前空間が起動していません。先に名前空間を起動してから、個々のアプリケーションを起動してください。"
 }

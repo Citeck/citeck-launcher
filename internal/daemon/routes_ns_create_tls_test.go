@@ -31,6 +31,8 @@ func TestBuildNamespaceConfigFromCreate_SelfSignedTLSDefaults(t *testing.T) {
 		config.SetDesktopMode(true)
 		t.Cleanup(config.ResetDesktopMode)
 		t.Setenv("CITECK_HOME", t.TempDir())
+		// The create path resolves the bundle it pins; give it one to read.
+		writeCreatableBundle(t, "wsMain", "2026.1")
 		d, _ := newNsCrudTestDaemon(t)
 
 		req := baseReq()
@@ -51,6 +53,8 @@ func TestBuildNamespaceConfigFromCreate_SelfSignedTLSDefaults(t *testing.T) {
 		config.SetDesktopMode(false)
 		t.Cleanup(config.ResetDesktopMode)
 		t.Setenv("CITECK_HOME", t.TempDir())
+		// The create path resolves the bundle it pins; give it one to read.
+		writeCreatableBundle(t, "wsMain", "2026.1")
 		d, _ := newNsCrudTestDaemon(t)
 
 		req := baseReq()
@@ -68,6 +72,8 @@ func TestBuildNamespaceConfigFromCreate_SelfSignedTLSDefaults(t *testing.T) {
 		config.SetDesktopMode(true)
 		t.Cleanup(config.ResetDesktopMode)
 		t.Setenv("CITECK_HOME", t.TempDir())
+		// The create path resolves the bundle it pins; give it one to read.
+		writeCreatableBundle(t, "wsMain", "2026.1")
 		d, _ := newNsCrudTestDaemon(t)
 
 		req := baseReq()

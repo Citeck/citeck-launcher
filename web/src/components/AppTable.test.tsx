@@ -3,7 +3,8 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { MemoryRouter } from 'react-router'
 import { AppTable } from './AppTable'
 import { usePanelStore } from '../lib/panels'
-import type { AppDto } from '../lib/types'
+import { useDashboardStore } from '../lib/store'
+import type { AppDto, NamespaceDto } from '../lib/types'
 
 const mockApps: AppDto[] = [
   { name: 'proxy', status: 'RUNNING', image: 'ecos-proxy:2.25', cpu: '0.1%', memory: '32M', kind: 'THIRD_PARTY', ports: ['80:80'], edited: false, locked: false },
@@ -15,8 +16,19 @@ function renderWithRouter(ui: React.ReactElement) {
   return render(<MemoryRouter>{ui}</MemoryRouter>)
 }
 
+// The row's start button needs the NAMESPACE status, not the app's: the
+// daemon refuses a per-app start while the namespace is not running.
+function setNamespaceStatus(status: NamespaceDto['status'] | null) {
+  useDashboardStore.setState({
+    namespace: status === null
+      ? null
+      : { id: 'n', name: 'n', status, bundleRef: '', apps: [] } as NamespaceDto,
+  })
+}
+
 beforeEach(() => {
   usePanelStore.getState().resetPanels()
+  setNamespaceStatus('RUNNING')
 })
 
 describe('AppTable', () => {
@@ -136,5 +148,63 @@ describe('AppTable', () => {
     }
     renderWithRouter(<AppTable apps={[failed]} />)
     expect(screen.getByText('container exited with code 1')).toBeInTheDocument()
+  })
+  // A stopped namespace has no runtime loop, so a per-app start cannot be
+  // carried out: the daemon answers NAMESPACE_NOT_RUNNING. Before this the
+  // button was enabled and pressing it produced either "app not found" (the
+  // registry is built when the namespace starts) or a silent no-op — both
+  // indistinguishable from success. Same treatment the Restart item already
+  // gets: disabled, with the reason as its tooltip.
+  it('disables the start button while the namespace is not running', () => {
+    setNamespaceStatus('STOPPED')
+    const stopped: AppDto = {
+      name: 'postgres', status: 'STOPPED', image: 'postgres:18', cpu: '', memory: '',
+      kind: 'THIRD_PARTY', edited: false, locked: false,
+    }
+    renderWithRouter(<AppTable apps={[stopped]} />)
+
+    const btn = screen.getByTitle(
+      'The namespace is not running — start it first, then start this application on its own.')
+    expect(btn).toBeDisabled()
+  })
+
+  it('enables the start button once the namespace is running', () => {
+    setNamespaceStatus('RUNNING')
+    const stopped: AppDto = {
+      name: 'postgres', status: 'STOPPED', image: 'postgres:18', cpu: '', memory: '',
+      kind: 'THIRD_PARTY', edited: false, locked: false,
+    }
+    renderWithRouter(<AppTable apps={[stopped]} />)
+
+    expect(screen.getByTitle('Start')).toBeEnabled()
+  })
+
+  // STARTING and STALLED are the other two states in which the loop is alive:
+  // a namespace that came up STALLED is exactly when an operator reaches for
+  // one app's start button.
+  // A detached app is the exception: its start button is an ATTACH, which the
+  // daemon carries out while the namespace is stopped (the app then starts with
+  // the namespace). rag ships detached by the default workspace template, so
+  // this is the ordinary way it gets switched on.
+  it('keeps the start button live for a detached app on a stopped namespace', () => {
+    setNamespaceStatus('STOPPED')
+    const detached: AppDto = {
+      name: 'rag', status: 'STOPPED', image: 'citeck-rag:1.2.2', cpu: '', memory: '',
+      kind: 'CITECK_ADDITIONAL', edited: false, locked: false, detached: true,
+    }
+    renderWithRouter(<AppTable apps={[detached]} />)
+
+    expect(screen.getByTitle('Start')).toBeEnabled()
+  })
+
+  it('enables the start button on a stalled namespace', () => {
+    setNamespaceStatus('STALLED')
+    const stopped: AppDto = {
+      name: 'postgres', status: 'STOPPED', image: 'postgres:18', cpu: '', memory: '',
+      kind: 'THIRD_PARTY', edited: false, locked: false,
+    }
+    renderWithRouter(<AppTable apps={[stopped]} />)
+
+    expect(screen.getByTitle('Start')).toBeEnabled()
   })
 })

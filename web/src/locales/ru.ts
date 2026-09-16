@@ -296,6 +296,7 @@ const ru = {
   'table.action.restart': 'Перезапустить',
   'table.action.stop.rmbRestart': 'Стоп (ПКМ: перезапуск)',
   'table.action.restart.disabledHint': 'Запустите приложение, чтобы перезапустить',
+  'table.action.start.disabledHint': 'Неймспейс не запущен — сначала запустите его, а затем запускайте отдельное приложение.',
   'table.toast.success': 'Запрошено {action} для {name}',
   'table.cpu.throttled': 'CPU throttling',
   'table.memory.warning': 'Высокий расход памяти',

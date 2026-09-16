@@ -241,6 +241,9 @@ func (d *Daemon) handleAppRestart(w http.ResponseWriter, r *http.Request) {
 	if rt == nil {
 		return
 	}
+	if !d.requireRunningNamespaceForApp(w, r, rt, name) {
+		return
+	}
 	app := d.findApp(name)
 	if app == nil {
 		writeAppNotFound(w, name)
@@ -301,6 +304,69 @@ func (d *Daemon) handleAppStop(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, api.ActionResultDto{Success: true, Message: fmt.Sprintf("App %s stopped", name)})
 }
 
+// perAppLifecycleStatuses are the namespace statuses in which a per-app start
+// or restart can actually be carried out: the runtime loop is alive, so the
+// transition this route asks for is stepped by something.
+var perAppLifecycleStatuses = map[namespace.NsRuntimeStatus]bool{
+	namespace.NsStatusRunning:  true,
+	namespace.NsStatusStarting: true,
+	namespace.NsStatusStalled:  true,
+}
+
+// perAppLifecycleAllowed answers the table above. Split out so the decision is
+// testable on its own: the handler half can only be driven for a STOPPED
+// namespace (a Runtime built in a test starts STOPPED and reaching RUNNING
+// needs Docker), and a rule that is only ever exercised on its refusing side
+// is a rule nobody notices losing its allowing side.
+func perAppLifecycleAllowed(status namespace.NsRuntimeStatus) bool {
+	return perAppLifecycleStatuses[status]
+}
+
+// requireRunningNamespaceForApp refuses a per-app start/restart while the
+// namespace is not running, and it exists because the two ways that request
+// used to end were both indistinguishable from success.
+//
+// The runtime's app registry (r.apps) is built by doStart and by nothing else,
+// so on a namespace that has never been started in this daemon process — a
+// freshly created one, or any stopped one after the launcher is restarted —
+// FindApp answers nil and the route said APP_NOT_FOUND about an app the table
+// on screen is listing. After a namespace stop in the SAME process the
+// registry survives (doStop keeps the definitions so per-app config editing
+// keeps working), so the route accepted the request, StartApp moved the app to
+// READY_TO_PULL — and nothing happened: cmdStop ends the runtime loop, and
+// stepAllApps is what would have pulled and started it. Measured on a real
+// stand: no container, and the next load showed the app STOPPED again.
+//
+// So the answer is neither "not found" nor a silent yes. Refusing here, before
+// the registry is consulted, is also what makes the message the same in both
+// states — the operator's next move does not depend on which of them they are
+// in. The Web UI disables the row's start button for the same reason
+// (AppTable.tsx), so this is the API's half of one rule, not a second one.
+//
+// STOPPING is refused with the rest: the loop is alive but winding down, and a
+// start that races the stop chain is the "fights the shutdown" case
+// stepAllApps already guards against internally.
+//
+// The ONE thing a per-app start can still carry out with the loop down is
+// ATTACHING a detached app — clearing its user-intent STOPPED flag is a
+// persisted decision, and for an app that gates the composition (rag deciding
+// whether qdrant exists, ai, onlyoffice) it also regenerates. The app then
+// starts with the namespace, which is what attaching means. That case is
+// allowed, and it needs the app to be in the runtime's registry: a namespace
+// that has never been started in this process has none, so there is nothing
+// there to attach and the refusal stands.
+func (d *Daemon) requireRunningNamespaceForApp(w http.ResponseWriter, r *http.Request, rt *namespace.Runtime, name string) bool {
+	if rt == nil || perAppLifecycleAllowed(rt.Status()) {
+		return true
+	}
+	if rt.FindApp(name) != nil && rt.ManualStoppedApps()[name] {
+		return true
+	}
+	writeErrorCode(w, http.StatusConflict, api.ErrCodeNamespaceNotRunning,
+		d.translatorFor(r).T("apps.msg.namespaceNotRunning"))
+	return false
+}
+
 func (d *Daemon) handleAppStart(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if !validateAppName(w, name) {
@@ -330,6 +396,9 @@ func (d *Daemon) handleAppStart(w http.ResponseWriter, r *http.Request) {
 	}
 	rt := d.requireRuntime(w)
 	if rt == nil {
+		return
+	}
+	if !d.requireRunningNamespaceForApp(w, r, rt, name) {
 		return
 	}
 	app := d.findApp(name)

@@ -570,9 +570,11 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 	runtime.SetGeneratedDefs(genResp.BaselineApplications)
 	runtime.SetCustomLinks(genResp.CustomLinks)
 
-	// Cache the successfully resolved bundle for fallback on future resolve failures
+	// Cache the successfully resolved bundle for fallback on future resolve
+	// failures. Restore-, not Set-: nothing may persist here (see
+	// RestoreCachedBundle). doReloadEx caches its own resolve separately.
 	if !bundleDef.IsEmpty() {
-		runtime.SetCachedBundle(bundleDef)
+		runtime.RestoreCachedBundle(bundleDef)
 	}
 
 	// Wire registry auth and operation history into runtime. Registry bindings

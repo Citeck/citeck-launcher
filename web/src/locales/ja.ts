@@ -296,6 +296,7 @@ const ja = {
   'table.action.restart': '\u518d\u8d77\u52d5',
   'table.action.stop.rmbRestart': '\u505c\u6b62\uff08\u53f3\u30af\u30ea\u30c3\u30af\uff1a\u518d\u8d77\u52d5\uff09',
   'table.action.restart.disabledHint': '\u518d\u8d77\u52d5\u3059\u308b\u306b\u306f\u30a2\u30d7\u30ea\u3092\u8d77\u52d5\u3057\u3066\u304f\u3060\u3055\u3044',
+  'table.action.start.disabledHint': '名前空間が起動していません。先に名前空間を起動してから、個々のアプリケーションを起動してください。',
   'table.toast.success': '{name} \u306e{action}\u3092\u30ea\u30af\u30a8\u30b9\u30c8\u3057\u307e\u3057\u305f',
   'table.cpu.throttled': 'CPU \u30b9\u30ed\u30c3\u30c8\u30eb\u4e2d',
   'table.memory.warning': '\u30e1\u30e2\u30ea\u4f7f\u7528\u7387\u304c\u9ad8\u3044',

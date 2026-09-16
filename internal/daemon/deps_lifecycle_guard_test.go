@@ -79,17 +79,22 @@ func TestPerAppStartAndRestartAreRefusedWhileARollbackIsPending(t *testing.T) {
 	assert.NotEqual(t, http.StatusConflict, rec.Code, rec.Body.String())
 }
 
-// With a clear journal the guard lets the request through to the ordinary app
-// lookup. This runtime has never been started, so that lookup answers 404 —
-// which is the point: the refusal above happens BEFORE it, so a 404 here is
-// proof the guard stood aside rather than that the route works by accident.
+// With a clear journal the guard lets the request through to the next door.
+// This runtime has never been started, so that door is the per-app lifecycle
+// gate, which refuses a namespace that is not running — a different refusal
+// from a later check. The assertion is therefore on the CODE, not on the
+// status: what this test is about is that the JOURNAL guard stood aside.
+// (It used to assert the 404 from the app lookup, which was the same proof
+// before that gate existed.)
 func TestPerAppStartIsAcceptedWithNoOpenJournal(t *testing.T) {
 	d, mux := newGateTestDaemon(t)
 	require.Nil(t, d.active().runtime.MigrationJournal())
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, api.AppStart("postgres"), http.NoBody))
-	require.NotEqual(t, http.StatusConflict, rec.Code, rec.Body.String())
-	assert.Contains(t, rec.Body.String(), api.ErrCodeAppNotFound)
+	assert.NotContains(t, rec.Body.String(), api.ErrCodeDependencyMigrationInProgress,
+		"a clear journal must not produce the migration refusal")
+	assert.NotContains(t, rec.Body.String(), "rollback pending")
+	assert.Contains(t, rec.Body.String(), api.ErrCodeNamespaceNotRunning)
 }
 
 // The same namespace with a CLEAR journal must still start — the guard is
