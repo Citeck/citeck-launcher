@@ -168,11 +168,11 @@ func rabbitEnv(t *testing.T) *guardEnv {
 
 func buildCopyPlan(t *testing.T, env Env, spec CopySpec) (*Plan, deps.MigrationJournal) {
 	t.Helper()
-	pre, _, ok := CopyPreflight(context.Background(), env, deps.RabbitMQ, rabbitFrom, rabbitTo,
+	pre, _, ok := CopyPreflight(context.Background(), env, deps.RabbitMQ, Path{rabbitFrom, rabbitTo},
 		func(deps.Version, deps.Version) (bool, msg.Message) { return true, msg.Message{} })
 	require.True(t, ok, pre.Problems)
 	pre.OK = len(pre.Problems) == 0
-	plan, j, err := BuildCopyUpgrade(env, spec, rabbitFrom, rabbitTo, PlanOptions{}, pre)
+	plan, j, err := BuildCopyUpgrade(env, spec, Path{rabbitFrom, rabbitTo}, PlanOptions{}, pre)
 	require.NoError(t, err)
 	return plan, j
 }
@@ -390,7 +390,7 @@ func TestCopyUpgradeTempContainersCarryTheNodeIdentity(t *testing.T) {
 // filesystem the volumes live on.
 func TestCopyPreflightMeasuresOnlyTheVolumeFilesystem(t *testing.T) {
 	env := rabbitEnv(t)
-	res, vols, ok := CopyPreflight(context.Background(), env, deps.RabbitMQ, rabbitFrom, rabbitTo,
+	res, vols, ok := CopyPreflight(context.Background(), env, deps.RabbitMQ, Path{rabbitFrom, rabbitTo},
 		func(deps.Version, deps.Version) (bool, msg.Message) { return true, msg.Message{} })
 	require.True(t, ok, res.Problems)
 	assert.Empty(t, res.Problems)
@@ -403,7 +403,7 @@ func TestCopyPreflightMeasuresOnlyTheVolumeFilesystem(t *testing.T) {
 	assert.Equal(t, CopyVolumes{Source: rabbitGen1, Target: rabbitGen2, TargetGen: 2}, vols)
 
 	env.FreeVolume = 1 << 20
-	res, _, ok = CopyPreflight(context.Background(), env, deps.RabbitMQ, rabbitFrom, rabbitTo,
+	res, _, ok = CopyPreflight(context.Background(), env, deps.RabbitMQ, Path{rabbitFrom, rabbitTo},
 		func(deps.Version, deps.Version) (bool, msg.Message) { return true, msg.Message{} })
 	require.True(t, ok)
 	assert.Contains(t, joinEN(res.Problems), "not enough free space")
@@ -415,7 +415,7 @@ func TestCopyPreflightMeasuresOnlyTheVolumeFilesystem(t *testing.T) {
 func TestCopyPreflightRefusesAMissingSourceVolume(t *testing.T) {
 	env := rabbitEnv(t)
 	delete(env.Volumes, rabbitGen1)
-	res, _, ok := CopyPreflight(context.Background(), env, deps.RabbitMQ, rabbitFrom, rabbitTo,
+	res, _, ok := CopyPreflight(context.Background(), env, deps.RabbitMQ, Path{rabbitFrom, rabbitTo},
 		func(deps.Version, deps.Version) (bool, msg.Message) { return true, msg.Message{} })
 	require.False(t, ok)
 	assert.Contains(t, joinEN(res.Problems), rabbitGen1)
@@ -429,17 +429,42 @@ func TestCopyPreflightReportsTheMigratorsRefusal(t *testing.T) {
 	refuse := func(deps.Version, deps.Version) (bool, msg.Message) {
 		return false, VendorPathProblem("RabbitMQ", "4.1", "4.3", "4.2")
 	}
-	res, _, ok := CopyPreflight(context.Background(), env, deps.RabbitMQ, rabbitFrom, "rabbitmq:4.3.5-management", refuse)
+	res, _, ok := CopyPreflight(context.Background(), env, deps.RabbitMQ, Path{rabbitFrom, "rabbitmq:4.3.5-management"}, refuse)
 	require.False(t, ok)
 	joined := joinEN(res.Problems)
 	assert.Contains(t, joined, "upgrade to 4.2 first")
 	assert.NotContains(t, joined, "update the launcher", "updating the launcher would not help")
 
 	// A downgrade never reaches the migrator: the shared checks word it.
-	res, _, ok = CopyPreflight(context.Background(), env, deps.RabbitMQ, rabbitTo, rabbitFrom,
+	res, _, ok = CopyPreflight(context.Background(), env, deps.RabbitMQ, Path{rabbitTo, rabbitFrom},
 		func(deps.Version, deps.Version) (bool, msg.Message) { return true, msg.Message{} })
 	require.False(t, ok)
 	assert.Contains(t, joinEN(res.Problems), "downgrade")
+}
+
+// CopyPreflight must ask supportsPair about EVERY hop, not just the route's
+// ends. A four-image route whose ENDS pair (4.1.2 -> 4.2.9) is fine on its own
+// but whose MIDDLE hop (4.1.5 -> 4.1.8) is refused must still refuse the whole
+// route: an implementation that asked only (From, To) would find that pair
+// permitted and wave the route through, silently walking a rung its own
+// vendor rule forbids.
+func TestCopyPreflightRefusesAHopInTheMiddleOfTheRoute(t *testing.T) {
+	env := rabbitEnv(t)
+	route := Path{
+		rabbitFrom,                  // 4.1.2
+		"rabbitmq:4.1.5-management", // 4.1.5
+		"rabbitmq:4.1.8-management", // 4.1.8 - the refused hop lands here
+		rabbitTo,                    // 4.2.9
+	}
+	supportsPair := func(from, to deps.Version) (bool, msg.Message) {
+		if from.String() == "4.1.5" && to.String() == "4.1.8" {
+			return false, VendorPathProblem("RabbitMQ", "4.1.5", "4.1.8", "")
+		}
+		return true, msg.Message{}
+	}
+	res, _, ok := CopyPreflight(context.Background(), env, deps.RabbitMQ, route, supportsPair)
+	require.False(t, ok, "the middle hop is refused, so the whole route must be")
+	assert.Contains(t, joinEN(res.Problems), "4.1.5")
 }
 
 // An existing target volume is a confirmation, not a refusal — but building
@@ -449,7 +474,7 @@ func TestBuildCopyUpgradeNeedsTheExistingVolumeConfirmed(t *testing.T) {
 	env := rabbitEnv(t)
 	env.Volumes[rabbitGen2] = map[string]string{}
 	env.VolSize[rabbitGen2] = 1 << 20
-	pre, _, ok := CopyPreflight(context.Background(), env, deps.RabbitMQ, rabbitFrom, rabbitTo,
+	pre, _, ok := CopyPreflight(context.Background(), env, deps.RabbitMQ, Path{rabbitFrom, rabbitTo},
 		func(deps.Version, deps.Version) (bool, msg.Message) { return true, msg.Message{} })
 	require.True(t, ok, pre.Problems)
 	pre.OK = len(pre.Problems) == 0
@@ -458,10 +483,10 @@ func TestBuildCopyUpgradeNeedsTheExistingVolumeConfirmed(t *testing.T) {
 	assert.Empty(t, pre.ExistingTargetVolume.Version,
 		"a dependency whose data carries no version marker must not claim one")
 
-	_, _, err := BuildCopyUpgrade(env, testSpec(&copyCalls{}, nil), rabbitFrom, rabbitTo, PlanOptions{}, pre)
+	_, _, err := BuildCopyUpgrade(env, testSpec(&copyCalls{}, nil), Path{rabbitFrom, rabbitTo}, PlanOptions{}, pre)
 	assert.Contains(t, planProblemsEN(t, err), "already exists")
 
-	plan, j, err := BuildCopyUpgrade(env, testSpec(&copyCalls{}, nil), rabbitFrom, rabbitTo,
+	plan, j, err := BuildCopyUpgrade(env, testSpec(&copyCalls{}, nil), Path{rabbitFrom, rabbitTo},
 		PlanOptions{ReplaceExistingVolume: true}, pre)
 	require.NoError(t, err)
 	require.NoError(t, Run(context.Background(), j2store(), j, plan, nil))
@@ -475,6 +500,6 @@ func TestBuildCopyUpgradeRefusesAFailedPreflight(t *testing.T) {
 	env := rabbitEnv(t)
 	pre := NewPreflightResult(rabbitFrom, rabbitTo)
 	pre.Problems = append(pre.Problems, msg.New("nope"))
-	_, _, err := BuildCopyUpgrade(env, testSpec(&copyCalls{}, nil), rabbitFrom, rabbitTo, PlanOptions{}, pre)
+	_, _, err := BuildCopyUpgrade(env, testSpec(&copyCalls{}, nil), Path{rabbitFrom, rabbitTo}, PlanOptions{}, pre)
 	require.ErrorContains(t, err, "nope")
 }

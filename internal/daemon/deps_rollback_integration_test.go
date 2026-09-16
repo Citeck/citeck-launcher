@@ -51,9 +51,9 @@ const itRowWrittenOn18 = "written-on-18"
 // nothing more.
 func (e *itEnv) migratePostgres(ctx context.Context, t *testing.T) {
 	t.Helper()
-	pre := migrate.PostgresMigrator{}.Preflight(ctx, e.env, itFromImage, itToImage)
+	pre := migrate.PostgresMigrator{}.Preflight(ctx, e.env, migrate.Path{itFromImage, itToImage})
 	require.True(t, pre.OK, "preflight problems: %v", pre.Problems)
-	plan, journal, err := migrate.PostgresMigrator{}.Plan(ctx, e.env, itFromImage, itToImage, migrate.PlanOptions{})
+	plan, journal, err := migrate.PostgresMigrator{}.Plan(ctx, e.env, migrate.Path{itFromImage, itToImage}, migrate.PlanOptions{})
 	require.NoError(t, err)
 
 	timer := newStepTimer()

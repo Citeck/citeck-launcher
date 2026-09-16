@@ -1071,6 +1071,26 @@ func (e *depsEnv) GenerateDefFor(id deps.ID, st deps.DependencyState) (appdef.Ap
 	if !ok {
 		return appdef.ApplicationDef{}, fmt.Errorf("unknown dependency %q", id)
 	}
+	return e.GenerateDefForVolume(id, st, deps.VolumeName(d, st.Gen()))
+}
+
+// GenerateDefForVolume is GenerateDefFor's more general form: it runs the same
+// generation and demands the same guarantee on the image, but mounts VOLUME
+// instead of whatever deps.VolumeName(d, st.Gen()) would ordinarily pick.
+//
+// It exists for exactly one caller: a multi-rung PostgreSQL walk's
+// intermediate clusters, which live in a SCRATCH volume that has no
+// generation of its own — deps.VolumeName cannot produce "postgres3-hop", see
+// deps.ScratchVolumeName. The generator itself has no notion of a scratch
+// volume, so the substitution happens HERE, after generation, by rewriting the
+// mount the generator picked for st's own generation: this is the one place a
+// container of a migration plan learns which volume it mounts, and
+// GenerateDefFor is a one-line wrapper over it rather than the reverse.
+func (e *depsEnv) GenerateDefForVolume(id deps.ID, st deps.DependencyState, mountVolume string) (appdef.ApplicationDef, error) {
+	d, ok := deps.Lookup(id)
+	if !ok {
+		return appdef.ApplicationDef{}, fmt.Errorf("unknown dependency %q", id)
+	}
 	rt := e.act.runtime
 	if rt == nil || e.act.nsConfig == nil || e.act.bundleDef == nil {
 		return appdef.ApplicationDef{}, errors.New("no namespace loaded")
@@ -1112,25 +1132,82 @@ func (e *depsEnv) GenerateDefFor(id deps.ID, st deps.DependencyState) (appdef.Ap
 			return appdef.ApplicationDef{}, fmt.Errorf(
 				"the generator resolved %s to %q, not to the requested %q", d.AppName(), a.Image, st.Image)
 		}
+		// The generator mounted the volume ST'S OWN generation names — it has
+		// no notion of a scratch volume — so when the caller asked for a
+		// DIFFERENT one, retarget the mount rather than trust the generator to
+		// have produced it. ordinary is what the pin gate guarantees is there;
+		// substituting only that exact source is what keeps this from ever
+		// touching a bind that merely happens to end in the same word.
+		ordinary := deps.VolumeName(d, st.Gen())
+		if mountVolume != "" && ordinary != "" && mountVolume != ordinary {
+			if !mountsVolume(a, ordinary) {
+				return appdef.ApplicationDef{}, fmt.Errorf(
+					"the generator gave %s the volumes %v, not the expected %q", d.AppName(), a.Volumes, ordinary)
+			}
+			a.Volumes = retargetVolume(a.Volumes, ordinary, mountVolume)
+			// retargetVolume's own correctness is not enough to rest the
+			// "source is only ever read" invariant on: it substitutes every
+			// entry whose source matches ordinary today, but nothing upstream
+			// of this line would notice if a future change to it (or to
+			// whatever the generator emits) left a SECOND bind — a WAL-archive
+			// mount, a PGDATA subdirectory, anything a bundle adds — still
+			// pointing at ordinary. So the postcondition is proven directly,
+			// not assumed: after retargeting, the def must not mount ordinary
+			// at all. A def that still does is refused rather than handed to a
+			// migration plan that promises the source is only ever read.
+			if mountsVolume(a, ordinary) {
+				return appdef.ApplicationDef{}, fmt.Errorf(
+					"the generator still gave %s a bind to %q after retargeting it to %q: %v",
+					d.AppName(), ordinary, mountVolume, a.Volumes)
+			}
+		}
 		// The same guard for the other half of the pin, and it is the one a
-		// copy-upgrade plan rests on: every container it starts must land on
-		// the COPY. A def that mounts the SOURCE volume instead would run the
-		// old image, the new image and the whole pre/post upgrade sequence
-		// against the namespace's real data — the one thing the plan promises
-		// never to touch — and nothing downstream would notice.
-		if want := deps.VolumeName(d, st.Gen()); want != "" && !mountsVolume(a, want) {
+		// copy-upgrade plan (and a multi-rung postgres walk) rests on: every
+		// container a migration plan starts must land on the volume it asked
+		// for. A def that mounts the SOURCE volume instead would run the old
+		// image, the new image and the whole restore against the namespace's
+		// real data — the one thing a migration plan promises never to touch —
+		// and nothing downstream would notice.
+		if mountVolume != "" && !mountsVolume(a, mountVolume) {
 			return appdef.ApplicationDef{}, fmt.Errorf(
-				"the generator gave %s the volumes %v, not the requested %q", d.AppName(), a.Volumes, want)
+				"the generator gave %s the volumes %v, not the requested %q", d.AppName(), a.Volumes, mountVolume)
 		}
 		return a, nil
 	}
 	return appdef.ApplicationDef{}, fmt.Errorf("the generator produced no %s app", d.AppName())
 }
 
+// retargetVolume rewrites the SOURCE half of the one volume entry that
+// mounts "from" to "to", leaving every other entry untouched. Only the source
+// is compared — see mountsVolume — so a bind of a host file that happens to
+// end in the same word is never touched.
+func retargetVolume(vols []string, from, to string) []string {
+	out := make([]string, len(vols))
+	for i, v := range vols {
+		src, rest, ok := strings.Cut(v, ":")
+		if ok && src == from {
+			out[i] = to + ":" + rest
+			continue
+		}
+		out[i] = v
+	}
+	return out
+}
+
 // mountsVolume reports whether the def mounts the named data volume. A def's
 // volume entry is "<source>:<container path>[:opts]", and only the SOURCE is
 // compared: a bind of a host file that happens to end in the same word is not
 // this dependency's data.
+//
+// It scans def.Volumes ONLY — never def.InitContainers[].Volumes — which is
+// narrower than "does the def mount X" and is worth stating rather than
+// leaving to be assumed: the two callers above use this to prove a migration
+// temp container cannot touch the source, and that proof is sound only
+// because RunAppDef (the one caller that starts a container from a def this
+// function checked) runs a single container from the def and never runs its
+// init containers at all — see runTemp/RunAppDef. If a future caller ever ran
+// init containers from one of these defs, an init-container-only bind would
+// be invisible here.
 func mountsVolume(def appdef.ApplicationDef, name string) bool {
 	for _, v := range def.Volumes {
 		if src, _, ok := strings.Cut(v, ":"); ok && src == name {

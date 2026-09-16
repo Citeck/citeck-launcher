@@ -69,6 +69,16 @@ const PLAN_STEPS: Record<string, readonly string[]> = {
   postgres: POSTGRES_STEPS,
   rabbitmq: COPY_STEPS,
   zookeeper: COPY_STEPS,
+  // Qdrant shares the same copy-upgrade plan as rabbitmq/zookeeper (Go:
+  // migrate.registry.go's `migrators`/`rollbacks` map it to
+  // QdrantMigrator{}/RollbackCopyUpgrade) — same 11 step ids, even though its
+  // CopySpec sets no PreUpgrade/PostUpgrade hook: the engine still runs steps
+  // named "pre-upgrade"/"post-upgrade", they just no-op. Only reachable today
+  // on a daemon that has qdrant migration but no `stepIds` (this UI's
+  // fallback is positional against PLAN_STEPS), but the fallback exists
+  // precisely for an older/newer daemon mismatch, so a missing entry here is
+  // a real gap, not a hypothetical one.
+  qdrant: COPY_STEPS,
 }
 
 /** The dependencies whose plan COPIES the data volume instead of dumping it —
@@ -83,8 +93,26 @@ const BTN_SECONDARY = 'rounded-md border border-border px-3 py-1.5 text-xs hover
  *  api.DependencyMigrationStepPreparing). */
 const PREPARING_STEP = 'preparing'
 
-/** The step ids to render: the known plan, plus anything the events mention that it does not cover. */
+/**
+ * The step ids to render, in the plan's real order — including repeats.
+ *
+ * `migration.stepIds` is the daemon's own plan.Steps, verbatim, published
+ * once it exists: the daemon is the only party that knows the plan's shape,
+ * and on a multi-hop copy upgrade that shape repeats ids
+ * (pre-upgrade/start-new/post-upgrade once per rung, and an INTERMEDIATE
+ * rung's own node-stop shares the id "stop-new" with the plan's FINAL
+ * cleanup step). Preferring it is what makes a row's position decidable at
+ * all for a ladder — see the caller, which positions every row against
+ * `migration.stepIndex`, never against an id.
+ *
+ * The fallback (an older daemon that predates this field, or the brief
+ * window before the first start/progress event) is the single-hop vocabulary
+ * this launcher has always hardcoded, plus anything the events mention that
+ * it does not cover — unaffected by any of this, since a daemon that cannot
+ * send `stepIds` cannot build a ladder plan either: its ids never repeat.
+ */
 function stepIdsFor(migration: DepsMigrationView): string[] {
+  if (migration.stepIds.length > 0) return migration.stepIds
   // A rollback runs its own three steps whatever dependency it belongs to, so
   // the kind is asked BEFORE the id: postgres' ten would be a list of things
   // that are never going to happen.
@@ -730,14 +758,31 @@ export function DependenciesDialog({ open, onClose }: Props) {
               // saw its progress event — which is exactly the case after a
               // reconnect, where the whole list would otherwise render as
               // untouched around a step in the middle.
-              const activePos = ids.indexOf(migration.step)
+              //
+              // A row's position is decided by StepIndex against THIS list —
+              // never by matching `id` — because a ladder repeats ids: an
+              // INTERMEDIATE rung's own node-stop shares "stop-new" with the
+              // plan's FINAL cleanup step, so `ids.indexOf('stop-new')` would
+              // resolve to whichever one is LISTED (the last), and mark every
+              // row before it done — verify included — the moment the FIRST
+              // rung's own stop-new ran. StepIndex is 1-based and counts the
+              // step CURRENTLY running (migrate.Run: `progress(st.ID, i+1,
+              // total, ...)`), so activePos below is its 0-based position.
+              const activePos = migration.stepIndex > 0 ? migration.stepIndex - 1 : -1
+              const seen = new Set<string>()
               return ids.map((id, pos) => {
-              const done = migration.done.includes(id) || (activePos >= 0 && pos < activePos)
-              const active = migration.step === id
+              const done = activePos >= 0 && pos < activePos
+              const active = activePos === pos
+              // Ids repeat on a ladder; the FIRST occurrence keeps the plain
+              // testid every existing single-hop test already asserts on, and
+              // only a REPEAT gets the position appended, so nothing about a
+              // non-repeating plan's ids changes.
+              const testId = seen.has(id) ? `deps-step-${id}-${pos}` : `deps-step-${id}`
+              seen.add(id)
               return (
                 <li
-                  key={id}
-                  data-testid={`deps-step-${id}`}
+                  key={`${pos}-${id}`}
+                  data-testid={testId}
                   data-state={done ? 'done' : active ? 'active' : 'todo'}
                   className={`flex items-center gap-2 text-xs ${active ? 'font-medium' : done ? 'opacity-70' : 'opacity-40'}`}
                 >

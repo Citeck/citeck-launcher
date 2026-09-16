@@ -28,7 +28,11 @@ func HealthyPostgres() PostgresInventory {
 // ToleratedRestoreError is the one line pg_dumpall's script always produces on
 // a fresh cluster (it re-creates the bootstrap superuser) and the only one a
 // restore is allowed to survive.
-const ToleratedRestoreError = `psql:/citeck/depsmig/dump.sql:12: ERROR:  role "postgres" already exists`
+//
+// It says "<stdin>" rather than a dump file path: RestoreScript pipes the
+// decompressed dump into psql rather than passing it a "-f <file>", and psql
+// names the input "<stdin>" for anything it did not open by path itself.
+const ToleratedRestoreError = `psql:<stdin>:12: ERROR:  role "postgres" already exists`
 
 // PostgresExec scripts a healthy PostgreSQL for a migration plan: the TCP
 // readiness probe, the inventory queries, pg_dumpall, the restore and
@@ -48,11 +52,15 @@ func PostgresExec(inv map[string]PostgresInventory) ExecFunc {
 		switch {
 		case strings.HasPrefix(cmdline, "pg_isready"):
 			return "127.0.0.1:5432 - accepting connections", "", 0, nil
-		case strings.HasPrefix(cmdline, "pg_dumpall"):
+		// Both the dump and the restore now run as `bash -c "…pg_dumpall…"` /
+		// `bash -c "…gunzip -c … | psql …"` (see DumpScript/RestoreScript in
+		// postgres_restore.go), so the joined cmdline no longer STARTS WITH
+		// the tool name — it has to be found inside the script instead.
+		case strings.Contains(cmdline, "pg_dumpall"):
 			return "", "", 0, nil
 		case strings.HasPrefix(cmdline, "vacuumdb"):
 			return "", "", 0, nil
-		case strings.HasPrefix(cmdline, "psql") && strings.Contains(cmdline, " -f "):
+		case strings.Contains(cmdline, "gunzip -c"):
 			// A restore reports its errors on stderr even when it exits 0.
 			return "", ToleratedRestoreError, 0, nil
 		case strings.Contains(cmdline, "select 1"):

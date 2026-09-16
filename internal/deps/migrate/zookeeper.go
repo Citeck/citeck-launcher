@@ -85,8 +85,8 @@ func zkDataTooOldProblem(from deps.Version) msg.Message {
 // state after a graceful stop is the transaction log (measured) — and a check
 // phrased as "confirm there is a snapshot" would refuse every ordinary stopped
 // namespace while the data is perfectly intact.
-func (m ZookeeperMigrator) Preflight(ctx context.Context, env Env, from, to string) PreflightResult {
-	res, _, ok := CopyPreflight(ctx, env, deps.Zookeeper, from, to, m.SupportsPair)
+func (m ZookeeperMigrator) Preflight(ctx context.Context, env Env, path Path) PreflightResult {
+	res, _, ok := CopyPreflight(ctx, env, deps.Zookeeper, path, m.SupportsPair)
 	if !ok {
 		return res
 	}
@@ -95,9 +95,9 @@ func (m ZookeeperMigrator) Preflight(ctx context.Context, env Env, from, to stri
 }
 
 // Plan builds the copy-upgrade plan for this pair.
-func (m ZookeeperMigrator) Plan(ctx context.Context, env Env, from, to string, opts PlanOptions) (*Plan, deps.MigrationJournal, error) {
-	pre := m.Preflight(ctx, env, from, to)
-	return BuildCopyUpgrade(env, zkCopySpec(), from, to, opts, pre)
+func (m ZookeeperMigrator) Plan(ctx context.Context, env Env, path Path, opts PlanOptions) (*Plan, deps.MigrationJournal, error) {
+	pre := m.Preflight(ctx, env, path)
+	return BuildCopyUpgrade(env, zkCopySpec(), path, opts, pre)
 }
 
 // zkCopySpec is everything the shared plan does not know about ZooKeeper.

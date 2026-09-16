@@ -44,8 +44,11 @@ func generateMongoDB(ctx *NsGenContext) {
 	if !ctx.Config.MongoEnabled() {
 		return
 	}
-	img := resolveAppImage(ctx, appdef.AppMongodb, ctx.Config.MongoDB.Image, "mongo:4.0.2")
-	img = resolveDependencyImage(ctx, deps.MongoDB, img)
+	// Mongo goes through the same chain-aware gate as every other registered
+	// dependency: a bundle or workspace `dependencies:` entry for it names a
+	// ladder exactly like qdrant/postgres/zookeeper/rabbitmq/keycloak do.
+	chain := resolveAppImageChain(ctx, appdef.AppMongodb, ctx.Config.MongoDB.Image, "mongo:4.0.2")
+	img := resolveDependencyImage(ctx, deps.MongoDB, chain)
 	app := ctx.GetOrCreateApp(appdef.AppMongodb)
 	app.Image = img
 	app.Kind = appdef.KindThirdParty
@@ -93,7 +96,7 @@ func generatePgAdmin(ctx *NsGenContext) {
 	// Upstream publishes minor tags (9.17), not patch tags (9.17.0).
 	fallback := "dpage/pgadmin4:9.17"
 	if ctx.WorkspaceConfig != nil && ctx.WorkspaceConfig.PgAdmin.Image != "" {
-		fallback = ctx.WorkspaceConfig.PgAdmin.Image
+		fallback = string(ctx.WorkspaceConfig.PgAdmin.Image)
 	}
 	img := resolveAppImage(ctx, appdef.AppPgadmin, ctx.Config.PgAdmin.Image, fallback)
 	app := ctx.GetOrCreateApp(appdef.AppPgadmin)
@@ -132,9 +135,9 @@ func generatePostgres(ctx *NsGenContext) {
 	// See TestInfraImageDefaults.
 	fallback := "postgres:17.5"
 	if ctx.WorkspaceConfig != nil && ctx.WorkspaceConfig.Postgres.Image != "" {
-		fallback = ctx.WorkspaceConfig.Postgres.Image
+		fallback = string(ctx.WorkspaceConfig.Postgres.Image)
 	}
-	img := resolveDependencyImage(ctx, deps.Postgres, bundleImageOr(ctx, appdef.AppPostgres, fallback))
+	img := resolveDependencyImage(ctx, deps.Postgres, bundleImageChainOr(ctx, appdef.AppPostgres, fallback))
 	// The data layout follows the major of the image that will RUN — never the
 	// candidate's. For a pinned namespace that is the pin, so an existing 17
 	// keeps postgres2 and its explicit PGDATA byte for byte
@@ -191,9 +194,9 @@ func generatePostgres(ctx *NsGenContext) {
 func generateZookeeper(ctx *NsGenContext) {
 	fallback := "zookeeper:3.9.5"
 	if ctx.WorkspaceConfig != nil && ctx.WorkspaceConfig.Zookeeper.Image != "" {
-		fallback = ctx.WorkspaceConfig.Zookeeper.Image
+		fallback = string(ctx.WorkspaceConfig.Zookeeper.Image)
 	}
-	img := resolveDependencyImage(ctx, deps.Zookeeper, bundleImageOr(ctx, appdef.AppZookeeper, fallback))
+	img := resolveDependencyImage(ctx, deps.Zookeeper, bundleImageChainOr(ctx, appdef.AppZookeeper, fallback))
 	app := ctx.GetOrCreateApp(appdef.AppZookeeper)
 	app.Image = img
 	app.Kind = appdef.KindThirdParty
@@ -266,7 +269,7 @@ func rabbitmqMemoryConf(memLimit string) string {
 }
 
 func generateRabbitMQ(ctx *NsGenContext) {
-	img := resolveDependencyImage(ctx, deps.RabbitMQ, bundleImageOr(ctx, appdef.AppRabbitmq, "rabbitmq:4.1.2-management"))
+	img := resolveDependencyImage(ctx, deps.RabbitMQ, bundleImageChainOr(ctx, appdef.AppRabbitmq, "rabbitmq:4.1.2-management"))
 	app := ctx.GetOrCreateApp(appdef.AppRabbitmq)
 	app.Image = img
 	app.Kind = appdef.KindThirdParty

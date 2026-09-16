@@ -320,7 +320,7 @@ return ({
         // them, so they are spelled out here; change them there and here
         // together.
         if (event.type === 'deps_migration_start') {
-          useDepsStore.getState().onStart(event.appName, event.total ?? 0)
+          useDepsStore.getState().onStart(event.appName, event.total ?? 0, undefined, event.stepIds)
           return
         }
         if (event.type === 'deps_migration_progress') {
@@ -331,6 +331,7 @@ return ({
             total: event.total ?? 0,
             percent: event.percent ?? 0,
             after: event.after ?? '',
+            stepIds: event.stepIds,
           })
           return
         }

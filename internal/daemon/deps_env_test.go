@@ -1408,6 +1408,100 @@ func TestGenerateDefForRefusesADefThatDoesNotMountTheRequestedVolume(t *testing.
 	assert.Contains(t, err.Error(), "postgres2", "...and the ones it actually got")
 }
 
+// newPostgresLadderEnv is the harness the multi-rung PostgreSQL walk's
+// GenerateDefForVolume calls run against: a namespace pinned to postgres:17.5
+// generation 1 (so deps.VolumeName(d, st.Gen()) — "ordinary" — is postgres2
+// for every call below, exactly as it is for the real plan's intermediate
+// rungs, which always pass a DependencyState with VolumeGen left at its zero
+// value; see the comment at the pgRun.startTempOnVolume call site).
+func newPostgresLadderEnv(t *testing.T, volumesPatch string) *depsEnv {
+	t.Helper()
+	rt := namespace.NewRuntime(&namespace.Config{ID: "ns1"}, planStubDocker{}, t.TempDir())
+	t.Cleanup(rt.Shutdown)
+	rt.RestoreDependencyState(map[deps.ID]deps.DependencyState{deps.Postgres: {Image: "postgres:17.5"}}, nil, nil)
+	if volumesPatch != "" {
+		rt.RestoreEditedState(map[string]json.RawMessage{
+			appdef.AppPostgres: json.RawMessage(volumesPatch),
+		}, nil)
+	}
+	env := (&Daemon{}).newDepsEnv(activeNamespace{
+		runtime:  rt,
+		nsConfig: &namespace.Config{ID: "ns1", Proxy: namespace.ProxyProps{Port: 80}},
+		// The bundle names the SAME image as the pin, so the candidate is not
+		// breaking and the gate would otherwise resolve it away from what
+		// these tests ask GenerateDefForVolume for — a multi-rung walk's
+		// intermediate rungs pass exactly this shape of DependencyState
+		// (Image set, VolumeGen left at its zero value).
+		bundleDef:       &bundle.Def{Applications: map[string]bundle.AppDef{appdef.AppPostgres: {Image: "postgres:17.5"}}},
+		workspaceConfig: &bundle.WorkspaceConfig{},
+		volumesBase:     t.TempDir(),
+	})
+	return env
+}
+
+// GenerateDefForVolume is the mechanism the whole "the source is only ever
+// read" invariant of a multi-rung PostgreSQL walk rests on: every
+// intermediate rung's container is generated through it rather than through
+// GenerateDefFor, precisely because the scratch volume has no generation of
+// its own. This is its dedicated coverage — GenerateDefFor's own tests above
+// exercise the ordinary, single-volume path and never call this method at
+// all.
+func TestGenerateDefForVolumeMountsTheScratchVolumeNotAGeneration(t *testing.T) {
+	env := newPostgresLadderEnv(t, "")
+
+	def, err := env.GenerateDefForVolume(deps.Postgres, deps.DependencyState{Image: "postgres:18.6"}, "postgres3-hop")
+	require.NoError(t, err)
+	assert.Equal(t, "postgres:18.6", def.Image)
+	assert.Contains(t, def.Volumes, "postgres3-hop:/var/lib/postgresql",
+		"the scratch volume, not postgres2 (the source generation) or postgres3 (the final generation)")
+	assert.NotContains(t, strings.Join(def.Volumes, "\n"), "postgres2:",
+		"the generation's OWN volume must not appear anywhere in the returned def")
+	assert.NotContains(t, strings.Join(def.Volumes, "\n"), "postgres3:",
+		"nor the final generation's — this call names neither")
+}
+
+// The generator's own mount is checked BEFORE any retargeting is attempted:
+// if it does not carry the volume ordinary names, retargetVolume would have
+// nothing correct to rewrite FROM, and proceeding would silently hand back a
+// def whose data mount is whatever the patch put there — never verified
+// against anything.
+func TestGenerateDefForVolumeRefusesWhenTheGeneratorsOwnMountDoesNotMatchOrdinary(t *testing.T) {
+	env := newPostgresLadderEnv(t, `{"volumes":["somewhere-else:/var/lib/postgresql/data"]}`)
+
+	_, err := env.GenerateDefForVolume(deps.Postgres, deps.DependencyState{Image: "postgres:18.6"}, "postgres3-hop")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "postgres2", "names ordinary — what it expected to find and retarget FROM")
+	assert.Contains(t, err.Error(), "not the expected")
+}
+
+// retargetVolume rewrites EVERY entry whose source is ordinary, not merely
+// the first — verified directly here rather than trusted, because a def with
+// two binds to the namespace's real data (a second bind for a PGDATA
+// subdirectory, a WAL-archive mount, anything a bundle adds) must come back
+// with NEITHER one still pointing at it. GenerateDefForVolume proves this
+// itself, after retargeting, rather than resting on retargetVolume's own
+// correctness: see the postcondition check right after the a.Volumes
+// assignment in GenerateDefForVolume. Weakening retargetVolume to stop after
+// its first match — a realistic future "optimization" of a loop that looks
+// like it only ever needs to fire once — is exactly the regression that
+// postcondition exists to catch, and it is what running this test against
+// such a mutation refuses on (verified by hand; see the task report).
+func TestGenerateDefForVolumeLeavesNoBindToTheSourceAfterRetargetingTwoEntries(t *testing.T) {
+	env := newPostgresLadderEnv(t, `{"volumes":[
+		"postgres2:/var/lib/postgresql/data",
+		"postgres2:/var/lib/postgresql/data/pg_wal"
+	]}`)
+
+	def, err := env.GenerateDefForVolume(deps.Postgres, deps.DependencyState{Image: "postgres:18.6"}, "postgres3-hop")
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{
+		"postgres3-hop:/var/lib/postgresql/data",
+		"postgres3-hop:/var/lib/postgresql/data/pg_wal",
+	}, def.Volumes, "BOTH binds to the source must be retargeted, not just one")
+	assert.False(t, mountsVolume(def, "postgres2"),
+		"the def must not still mount the source under any bind after retargeting")
+}
+
 // A temp container with no name of its own would be created as the
 // NAMESPACE'S own container: docker.CreateContainerWith reads "" as "no
 // override" and builds the app's container — same name, same LabelAppName,

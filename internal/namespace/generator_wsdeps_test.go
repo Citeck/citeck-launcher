@@ -13,10 +13,14 @@ import (
 )
 
 // wsDeps is the workspace `dependencies:` section as the parser produces it.
+// UnmarshalYAML always sets Images alongside Image — even for a plain string,
+// which decodes to a one-rung ladder — so a fixture built by literal struct
+// construction has to set both too, or it would understate what a real
+// workspace config carries and hide any bug in a chain-aware reader.
 func wsDeps(images map[string]string) map[string]bundle.DependencyEntry {
 	out := make(map[string]bundle.DependencyEntry, len(images))
 	for name, image := range images {
-		out[name] = bundle.DependencyEntry{Image: image}
+		out[name] = bundle.DependencyEntry{Image: image, Images: []string{image}}
 	}
 	return out
 }

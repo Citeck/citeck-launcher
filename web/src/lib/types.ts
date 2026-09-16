@@ -211,6 +211,15 @@ export interface DependencyMigrationDto {
   /** "" (absent) = a migration, "rollback" = a rollback. The two share this
    *  channel, so only the title differs. */
   kind?: string
+  /** The running plan's ACTUAL step list, in order — including repeats. A
+   *  multi-hop copy upgrade repeats ids (pre-upgrade/start-new/post-upgrade
+   *  once per rung, and an intermediate rung's own stop shares "stop-new"
+   *  with the plan's FINAL cleanup step), so a row is positioned by
+   *  stepIndex/stepCount against THIS list, never by matching an id — only
+   *  the daemon that built the plan knows which occurrence is which. Absent
+   *  from an older daemon; the dialog falls back to its own hardcoded
+   *  single-hop vocabulary then. */
+  stepIds?: string[]
 }
 
 /** Verdict of the last migration, kept until the next one replaces it. */
@@ -363,6 +372,10 @@ export interface EventDto {
   freeBytes?: number
   /** Low-disk threshold in bytes. Present on `disk_low` / `disk_ok` only. */
   thresholdBytes?: number
+  /** The running migration's real step list — see
+   *  DependencyMigrationDto.stepIds. Present on `deps_migration_start` /
+   *  `deps_migration_progress` once the plan exists. */
+  stepIds?: string[]
 }
 
 export interface AppInspectDto {

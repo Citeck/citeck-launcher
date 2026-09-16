@@ -488,6 +488,7 @@
   "deps.msg.zk.dataTooOld": "{from} が書き込んだ ZooKeeper のデータは zookeeper.snapshot.trust.empty より前のものである可能性があり、その場合は新しいサーバーが空のスナップショットを正常な状態として読み取ってしまいます。そのためランチャーはこのデータを移行しません。ZooKeeper は各ウェブアプリのパッチ結果マーカーと eproc の恒久的な mongo 無効マーカーを保持しているため、健全に見える空のツリーは最悪の結果です。名前空間は {from} のまま動き続けます。",
   "deps.msg.progress.waiting": "{container} の {what} を待機しています",
   "deps.msg.progress.pulling": "{image} を取得しています",
+  "deps.msg.progress.starting": "{image} を起動中",
   "deps.msg.progress.copying": "{size} をコピーしています",
   "deps.msg.progress.dumped": "{size} をダンプしました",
   "deps.msg.progress.restoring": "{size} のダンプを復元しています",

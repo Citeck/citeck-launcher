@@ -47,6 +47,16 @@ type DependencyUpgrade struct {
 	// held at all and therefore never appears here (user ruling, 2026-09-09:
 	// only format breaks are held back). See deps.BundleOlder.
 	BundleOlder bool
+	// Path is the ROUTE this upgrade takes: the pinned image at index 0, then
+	// every rung of the bundle's ladder strictly newer than it, ending at To.
+	// A bundle naming one image gives the ordinary two-element pair, so no
+	// consumer needs a second shape for the single-hop case.
+	//
+	// EMPTY means there is no route at all — a rung the version parser cannot
+	// read — and it is deliberately not the same as a one-element path: the
+	// dependency is held back and the preflight's message about the tag is
+	// what the operator needs, so nothing downstream may invent a pair here.
+	Path []string
 }
 
 // DependencyGen records, per registered dependency, the image the generator
@@ -57,14 +67,39 @@ type DependencyGen struct {
 }
 
 // resolveDependencyImage is the gate every infra generator passes its image
-// through. With no pin (no data yet) the candidate applies. With a pin, a
-// non-breaking candidate applies (and the Runtime re-pins it once RUNNING);
-// a breaking one is held and reported. Upgrades are appended in generator
-// order; sortedUpgrades re-orders them to registry order.
-func resolveDependencyImage(ctx *NsGenContext, id deps.ID, candidate string) string {
+// through. It takes the bundle's whole LADDER rather than one candidate: the
+// candidate is its last rung, and the rungs in between are what make a hop the
+// vendor forbids in one step reachable in several.
+//
+// With no pin (no data yet) the candidate applies. With a pin, a non-breaking
+// candidate applies (and the Runtime re-pins it once RUNNING); a breaking one
+// is held and reported. Upgrades are appended in generator order;
+// sortedUpgrades re-orders them to registry order.
+func resolveDependencyImage(ctx *NsGenContext, id deps.ID, chain []string) string {
+	candidate := ""
+	if len(chain) > 0 {
+		candidate = chain[len(chain)-1]
+	}
 	d, ok := deps.Lookup(id)
 	if !ok {
 		return candidate
+	}
+	// A malformed ladder (rungs out of order, a duplicate, one nobody can
+	// parse) is refused by deps.UpgradeRoute wherever a pin exists to route
+	// from — but on a FRESH stand nothing calls UpgradeRoute at all, so
+	// nothing would otherwise say anything: the candidate above is already
+	// just chain's last element, taken as written, regardless of whether the
+	// rest of the chain makes sense. Checking here, before the two paths
+	// diverge, covers both: a fresh stand still gets the candidate it always
+	// got (this is a diagnostic, not a behavior change), and a pinned stand
+	// whose route later comes back empty now has a reason on record instead
+	// of a bare "held back".
+	if deps.MalformedLadder(d, chain) {
+		slog.Warn("Bundle ladder is malformed (a rung is unreadable, or the "+
+			"rungs do not strictly ascend, as written); using its last rung "+
+			"as written, and no multi-step route can be computed through it "+
+			"until the ladder is fixed",
+			"dependency", id, "ladder", chain)
 	}
 	// deps.Breaking already answers false for pinned == candidate and true for
 	// an unparsable tag on either side, so only the "no pin at all" case needs
@@ -83,44 +118,92 @@ func resolveDependencyImage(ctx *NsGenContext, id deps.ID, candidate string) str
 	older := deps.BundleOlder(d, effective, candidate)
 	var blocked bool
 	var via string
+	var path []string
 	if !older {
-		blocked, via = vendorVerdict(d, effective, candidate)
+		// The route is computed from the EFFECTIVE pin, which is what the
+		// migration's first container is built from — a rehomed pin names the
+		// registry the stand can actually pull from.
+		path, blocked, via = routeVerdict(d, effective, rehomeChain(d, effective, chain))
 	}
 	slog.Info("Dependency image held back by pin",
 		"dependency", id, "pinned", pinned, "candidate", candidate, "effective", effective,
-		"bundleOlder", older)
+		"bundleOlder", older, "rungs", len(path))
 	ctx.DependencyImages[id] = DependencyGen{Effective: effective, Candidate: candidate}
 	ctx.DependencyUpgrades = append(ctx.DependencyUpgrades, DependencyUpgrade{
 		ID: id, App: d.AppName(), From: effective, To: candidate, Migratable: d.Migratable(),
-		VendorBlocked: blocked, VendorVia: via, BundleOlder: older,
+		VendorBlocked: blocked, VendorVia: via, BundleOlder: older, Path: path,
 	})
 	return effective
 }
 
-// vendorVerdict asks the dependency's own vendor whether the held-back hop is
-// supported at all, and — when it is not — which intermediate version the
-// operator has to go through first. It is a question about the DEPENDENCY, so
-// the table lives in internal/deps; the generator only records the answer,
-// because the sentence an operator reads is built where every other migration
-// refusal is worded.
+// rehomeChain applies the pin's registry to every rung, the same way
+// rehomePin applies it to the candidate: a ladder is only usable if every rung
+// on it can be pulled from the registry this stand actually has.
 //
-// With an unreadable tag on either side there are no versions to ask about, so
-// the verdict is empty rather than guessed. The pin is held back anyway
-// (deps.Breaking answers true for an unparsable tag) and the preflight's
-// message about the tag is the one the operator needs — the same carve-out the
-// downgrade case gets, and for the same reason: a wrong intermediate sends the
-// operator after a version that would not help.
-func vendorVerdict(d deps.Descriptor, pinned, candidate string) (blocked bool, via string) {
-	from, okFrom := d.ParseVersion(pinned)
-	to, okTo := d.ParseVersion(candidate)
-	if !okFrom || !okTo {
-		return false, ""
+// It is deliberately NOT a per-rung call into rehomePin: that function always
+// answers with the PIN's own tag (it is choosing the one running image), while
+// here every rung must keep its OWN tag and only the repository is up for
+// adoption. The decision is the same one rehomePin makes for the candidate —
+// a pin already known to live on a real (non-default) registry is the only
+// evidence this stand has about where its pulls can succeed, and that
+// registry is what every rung is rewritten onto. A pin still carrying the
+// launcher's own guessed default teaches nothing about the real registry, so
+// the ladder is left exactly as the bundle wrote it.
+func rehomeChain(d deps.Descriptor, effectivePin string, chain []string) []string {
+	if len(chain) == 0 {
+		return nil
 	}
-	sup := d.UpgradeSupport(from, to)
-	if sup.Allowed {
-		return false, ""
+	pinRepo, _, ok := deps.SplitImageRef(effectivePin)
+	if !ok {
+		return chain
 	}
-	return true, sup.Via
+	defaultRepo, _, okDefault := deps.SplitImageRef(d.LegacyImage())
+	if !okDefault || pinRepo == defaultRepo {
+		return chain
+	}
+	out := make([]string, 0, len(chain))
+	for _, rung := range chain {
+		_, rungTag, okRung := deps.SplitImageRef(rung)
+		if !okRung {
+			out = append(out, rung)
+			continue
+		}
+		out = append(out, pinRepo+":"+rungTag)
+	}
+	return out
+}
+
+// routeVerdict computes the route and asks the vendor about EVERY adjacent
+// pair on it, rather than about (pin, target).
+//
+// That is the whole of the ladder feature on the gate's side. Asking about the
+// pair alone is what made a reachable multi-step upgrade report as blocked,
+// and the intermediate it then named was one the edit gate refuses to apply.
+//
+// With no route — an unreadable rung — the verdict is EMPTY rather than
+// guessed: the pin is held back anyway (deps.Breaking answers true for an
+// unparsable tag) and the preflight's message about the tag is the accurate
+// one, the same carve-out the downgrade case gets.
+//
+// `via` names the GAP: the version the ladder would have needed at the first
+// pair the vendor refuses. It is not the ladder's own next rung — that is
+// precisely the rung that does not help.
+func routeVerdict(d deps.Descriptor, pinned string, chain []string) (path []string, blocked bool, via string) {
+	route, ok := deps.UpgradeRoute(d, pinned, chain)
+	if !ok {
+		return nil, false, ""
+	}
+	for i := 0; i+1 < len(route); i++ {
+		from, okFrom := d.ParseVersion(route[i])
+		to, okTo := d.ParseVersion(route[i+1])
+		if !okFrom || !okTo { // unreachable: UpgradeRoute parsed them all
+			return route, false, ""
+		}
+		if sup := d.UpgradeSupport(from, to); !sup.Allowed {
+			return route, true, sup.Via
+		}
+	}
+	return route, false, ""
 }
 
 // resolveDependencyVolume is the ONE place a generator learns which volume a

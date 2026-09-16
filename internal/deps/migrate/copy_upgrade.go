@@ -121,24 +121,38 @@ func CopyStepIDs() []string {
 // against a pair that is not going to happen. ok=true means the caller may
 // append its own problems and warnings and then set res.OK itself.
 func CopyPreflight(
-	ctx context.Context, env Env, id deps.ID, from, to string,
+	ctx context.Context, env Env, id deps.ID, path Path,
 	supportsPair func(from, to deps.Version) (ok bool, problem msg.Message),
 ) (PreflightResult, CopyVolumes, bool) {
-	res := NewPreflightResult(from, to)
+	res := NewPreflightResult(path.From(), path.To())
 	res.WasRunning = env.IsRunning()
-	fromV, toV, problems := versionProblems(id, from, to)
-	if len(problems) > 0 {
+	// The ends decide whether a migration is needed at all (a downgrade, an
+	// unparsable tag, a pair that needs no migration); the HOPS decide whether
+	// the route can be walked. Both, in that order.
+	if _, _, problems := versionProblems(id, path.From(), path.To()); len(problems) > 0 {
 		res.Problems = append(res.Problems, problems...)
-		return res, CopyVolumes{}, false
-	}
-	if ok, problem := supportsPair(fromV, toV); !ok {
-		res.Problems = append(res.Problems, pairRefusal(problem, from, to))
 		return res, CopyVolumes{}, false
 	}
 	d, ok := deps.Lookup(id)
 	if !ok { // unreachable: versionProblems just looked it up
 		res.Problems = append(res.Problems, NotRegisteredProblem(id))
 		return res, CopyVolumes{}, false
+	}
+	for _, hop := range path.Hops() {
+		fromV, okFrom := d.ParseVersion(hop[0])
+		toV, okTo := d.ParseVersion(hop[1])
+		switch {
+		case !okFrom:
+			res.Problems = append(res.Problems, msg.New("deps.msg.version.unreadableFrom", "image", hop[0]))
+			return res, CopyVolumes{}, false
+		case !okTo:
+			res.Problems = append(res.Problems, msg.New("deps.msg.version.unreadableTo", "image", hop[1]))
+			return res, CopyVolumes{}, false
+		}
+		if ok, problem := supportsPair(fromV, toV); !ok {
+			res.Problems = append(res.Problems, pairRefusal(problem, hop[0], hop[1]))
+			return res, CopyVolumes{}, false
+		}
 	}
 	src, dst, toGen := migrationVolumes(d, env.DependencyState(id))
 	vols := CopyVolumes{Source: src, Target: dst, TargetGen: toGen}
@@ -171,9 +185,11 @@ func CopyPreflight(
 type copyRun struct {
 	env  Env
 	spec CopySpec
-	// from/to are the images; dstVolume is the copy, and it is the ONLY volume
-	// any container of this plan is generated for (see tempDef).
-	from, to  string
+	// path is the whole route. path.From() is the image the copy is first
+	// started under; every rung after it (path.Rungs()) is a version the copy
+	// is raised through, in order. dstVolume is the copy, and it is the ONLY
+	// volume any container of this plan is generated for (see tempDef).
+	path      Path
 	opts      PlanOptions
 	toGen     int
 	dstVolume string
@@ -191,7 +207,8 @@ type copyRun struct {
 // above): the two refusals every copy migrator shares — a preflight that
 // failed, and an existing target volume the user has not agreed to replace —
 // live here so three migrators cannot word them three ways.
-func BuildCopyUpgrade(env Env, spec CopySpec, from, to string, opts PlanOptions, pre PreflightResult) (*Plan, deps.MigrationJournal, error) {
+func BuildCopyUpgrade(env Env, spec CopySpec, path Path, opts PlanOptions, pre PreflightResult) (*Plan, deps.MigrationJournal, error) {
+	from, to := path.From(), path.To()
 	if err := spec.validate(); err != nil {
 		return nil, deps.MigrationJournal{}, err
 	}
@@ -210,7 +227,7 @@ func BuildCopyUpgrade(env Env, spec CopySpec, from, to string, opts PlanOptions,
 	// migration is rewriting.
 	src, dst, toGen := migrationVolumes(d, env.DependencyState(spec.ID))
 	r := &copyRun{
-		env: env, spec: spec, from: from, to: to, opts: opts,
+		env: env, spec: spec, path: path, opts: opts,
 		toGen: toGen, dstVolume: dst, srcVolume: src, dataSize: pre.DataSizeBytes,
 	}
 	j := deps.MigrationJournal{
@@ -219,20 +236,38 @@ func BuildCopyUpgrade(env Env, spec CopySpec, from, to string, opts PlanOptions,
 		WasRunning: env.IsRunning(),
 		StartedAt:  time.Now(),
 	}
+	steps := []Step{
+		{ID: "stop-namespace", Run: r.stopNamespace},
+		{ID: "pull-image", Run: r.pullImages},
+		{ID: "create-volume", Run: r.createVolume},
+		{ID: "copy-volume", Run: r.copyVolume},
+		{ID: "start-old", Run: r.startOld},
+	}
+	// Every rung after the bottom is climbed by the same four-step shape:
+	// prepare the node that is about to be replaced, stop it, start the rung,
+	// let the new node finish settling in. pre-upgrade runs on EVERY rung
+	// (there is always a node below it to prepare, and on the first rung that
+	// node also yields the "before" inventory); verify and the final
+	// stop-new run only once, after the LAST rung, because that is the only
+	// point with nothing left to climb to.
+	rungs := path.Rungs()
+	for i, rung := range rungs {
+		last := i == len(rungs)-1
+		steps = append(steps,
+			Step{ID: "pre-upgrade", Run: r.preUpgradeAt(i)},
+			Step{ID: stopIDFor(i), Run: r.stopCurrent(i)},
+			Step{ID: "start-new", Run: r.startRung(rung)},
+			Step{ID: "post-upgrade", Run: r.postUpgrade},
+		)
+		if last {
+			steps = append(steps,
+				Step{ID: "verify", Run: r.verify},
+				Step{ID: "stop-new", Run: r.stopNew},
+			)
+		}
+	}
 	plan := &Plan{
-		Steps: []Step{
-			{ID: "stop-namespace", Run: r.stopNamespace},
-			{ID: "pull-image", Run: r.pullImage},
-			{ID: "create-volume", Run: r.createVolume},
-			{ID: "copy-volume", Run: r.copyVolume},
-			{ID: "start-old", Run: r.startOld},
-			{ID: "pre-upgrade", Run: r.preUpgrade},
-			{ID: "stop-old", Run: r.stopOld},
-			{ID: "start-new", Run: r.startNew},
-			{ID: "post-upgrade", Run: r.postUpgrade},
-			{ID: "verify", Run: r.verify},
-			{ID: "stop-new", Run: r.stopNew},
-		},
+		Steps: steps,
 		Rollback: func(ctx context.Context, j *deps.MigrationJournal) error {
 			return RollbackCopyUpgrade(ctx, env, j)
 		},
@@ -267,8 +302,17 @@ func (r *copyRun) stopNamespace(ctx context.Context, _ *Journal, _ StepProgress)
 	return stopNamespaceStep(ctx, r.env)
 }
 
-func (r *copyRun) pullImage(ctx context.Context, _ *Journal, p StepProgress) error {
-	return pullImageStep(ctx, r.env, r.to, p)
+// pullImages pulls EVERY rung before anything irreversible happens. An
+// unreachable registry then costs a stopped namespace and nothing else — and
+// on a ladder that has to hold for the rung four steps up, not just the
+// first.
+func (r *copyRun) pullImages(ctx context.Context, _ *Journal, p StepProgress) error {
+	for _, image := range r.path.Rungs() {
+		if err := pullImageStep(ctx, r.env, image, p); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // createVolume makes the volume this plan writes into; the write-ahead
@@ -299,16 +343,25 @@ func (r *copyRun) copyVolume(ctx context.Context, _ *Journal, p StepProgress) er
 }
 
 func (r *copyRun) startOld(ctx context.Context, _ *Journal, p StepProgress) error {
-	return r.startTemp(ctx, r.from, SrcContainer, p)
+	return r.startTemp(ctx, r.path.From(), SrcContainer, p)
 }
 
-func (r *copyRun) startNew(ctx context.Context, _ *Journal, p StepProgress) error {
-	return r.startTemp(ctx, r.to, DstContainer, p)
+// startRung starts the temp container for one rung of the ladder. It always
+// lands on DstContainer: after the first rung, the bottom node's name
+// (SrcContainer) is retired for the whole rest of the climb, and every later
+// "current" node — one started by a previous iteration of this same method —
+// is also DstContainer.
+func (r *copyRun) startRung(image string) func(context.Context, *Journal, StepProgress) error {
+	return func(ctx context.Context, _ *Journal, p StepProgress) error {
+		return r.startTemp(ctx, image, DstContainer, p)
+	}
 }
 
 // startTemp runs one temp container on the COPY, under a name of its own and
-// with the dependency's node identity pinned.
+// with the dependency's node identity pinned. It opens its step by naming the
+// image, so a repeated "start-new" (one per rung) says which rung it is.
 func (r *copyRun) startTemp(ctx context.Context, image, name string, p StepProgress) error {
+	p(0, msg.New("deps.msg.progress.starting", "image", image))
 	def, err := r.tempDef(image)
 	if err != nil {
 		return err
@@ -335,28 +388,60 @@ func (r *copyRun) tempDef(image string) (appdef.ApplicationDef, error) {
 	return def, nil
 }
 
-// preUpgrade runs the dependency's own pre-upgrade work on the OLD image and
-// then captures the "before" inventory.
+// stopIDFor names the step that stops the node BELOW rung i, the one about to
+// be replaced. The first one is the OLD image, started by startOld under
+// SrcContainer, and keeps the plan's existing "stop-old" key; every later one
+// is an intermediate rung the plan itself started under DstContainer (see
+// startRung), which is "stop-new" — the same id the plan's final cleanup step
+// uses, since both stop a node the plan itself started under that name.
+func stopIDFor(i int) string {
+	if i == 0 {
+		return "stop-old"
+	}
+	return "stop-new"
+}
+
+// preUpgradeAt runs the dependency's own pre-upgrade work on the node that is
+// running now — the one about to be replaced by rung i — and, on the FIRST
+// rung only, captures the "before" inventory.
 //
-// The inventory is taken HERE, from the copy, and not from the namespace's own
-// container before it was stopped. That is what makes "the original is only
-// ever read" total rather than nearly-total: reading it from the live
-// container would work only when the namespace was running, and starting the
-// old image on the ORIGINAL volume to read it is exactly what this plan does
-// not do. The copy is the same bytes, and the old image has to run on it
-// anyway.
-func (r *copyRun) preUpgrade(ctx context.Context, _ *Journal, p StepProgress) error {
-	if r.spec.PreUpgrade != nil {
-		if err := r.spec.PreUpgrade(ctx, r.env, SrcContainer, p); err != nil {
-			return fmt.Errorf("pre-upgrade: %w", err)
+// It runs before EVERY rung, not just the first: pre-upgrade prepares the
+// node that is about to be REPLACED for what comes next (RabbitMQ's feature
+// flags a new node refuses to start without), so a 4.1 → 4.2 → 4.3 ladder
+// needs it once on 4.1 and once on 4.2, each against the then-current image.
+// After the top rung there is no next node to prepare, and the loop simply
+// has no further iteration to run it in.
+//
+// The inventory is taken HERE, from the copy, and only on the first rung —
+// from the bottom of the ladder — because that is what the verify at the top
+// compares against. An intermediate comparison would measure work a rung
+// legitimately did to the data, the same reason Qdrant's own inventory
+// deliberately ignores status and config. Reading it from the namespace's own
+// container before it was stopped would also only work when the namespace was
+// running, and starting the old image on the ORIGINAL volume to read it is
+// exactly what this plan does not do — the copy is the same bytes, and the
+// old image has to run on it anyway.
+func (r *copyRun) preUpgradeAt(i int) func(context.Context, *Journal, StepProgress) error {
+	container := DstContainer
+	if i == 0 {
+		container = SrcContainer
+	}
+	return func(ctx context.Context, _ *Journal, p StepProgress) error {
+		if r.spec.PreUpgrade != nil {
+			if err := r.spec.PreUpgrade(ctx, r.env, container, p); err != nil {
+				return fmt.Errorf("pre-upgrade: %w", err)
+			}
 		}
+		if i != 0 {
+			return nil
+		}
+		inv, err := r.spec.Inventory(ctx, r.env, container)
+		if err != nil {
+			return fmt.Errorf("read the inventory of %s: %w", r.path.From(), err)
+		}
+		r.before = inv
+		return nil
 	}
-	inv, err := r.spec.Inventory(ctx, r.env, SrcContainer)
-	if err != nil {
-		return fmt.Errorf("read the inventory of %s: %w", r.from, err)
-	}
-	r.before = inv
-	return nil
 }
 
 func (r *copyRun) postUpgrade(ctx context.Context, _ *Journal, p StepProgress) error {
@@ -369,11 +454,19 @@ func (r *copyRun) postUpgrade(ctx context.Context, _ *Journal, p StepProgress) e
 	return nil
 }
 
-func (r *copyRun) stopOld(ctx context.Context, _ *Journal, _ StepProgress) error {
-	if err := r.env.StopRemove(ctx, SrcContainer); err != nil {
-		return fmt.Errorf("remove %s: %w", SrcContainer, err)
+// stopCurrent stops the node BELOW rung i — see stopIDFor for which container
+// that is.
+func (r *copyRun) stopCurrent(i int) func(context.Context, *Journal, StepProgress) error {
+	container := DstContainer
+	if i == 0 {
+		container = SrcContainer
 	}
-	return nil
+	return func(ctx context.Context, _ *Journal, _ StepProgress) error {
+		if err := r.env.StopRemove(ctx, container); err != nil {
+			return fmt.Errorf("remove %s: %w", container, err)
+		}
+		return nil
+	}
 }
 
 func (r *copyRun) stopNew(ctx context.Context, _ *Journal, _ StepProgress) error {
@@ -389,7 +482,7 @@ func (r *copyRun) stopNew(ctx context.Context, _ *Journal, _ StepProgress) error
 func (r *copyRun) verify(ctx context.Context, _ *Journal, p StepProgress) error {
 	after, err := r.spec.Inventory(ctx, r.env, DstContainer)
 	if err != nil {
-		return fmt.Errorf("read the inventory of %s: %w", r.to, err)
+		return fmt.Errorf("read the inventory of %s: %w", r.path.To(), err)
 	}
 	problems, notes := r.before.Diff(after)
 	if len(problems) > 0 {

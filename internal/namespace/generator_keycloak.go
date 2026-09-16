@@ -27,9 +27,9 @@ func generateKeycloak(ctx *NsGenContext) error {
 
 	kcFallback := "keycloak/keycloak:26.4.5"
 	if ctx.WorkspaceConfig != nil && ctx.WorkspaceConfig.Keycloak.Image != "" {
-		kcFallback = ctx.WorkspaceConfig.Keycloak.Image
+		kcFallback = string(ctx.WorkspaceConfig.Keycloak.Image)
 	}
-	img := resolveDependencyImage(ctx, deps.Keycloak, bundleImageOr(ctx, appdef.AppKeycloak, kcFallback))
+	img := resolveDependencyImage(ctx, deps.Keycloak, bundleImageChainOr(ctx, appdef.AppKeycloak, kcFallback))
 	app := ctx.GetOrCreateApp(appdef.AppKeycloak)
 	app.Image = img
 	app.Kind = appdef.KindThirdParty

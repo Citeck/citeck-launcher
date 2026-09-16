@@ -2,6 +2,12 @@
 - **RAG semantic search.** Enterprise bundles now offer a `rag` app for semantic search over your knowledge base, off by default. Starting it brings up a Qdrant vector database automatically and turns on knowledge-base access for the AI assistant; a disabled `rag` still uses no extra memory — Qdrant isn't even created. Community bundles are unaffected — neither `rag` nor Qdrant appear on them.
 - **Qdrant is a managed dependency now, with a migration of its own.** The launcher pins the version your vector index actually runs on, so a bundle offering a newer minor is held back and reported instead of being applied silently — Qdrant guarantees it can read its own storage across ONE minor only, and skipping one is not supported. `citeck deps upgrade qdrant` then moves the index: it copies the data volume, upgrades the COPY, checks every collection, alias and point count, and only then switches over — your original volume is never written to, and `citeck deps rollback qdrant` goes back to it. One consequence to know about: the data volume is now called `qdrant2` instead of `qdrant_storage`, so a stand that already ran `rag` from a pre-release build starts with an empty index and has to re-index.
 - **Configurable webapp dependencies.** A webapp's `dependsOn` can now be extended through the workspace's `webapps[].defaultProps.dependsOn` and a namespace's `webapps.<id>.dependsOn` — configured dependencies add to the built-in ones, they don't replace them. A `dependsOn` cycle now fails generation with a clear error instead of leaving the apps involved waiting forever.
+- An infrastructure image in a bundle's `dependencies:` section may now be written as a
+  list of versions. The last one is the target and the ones before it are the steps the
+  launcher takes to reach it, one migration at a time — so an upgrade the vendor does not
+  support in a single step is now reachable without editing anything by hand. The data
+  volume is copied once and raised through every step; the original is untouched and the
+  rollback is unchanged.
 
 ## Changes
 - **A stopped dependency no longer lets its dependent start past it.** Previously, an app whose dependency was manually stopped would start anyway and then fail its health checks. It now waits, showing what it's waiting for in its status, and proceeds once the dependency is started.

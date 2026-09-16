@@ -2,6 +2,13 @@
 - **Semantische Suche mit RAG.** Enterprise-Bundles bieten jetzt eine `rag`-App für die semantische Suche über Ihre Wissensdatenbank, standardmäßig deaktiviert. Beim Start wird automatisch eine Qdrant-Vektordatenbank hochgefahren und der Wissensdatenbank-Zugriff für den KI-Assistenten aktiviert; eine deaktivierte `rag`-App verbraucht weiterhin keinen zusätzlichen Speicher – Qdrant wird gar nicht erst erstellt. Community-Bundles sind nicht betroffen – weder `rag` noch Qdrant erscheinen dort.
 - **Qdrant ist jetzt eine verwaltete Abhängigkeit – mit einer eigenen Migration.** Der Launcher pinnt die Version, auf der Ihr Vektorindex tatsächlich läuft, sodass ein Bundle mit einem neueren Minor zurückgehalten und gemeldet statt still angewendet wird: Qdrant garantiert das Lesen seines eigenen Speichers über genau EINEN Minor, das Überspringen eines Minors wird nicht unterstützt. `citeck deps upgrade qdrant` verschiebt dann den Index: Es kopiert das Datenvolume, aktualisiert die KOPIE, prüft jede Collection, jeden Alias und jede Punktzahl und schaltet erst danach um – Ihr ursprüngliches Volume wird nie beschrieben, und `citeck deps rollback qdrant` kehrt dorthin zurück. Eine Folge, die man kennen sollte: Das Datenvolume heißt jetzt `qdrant2` statt `qdrant_storage`, ein Stand, auf dem `rag` bereits aus einem Vorabbuild lief, startet also mit leerem Index und muss neu indiziert werden.
 - **Konfigurierbare Webapp-Abhängigkeiten.** Das `dependsOn` einer Webapp lässt sich jetzt über `webapps[].defaultProps.dependsOn` des Arbeitsbereichs und `webapps.<id>.dependsOn` eines Namespace erweitern – konfigurierte Abhängigkeiten kommen zu den eingebauten hinzu, statt sie zu ersetzen. Ein `dependsOn`-Zyklus lässt die Generierung jetzt mit einer klaren Fehlermeldung fehlschlagen, statt die beteiligten Apps für immer warten zu lassen.
+- Ein Infrastruktur-Image im `dependencies:`-Abschnitt eines Bundles kann jetzt als Liste
+  von Versionen geschrieben werden. Die letzte ist das Ziel, die vorherigen sind die
+  Schritte, mit denen der Launcher es erreicht – alles in einer einzigen Migration. Ein
+  Upgrade, das der Hersteller nicht in einem einzigen Schritt unterstützt, ist damit ohne
+  manuelle Bearbeitung erreichbar. Das Datenvolume wird einmal kopiert und über jeden
+  Schritt angehoben; das Original bleibt unverändert, und der Rollback funktioniert wie
+  bisher.
 
 ## Änderungen
 - **Eine gestoppte Abhängigkeit lässt die davon abhängige App nicht mehr an ihr vorbeistarten.** Bisher startete eine App, deren Abhängigkeit manuell gestoppt war, trotzdem und scheiterte dann an ihren Health-Prüfungen. Sie wartet jetzt und zeigt in ihrem Status an, worauf sie wartet; sobald die Abhängigkeit gestartet wird, geht es weiter.

@@ -125,6 +125,19 @@ type MigrationJournal struct {
 	// reason as ToVolumeGen: after a crash the recovery has to be able to say
 	// what was left where without re-deriving anything.
 	SourceVolume string `json:"sourceVolume,omitempty"`
+	// ScratchVolume is the ONE intermediate cluster a multi-rung PostgreSQL
+	// walk reuses. "" for every single-hop migration — which is every
+	// migration a launcher before this one could produce, and every namespace
+	// whose bundle names a plain image rather than a ladder.
+	//
+	// It is a single name rather than a list because at most one intermediate
+	// exists at a time: rung i is restored into it, dumped out of it, and the
+	// volume is deleted before rung i+1 recreates it under the same name. The
+	// peak on disk is therefore source + one cluster + one dump, whatever the
+	// ladder's length. A journal written by an older launcher has no such
+	// field and reads as the empty string, which is exactly what a
+	// single-hop journal means today.
+	ScratchVolume string `json:"scratchVolume,omitempty"`
 	// WasRunning records whether the namespace was running when the migration
 	// began, so both commit and rollback can start it again.
 	WasRunning bool      `json:"wasRunning"`

@@ -134,9 +134,9 @@ type Env interface {
 	// can write into it once it is bind-mounted: mode 1777, sticky and
 	// world-writable, the same rule as EnsureExportDir. The daemon runs as
 	// root while an image runs as its own uid (postgres is 999), so a
-	// directory left with the daemon's ownership makes
-	// `pg_dumpall -f /citeck/depsmig/dump.sql` die with Permission denied —
-	// after the namespace has already been stopped.
+	// directory left with the daemon's ownership makes the dump step's
+	// `gzip -1 > /citeck/depsmig/dump.sql.gz` redirect die with Permission
+	// denied — after the namespace has already been stopped.
 	//
 	// World-writable is the part that does the work; the sticky bit is what
 	// makes world-writable safe, by restricting unlinking inside the directory
@@ -188,6 +188,20 @@ type Env interface {
 	// there; the volume one is what a copy-upgrade plan rests on, since every
 	// container it runs must land on the COPY and never on the source.
 	GenerateDefFor(id deps.ID, st deps.DependencyState) (appdef.ApplicationDef, error)
+	// GenerateDefForVolume is GenerateDefFor's more general form: the same
+	// generation, the same guarantee that the image is right, but the volume
+	// mounted is VOLUME rather than whatever deps.VolumeName(d, st.Gen())
+	// would ordinarily pick.
+	//
+	// It exists for exactly one caller: a multi-rung PostgreSQL walk's
+	// intermediate clusters, which live in a SCRATCH volume that cannot be
+	// expressed as a generation at all — deps.VolumeName has no generation
+	// that produces "postgres3-hop" (see deps.ScratchVolumeName). Nothing else
+	// may build a def from scratch or edit a returned def's Volumes list
+	// directly: GenerateDefFor stays a one-line wrapper over this rather than
+	// the other way around, so a container still learns its volume in exactly
+	// ONE place.
+	GenerateDefForVolume(id deps.ID, st deps.DependencyState, volume string) (appdef.ApplicationDef, error)
 }
 
 // TempContainerOpts is everything about a temp container that is not in the

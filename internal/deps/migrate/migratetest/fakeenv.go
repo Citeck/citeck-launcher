@@ -93,6 +93,43 @@ type FakeEnv struct {
 	portsStripped int
 	runOpts       map[string]RunRecord
 	volDirs       map[string][]string
+	// removedVolumes is every volume RemoveVolume was asked to remove, in
+	// order — including a volume that was never there, since a rollback's
+	// removal calls are idempotent and a test asserting on WHAT was asked for
+	// must see them all.
+	removedVolumes []string
+	// createdVolumes is the set of volumes CreateVolume made that RemoveVolume
+	// has not yet undone — bookkeeping over those two calls, not a mirror of
+	// Volumes: a volume a test seeds directly (the namespace's own source
+	// data) was never "created" by the migration and must not appear in
+	// LiveVolumes.
+	createdVolumes map[string]bool
+	// dumps is the set of host paths a dump write (an Exec'd pg_dumpall this
+	// fake recognizes) has put down that a later removal has not yet undone.
+	// Bookkeeping over Exec and RemoveDir, the two calls a dump's lifecycle
+	// already goes through — nothing here is new production behavior.
+	dumps map[string]bool
+	// trace is every dump and cluster-volume creation/removal this fake
+	// observed, in order — what TestPostgresLadderDeletesEachDumpBeforeTakingTheNext
+	// walks to prove the peak never exceeds one dump plus one cluster.
+	trace []TraceEvent
+	// execCmds is every argv Exec was asked to run, in order — the raw slice,
+	// not the joined string ExecFn receives. Bookkeeping over a call the fake
+	// already receives: it exists so a test can inspect the SHAPE of a command
+	// (e.g. that a dump ran as `bash -c "…"` and not a bare argv) without
+	// reconstructing it from the call log's joined strings.
+	execCmds [][]string
+}
+
+// TraceEvent is one creation or removal of a dump file or a data volume, in
+// the order the fake observed it.
+type TraceEvent struct {
+	// Kind is "dump" or "cluster".
+	Kind string
+	Name string
+	// Created is true when the thing came into existence, false when it was
+	// removed.
+	Created bool
 }
 
 // RunRecord is what RunAppDef was asked for, beyond the def: the temp
@@ -113,21 +150,23 @@ func DefKey(image string, gen int) string { return image + "@" + strconv.Itoa(ge
 // New returns a FakeEnv with empty inventories and plenty of free space.
 func New() *FakeEnv {
 	return &FakeEnv{
-		NS:          "ns1",
-		Containers:  map[string]appdef.ApplicationDef{},
-		Volumes:     map[string]map[string]string{},
-		VolSize:     map[string]int64{},
-		Files:       map[string]int64{},
-		Dirs:        map[string]bool{},
-		Defs:        map[string]appdef.ApplicationDef{},
-		States:      map[deps.ID]deps.DependencyState{},
-		LocalImages: map[string]bool{},
-		runOpts:     map[string]RunRecord{},
-		volDirs:     map[string][]string{},
-		FreeHost:    100 << 30,
-		FreeVolume:  100 << 30,
-		DumpRoot:    "/host/deps-migration",
-		FailOn:      map[string]error{},
+		NS:             "ns1",
+		Containers:     map[string]appdef.ApplicationDef{},
+		Volumes:        map[string]map[string]string{},
+		VolSize:        map[string]int64{},
+		Files:          map[string]int64{},
+		Dirs:           map[string]bool{},
+		Defs:           map[string]appdef.ApplicationDef{},
+		States:         map[deps.ID]deps.DependencyState{},
+		LocalImages:    map[string]bool{},
+		runOpts:        map[string]RunRecord{},
+		volDirs:        map[string][]string{},
+		createdVolumes: map[string]bool{},
+		dumps:          map[string]bool{},
+		FreeHost:       100 << 30,
+		FreeVolume:     100 << 30,
+		DumpRoot:       "/host/deps-migration",
+		FailOn:         map[string]error{},
 	}
 }
 
@@ -165,6 +204,72 @@ func (f *FakeEnv) Reloads() []bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]bool(nil), f.reloads...)
+}
+
+// RemovedVolumes returns every volume RemoveVolume was asked to remove, in
+// order.
+func (f *FakeEnv) RemovedVolumes() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.removedVolumes...)
+}
+
+// LiveVolumes returns the volumes CreateVolume made that RemoveVolume has not
+// yet undone, sorted. A volume a test seeded directly (the namespace's own
+// source data) was never CREATED by the plan and is deliberately not in it.
+func (f *FakeEnv) LiveVolumes() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Sorted(maps.Keys(f.createdVolumes))
+}
+
+// LiveDumps returns the host paths of every dump write this fake has observed
+// (via Exec) that no removal (via RemoveDir) has undone yet, sorted.
+func (f *FakeEnv) LiveDumps() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Sorted(maps.Keys(f.dumps))
+}
+
+// DumpsWritten returns the host path of every dump write this fake has ever
+// observed, in order — including one that was later removed. Unlike
+// LiveDumps, which answers "still on disk right now", this is what a test
+// asserting every RUNG's dump was compressed needs: an intermediate rung's
+// dump is gone (restored and removed) by the time a multi-hop migration
+// finishes, and by then LiveDumps would report nothing at all.
+func (f *FakeEnv) DumpsWritten() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []string
+	for _, ev := range f.trace {
+		if ev.Kind == "dump" && ev.Created {
+			out = append(out, ev.Name)
+		}
+	}
+	return out
+}
+
+// ExecutedCommands returns every argv Exec was asked to run, in order — the
+// raw command slice, not the joined string ExecFn receives. A test that needs
+// to inspect the SHAPE of a command (e.g. that the dump step ran `bash -c
+// "…gzip…"` rather than a bare `pg_dumpall` argv) reads this instead of
+// reconstructing it from the joined call log.
+func (f *FakeEnv) ExecutedCommands() [][]string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([][]string, len(f.execCmds))
+	for i, c := range f.execCmds {
+		out[i] = append([]string(nil), c...)
+	}
+	return out
+}
+
+// Trace returns a copy of every dump and cluster-volume creation/removal this
+// fake has observed, in order.
+func (f *FakeEnv) Trace() []TraceEvent {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]TraceEvent(nil), f.trace...)
 }
 
 // ContainerNames returns the containers the fake currently runs, sorted.
@@ -267,18 +372,96 @@ func (f *FakeEnv) ContainerRunning(_ context.Context, name string) (bool, error)
 
 // Exec delegates to ExecFn; an unknown container fails the way the real Env
 // does (err set, exit code -1).
+//
+// It also recognizes a successful pg_dumpall and records the dump it wrote —
+// bookkeeping over a call the fake already receives, not new production
+// behavior: the real dump step has no other way to make a fake "write" a
+// host file, since Exec is the only call that carries the in-container path
+// pg_dumpall was told to use, resolved to a host path through the very binds
+// RunAppDef recorded for this container.
 func (f *FakeEnv) Exec(_ context.Context, name string, cmd []string) (stdout, stderr string, exitCode int, err error) {
 	f.mu.Lock()
+	f.execCmds = append(f.execCmds, append([]string(nil), cmd...))
 	_, ok := f.Containers[name]
 	fn := f.ExecFn
+	binds := append([]string(nil), f.runOpts[name].Binds...)
 	f.mu.Unlock()
 	if !ok {
 		return "", "", -1, fmt.Errorf("fake: container %s not running", name)
 	}
 	if fn == nil {
-		return "", "", 0, nil
+		stdout, stderr, exitCode, err = "", "", 0, nil
+	} else {
+		stdout, stderr, exitCode, err = fn(name, strings.Join(cmd, " "))
 	}
-	return fn(name, strings.Join(cmd, " "))
+	if err == nil && exitCode == 0 {
+		if hostPath, isDump := dumpWritePath(cmd, binds); isDump {
+			f.mu.Lock()
+			f.Files[hostPath] = dumpPlaceholderSize
+			f.dumps[hostPath] = true
+			f.trace = append(f.trace, TraceEvent{Kind: "dump", Name: hostPath, Created: true})
+			f.log = append(f.log, "dump-write:"+hostPath)
+			f.mu.Unlock()
+		}
+	}
+	return stdout, stderr, exitCode, err
+}
+
+// dumpPlaceholderSize is the size the fake records for an auto-tracked dump
+// write. Tests that care about a real size (the progress-watcher ones) set
+// Files directly and never go through this path.
+const dumpPlaceholderSize = 1 << 10
+
+// dumpWritePath recognizes a DumpScript-shaped command — `bash -c "set -o
+// pipefail; pg_dumpall … | gzip -N > '<path>'"` — and resolves the
+// in-container redirect target to a host path through binds — the extra
+// binds RunAppDef recorded for the container this command ran in. ok=false
+// for every other command, or one with no matching bind.
+//
+// The command is no longer a bare `pg_dumpall …` argv (that shape predates
+// the dump being piped into gzip through bash -c — see DumpScript in
+// postgres_restore.go), so recognition can no longer key on cmd[0] or scan for
+// a "-f" flag: it has to read the redirect target out of the script string.
+func dumpWritePath(cmd, binds []string) (hostPath string, ok bool) {
+	if len(cmd) != 3 || cmd[0] != "bash" || cmd[1] != "-c" {
+		return "", false
+	}
+	script := cmd[2]
+	if !strings.Contains(script, "pg_dumpall") {
+		return "", false
+	}
+	inContainer, ok := dumpRedirectTarget(script)
+	if !ok {
+		return "", false
+	}
+	for _, b := range binds {
+		host, ctr, cut := strings.Cut(b, ":")
+		if !cut {
+			continue
+		}
+		if inContainer == ctr {
+			return host, true
+		}
+		if rel, isChild := strings.CutPrefix(inContainer, ctr+"/"); isChild {
+			return host + "/" + rel, true
+		}
+	}
+	return "", false
+}
+
+// dumpRedirectTarget extracts the single-quoted path following "> " at the
+// end of a DumpScript-shaped command line — the in-container path gzip's
+// stdout was redirected to.
+func dumpRedirectTarget(script string) (string, bool) {
+	idx := strings.LastIndex(script, "> '")
+	if idx == -1 {
+		return "", false
+	}
+	rest := script[idx+len("> '"):]
+	if !strings.HasSuffix(rest, "'") {
+		return "", false
+	}
+	return strings.TrimSuffix(rest, "'"), true
 }
 
 // StopRemove forgets the container; removing an unknown one succeeds.
@@ -316,6 +499,8 @@ func (f *FakeEnv) CreateVolume(_ context.Context, v string) error {
 		return err
 	}
 	f.Volumes[v] = map[string]string{}
+	f.createdVolumes[v] = true
+	f.trace = append(f.trace, TraceEvent{Kind: "cluster", Name: v, Created: true})
 	f.log = append(f.log, "createvol:"+v)
 	return nil
 }
@@ -329,6 +514,11 @@ func (f *FakeEnv) RemoveVolume(_ context.Context, v string) error {
 	}
 	delete(f.Volumes, v)
 	delete(f.VolSize, v)
+	f.removedVolumes = append(f.removedVolumes, v)
+	if f.createdVolumes[v] {
+		delete(f.createdVolumes, v)
+		f.trace = append(f.trace, TraceEvent{Kind: "cluster", Name: v, Created: false})
+	}
 	f.log = append(f.log, "rmvol:"+v)
 	return nil
 }
@@ -452,15 +642,51 @@ func (f *FakeEnv) EnsureDir(p string) error {
 }
 
 // RemoveDir forgets the directory.
+// RemoveDir removes whatever is at p — a directory entry, a tracked dump
+// file, or a directory's contents recursively — mirroring the real Env, whose
+// RemoveDir is backed by os.RemoveAll and does not distinguish a scratch
+// directory from a single dump file inside it. This is what makes Finalize's
+// whole-directory cleanup also clear a dump this fake is still tracking as
+// live, exactly as it would on a real filesystem.
 func (f *FakeEnv) RemoveDir(p string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := f.failUnderLock("rmdir", p); err != nil {
 		return err
 	}
-	delete(f.Dirs, p)
+	f.removeRecursivelyUnderLock(p)
 	f.log = append(f.log, "rmdir:"+p)
 	return nil
+}
+
+// removeRecursivelyUnderLock deletes p itself (a Dirs entry, a Files entry, or
+// a tracked dump) plus anything nested under it as a directory, clearing the
+// trace as any tracked dump goes. The caller must already hold mu.
+func (f *FakeEnv) removeRecursivelyUnderLock(p string) {
+	delete(f.Dirs, p)
+	f.forgetDumpUnderLock(p)
+	prefix := strings.TrimSuffix(p, "/") + "/"
+	for d := range f.Dirs {
+		if strings.HasPrefix(d, prefix) {
+			delete(f.Dirs, d)
+		}
+	}
+	for file := range maps.Clone(f.Files) {
+		if file == p || strings.HasPrefix(file, prefix) {
+			f.forgetDumpUnderLock(file)
+			delete(f.Files, file)
+		}
+	}
+}
+
+// forgetDumpUnderLock clears a tracked dump at p, if there is one, and
+// records its removal on the trace. The caller must already hold mu.
+func (f *FakeEnv) forgetDumpUnderLock(p string) {
+	if !f.dumps[p] {
+		return
+	}
+	delete(f.dumps, p)
+	f.trace = append(f.trace, TraceEvent{Kind: "dump", Name: p, Created: false})
 }
 
 // RemoveDirIfEmpty forgets the directory only when nothing else the fake
@@ -574,6 +800,23 @@ func (f *FakeEnv) DependencyState(id deps.ID) deps.DependencyState {
 // was generated for, which is what "the temp container mounts the copy" is
 // asserted on.
 func (f *FakeEnv) GenerateDefFor(id deps.ID, st deps.DependencyState) (appdef.ApplicationDef, error) {
+	vol := "vol-" + string(id)
+	if d, ok := deps.Lookup(id); ok {
+		if v := deps.VolumeName(d, st.Gen()); v != "" {
+			vol = v
+		}
+	}
+	return f.GenerateDefForVolume(id, st, vol)
+}
+
+// GenerateDefForVolume answers from Defs keyed by image AND generation — the
+// same key GenerateDefFor uses, since a scratch-volume def differs from the
+// ordinary one ONLY in which volume it mounts, and an arranged Defs entry is
+// returned as-is, exactly as GenerateDefFor already promised — or builds a
+// default def that mounts VOLUME, whatever it is. That is what "this
+// container mounts the scratch volume" is asserted on in a test that never
+// arranges Defs.
+func (f *FakeEnv) GenerateDefForVolume(id deps.ID, st deps.DependencyState, volume string) (appdef.ApplicationDef, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	key := DefKey(st.Image, st.Gen())
@@ -584,17 +827,16 @@ func (f *FakeEnv) GenerateDefFor(id deps.ID, st deps.DependencyState) (appdef.Ap
 		return d, nil
 	}
 	name := string(id)
-	vol := "vol-" + name
 	if d, ok := deps.Lookup(id); ok {
 		name = d.AppName()
-		if v := deps.VolumeName(d, st.Gen()); v != "" {
-			vol = v
-		}
+	}
+	if volume == "" {
+		volume = "vol-" + string(id)
 	}
 	return appdef.ApplicationDef{
 		Name:    name,
 		Image:   st.Image,
 		Ports:   []string{"14523:5432"},
-		Volumes: []string{vol + ":/data"},
+		Volumes: []string{volume + ":/data"},
 	}, nil
 }

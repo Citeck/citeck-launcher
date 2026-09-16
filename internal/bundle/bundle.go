@@ -70,6 +70,9 @@ type Key struct {
 // AppDef defines an app within a bundle.
 type AppDef struct {
 	Image string `json:"image" yaml:"image"`
+	// Images is the LADDER a `dependencies:` entry named, nil for every other
+	// source. Image is its last rung.
+	Images []string `json:"images,omitempty" yaml:"images,omitempty"`
 }
 
 // Def is a resolved bundle definition containing apps and metadata.

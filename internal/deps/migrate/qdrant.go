@@ -72,8 +72,8 @@ func (QdrantMigrator) SupportsPair(from, to deps.Version) (ok bool, problem msg.
 // segments whose layout is the very thing the new version is entitled to
 // rewrite — so a check phrased over it would either restate what the pin
 // already says or refuse a perfectly ordinary volume.
-func (m QdrantMigrator) Preflight(ctx context.Context, env Env, from, to string) PreflightResult {
-	res, _, ok := CopyPreflight(ctx, env, deps.Qdrant, from, to, m.SupportsPair)
+func (m QdrantMigrator) Preflight(ctx context.Context, env Env, path Path) PreflightResult {
+	res, _, ok := CopyPreflight(ctx, env, deps.Qdrant, path, m.SupportsPair)
 	if !ok {
 		return res
 	}
@@ -82,9 +82,9 @@ func (m QdrantMigrator) Preflight(ctx context.Context, env Env, from, to string)
 }
 
 // Plan builds the copy-upgrade plan for this pair.
-func (m QdrantMigrator) Plan(ctx context.Context, env Env, from, to string, opts PlanOptions) (*Plan, deps.MigrationJournal, error) {
-	pre := m.Preflight(ctx, env, from, to)
-	return BuildCopyUpgrade(env, qdrantCopySpec(), from, to, opts, pre)
+func (m QdrantMigrator) Plan(ctx context.Context, env Env, path Path, opts PlanOptions) (*Plan, deps.MigrationJournal, error) {
+	pre := m.Preflight(ctx, env, path)
+	return BuildCopyUpgrade(env, qdrantCopySpec(), path, opts, pre)
 }
 
 // qdrantCopySpec is everything the shared plan does not know about Qdrant.

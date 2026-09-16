@@ -488,6 +488,7 @@
   "deps.msg.zk.dataTooOld": "данные ZooKeeper, записанные версией {from}, могут быть старше zookeeper.snapshot.trust.empty, из-за чего более новый сервер способен принять пустой снимок за корректное состояние; лаунчер не станет их переносить. В ZooKeeper хранятся отметки о результатах патчей каждого веб-приложения и постоянная отметка eproc об отключённом mongo, поэтому пустое дерево, выглядящее исправным, — худший из возможных исходов. Пространство имён продолжает работать на {from}.",
   "deps.msg.progress.waiting": "ожидание {what} в {container}",
   "deps.msg.progress.pulling": "загрузка {image}",
+  "deps.msg.progress.starting": "запуск {image}",
   "deps.msg.progress.copying": "копирование {size}",
   "deps.msg.progress.dumped": "выгружено {size}",
   "deps.msg.progress.restoring": "восстановление дампа объёмом {size}",

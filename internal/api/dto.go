@@ -379,6 +379,23 @@ type DependencyMigrationDto struct {
 	// three steps on the same progress events, so the CLI's renderer and the
 	// dialog's progress screen work unchanged and only the title differs.
 	Kind string `json:"kind,omitempty"`
+	// StepIDs is the running plan's ACTUAL step list, in order — plan.Steps'
+	// ids, verbatim, including repeats. It exists because a multi-hop copy
+	// upgrade repeats ids (pre-upgrade/start-new/post-upgrade once per rung,
+	// and an intermediate rung's own stop shares "stop-new" with the plan's
+	// FINAL cleanup step): a client that hardcodes the single-hop vocabulary
+	// and locates a step by `indexOf(id)` finds the id's ONLY listed
+	// position — the plan's LAST one for "stop-new" — and marks every row
+	// before it done, verify included, while verify has not run yet. Only the
+	// daemon knows the plan's real shape, so it is the one place this can be
+	// fixed: the client positions a row by StepIndex/StepCount now, never by
+	// matching ids, and this is what it positions them AGAINST.
+	//
+	// Omitted (omitempty) rather than always sent is deliberate: an older
+	// daemon this field predates sends none, and the client's fallback is its
+	// OWN hardcoded vocabulary, unaffected either way — nothing on the wire
+	// changed shape for it to trip over.
+	StepIDs []string `json:"stepIds,omitempty"`
 }
 
 // DependencyMigrationResultDto is the verdict of the last migration, kept
@@ -578,9 +595,10 @@ type LinkDto struct {
 //     index/count, Percent the step's own sub-progress (0 = indeterminate),
 //     After a human message — on start "<from> → <to>", on error the reason
 //     (the rollback has already run by the time it is sent), on complete
-//     after a finalize failure the warning. NamespaceID is set; the
-//     namespace-scoped truth for a client that connects mid-migration is
-//     NamespaceDto.DependencyMigration.
+//     after a finalize failure the warning. StepIDs (start/progress only) is
+//     the plan's real step list — see DependencyMigrationDto.StepIDs.
+//     NamespaceID is set; the namespace-scoped truth for a client that
+//     connects mid-migration is NamespaceDto.DependencyMigration.
 //
 // The four deps_migration_* type strings are the constants below; the daemon
 // broadcasts them and the CLI selects on them. The web store cannot import Go,
@@ -609,6 +627,12 @@ type EventDto struct {
 	Path           string `json:"path,omitempty"`
 	FreeBytes      int64  `json:"freeBytes,omitempty"`
 	ThresholdBytes int64  `json:"thresholdBytes,omitempty"`
+	// StepIDs is the running migration's plan.Steps ids, verbatim — see
+	// DependencyMigrationDto.StepIDs for why a client needs the real list
+	// rather than a hardcoded one. Present on "deps_migration_start" and
+	// "deps_migration_progress" once the plan exists (never on "preparing",
+	// where there is no plan yet to name).
+	StepIDs []string `json:"stepIds,omitempty"`
 }
 
 // The dependency-migration event types. They lived as separate literals in the

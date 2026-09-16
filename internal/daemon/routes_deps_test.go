@@ -42,8 +42,10 @@ func newDepsRoutesDaemon(t *testing.T) (*Daemon, *http.ServeMux, *namespace.Runt
 		nsConfig:    &namespace.Config{ID: "ns1"},
 		volumesBase: t.TempDir(),
 		dependencyUpgrades: []namespace.DependencyUpgrade{
-			{ID: deps.Postgres, App: "postgres", From: "postgres:17.5", To: "postgres:18", Migratable: true},
-			{ID: deps.RabbitMQ, App: "rabbitmq", From: "rabbitmq:4.1.2-management", To: "rabbitmq:4.2.9-management"},
+			{ID: deps.Postgres, App: "postgres", From: "postgres:17.5", To: "postgres:18", Migratable: true,
+				Path: []string{"postgres:17.5", "postgres:18"}},
+			{ID: deps.RabbitMQ, App: "rabbitmq", From: "rabbitmq:4.1.2-management", To: "rabbitmq:4.2.9-management",
+				Path: []string{"rabbitmq:4.1.2-management", "rabbitmq:4.2.9-management"}},
 		},
 		dependencies: map[deps.ID]namespace.DependencyGen{
 			deps.Postgres:  {Effective: "postgres:17.5", Candidate: "postgres:18"},
@@ -418,6 +420,7 @@ func TestAPairTheLauncherCannotCarryIsReportedAsALauncherUpdate(t *testing.T) {
 	rt.RestoreDependencyState(map[deps.ID]deps.DependencyState{deps.Postgres: {Image: "postgres:18"}}, nil, nil)
 	d.activeNs.dependencyUpgrades[0] = namespace.DependencyUpgrade{
 		ID: deps.Postgres, App: "postgres", From: "postgres:18", To: "postgres:99", Migratable: true,
+		Path: []string{"postgres:18", "postgres:99"},
 	}
 	d.activeNs.dependencies[deps.Postgres] = namespace.DependencyGen{
 		Effective: "postgres:18", Candidate: "postgres:99",
@@ -458,6 +461,7 @@ func TestNamespaceDtoMarksAnUnsupportedPairAsNotMigratable(t *testing.T) {
 	rt.RestoreDependencyState(map[deps.ID]deps.DependencyState{deps.Postgres: {Image: "postgres:18"}}, nil, nil)
 	d.activeNs.dependencyUpgrades[0] = namespace.DependencyUpgrade{
 		ID: deps.Postgres, App: "postgres", From: "postgres:18", To: "postgres:99", Migratable: true,
+		Path: []string{"postgres:18", "postgres:99"},
 	}
 	d.activeNs.appDefs = []appdef.ApplicationDef{{Name: "postgres"}}
 	// Same fake as the list route's test, and for the same reason: the
@@ -501,11 +505,12 @@ func TestADowngradeGetsItsOwnMessageNotALauncherUpdate(t *testing.T) {
 	rt.RestoreDependencyState(map[deps.ID]deps.DependencyState{deps.Postgres: {Image: "postgres:18"}}, nil, nil)
 	d.activeNs.dependencyUpgrades[0] = namespace.DependencyUpgrade{
 		ID: deps.Postgres, App: "postgres", From: "postgres:18", To: "postgres:17", Migratable: true,
+		Path: []string{"postgres:18", "postgres:17"},
 	}
 	d.activeNs.dependencies[deps.Postgres] = namespace.DependencyGen{
 		Effective: "postgres:18", Candidate: "postgres:17",
 	}
-	assert.True(t, d.pairProblem(deps.Postgres, "postgres:18", "postgres:17").Empty(),
+	assert.True(t, d.routeProblem(deps.Postgres, migrate.Path{"postgres:18", "postgres:17"}).Empty(),
 		"a downgrade is not a launcher problem: the migrator refuses it with an EMPTY reason, "+
 			"which is the contract that leaves the preflight's accurate wording reachable")
 
@@ -522,9 +527,39 @@ func TestADowngradeGetsItsOwnMessageNotALauncherUpdate(t *testing.T) {
 	// unreachable through both routes.
 	env := migratetest.New()
 	env.Volumes[postgresVolume(2)] = map[string]string{"18/docker/PG_VERSION": "18\n"}
-	pre := migrate.PostgresMigrator{}.Preflight(context.Background(), env, "postgres:18", "postgres:17")
+	pre := migrate.PostgresMigrator{}.Preflight(context.Background(), env, migrate.Path{"postgres:18", "postgres:17"})
 	assert.False(t, pre.OK)
 	assert.Contains(t, renderProblems(englishForLogs, pre.Problems), "does not migrate data backwards")
+}
+
+// A migratable dependency whose held-back upgrade carries an EMPTY route:
+// the gate's own no-route case, produced when a rung's tag cannot be parsed
+// (see TestAnUnreadableRungLeavesNoRoute and
+// TestAMalformedLadderOnAPinnedStandStillHoldsThePinAndIsReported in
+// internal/namespace/generator_deps_ladder_test.go — both leave held.Path
+// empty for a Migratable() dependency). There is nothing to plan a migration
+// FROM, so both routes must refuse it with the same code an unmigratable
+// dependency gets, and — this is the part a revert to [upgrade.From,
+// upgrade.To] would break silently — the refusal must not name a fabricated
+// pair: the operator already has the tag-level detail through the list
+// route's StatusDetail.
+func TestBothMigrationRoutesRefuseAnUpgradeWithNoRouteAtAll(t *testing.T) {
+	d, mux, _ := newDepsRoutesDaemon(t)
+	d.activeNs.dependencyUpgrades[0] = namespace.DependencyUpgrade{
+		ID: deps.Postgres, App: "postgres", From: "postgres:17.5", To: "postgres:18", Migratable: true,
+		// Path is deliberately left unset (nil): the gate's EMPTY-route case.
+	}
+
+	for _, rec := range []*httptest.ResponseRecorder{
+		depsGet(mux, api.DependencyPreflightPath("postgres")),
+		depsPost(mux, api.DependencyMigratePath("postgres"), "{}"),
+	} {
+		require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+		assert.Contains(t, rec.Body.String(), api.ErrCodeDependencyNotMigratable)
+		assert.NotContains(t, rec.Body.String(), "17.5",
+			"no route means nothing to name; a fabricated [From, To] pair would leak the version here")
+		assert.NotContains(t, rec.Body.String(), "postgres:18")
+	}
 }
 
 // The pair the launcher WAS built for stays offered — the guard above must not
@@ -633,14 +668,15 @@ func (f fakeMigrator) SupportsPair(from, to deps.Version) (ok bool, problem msg.
 	return f.supports(from, to)
 }
 
-func (f fakeMigrator) Preflight(context.Context, migrate.Env, string, string) migrate.PreflightResult {
+func (f fakeMigrator) Preflight(context.Context, migrate.Env, migrate.Path) migrate.PreflightResult {
 	if f.onProbe != nil {
 		f.onProbe()
 	}
 	return f.pre
 }
 
-func (f fakeMigrator) Plan(_ context.Context, _ migrate.Env, from, to string, opts migrate.PlanOptions) (*migrate.Plan, deps.MigrationJournal, error) {
+func (f fakeMigrator) Plan(_ context.Context, _ migrate.Env, path migrate.Path, opts migrate.PlanOptions) (*migrate.Plan, deps.MigrationJournal, error) {
+	from, to := path.From(), path.To()
 	if f.onProbe != nil {
 		f.onProbe()
 	}
@@ -731,11 +767,84 @@ func TestMigrateAcceptsRunsAndBroadcasts(t *testing.T) {
 	assert.Equal(t, 1, prog.Total)
 	assert.Equal(t, "ns1", prog.NamespaceID)
 	assert.InDelta(t, 50.0, prog.Percent, 0.001)
+	// StepIDs is the plan's real step list, published from the plan alone —
+	// the web dialog positions a row by StepIndex against exactly this,
+	// never by matching an id (see api.DependencyMigrationDto.StepIDs).
+	assert.Equal(t, []string{"only"}, prog.StepIDs)
+	assert.Equal(t, []string{"only"}, byType["deps_migration_start"].StepIDs)
 	// The broadcast event carries the MESSAGE; After is filled in per
 	// subscriber by writeSSEEvent, in that subscriber's language.
 	assert.Equal(t, "analyzing", englishForLogs.Render(prog.AfterMsg))
 
 	assert.Nil(t, d.currentDepsMigration("ns1"), "progress state is cleared when the pass ends")
+}
+
+// A ladder repeats step ids on purpose (BuildCopyUpgrade: pre-upgrade,
+// start-new and post-upgrade once per rung, an intermediate rung's own stop
+// sharing "stop-new" with the plan's FINAL cleanup step) — StepIDs has to
+// carry the plan's ids VERBATIM, repeats included, or the web dialog has no
+// way to tell an intermediate rung's step from the plan's last one. Deduping
+// here would silently reintroduce the exact bug this field exists to fix.
+func TestMigrateProgressPublishesTheRealStepListIncludingRepeats(t *testing.T) {
+	d, mux, rt := newDepsRoutesDaemon(t)
+	d.activeNs.dockerClient = &docker.Client{}
+	d.bgCtx, d.bgCancel = context.WithCancel(context.Background())
+	t.Cleanup(d.bgCancel)
+	_ = rt
+
+	finalized := make(chan struct{})
+	d.depsMigratorFn = func(deps.ID) migrate.Migrator {
+		return fakeMigrator{
+			pre: migrate.PreflightResult{OK: true, From: "postgres:17.5", To: "postgres:18"},
+			plan: &migrate.Plan{
+				Steps: []migrate.Step{
+					{ID: "a", Run: func(context.Context, *migrate.Journal, migrate.StepProgress) error { return nil }},
+					{ID: "b", Run: func(context.Context, *migrate.Journal, migrate.StepProgress) error { return nil }},
+					{ID: "a", Run: func(context.Context, *migrate.Journal, migrate.StepProgress) error { return nil }},
+				},
+				Rollback: func(context.Context, *deps.MigrationJournal) error { return nil },
+				Result: func(j *deps.MigrationJournal) deps.MigrationResult {
+					return deps.MigrationResult{ID: j.ID}
+				},
+				Finalize: func(context.Context, *deps.MigrationJournal) error { close(finalized); return nil },
+			},
+		}
+	}
+	events, _, ok := d.addSubscriber()
+	require.True(t, ok)
+	defer d.removeSubscriber(events)
+
+	rec := depsPost(mux, api.DependencyMigratePath("postgres"), `{}`)
+	require.Equal(t, http.StatusAccepted, rec.Code, rec.Body.String())
+	select {
+	case <-finalized:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the migration never reached its finalize step")
+	}
+	d.bgWg.Wait()
+
+	want := []string{"a", "b", "a"}
+	var sawStart, sawLastProgress bool
+	for len(events) > 0 {
+		e := <-events
+		switch e.Type {
+		case "deps_migration_start":
+			assert.Equal(t, want, e.StepIDs, "the start event names the whole plan up front")
+			sawStart = true
+		case "deps_migration_progress":
+			if e.Phase == api.DependencyMigrationStepPreparing {
+				// Before the plan exists there is nothing to name — see
+				// api.EventDto.StepIDs.
+				continue
+			}
+			assert.Equal(t, want, e.StepIDs, "every progress event carries the same, unchanging list")
+			if e.Phase == "a" && e.Current == 3 {
+				sawLastProgress = true
+			}
+		}
+	}
+	assert.True(t, sawStart)
+	assert.True(t, sawLastProgress, "the THIRD step, id \"a\" again, must still publish its own real position")
 }
 
 func TestMigrateReportsAFailedRunAsAnErrorEvent(t *testing.T) {
@@ -921,6 +1030,7 @@ func blockedRabbitDaemon(t *testing.T) (*Daemon, *http.ServeMux) {
 		ID: deps.RabbitMQ, App: "rabbitmq",
 		From: "rabbitmq:4.1.8-management", To: "rabbitmq:4.3.5-management",
 		Migratable: true, VendorBlocked: true, VendorVia: "4.2",
+		Path: []string{"rabbitmq:4.1.8-management", "rabbitmq:4.3.5-management"},
 	}}
 	d.activeNs.dependencies = map[deps.ID]namespace.DependencyGen{
 		deps.RabbitMQ: {Effective: "rabbitmq:4.1.8-management", Candidate: "rabbitmq:4.3.5-management"},
@@ -992,6 +1102,7 @@ func TestZookeeperDataTooOldIsBlockedNotALauncherProblem(t *testing.T) {
 	d.activeNs.dependencyUpgrades = []namespace.DependencyUpgrade{{
 		ID: deps.Zookeeper, App: "zookeeper", From: "zookeeper:3.4.14", To: "zookeeper:3.9.5",
 		Migratable: true, VendorBlocked: true,
+		Path: []string{"zookeeper:3.4.14", "zookeeper:3.9.5"},
 	}}
 	d.activeNs.dependencies = map[deps.ID]namespace.DependencyGen{
 		deps.Zookeeper: {Effective: "zookeeper:3.4.14", Candidate: "zookeeper:3.9.5"},
@@ -1014,12 +1125,12 @@ func TestZookeeperDataTooOldIsBlockedNotALauncherProblem(t *testing.T) {
 func TestPairProblemIsTheOneVerdictEverySurfaceAsksFor(t *testing.T) {
 	d, _, _ := newDepsRoutesDaemon(t)
 
-	assert.True(t, d.pairProblem(deps.RabbitMQ, "rabbitmq:4.1.8-management", "rabbitmq:4.2.9-management").Empty(),
+	assert.True(t, d.routeProblem(deps.RabbitMQ, migrate.Path{"rabbitmq:4.1.8-management", "rabbitmq:4.2.9-management"}).Empty(),
 		"a hop the vendor allows and this launcher ships a plan for")
-	assert.Contains(t, englishForLogs.Render(d.pairProblem(deps.RabbitMQ, "rabbitmq:4.1.8-management", "rabbitmq:4.3.5-management")), "4.2")
-	assert.True(t, d.pairProblem(deps.Postgres, "postgres:latest", "postgres:18").Empty(),
+	assert.Contains(t, englishForLogs.Render(d.routeProblem(deps.RabbitMQ, migrate.Path{"rabbitmq:4.1.8-management", "rabbitmq:4.3.5-management"})), "4.2")
+	assert.True(t, d.routeProblem(deps.Postgres, migrate.Path{"postgres:latest", "postgres:18"}).Empty(),
 		"an unreadable tag is the preflight's to explain, and its message names the tag")
-	assert.True(t, d.pairProblem(deps.MongoDB, "mongo:4.0", "mongo:7.0").Empty(),
+	assert.True(t, d.routeProblem(deps.MongoDB, migrate.Path{"mongo:4.0", "mongo:7.0"}).Empty(),
 		"a dependency with no migrator is answered by the Migratable() arm, not by a second account of the pair")
 }
 
