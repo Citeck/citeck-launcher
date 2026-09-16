@@ -1,0 +1,3 @@
+## Novedades
+- **Un bundle ahora puede exigir una versión mínima del launcher.** Crear o editar un namespace se rechaza si el bundle seleccionado necesita una versión del launcher más nueva que la instalada; el mensaje indica a qué versión actualizar. Un namespace que ya usa ese bundle no se ve afectado, y elegir «LATEST» siempre selecciona el bundle más reciente que este launcher puede ejecutar realmente.
+- **El engranaje de ajustes del namespace ahora muestra un punto cuando hay un bundle más reciente disponible** en tu repositorio de bundles: verde si este launcher puede ejecutarlo, ámbar si antes hace falta un launcher más nuevo. Pasa el cursor sobre el icono para ver la versión y qué hacer.

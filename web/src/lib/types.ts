@@ -131,6 +131,10 @@ export interface NamespaceDto {
   // because applying them to this namespace's existing data would be a
   // breaking change. Recomputed on every load and reload.
   dependencyUpgrades?: DependencyUpgradeDto[]
+  // Set when this namespace's bundle repo has a version above the one it runs.
+  // `requiresLauncher` present means we cannot switch to it yet — the next move
+  // is updating the launcher, not opening the settings dialog.
+  newerBundle?: { version: string; requiresLauncher?: string }
   // Set while a dependency migration runs for THIS namespace, so a client that
   // connects or reloads mid-way still sees it (the deps_migration_* events
   // only reach clients already listening).

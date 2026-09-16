@@ -1,0 +1,3 @@
+## New features
+- **A bundle can require a minimum launcher version.** Creating or editing a namespace is now refused if the selected bundle needs a newer launcher than the one you are running — the message names the launcher version to update to. A namespace already running such a bundle is unaffected, and choosing "LATEST" always picks the newest bundle this launcher can actually run.
+- **The namespace settings gear now shows a dot when a newer bundle is available** in your bundle repository — green if this launcher can run it, amber if a newer launcher is needed first. Hover the gear to see the version and what to do.

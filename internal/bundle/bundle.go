@@ -91,7 +91,17 @@ type Def struct {
 	// webapp loop admits bundle applications, and infra must never reach it.
 	Dependencies map[string]AppDef `json:"dependencies,omitempty" yaml:"dependencies,omitempty"`
 	CiteckApps   []AppDef          `json:"citeckApps,omitempty" yaml:"citeckApps,omitempty"`
-	Content      map[string]any    `json:"content,omitempty" yaml:"content,omitempty"` // raw bundle YAML as map
+	// MinLauncherVersion is the launcher version this bundle declares it needs,
+	// as the author's own text ("2.13.0"). Empty means no requirement — both
+	// when the key is absent and when it is blank, because an unreadable floor
+	// compares as newer than every release (see update.Greater) and a blank one
+	// would otherwise refuse everybody.
+	//
+	// Only launchers from the release that introduced the check enforce it;
+	// every older launcher, Go and Kotlin alike, ignores the key. So it guards
+	// nothing retroactively — see AGENTS.md.
+	MinLauncherVersion string         `json:"minLauncherVersion,omitempty" yaml:"minLauncherVersion,omitempty"`
+	Content            map[string]any `json:"content,omitempty" yaml:"content,omitempty"` // raw bundle YAML as map
 }
 
 // EmptyDef is a Def with no applications.

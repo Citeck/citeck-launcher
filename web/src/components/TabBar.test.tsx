@@ -74,3 +74,41 @@ describe('TabBar settings gear', () => {
     expect(screen.getByTitle('Namespace config')).toBeInTheDocument()
   })
 })
+
+// The gear is the control that acts on the message, so the message lives on
+// the gear. An element has ONE title, so while the dot shows, the gear's
+// title IS the indicator sentence — otherwise the dot appears and says
+// nothing.
+describe('TabBar namespace gear', () => {
+  beforeEach(() => {
+    store.state.namespace = { ...NS, newerBundle: undefined }
+  })
+
+  it('keeps the plain tooltip and shows no dot when nothing is newer', () => {
+    const { container } = renderAt('/')
+    const gear = screen.getByTitle('Namespace config')
+    expect(gear).toBeTruthy()
+    expect(container.querySelector('.bg-emerald-500')).toBeNull()
+    expect(container.querySelector('.bg-amber-500')).toBeNull()
+  })
+
+  it('names the version we can switch to, with an emerald dot', () => {
+    store.state.namespace = { ...NS, newerBundle: { version: '2026.3' } }
+    const { container } = renderAt('/')
+    const gear = container.querySelector('button[title*="2026.3"]')
+    expect(gear).not.toBeNull()
+    expect(gear!.getAttribute('title')).toContain('settings')
+    expect(container.querySelector('.bg-emerald-500')).not.toBeNull()
+    expect(container.querySelector('.bg-amber-500')).toBeNull()
+  })
+
+  it('asks for a launcher update, with an amber dot, when we cannot run it', () => {
+    store.state.namespace = { ...NS, newerBundle: { version: '2026.3', requiresLauncher: '2.13.0' } }
+    const { container } = renderAt('/')
+    const gear = container.querySelector('button[title*="2026.3"]')
+    expect(gear).not.toBeNull()
+    expect(gear!.getAttribute('title')).toContain('2.13.0')
+    expect(container.querySelector('.bg-amber-500')).not.toBeNull()
+    expect(container.querySelector('.bg-emerald-500')).toBeNull()
+  })
+})

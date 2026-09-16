@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -315,7 +314,8 @@ func (d *Daemon) resolveLatestBundleKey(wsID, repo string, offline bool) (string
 	}
 	resolver := bundle.NewResolverWithAuth(config.BundlesDataDir(wsID), makeTokenLookup(d.secretService)).
 		WithWorkspaceRepo(lookupWorkspaceRepoOpts(d.store, d.secretService, wsID)).
-		WithWorkspaceOverlay(workspaceConfigOverlay(d.store, wsID))
+		WithWorkspaceOverlay(workspaceConfigOverlay(d.store, wsID)).
+		WithLauncherVersion(d.version)
 	// Server mode never auto-pulls git; desktop may pull to find the latest tag,
 	// throttled by the repo's pullPeriod (a clone synced within the period is read
 	// without network). offline=true forces a no-pull read even on desktop.
@@ -399,15 +399,16 @@ func (d *Daemon) handleActivateNamespace(w http.ResponseWriter, r *http.Request)
 	// tearing down current state — if loading fails, the daemon stays on
 	// the previous namespace and the user can retry without a restart.
 	loaded, err := loadNamespace(loadNamespaceInput{
-		Ctx:           d.bgCtx,
-		Store:         d.store,
-		SecretService: d.secretService,
-		DockerClient:  nil, // build a fresh client scoped to this ns (loadNamespace)
-		DaemonCfg:     d.daemonCfg,
-		Licenses:      d.licenses,
-		WorkspaceID:   wsID,
-		NamespaceID:   nsID,
-		Desktop:       d.desktop,
+		Ctx:             d.bgCtx,
+		Store:           d.store,
+		SecretService:   d.secretService,
+		DockerClient:    nil, // build a fresh client scoped to this ns (loadNamespace)
+		DaemonCfg:       d.daemonCfg,
+		Licenses:        d.licenses,
+		WorkspaceID:     wsID,
+		NamespaceID:     nsID,
+		Desktop:         d.desktop,
+		LauncherVersion: d.version,
 	})
 	if err != nil {
 		writeInternalError(w, fmt.Errorf("load namespace %q: %w", nsID, err))
@@ -551,8 +552,11 @@ func (d *Daemon) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 
 	nsCfg, err := d.createNamespace(req)
 	if err != nil {
+		var floor *errLauncherTooOld
 		var ce *createNamespaceError
 		switch {
+		case errors.As(err, &floor):
+			d.writeLauncherTooOldError(w, r, floor)
 		case errors.As(err, &ce) && ce.code != "":
 			writeErrorCode(w, ce.status, ce.code, ce.message)
 		case errors.As(err, &ce):
@@ -790,6 +794,12 @@ func (d *Daemon) persistNewNamespace(wsID string, nsCfg *namespace.Config) error
 			message: fmt.Sprintf("namespace %q already exists", nsCfg.ID)}
 	}
 	if persistErr := d.persistNamespaceConfig(wsID, nsCfg.ID, data); persistErr != nil {
+		// *errLauncherTooOld travels unwrapped so the handler can render it
+		// in the request's language — see handleCreateNamespace.
+		var floor *errLauncherTooOld
+		if errors.As(persistErr, &floor) {
+			return persistErr
+		}
 		return &createNamespaceError{status: http.StatusBadRequest, code: api.ErrCodeInvalidConfig,
 			message: persistErr.Error()}
 	}
@@ -853,12 +863,13 @@ func (d *Daemon) autoActivateAfterCreate(wsID, nsID string) {
 		// nil → loadNamespace builds the runtime client scoped to
 		// nsID. Never inject the active dockerClient: it is scoped to the
 		// previously-active namespace (the wrong-namespace bug).
-		DockerClient: nil,
-		DaemonCfg:    d.daemonCfg,
-		Licenses:     d.licenses,
-		WorkspaceID:  activeWsID,
-		NamespaceID:  nsID,
-		Desktop:      d.desktop,
+		DockerClient:    nil,
+		DaemonCfg:       d.daemonCfg,
+		Licenses:        d.licenses,
+		WorkspaceID:     activeWsID,
+		NamespaceID:     nsID,
+		Desktop:         d.desktop,
+		LauncherVersion: d.version,
 	})
 	if loadErr != nil {
 		slog.Warn("Auto-activate after create failed (load)", "nsID", nsID, "err", loadErr)
@@ -1111,6 +1122,11 @@ func (d *Daemon) handlePutNamespaceEdit(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if err := d.persistNamespaceConfig(wsID, nsID, data); err != nil {
+		var floor *errLauncherTooOld
+		if errors.As(err, &floor) {
+			d.writeLauncherTooOldError(w, r, floor)
+			return
+		}
 		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeInvalidConfig, err.Error())
 		return
 	}
@@ -1164,7 +1180,8 @@ func (d *Daemon) handleBundleRepoPull(w http.ResponseWriter, r *http.Request) {
 	// disk yet. No background pulling either way.
 	resolver := bundle.NewResolverWithAuth(config.BundlesDataDir(act.workspaceID), makeTokenLookup(d.secretReaderFunc())).
 		WithWorkspaceRepo(d.resolveActiveWorkspaceRepoOpts()).
-		WithWorkspaceOverlay(workspaceConfigOverlay(d.store, act.workspaceID))
+		WithWorkspaceOverlay(workspaceConfigOverlay(d.store, act.workspaceID)).
+		WithLauncherVersion(d.version)
 	if r.URL.Query().Get("force") == "true" {
 		resolver = resolver.WithForcePull()
 	}
@@ -1172,22 +1189,38 @@ func (d *Daemon) handleBundleRepoPull(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+
+	// Refresh "is there a newer bundle" when the repo just synced is the one
+	// the active namespace's bundle comes from — a pull of a DIFFERENT repo
+	// (e.g. selecting a not-yet-cloned "release" repo while running on
+	// "community") cannot have changed the answer for this namespace.
+	d.configMu.Lock()
+	a := d.activeLocked()
+	if a.workspaceConfig != nil && a.bundleDef != nil && a.nsConfig != nil &&
+		a.nsConfig.BundleRef.Repo == repoID {
+		repoEntry := bundleRepoByID(a.workspaceConfig, a.nsConfig.BundleRef.Repo)
+		// This fill runs under the d.configMu.Lock() taken just above, so
+		// nothing it calls may re-acquire configMu: sync.RWMutex is not
+		// reentrant, and a second acquisition on the goroutine already holding
+		// the write lock blocks forever — here that hangs the repo-refresh
+		// request and every later configMu reader with it. Hence the
+		// package-level resolveBundleRepoDir with the workspace id already in
+		// hand, and NOT d.resolveBundleDir, which re-derives it via
+		// d.activeWorkspaceID() -> d.active() -> d.configMu.RLock(). Guarded by
+		// TestBundleRepoPullDoesNotDeadlockOnTheNewerBundleFill, which drives
+		// this handler for real, and by
+		// TestNewerBundleFillNeverReacquiresConfigMu (newer_bundle_lock_test.go).
+		a.newerBundle = bundle.FindNewerBundle(
+			resolveBundleRepoDir(act.workspaceID, repoEntry), a.bundleDef.Key.Version, d.version)
+	}
+	d.configMu.Unlock()
+
 	writeJSON(w, api.ActionResultDto{Success: true, Message: "bundle repo synced"})
 }
 
-// resolveBundleDir returns the on-disk directory for a bundle repo.
-// Delegates to the shared ResolveBundleRepoDir which handles offline import,
-// workspace repo, and cloned repo priorities. In desktop mode bundles live
-// under ~/.citeck/launcher/ws/{wsID}/, mirroring the path the namespace
-// loader (namespace_loader.go) uses to feed `bundle.NewResolverWithAuth` —
-// without this branch `versions[]` came back empty in desktop mode and the
-// bundle dropdown in the namespace-edit dialog only showed the currently
-// selected key as a stale fallback.
+// resolveBundleDir returns the on-disk directory for a bundle repo, scoped to
+// the ACTIVE workspace. See resolveBundleRepoDir (namespace_loader.go) for
+// what this reconstructs and — more importantly — what it gets wrong.
 func (d *Daemon) resolveBundleDir(repo bundle.BundlesRepo) string {
-	dataDir := config.DataDir()
-	if wsID := d.activeWorkspaceID(); config.IsDesktopMode() && wsID != "" {
-		dataDir = config.WorkspaceDir(wsID)
-	}
-	wsRepoDir := filepath.Join(dataDir, "bundles", "workspace")
-	return bundle.ResolveBundleRepoDir(dataDir, wsRepoDir, repo)
+	return resolveBundleRepoDir(d.activeWorkspaceID(), repo)
 }

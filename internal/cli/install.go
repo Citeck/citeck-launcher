@@ -267,7 +267,17 @@ hostStep:
 
 	// --- Step 5: Release + registry auth (registry is a conditional sub-step) ---
 	for {
-		if err := resolveRelease(&nsCfg, isOffline); err != nil {
+		if err := resolveRelease(&nsCfg, isOffline, info.Version); err != nil {
+			var floorErr *errReleaseFloorTooOld
+			if errors.As(err, &floorErr) {
+				// A floor refusal is not fatal to the wizard — every answer
+				// already given (host, TLS, proxy port, auth, admin password)
+				// stays intact. Print the refusal and re-show the release
+				// picker, the same shape configureRegistryAuth's
+				// errBackToRelease already uses below.
+				output.Errf("   %s", floorErr.Error())
+				continue // re-show release selection
+			}
 			return err
 		}
 
@@ -993,7 +1003,7 @@ func (rv repoVersions) displayName() string {
 
 // resolveRelease resolves available platform releases and lets the user pick one.
 // Returns an error if no releases are available (offline without workspace data).
-func resolveRelease(nsCfg *namespace.Config, offline bool) error {
+func resolveRelease(nsCfg *namespace.Config, offline bool, launcherVersion string) error {
 	output.PrintText("   %s", t("install.release.fetching"))
 	repos := discoverRepos(offline)
 
@@ -1013,8 +1023,53 @@ func resolveRelease(nsCfg *namespace.Config, offline bool) error {
 	if err != nil {
 		return err
 	}
+	if err := checkReleaseFloor(bundlesDirFor(withVersions, ref.Repo), ref, launcherVersion); err != nil {
+		return err
+	}
 	nsCfg.BundleRef = ref
 	return nil
+}
+
+// errReleaseFloorTooOld carries a release-floor refusal out of
+// checkReleaseFloor/resolveRelease so the caller can loop back to the release
+// picker instead of aborting the whole wizard — every answer already given
+// (host, TLS, proxy port, auth, admin password) stays intact. Distinguished by
+// type (rather than reusing errBackToRelease, which means "the operator asked
+// to go back") because the caller must print this one's message itself; an
+// operator-requested back needs none.
+type errReleaseFloorTooOld struct {
+	msg string
+}
+
+func (e *errReleaseFloorTooOld) Error() string { return e.msg }
+
+// checkReleaseFloor refuses a picked release whose bundle declares a
+// minLauncherVersion above this build.
+//
+// It exists apart from resolveRelease because resolveRelease ends in an
+// interactive picker: the rule has to be reachable by a test that does not have
+// to answer a terminal. A bundle file that is not on disk is not a refusal.
+func checkReleaseFloor(bundlesDir string, ref bundle.Ref, launcherVersion string) error {
+	floor := bundle.ReadMinLauncherVersion(bundlesDir, ref.Key)
+	if !bundle.NeedsNewerLauncher(floor, launcherVersion) {
+		return nil
+	}
+	return &errReleaseFloorTooOld{msg: t("install.release.launcherTooOld",
+		"bundle", ref.String(), "needs", floor, "current", launcherVersion)}
+}
+
+// bundlesDirFor answers the bundles directory a repo's versions were listed
+// from. The brief named an existing helper `bundlesDirFor(ref.Repo)`; no such
+// helper exists in this codebase, so this reuses discoverRepos's own
+// directory lookup (resolveBundleDir) against the already-discovered repo
+// list rather than recomputing the path a second, possibly-drifting way.
+func bundlesDirFor(withVersions []repoVersions, repoID string) string {
+	for _, rv := range withVersions {
+		if rv.repo.ID == repoID {
+			return resolveBundleDir(rv.repo)
+		}
+	}
+	return ""
 }
 
 // ErrInstallCancelled signals that the user aborted an install-time picker

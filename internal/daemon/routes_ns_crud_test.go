@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -131,6 +133,51 @@ func TestCreateNamespace_LatestUnsyncedRepoRefused(t *testing.T) {
 	rows, err := d.store.ListNamespaces("ws-target")
 	require.NoError(t, err)
 	assert.Empty(t, rows, "no namespace persisted with a raw LATEST bundle key")
+}
+
+// TestCreateNamespace_LatestSkipsABundleThisLauncherCannotRun: the create
+// path resolves LATEST via resolveLatestBundleKey, so it is the one that must
+// not hand back a bundle this launcher cannot run. A construction site that
+// forgets .WithLauncherVersion(d.version) loses exactly this — LATEST would
+// silently pin the newest bundle on disk regardless of the floor it declares.
+//
+// The brief's own sketch of this test called a two-argument
+// resolveLatestBundleKey returning (string, error); the real signature is
+// (wsID, repo string, offline bool) (string, bool) (see routes_ns.go). This
+// drives the real HTTP create path instead, which is what actually needs the
+// launcher version threaded through.
+func TestCreateNamespace_LatestSkipsABundleThisLauncherCannotRun(t *testing.T) {
+	t.Setenv("CITECK_HOME", t.TempDir())
+	d, mux := newNsCrudTestDaemon(t)
+	d.version = "2.12.2"
+
+	// Lay out a local (un-cloned) workspace repo declaring "community" bundles
+	// under dataDir/repo/community — the same local-bundles shape
+	// TestResolve_KnownRepoWithEmptyURLUsesWorkspaceDir uses in
+	// internal/bundle, so no git network access is needed.
+	repoDir := filepath.Join(config.DataDir(), "repo")
+	require.NoError(t, os.MkdirAll(filepath.Join(repoDir, "community"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, "workspace-v1.yml"),
+		[]byte("bundleRepos:\n  - id: community\n    path: community\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, "community", "2026.2.yaml"),
+		[]byte("EcosModelApp:\n  image: core/ecos-model:1.0\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, "community", "2026.3.yaml"),
+		[]byte("minLauncherVersion: \"9.9.9\"\nEcosModelApp:\n  image: core/ecos-model:1.0\n"), 0o644))
+
+	body := `{"name":"X","authType":"BASIC","users":["admin"],` +
+		`"bundleRepo":"community","bundleKey":"LATEST","workspaceId":"ws-target"}`
+	req := httptest.NewRequest("POST", api.Namespaces, strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+	rows, err := d.store.ListNamespaces("ws-target")
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	cfg, err := d.loadNamespaceConfigFromStore("ws-target", rows[0].ID)
+	require.NoError(t, err)
+	assert.Equal(t, "2026.2", cfg.BundleRef.Key,
+		"LATEST must pin the newest bundle this launcher can run, not 2026.3 (needs 9.9.9)")
 }
 
 // TestDeleteNamespace_Validation: bad id → 400, server mode → 400, desktop

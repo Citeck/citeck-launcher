@@ -666,6 +666,8 @@ const zh = {
   'namespace.form.submit': '创建',
   'namespace.form.save': '保存',
   'namespace.form.createSuccess': '命名空间已创建',
+  'namespace.newerBundle.tooltip': '有可用的新版本 bundle：{version}。打开命名空间设置以切换到该版本。',
+  'namespace.newerBundle.needsLauncher.tooltip': '有可用的新版本 bundle（{version}），但需要启动器 {min} 或更高版本。请更新启动器。',
 
   // -- Snapshot import warning --
   'snapshots.import.confirm.title': '导入快照？',

@@ -59,14 +59,35 @@ export function TabBar() {
             <span className="text-muted-foreground/60" aria-hidden="true">·</span>
             <span className="text-muted-foreground truncate">{namespace.bundleRef}</span>
           </button>
-          {/* Click → typed namespace-edit form. */}
+          {/* Click → typed namespace-edit form. The dot is the same 6x6 corner
+              dot UpdateNotification uses for the launcher's own update, and the
+              button's title BECOMES the indicator sentence while it shows: an
+              element has one title, and the meaning of the dot is the more
+              useful thing to say. Each sentence names the next move — without
+              that the operator is told a fact and left with nowhere to go. */}
           <button
             type="button"
-            className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted focus:outline-none"
-            title={t('dashboard.nsConfig')}
+            className="relative p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted focus:outline-none"
+            title={
+              namespace.newerBundle
+                ? namespace.newerBundle.requiresLauncher
+                  ? t('namespace.newerBundle.needsLauncher.tooltip', {
+                      version: namespace.newerBundle.version,
+                      min: namespace.newerBundle.requiresLauncher,
+                    })
+                  : t('namespace.newerBundle.tooltip', { version: namespace.newerBundle.version })
+                : t('dashboard.nsConfig')
+            }
             onClick={() => setNsEditOpen(true)}
           >
             <Settings size={14} />
+            {namespace.newerBundle && (
+              <span
+                className={`absolute right-1 top-1 h-1.5 w-1.5 rounded-full ${
+                  namespace.newerBundle.requiresLauncher ? 'bg-amber-500' : 'bg-emerald-500'
+                }`}
+              />
+            )}
           </button>
         </>
       )}

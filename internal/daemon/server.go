@@ -109,6 +109,17 @@ type activeNamespace struct {
 	// generator did with them.
 	dependencyUpgrades []namespace.DependencyUpgrade
 	dependencies       map[deps.ID]namespace.DependencyGen
+	// newerBundle is the last computed answer to "does this namespace's repo
+	// have a version above the one it runs" — nil when it does not. Computed
+	// where the bundle is already resolved (load, reload, explicit pull) and
+	// NOT in handleGetNamespace, which runs on every SSE-triggered refetch: a
+	// directory walk per refetch buys nothing, because the answer can only
+	// change when the repo is synced.
+	//
+	// It therefore reflects what has been SYNCED, not what exists upstream, and
+	// it must never trigger a sync of its own. A namespace list that waits on
+	// git is a worse bug than a late dot.
+	newerBundle *bundle.NewerBundle
 }
 
 // Daemon is the main daemon server.
@@ -696,7 +707,8 @@ func (d *Daemon) doReloadEx(forceGitPull, startNotRegenerate, refreshImages bool
 
 	resolver := bundle.NewResolverWithAuth(config.BundlesDataDir(act.workspaceID), makeTokenLookup(d.secretReaderFunc())).
 		WithWorkspaceRepo(d.resolveActiveWorkspaceRepoOpts()).
-		WithWorkspaceOverlay(workspaceConfigOverlay(d.store, act.workspaceID))
+		WithWorkspaceOverlay(workspaceConfigOverlay(d.store, act.workspaceID)).
+		WithLauncherVersion(d.version)
 	if forceGitPull {
 		resolver = resolver.WithForcePull()
 	}
@@ -789,6 +801,26 @@ func (d *Daemon) doReloadEx(forceGitPull, startNotRegenerate, refreshImages bool
 	a.appDefs = genResp.Applications
 	a.dependencyUpgrades = genResp.DependencyUpgrades
 	a.dependencies = genResp.Dependencies
+	// "Is there a newer bundle" is recomputed alongside everything else this
+	// generation produced. Guarded against nil rather than assumed: a reload
+	// with a resolve failure still reaches here (resolveErr already returned
+	// earlier in that case, but a nil workspaceConfig/bundleDef must not
+	// reach through to FindNewerBundle regardless).
+	a.newerBundle = nil
+	if a.workspaceConfig != nil && a.bundleDef != nil && a.nsConfig != nil {
+		repoEntry := bundleRepoByID(a.workspaceConfig, a.nsConfig.BundleRef.Repo)
+		// This fill runs under the d.configMu.Lock() taken just above, so
+		// nothing it calls may re-acquire configMu: sync.RWMutex is not
+		// reentrant, and a second acquisition on the goroutine already holding
+		// the write lock blocks forever, bricking the daemon on the first
+		// reload after start. Hence the package-level resolveBundleRepoDir
+		// with the workspace id already in hand, and NOT the d.resolveBundleDir
+		// method, which re-derives it via d.activeWorkspaceID() -> d.active()
+		// -> d.configMu.RLock(). Guarded by
+		// TestNewerBundleFillNeverReacquiresConfigMu (newer_bundle_lock_test.go).
+		a.newerBundle = bundle.FindNewerBundle(
+			resolveBundleRepoDir(act.workspaceID, repoEntry), a.bundleDef.Key.Version, d.version)
+	}
 	// Reload succeeded with a freshly-resolved bundle — clear any boot-time
 	// bundle resolution error so the UI banner doesn't survive a successful
 	// reload until the next namespace activation. "Succeeded" is not the same

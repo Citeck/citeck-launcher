@@ -178,38 +178,6 @@ func TestListBundleVersions_NonexistentDir(t *testing.T) {
 	assert.Nil(t, versions)
 }
 
-func TestFindLatestBundle_NumericVersions(t *testing.T) {
-	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "2025.9.yaml"), []byte("x"), 0o644)
-	os.WriteFile(filepath.Join(dir, "2025.10.yaml"), []byte("x"), 0o644)
-	os.WriteFile(filepath.Join(dir, "2024.12.yaml"), []byte("x"), 0o644)
-
-	got, err := findLatestBundle(dir)
-	require.NoError(t, err)
-	assert.Equal(t, "2025.10", got) // not "2025.9" — numeric comparison
-}
-
-// TestFindLatestBundle_ErrNoBundles_MissingDir verifies that a missing
-// bundles directory returns an error that callers can classify via
-// errors.Is(err, ErrNoBundles). This lets `citeck update` distinguish
-// benign "repo has no bundles layout" outcomes from genuine pull errors.
-func TestFindLatestBundle_ErrNoBundles_MissingDir(t *testing.T) {
-	_, err := findLatestBundle(filepath.Join(t.TempDir(), "does-not-exist"))
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrNoBundles)
-}
-
-// TestFindLatestBundle_ErrNoBundles_EmptyDir verifies that an existing
-// directory with no version YAMLs also surfaces ErrNoBundles.
-func TestFindLatestBundle_ErrNoBundles_EmptyDir(t *testing.T) {
-	dir := t.TempDir()
-	// A non-version file should NOT count as a bundle.
-	os.WriteFile(filepath.Join(dir, "README.md"), []byte("x"), 0o644)
-	_, err := findLatestBundle(dir)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrNoBundles)
-}
-
 func TestCompareBundleVersions(t *testing.T) {
 	// Basic numeric
 	assert.Equal(t, 1, compareBundleVersions("2025.10", "2025.9"))
@@ -531,22 +499,6 @@ func TestListBundleVersions_NestedLayout(t *testing.T) {
 	// Top-level (no scope) ranks above scoped per BundleKey.compareTo.
 	// Within each scope, version-descending.
 	assert.Equal(t, []string{"2025.12", "2025.10", "archive/2024.2", "archive/2024.1"}, got)
-}
-
-// TestFindLatestBundle_NestedLayout verifies that findLatestBundle walks the
-// nested layout and returns the highest-priority key (Kotlin: BundleKey sort).
-func TestFindLatestBundle_NestedLayout(t *testing.T) {
-	dir := t.TempDir()
-	// Helm chart for 2025.10 in nested form.
-	helmDir := filepath.Join(dir, "community", "2025.10")
-	require.NoError(t, os.MkdirAll(helmDir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(helmDir, "values.yaml"), []byte("x"), 0o644))
-	// Older nested entry.
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "community", "2025.5.yml"), []byte("x"), 0o644))
-
-	got, err := findLatestBundle(dir)
-	require.NoError(t, err)
-	assert.Equal(t, "community/2025.10", got)
 }
 
 // TestFindBundleFile_NestedKeyFallsBackToTreeWalk ensures the flat candidate

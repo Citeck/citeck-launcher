@@ -1,0 +1,3 @@
+## Neue Funktionen
+- **Ein Bundle kann jetzt eine minimale Launcher-Version verlangen.** Das Erstellen oder Bearbeiten eines Namespace wird abgelehnt, wenn das gewählte Bundle einen neueren Launcher benötigt als den installierten — die Meldung nennt die Version, auf die aktualisiert werden muss. Ein Namespace, der bereits mit einem solchen Bundle läuft, ist davon nicht betroffen, und „LATEST" wählt immer das neueste Bundle, das dieser Launcher tatsächlich ausführen kann.
+- **Das Zahnrad der Namespace-Einstellungen zeigt jetzt einen Punkt, wenn im Bundle-Repository eine neuere Version verfügbar ist** — grün, wenn dieser Launcher sie ausführen kann, gelb, wenn zuerst ein neuerer Launcher nötig ist. Beim Überfahren mit der Maus werden Version und nötige Aktion angezeigt.

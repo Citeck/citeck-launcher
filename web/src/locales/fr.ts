@@ -666,6 +666,8 @@ const fr = {
   'namespace.form.submit': 'Créer',
   'namespace.form.save': 'Enregistrer',
   'namespace.form.createSuccess': 'Namespace créé',
+  'namespace.newerBundle.tooltip': 'Un bundle plus récent est disponible : {version}. Ouvrez les paramètres du namespace pour y passer.',
+  'namespace.newerBundle.needsLauncher.tooltip': 'Un bundle plus récent est disponible ({version}), mais il nécessite le lanceur {min} ou plus récent. Mettez à jour le lanceur.',
 
   // -- Snapshot import warning --
   'snapshots.import.confirm.title': "Importer l'instantané ?",

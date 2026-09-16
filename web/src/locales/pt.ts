@@ -666,6 +666,8 @@ const pt = {
   'namespace.form.submit': 'Criar',
   'namespace.form.save': 'Salvar',
   'namespace.form.createSuccess': 'Namespace criado',
+  'namespace.newerBundle.tooltip': 'Há um bundle mais recente disponível: {version}. Abra as configurações do namespace para mudar para ele.',
+  'namespace.newerBundle.needsLauncher.tooltip': 'Há um bundle mais recente disponível ({version}), mas requer o launcher {min} ou mais recente. Atualize o launcher.',
 
   // -- Snapshot import warning --
   'snapshots.import.confirm.title': 'Importar snapshot?',

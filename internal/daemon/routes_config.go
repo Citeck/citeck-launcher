@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -219,6 +220,12 @@ func (d *Daemon) handleGetNamespace(w http.ResponseWriter, r *http.Request) {
 	}
 	if bundleErr != "" {
 		dto.BundleError = bundleErr
+	}
+	if nb := act.newerBundle; nb != nil {
+		dto.NewerBundle = &api.NewerBundleDto{
+			Version:          nb.Version,
+			RequiresLauncher: nb.RequiresLauncher,
+		}
 	}
 	// Dependency state is the daemon's, not the runtime's: the held-back
 	// upgrades come from the last generation (activeNamespace) and the running
@@ -724,6 +731,11 @@ func (d *Daemon) handleUpgradeNamespace(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if err := d.persistNamespaceConfig(act.workspaceID, nsID, data); err != nil {
+		var floor *errLauncherTooOld
+		if errors.As(err, &floor) {
+			d.writeLauncherTooOldError(w, r, floor)
+			return
+		}
 		writeInternalError(w, fmt.Errorf("write config: %w", err))
 		return
 	}
@@ -788,6 +800,11 @@ func (d *Daemon) handlePutConfig(w http.ResponseWriter, r *http.Request) {
 
 	// Validate + persist the user's exact bytes through the choke-point.
 	if err := d.persistNamespaceConfig(wsID, nsID, body); err != nil {
+		var floor *errLauncherTooOld
+		if errors.As(err, &floor) {
+			d.writeLauncherTooOldError(w, r, floor)
+			return
+		}
 		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeInvalidConfig, fmt.Sprintf("invalid config: %s", err.Error()))
 		return
 	}

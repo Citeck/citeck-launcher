@@ -43,6 +43,10 @@ type loadNamespaceInput struct {
 	NamespaceID   string
 	Offline       bool
 	Desktop       bool
+	// LauncherVersion is this build's version, threaded into the bundle
+	// resolver so LATEST resolves to the newest bundle this launcher can
+	// actually run rather than the newest one that exists.
+	LauncherVersion string
 }
 
 // context is the load's context, or Background when the caller had none.
@@ -90,6 +94,56 @@ type loadedNamespace struct {
 	// dependency. Both are recomputed by every generation (load and reload).
 	DependencyUpgrades []namespace.DependencyUpgrade
 	Dependencies       map[deps.ID]namespace.DependencyGen
+	// NewerBundle is the newest version above the one this generation resolved
+	// to, in the same repo — nil when there is none. Same recomputed-every-
+	// generation rule as DependencyUpgrades.
+	NewerBundle *bundle.NewerBundle
+}
+
+// bundleRepoByID looks up a declared BundlesRepo by id in a workspace config.
+// bundle.findBundleRepo does the same lookup but is unexported, and this is
+// the only caller of it outside that package. A wsCfg with no matching id
+// (or a nil wsCfg) answers the zero value, which resolveBundleDir/
+// ResolveBundleRepoDir treat as "nothing declared" rather than panicking.
+func bundleRepoByID(wsCfg *bundle.WorkspaceConfig, id string) bundle.BundlesRepo {
+	if wsCfg == nil {
+		return bundle.BundlesRepo{}
+	}
+	for _, br := range wsCfg.BundleRepos {
+		if br.ID == id {
+			return br
+		}
+	}
+	return bundle.BundlesRepo{}
+}
+
+// resolveBundleRepoDir reconstructs the on-disk directory for a bundle repo:
+// {dataDir}/bundles/workspace in desktop mode against a known workspace,
+// config.DataDir() as dataDir otherwise, handed to the shared
+// bundle.ResolveBundleRepoDir for the offline-import / workspace-repo /
+// cloned-repo priority order. Both `resolveBundleDir` (the daemon method used
+// by handleListBundles and the newer-bundle fill sites) and loadNamespace
+// (which has no *Daemon to call that method on) go through this one function,
+// so the two cannot silently diverge again.
+//
+// KNOWN LIMITATION, deliberately not fixed here: this reconstructs the path
+// the resolver would have chosen for a HEALTHY git clone. bundle.Resolver's
+// own resolveWorkspace() also has an offline-ZIP-import branch and a
+// stale-1.x-migrated-clone branch, both of which land on {dataDir}/repo
+// instead — and for a workspace-EMBEDDED bundle repo (BundlesRepo.URL == "")
+// backed by either of those, this function names the WRONG directory.
+// handleListBundles has the identical limitation, because it reads this same
+// reconstruction to populate the bundle-repo dropdown; the two must stay
+// consistent with EACH OTHER even while both are wrong about that one case —
+// fixing one without the other would make the namespace dialog and the
+// newer-bundle indicator disagree about which versions of a repo exist.
+func resolveBundleRepoDir(wsID string, repo bundle.BundlesRepo) string {
+	dataDir := config.DataDir()
+	if config.IsDesktopMode() && wsID != "" {
+		dataDir = config.WorkspaceDir(wsID)
+	}
+	wsRepoDir := filepath.Join(dataDir, "bundles", "workspace")
+	return bundle.ResolveBundleRepoDir(dataDir, wsRepoDir, repo)
 }
 
 // resolveBundleWithCacheFallback resolves `ref` via the prepared resolver; when
@@ -254,7 +308,8 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 	// Resolve workspace config first — needed by wizard even without a namespace.
 	resolver := bundle.NewResolverWithAuth(config.BundlesDataDir(wsID), makeTokenLookup(in.SecretService)).
 		WithWorkspaceRepo(lookupWorkspaceRepoOpts(in.Store, in.SecretService, wsID)).
-		WithWorkspaceOverlay(workspaceConfigOverlay(in.Store, wsID))
+		WithWorkspaceOverlay(workspaceConfigOverlay(in.Store, wsID)).
+		WithLauncherVersion(in.LauncherVersion)
 	// Server mode: never auto-pull git repos (use 'citeck workspace update' for manual sync).
 	// Desktop mode: auto-pull with throttling. --offline flag: skip git entirely.
 	if in.Offline || !config.IsDesktopMode() {
@@ -323,6 +378,19 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 	// the paths that "succeed" with nothing, chiefly an empty bundle ref.
 	if bundleError == "" {
 		bundleError = emptyBundleError(bundleDef, nsCfg.BundleRef, nsID)
+	}
+
+	// "Is there a newer bundle" — guarded rather than assumed, even though
+	// bundleDef/wsCfg are non-nil on every path reaching here: this walk must
+	// never be the reason the load path panics. loadNamespace is a package
+	// function (not a *Daemon method), so it goes through the standalone
+	// resolveBundleRepoDir rather than d.resolveBundleDir — same function
+	// either way (see its doc for the one case it gets wrong).
+	var newerBundle *bundle.NewerBundle
+	if wsCfg != nil && bundleDef != nil {
+		repoEntry := bundleRepoByID(wsCfg, nsCfg.BundleRef.Repo)
+		bundlesDir := resolveBundleRepoDir(wsID, repoEntry)
+		newerBundle = bundle.FindNewerBundle(bundlesDir, bundleDef.Key.Version, in.LauncherVersion)
 	}
 
 	// Certs (self-signed when TLS is on without LE; Let's Encrypt obtain when
@@ -659,6 +727,7 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 		DeferredForSecrets: deferredForSecrets,
 		DependencyUpgrades: genResp.DependencyUpgrades,
 		Dependencies:       genResp.Dependencies,
+		NewerBundle:        newerBundle,
 	}, nil
 }
 
@@ -776,6 +845,7 @@ func (d *Daemon) installLoadedNamespace(loaded *loadedNamespace, wsID, nsID stri
 		// just ran, so it must travel with it.
 		dependencyUpgrades: loaded.DependencyUpgrades,
 		dependencies:       loaded.Dependencies,
+		newerBundle:        loaded.NewerBundle,
 		acmeRenewal:        nil,
 		// deferredForSecrets always false here: installLoadedNamespace serves
 		// namespace switch / auto-activate-after-create, both user-initiated —
