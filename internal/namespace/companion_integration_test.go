@@ -13,9 +13,9 @@ package namespace
 // whether a container exists on the host at the end.
 //
 // So both cases below ask Docker: an auto-detached app must have NO container
-// after the namespace reaches RUNNING, and a companion that was up when the
-// verdict arrived must have its container GONE, without the operator's detach
-// set ever mentioning it (that map is persisted and would outlive the owner).
+// after the namespace reaches RUNNING, and a companion that was already up when
+// the verdict arrived must still have one — the verdict decides what STARTS by
+// itself and nothing else.
 //
 // Safe to run beside real stands: its own namespace and workspace labels, the
 // utils image, no published ports, no named volumes.
@@ -104,10 +104,11 @@ func TestIntegration_AutoDetachedCompanionNeverReachesDocker(t *testing.T) {
 	assert.True(t, companionITHasContainer(t, dc, companionITCompanion))
 }
 
-// The other half: a companion that is UP when its owner is detached goes down
-// for real. A container left running under a STOPPED row is a ghost — and the
-// memory it holds is exactly what "a switched-off owner costs nothing" promises.
-func TestIntegration_CompanionContainerGoesDownWhenTheOwnerDetaches(t *testing.T) {
+// The other half: the verdict never reaches a companion that is already UP.
+// Stopping it is the operator's move — the launcher deciding to take down a
+// store on its own is both a surprise and, with other services able to read
+// that store later, wrong.
+func TestIntegration_ARunningCompanionIsLeftAloneWhenItsOwnerDetaches(t *testing.T) {
 	dc, r, apps := companionITSetup(t)
 
 	r.Start(apps, false)
@@ -116,12 +117,12 @@ func TestIntegration_CompanionContainerGoesDownWhenTheOwnerDetaches(t *testing.T
 
 	r.SetAutoDetachedApps(map[string]bool{companionITCompanion: true})
 
-	require.True(t, waitForAppStatus(r, companionITCompanion, AppStatusStopped, 2*time.Minute),
-		"companion должен остановиться сам")
-	assert.False(t, companionITHasContainer(t, dc, companionITCompanion),
-		"контейнер должен быть снят, а не оставлен жить под статусом STOPPED")
-	assert.Equal(t, AppStatusRunning, r.FindApp(companionITOwner).Status,
-		"соседа это трогать не должно")
+	assert.Equal(t, AppStatusRunning, r.FindApp(companionITCompanion).Status,
+		"работающий companion остаётся работать")
+	assert.True(t, companionITHasContainer(t, dc, companionITCompanion),
+		"контейнер должен остаться на месте")
+	assert.False(t, r.IsAppDetached(companionITCompanion),
+		"и остаться под управлением цикла, а не числиться отцепленным")
 	assert.NotContains(t, r.ManualStoppedApps(), companionITCompanion,
-		"это состояние владельца, а не намерение оператора: manualStoppedApps персистится")
+		"вердикт владельца не пишется в персистентный набор оператора")
 }

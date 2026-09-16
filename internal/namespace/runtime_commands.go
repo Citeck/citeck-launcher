@@ -458,19 +458,7 @@ func (r *Runtime) ResetEditedFile(appName, relPath string) error {
 //
 // manualStoppedApps[appName]=true is set BEFORE dispatch so the user's
 // detach intent persists even if the stop fails.
-func (r *Runtime) StopApp(appName string) error {
-	return r.stopApp(appName, true)
-}
-
-// stopApp is StopApp's body plus the one thing that is not always true of a
-// stop: whether it is the OPERATOR's.
-//
-// recordIntent=false is the companion path (see SetAutoDetachedApps). The app
-// goes down because its OWNER is detached, so nothing may land in
-// manualStoppedApps — that map is persisted and would outlive the owner's
-// state, leaving a re-attached rag parked in DEPS_WAITING on a qdrant nobody
-// remembers stopping.
-func (r *Runtime) stopApp(appName string, recordIntent bool) error { //nolint:gocyclo // single-pass dispatch over T19/T19b/T19c branches
+func (r *Runtime) StopApp(appName string) error { //nolint:gocyclo // single-pass dispatch over T19/T19b/T19c branches
 	r.mu.Lock()
 	app, ok := r.apps[appName]
 	if !ok {
@@ -480,12 +468,7 @@ func (r *Runtime) stopApp(appName string, recordIntent bool) error { //nolint:go
 
 	// Mark as detached immediately — the user's intent to detach must be
 	// recorded even if the Docker stop fails (container already gone, etc.).
-	if recordIntent {
-		r.manualStoppedApps[appName] = true
-		// An explicit stop hands the app back to the companion rule: whatever
-		// the operator started for a debugging session, they have now stopped.
-		delete(r.autoDetachStarted, appName)
-	}
+	r.manualStoppedApps[appName] = true
 
 	containerName := r.docker.ContainerName(appName)
 	stopTimeout := r.resolveStopTimeout(app.Def.StopTimeout)
@@ -833,13 +816,9 @@ func (r *Runtime) RestartApp(appName string) error { //nolint:gocyclo // single-
 	return nil
 }
 
-// clearAutoDetachLocked records that the operator started this app on purpose.
-// It leaves the auto-detached set for good — until its owner is attached again,
-// at which point SetAutoDetachedApps drops the override too.
+// clearAutoDetachLocked lifts the autostart hold the moment the operator starts
+// the app themselves. Nothing else has to remember that: the app stops being
+// STOPPED, so the next generation's verdict skips it (SetAutoDetachedApps).
 func (r *Runtime) clearAutoDetachLocked(appName string) {
-	if !r.autoDetachedApps[appName] && !r.autoDetachStarted[appName] {
-		return
-	}
 	delete(r.autoDetachedApps, appName)
-	r.autoDetachStarted[appName] = true
 }

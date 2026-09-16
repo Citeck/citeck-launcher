@@ -63,7 +63,6 @@ package namespace
 import (
 	"context"
 	"encoding/json"
-	"log/slog"
 	"maps"
 	"sync"
 	"sync/atomic"
@@ -166,16 +165,12 @@ type Runtime struct {
 	history           *OperationHistory
 	manualStoppedApps map[string]bool
 	// autoDetachedApps are apps the GENERATOR emits but the runtime must not
-	// start by itself: a companion (qdrant, stt-sidecar) whose owner (rag, ai)
-	// is detached. It is recomputed from GenResp on every generation and is
-	// deliberately NOT persisted — the owner's own detach state is, and that is
-	// what this is derived from.
-	autoDetachedApps map[string]bool
-	// autoDetachStarted records companions the operator started ON PURPOSE, so
-	// the next generation — which still says "auto-detached", because the owner
-	// is still detached — does not take them away again. Session-scoped: a
-	// restarted launcher goes back to the conservative answer.
-	autoDetachStarted     map[string]bool
+	// START by itself: a companion (qdrant, stt-sidecar) whose owner (rag, ai)
+	// is detached. It decides autostart and NOTHING else — an app that is
+	// already up is never in it, and nothing here ever stops a container.
+	// Recomputed from GenResp on every generation and deliberately NOT
+	// persisted: the owner's own detach state is, and this is derived from it.
+	autoDetachedApps      map[string]bool
 	editedAppPatches      map[string]json.RawMessage       // user-edit deltas over generated app defs (JSON merge patch)
 	editedFileEdits       map[string]FileEdit              // user-edit deltas for mounted files (key: "<app>/<rel-path>", no leading "./")
 	lastGenFiles          map[string][]byte                // last generated (pre-merge) file set; baseline source for the editor + WriteEditedFile template
@@ -548,50 +543,25 @@ func (r *Runtime) SetManualStoppedApps(apps map[string]bool) {
 // Runtime.autoDetachedApps). Called after every generation, exactly where
 // SetDependsOnDetachedApps is.
 //
-// A companion the operator has started on purpose is left alone: that is the
-// whole local-debugging case, and re-detaching it on the next reload would pull
-// the store out from under the app being debugged. Once the owner is attached
-// again the companion leaves the auto set entirely, and with it the override.
+// An app that is NOT stopped is left out of the verdict entirely, and that one
+// rule replaces every piece of machinery this could otherwise need. Stopping a
+// companion that is up is the operator's move, not the launcher's — "the owner
+// is off" is not a reason to take down a store something else may be reading —
+// and a container the launcher stopped behind their back is worse than one they
+// stop themselves. It also means an explicit start survives every later
+// generation on its own: the app is running, so the verdict does not reach it.
+// No override set, no session state, nothing to keep in sync.
 func (r *Runtime) SetAutoDetachedApps(apps map[string]bool) {
-	for _, name := range r.applyAutoDetachedApps(apps) {
-		// A companion that is UP when it becomes auto-detached has to come
-		// down: "a switched-off owner costs no memory" is the promise, and a
-		// container left running while its row reads STOPPED is a ghost
-		// nothing accounts for.
-		if err := r.stopApp(name, false); err != nil {
-			slog.Warn("Cannot stop an auto-detached companion app", "app", name, "err", err)
-		}
-	}
-}
-
-// applyAutoDetachedApps installs the new auto-detach set and answers the
-// companions that were running under the old one and must now be stopped.
-func (r *Runtime) applyAutoDetachedApps(apps map[string]bool) []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	next := make(map[string]bool, len(apps))
 	for name := range apps {
-		if r.autoDetachStarted[name] {
+		if app, ok := r.apps[name]; ok && app.Status != AppStatusStopped {
 			continue
 		}
 		next[name] = true
 	}
-	for name := range r.autoDetachStarted {
-		if !apps[name] {
-			delete(r.autoDetachStarted, name)
-		}
-	}
-	var toStop []string
-	for name := range next {
-		if r.autoDetachedApps[name] {
-			continue // already auto-detached; nothing changed for it
-		}
-		if app, ok := r.apps[name]; ok && app.Status != AppStatusStopped {
-			toStop = append(toStop, name)
-		}
-	}
 	r.autoDetachedApps = next
-	return toStop
 }
 
 // IsAppDetached answers isDetachedLocked from outside the runtime: the daemon's
@@ -777,7 +747,6 @@ func NewRuntime(cfg *Config, dockerClient docker.RuntimeClient, volumesBase stri
 		volumesBase:         volumesBase,
 		manualStoppedApps:   make(map[string]bool),
 		autoDetachedApps:    make(map[string]bool),
-		autoDetachStarted:   make(map[string]bool),
 		pullAuthBlockedApps: make(map[string]bool),
 		lastLoggedPullErr:   make(map[string]string),
 		editedAppPatches:    make(map[string]json.RawMessage),

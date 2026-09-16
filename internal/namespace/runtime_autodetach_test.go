@@ -66,7 +66,9 @@ func TestAutoDetachedAppReportsItselfDetached(t *testing.T) {
 
 // The debug case itself: the operator starts the companion on purpose, and a
 // later regeneration — which re-states the same auto-detach, because the owner
-// is still detached — must not take it away again.
+// is still detached — must not take it away again. Nothing remembers the
+// operator's click: the app is simply no longer stopped, and the verdict only
+// ever reaches apps that are.
 func TestExplicitStartSurvivesTheNextGeneration(t *testing.T) {
 	md := newMockDocker()
 	r := NewRuntime(testConfig(), md, t.TempDir())
@@ -85,11 +87,10 @@ func TestExplicitStartSurvivesTheNextGeneration(t *testing.T) {
 		"перегенерация не должна гасить то, что оператор поднял руками")
 }
 
-// Detaching the owner while its companion is RUNNING must actually take the
-// container down — that is the memory the "switched-off RAG costs nothing"
-// promise is about. Marking it STOPPED and leaving the container up would be a
-// ghost: 1 GB of qdrant nothing in the UI accounts for.
-func TestCompanionContainerIsStoppedWhenItBecomesAutoDetached(t *testing.T) {
+// Detaching the owner does NOT reach back for a companion that is already
+// RUNNING. Stopping it is the operator's move — the rule only decides what
+// starts by itself, and a running container is something somebody started.
+func TestAutoDetachDoesNotTouchARunningCompanion(t *testing.T) {
 	md := newMockDocker()
 	r := NewRuntime(testConfig(), md, t.TempDir())
 	defer r.Shutdown()
@@ -99,18 +100,19 @@ func TestCompanionContainerIsStoppedWhenItBecomesAutoDetached(t *testing.T) {
 
 	r.SetAutoDetachedApps(map[string]bool{"qdrant": true})
 
-	require.True(t, waitForAppStatus(r, "qdrant", AppStatusStopped, 10*time.Second),
-		"companion должен остановиться, а не просто числиться остановленным")
+	assert.Equal(t, AppStatusRunning, r.FindApp("qdrant").Status,
+		"вердикт не должен гасить то, что уже работает")
 	md.mu.Lock()
 	_, alive := md.containers["qdrant"]
 	md.mu.Unlock()
-	assert.False(t, alive, "контейнер должен быть снят")
+	assert.True(t, alive, "контейнер должен остаться")
+	assert.False(t, r.ToNamespaceDto().Apps[0].Detached || r.IsAppDetached("qdrant"),
+		"работающее приложение остаётся под управлением цикла, а не числится отцепленным")
 }
 
-// ...and it must not be recorded as an OPERATOR detach: manualStoppedApps is
-// persisted, so a stop that belongs to the owner's state would outlive it and
-// park a re-attached rag in DEPS_WAITING on a qdrant nobody remembers stopping.
-func TestAutoDetachIsNotRecordedAsAnOperatorStop(t *testing.T) {
+// ...and nothing about it is recorded as an operator stop either: that map is
+// persisted, and the owner's state has no business in it.
+func TestAutoDetachNeverWritesTheOperatorsDetachSet(t *testing.T) {
 	md := newMockDocker()
 	r := NewRuntime(testConfig(), md, t.TempDir())
 	defer r.Shutdown()
@@ -119,7 +121,6 @@ func TestAutoDetachIsNotRecordedAsAnOperatorStop(t *testing.T) {
 	require.True(t, waitForAppStatus(r, "qdrant", AppStatusRunning, 10*time.Second))
 
 	r.SetAutoDetachedApps(map[string]bool{"qdrant": true})
-	require.True(t, waitForAppStatus(r, "qdrant", AppStatusStopped, 10*time.Second))
 
 	assert.NotContains(t, r.ManualStoppedApps(), "qdrant",
 		"это состояние владельца, а не намерение оператора")

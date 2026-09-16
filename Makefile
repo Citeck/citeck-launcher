@@ -181,13 +181,13 @@ test-integration-sweep:
 
 # Real-Docker proof that an AUTO-DETACHED companion (qdrant beside a detached
 # rag, stt-sidecar beside a detached ai) never gets a container, that an explicit
-# start still gives it one, and that a companion which was up when the verdict
-# arrived is taken down for real. A fake Docker can only record the calls the
+# start still gives it one, and that a companion which was already up when the
+# verdict arrived is left running. A fake Docker can only record the calls the
 # runtime chose to make; what matters here is what exists on the host.
 # Cheap: two utils containers, no ports, no volumes, its own namespace labels,
 # so it is safe to run beside real stands.
 test-integration-companion:
-	go test -tags integration -run 'TestIntegration_AutoDetachedCompanion|TestIntegration_CompanionContainer' -timeout 15m -v ./internal/namespace/
+	go test -tags integration -run 'TestIntegration_AutoDetachedCompanion|TestIntegration_ARunningCompanion' -timeout 15m -v ./internal/namespace/
 
 # Web UI end-to-end tests (Playwright, web/tests/). PREREQUISITE: a daemon
 # serving the web UI at http://127.0.0.1:7088 must already be running (see
