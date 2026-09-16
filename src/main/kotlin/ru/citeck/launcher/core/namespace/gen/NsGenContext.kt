@@ -18,7 +18,15 @@ class NsGenContext(
     val applications: MutableMap<String, ApplicationDef.Builder> = LinkedHashMap(),
     val portsCounter: AtomicInteger = AtomicInteger(17020),
     val cloudConfig: MutableCloudConfig = CloudConfigImpl(),
-    val links: MutableList<NamespaceLink> = ArrayList()
+    val links: MutableList<NamespaceLink> = ArrayList(),
+    /**
+     * Приложения, которые генерируются, но которые рантайм не должен запускать
+     * сам: companion (qdrant, stt-sidecar), чей владелец (rag, ai) отцеплен.
+     * Спека остаётся в неймспейсе, чтобы её можно было поднять вручную для
+     * локальной отладки владельца, и остаётся остановленной у всех, кто просто
+     * выключил владельца. Уходит наружу как [NamespaceGenResp.autoDetachedApps].
+     */
+    val autoDetachedApps: MutableSet<String> = LinkedHashSet()
 ) {
     companion object {
         const val KK_HOST = AppName.KEYCLOAK
@@ -55,6 +63,14 @@ class NsGenContext(
             "KK_ADMIN_USER" to "admin",
             "KK_ADMIN_PASSWORD" to "admin"
         )
+    }
+
+    /**
+     * Помечает [name] как сгенерированное, но не подлежащее автозапуску —
+     * см. [autoDetachedApps]. Явный старт оператором это перебивает.
+     */
+    fun markAutoDetached(name: String) {
+        autoDetachedApps.add(name)
     }
 
     fun getOrCreateApp(name: String): ApplicationDef.Builder {

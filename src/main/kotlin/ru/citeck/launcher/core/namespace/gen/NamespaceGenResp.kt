@@ -17,5 +17,12 @@ class NamespaceGenResp(
 
     val links: List<NamespaceLink>,
 
-    val dependsOnDetachedApps: Set<String>
+    val dependsOnDetachedApps: Set<String>,
+
+    /**
+     * Приложения, которые сгенерированы, но которые рантайм не должен запускать
+     * сам: companion (qdrant, stt-sidecar), чей владелец (rag, ai) отцеплен.
+     * Явный старт оператором это перебивает — см. NamespaceRuntime.
+     */
+    val autoDetachedApps: Set<String> = emptySet()
 )

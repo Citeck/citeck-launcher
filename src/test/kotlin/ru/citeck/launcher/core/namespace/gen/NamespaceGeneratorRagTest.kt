@@ -126,11 +126,36 @@ class NamespaceGeneratorRagTest {
     }
 
     @Test
-    fun `qdrant is not generated when rag is detached`() {
+    fun `qdrant stays with a detached rag, but auto-detached`() {
+        // Taking the vector store away with rag broke the one thing stopping rag
+        // is for: running it from an IDE against this stand. The spec stays so it
+        // can be started on its own, and it is marked AUTO-DETACHED so the runtime
+        // never starts it by itself -- a switched-off RAG still costs no memory.
         val context = createContext(detachedApps = setOf(AppName.RAG))
         NamespaceGenerator().generateQdrant(context)
 
-        assertThat(context.applications).doesNotContainKey(AppName.QDRANT)
+        assertThat(context.applications).containsKey(AppName.QDRANT)
+        assertThat(context.autoDetachedApps).contains(AppName.QDRANT)
+    }
+
+    @Test
+    fun `qdrant is not auto-detached when rag is active`() {
+        val context = createContext()
+        NamespaceGenerator().generateQdrant(context)
+
+        assertThat(context.autoDetachedApps).doesNotContain(AppName.QDRANT)
+    }
+
+    @Test
+    fun `qdrant publishes its grpc port for local debugging`() {
+        // citeck-rag reaches the store over gRPC
+        // (spring.ai.vectorstore.qdrant.port = ${QDRANT_GRPC_PORT:6334}), so a rag
+        // run OUTSIDE the launcher needs 6334 on the host. 6333 carries HTTP only.
+        val context = createContext()
+        NamespaceGenerator().generateQdrant(context)
+
+        val qdrant = context.applications[AppName.QDRANT]!!.build()
+        assertThat(qdrant.ports).contains("6334:6334")
     }
 
     @Test

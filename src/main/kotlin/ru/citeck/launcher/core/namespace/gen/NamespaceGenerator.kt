@@ -149,7 +149,8 @@ class NamespaceGenerator {
             context.files,
             context.cloudConfig,
             context.links,
-            DEPENDS_ON_DETACHED_APPS
+            DEPENDS_ON_DETACHED_APPS,
+            context.autoDetachedApps
         )
     }
 
@@ -300,16 +301,21 @@ class NamespaceGenerator {
 
     internal fun generateSttSidecar(context: NsGenContext) {
         val aiApp = context.applications[AppName.AI] ?: return
-        if (context.detachedApps.contains(AppName.AI)) {
-            return
-        }
-
+        // Отцепленный ai больше не удаляет свой сайдкар — по той же причине, по
+        // которой generateQdrant оставляет qdrant рядом с отцепленным rag:
+        // остановка владельца в лончере и есть способ запустить его из IDE, а
+        // сайдкар — ровно то, к чему такому владельцу надо подключаться.
+        // markAutoDetached оставляет сайдкар остановленным у всех, кто просто
+        // выключил ai.
         val props = context.workspaceConfig.sttSidecar
         val port = props.port
         val image = props.image.takeIf { it.isNotBlank() }
             ?: context.bundle.applications[AppName.STT_SIDECAR]?.image?.takeIf { it.isNotBlank() }
             ?: return
 
+        if (context.detachedApps.contains(AppName.AI)) {
+            context.markAutoDetached(AppName.STT_SIDECAR)
+        }
         context.getOrCreateApp(AppName.STT_SIDECAR)
             .withImage(image)
             .addEnv("PORT", port.toString())
@@ -335,8 +341,12 @@ class NamespaceGenerator {
 
     internal fun generateQdrant(context: NsGenContext) {
         val ragApp = context.applications[AppName.RAG] ?: return
+        // Отцепленный rag больше не уносит с собой хранилище: остановка rag в
+        // лончере — это и есть способ запустить его из IDE, а локальному rag
+        // всё равно нужен qdrant на localhost. markAutoDetached оставляет его
+        // остановленным у всех, кто просто выключил RAG.
         if (context.detachedApps.contains(AppName.RAG)) {
-            return
+            context.markAutoDetached(AppName.QDRANT)
         }
 
         val props = context.workspaceConfig.qdrant
@@ -357,6 +367,12 @@ class NamespaceGenerator {
             // rag would wait on it until the failure threshold expired. Every other
             // probed app here publishes the port it is probed on.
             .addPort("$QDRANT_HTTP_PORT:$QDRANT_HTTP_PORT")
+            // gRPC-порт публикуется по той же причине, по которой postgres
+            // публикует 14523: rag, запущенный ВНЕ лончера (остановлен здесь,
+            // поднят из IDE), ходит в хранилище по gRPC —
+            // spring.ai.vectorstore.qdrant.port = ${QDRANT_GRPC_PORT:6334}, —
+            // а на 6333 только HTTP.
+            .addPort("${props.grpcPort}:${props.grpcPort}")
             // The gRPC port is configuration, so the container has to hear about it too:
             // rag is told QDRANT_GRPC_PORT and would otherwise dial a port qdrant never
             // opened (the image defaults to 6334). Qdrant maps QDRANT__<SECTION>__<KEY>

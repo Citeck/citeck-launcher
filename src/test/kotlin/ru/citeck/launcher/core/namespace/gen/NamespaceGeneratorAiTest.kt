@@ -103,18 +103,33 @@ class NamespaceGeneratorAiTest {
         assertThat(proxy.dependsOn).contains(AppName.AI)
     }
 
-    // --- TC-6: AI detached — STT cut out entirely (STT only serves AI) ---
+    // --- TC-6: AI detached — STT stays, but auto-detached ---
 
     @Test
-    fun `ai detached - stt-sidecar not created`() {
+    fun `ai detached - stt-sidecar stays but is auto-detached`() {
+        // Останавливая ai в лончере, его запускают из IDE — и сайдкар нужен
+        // именно тогда. Спека остаётся, автозапуска нет: рантайм не стартует
+        // auto-detached приложения сам. Проводка ai -> stt следует отцепленности
+        // САЙДКАРА, а не ai: иначе каждый старт/стоп ai переписывал бы def ai и
+        // пересоздавал контейнер.
         val context = createContext(detachedApps = setOf(AppName.AI))
         NamespaceGenerator().generateSttSidecar(context)
 
-        assertThat(context.applications).doesNotContainKey(AppName.STT_SIDECAR)
+        assertThat(context.applications).containsKey(AppName.STT_SIDECAR)
+        assertThat(context.autoDetachedApps).contains(AppName.STT_SIDECAR)
 
         val ai = context.applications[AppName.AI]!!.build(false)
-        assertThat(ai.environments).doesNotContainKey("CITECK_AI_CALLRECORDING_STT_SIDECARURL")
-        assertThat(ai.dependsOn).doesNotContain(AppName.STT_SIDECAR)
+        assertThat(ai.environments).containsKey("CITECK_AI_CALLRECORDING_STT_SIDECARURL")
+        assertThat(ai.dependsOn).contains(AppName.STT_SIDECAR)
+    }
+
+    @Test
+    fun `stt-sidecar is not auto-detached when ai is active`() {
+        val context = createContext()
+        NamespaceGenerator().generateSttSidecar(context)
+
+        assertThat(context.applications).containsKey(AppName.STT_SIDECAR)
+        assertThat(context.autoDetachedApps).doesNotContain(AppName.STT_SIDECAR)
     }
 
     @Test

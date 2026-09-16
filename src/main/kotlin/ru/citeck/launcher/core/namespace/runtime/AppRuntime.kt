@@ -40,7 +40,7 @@ class AppRuntime(
 
     var pullImageIfPresent = false
     val isDetached: Boolean
-        get() = nsRuntime.detachedApps.contains(name)
+        get() = nsRuntime.isAppDetached(name)
 
     val dependenciesToWait: MutableSet<String> = Collections.newSetFromMap<String>(ConcurrentHashMap())
     internal var lastDepsCheckingTime = 0L

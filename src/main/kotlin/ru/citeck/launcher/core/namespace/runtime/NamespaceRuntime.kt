@@ -94,6 +94,22 @@ class NamespaceRuntime(
 
     internal val detachedApps = Collections.newSetFromMap<String>(ConcurrentHashMap())
 
+    /**
+     * Приложения, которые генератор отдал, но запускать сами они не должны:
+     * companion (qdrant, stt-sidecar) при отцепленном владельце (rag, ai).
+     * Пересчитывается на каждой генерации и НЕ персистится — персистится
+     * состояние владельца, из которого это выводится.
+     */
+    internal val autoDetachedApps = Collections.newSetFromMap<String>(ConcurrentHashMap())
+
+    /**
+     * Companion'ы, которые оператор поднял НАМЕРЕННО: следующая генерация, всё
+     * ещё говорящая "auto-detached" (владелец по-прежнему отцеплен), не должна
+     * их гасить. Живёт в пределах сессии: перезапуск лончера возвращает
+     * консервативный ответ.
+     */
+    private val autoDetachStarted = Collections.newSetFromMap<String>(ConcurrentHashMap())
+
     private val editedAndLockedApps = Collections.newSetFromMap<String>(ConcurrentHashMap())
     private val editedApps = ConcurrentHashMap<String, ApplicationDef>()
 
@@ -239,6 +255,53 @@ class NamespaceRuntime(
         this.detachedApps.clear()
         this.detachedApps.addAll(detachedApps)
         detachedAppsChanged(detachedApps)
+    }
+
+    /**
+     * Отцеплено ли приложение — самим оператором или потому, что отцеплен его
+     * владелец. Единственная проверка, которую должен делать рантайм.
+     */
+    fun isAppDetached(appName: String): Boolean {
+        return detachedApps.contains(appName) || autoDetachedApps.contains(appName)
+    }
+
+    /**
+     * Ставит вердикт генератора (см. [autoDetachedApps]) и гасит companion'ы,
+     * которые были подняты под старым вердиктом: обещание "выключенный владелец
+     * не стоит памяти" держится именно здесь, а контейнер, оставшийся жить при
+     * статусе STOPPED, — это призрак, которого не видно в UI.
+     *
+     * Companion, поднятый оператором вручную, не трогается: это и есть локальная
+     * отладка, и повторное отцепление вырвало бы хранилище из-под отлаживаемого
+     * приложения.
+     */
+    private fun setAutoDetachedApps(apps: Set<String>) {
+        val next = apps.filterTo(HashSet()) { !autoDetachStarted.contains(it) }
+        autoDetachStarted.retainAll(apps)
+        val newlyDetached = next.filterTo(HashSet()) { !autoDetachedApps.contains(it) }
+        autoDetachedApps.retainAll(next)
+        autoDetachedApps.addAll(next)
+        if (newlyDetached.isEmpty()) {
+            return
+        }
+        for (app in appRuntimes.getValue()) {
+            if (newlyDetached.contains(app.name) && !app.status.getValue().isStoppingState()) {
+                // manual = false: приложение гаснет из-за состояния ВЛАДЕЛЬЦА, и
+                // в персистентный detachedApps это попасть не должно.
+                app.stop()
+            }
+        }
+    }
+
+    /**
+     * Запомнить, что companion подняли намеренно. Из auto-набора он уходит до
+     * тех пор, пока владельца не подключат обратно — тогда [setAutoDetachedApps]
+     * снимет и пометку.
+     */
+    private fun clearAutoDetach(appName: String) {
+        if (autoDetachedApps.remove(appName)) {
+            autoDetachStarted.add(appName)
+        }
     }
 
     fun addDetachedApp(appName: String) {
@@ -389,6 +452,7 @@ class NamespaceRuntime(
                 AppRuntimeStatus.READY_TO_PULL -> {
 
                     detachedAppsToRemove.add(application.name)
+                    clearAutoDetach(application.name)
 
                     val pullIfPresent = application.pullImageIfPresent
                     application.status.setValue(AppRuntimeStatus.PULLING) { statusVersion ->
@@ -723,10 +787,15 @@ class NamespaceRuntime(
 
             appRuntimes.setValue(resRuntimes)
 
+            // Строго ДО цикла запуска ниже: иначе companion при отцепленном
+            // владельце успеет стартовать, и обещание "выключенный владелец не
+            // стоит памяти" нарушится ровно в тот момент, ради которого всё это.
+            setAutoDetachedApps(newGenRes.autoDetachedApps)
+
             if (newRuntimes.isNotEmpty()) {
                 if (!nsStatus.getValue().isStoppingState()) {
                     newRuntimes.forEach {
-                        if (!detachedApps.contains(it.name)) {
+                        if (!isAppDetached(it.name)) {
                             it.start()
                         }
                     }
