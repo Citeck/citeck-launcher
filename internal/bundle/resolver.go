@@ -303,6 +303,21 @@ type WorkspaceConfig struct {
 	Links []WorkspaceLink `yaml:"links,omitempty"`
 }
 
+// followAlias resolves a YAML alias node ("*anchor") to the node it points at.
+//
+// It matters because everything that reads an image reads it from the node tree
+// rather than from a decoded map, and yaml.v3 hands an alias through verbatim
+// when the destination is a yaml.Node — the alias check in its decoder sits
+// AFTER the node short-circuit. An anchored image left unresolved would look
+// exactly like an unreadable one, which for a dependency means staying on the
+// pin and for an application means disappearing.
+func followAlias(node *yaml.Node) *yaml.Node {
+	for node != nil && node.Kind == yaml.AliasNode {
+		node = node.Alias
+	}
+	return node
+}
+
 // decodeImageValues reads an `image:` value in any of the three shapes the
 // launcher accepts and answers them as an ordered list.
 //
@@ -323,6 +338,7 @@ type WorkspaceConfig struct {
 // route, and a route with a hole in it is a hop the vendor was never asked
 // about; the dependency staying on its pin is the only honest answer.
 func decodeImageValues(node *yaml.Node) []string {
+	node = followAlias(node)
 	if node == nil {
 		return nil
 	}
@@ -1187,20 +1203,6 @@ func buildImageRepoMap(cfg *WorkspaceConfig) map[string]string {
 	return m
 }
 
-func resolveImageURL(repository, tag string, imageRepoMap map[string]string) string {
-	if repository == "" || tag == "" {
-		return ""
-	}
-	// Check if repository has a prefix that maps to a registry
-	parts := strings.SplitN(repository, "/", 2)
-	if len(parts) == 2 {
-		if registryURL, ok := imageRepoMap[parts[0]]; ok {
-			return registryURL + "/" + parts[1] + ":" + tag
-		}
-	}
-	return repository + ":" + tag
-}
-
 // ResolveImageRef rewrites a bundle-style single-string image reference whose
 // first path segment is an imageRepos ID — e.g. "core/ecos-model:1.1-SNAPSHOT"
 // with imageRepos[core].url=nexus.citeck.ru → "nexus.citeck.ru/ecos-model:1.1-SNAPSHOT".
@@ -1260,9 +1262,21 @@ func parseBundleFile(path, version string, aliasMap, imageRepoMap map[string]str
 		return nil, fmt.Errorf("read bundle %s: %w", version, err)
 	}
 
-	// Parse as generic map — needed for ecos: scope recursion
+	// Parse as generic map — this is what Def.Content carries to every reader
+	// that wants the bundle's own shape (ecos: scope included).
 	var raw map[string]any
 	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("parse bundle %s: %w", version, err)
+	}
+
+	// Parse AGAIN, as a node tree, and read every image from THAT. In the
+	// generic map an unquoted `tag: 17.10` is already float64(17.1): the tag
+	// failed a string type-assertion, came back empty, and the whole
+	// application vanished from the bundle — no image, no container, no log
+	// line. The `dependencies:` section has read its tags from the YAML text
+	// since it was introduced; this is the same rule for everything else.
+	var rootNode yaml.Node
+	if err := yaml.Unmarshal(data, &rootNode); err != nil {
 		return nil, fmt.Errorf("parse bundle %s: %w", version, err)
 	}
 
@@ -1272,23 +1286,31 @@ func parseBundleFile(path, version string, aliasMap, imageRepoMap map[string]str
 
 	// processApp handles one bundle entry. When appName is "ecos", it recurses
 	// into sub-entries (Helm charts group core apps under an ecos: key).
-	var processApp func(appName string, value map[string]any)
-	processApp = func(appName string, value map[string]any) {
+	var processApp func(appName string, entry *yaml.Node)
+	processApp = func(appName string, entry *yaml.Node) {
 		if appName == "" {
 			return
 		}
 		if appName == "ecos" {
 			// Recurse into nested entries under ecos: scope
-			for subName, subVal := range value {
-				if subMap, ok := subVal.(map[string]any); ok {
-					processApp(subName, subMap)
-				}
+			for _, sub := range mappingEntries(entry) {
+				processApp(sub.key, sub.node)
 			}
 			return
 		}
 
-		image := extractBundleImage(value, imageRepoMap)
+		image, named := extractBundleImage(entry, imageRepoMap)
 		if image == "" {
+			// An entry with no `image:` at all is ordinary — a bundle carries
+			// plenty of keys that are not applications. An entry that NAMES an
+			// image the launcher cannot read is not: the application then
+			// silently leaves the bundle, and the stand comes up missing it
+			// with nothing anywhere saying why. That is the same price the
+			// `dependencies:` section refuses to pay one level down.
+			if named {
+				logger.Warn("Bundle entry names an image the launcher cannot read; ignoring the application",
+					"app", appName)
+			}
 			return
 		}
 
@@ -1304,15 +1326,12 @@ func parseBundleFile(path, version string, aliasMap, imageRepoMap map[string]str
 		// ignored — so match that to avoid leaking unrelated init images into
 		// eapps' init containers.
 		if canonical == appdef.AppEapps {
-			citeckApps = collectCiteckApps(value, imageRepoMap, citeckApps)
+			citeckApps = collectCiteckApps(entry, imageRepoMap, citeckApps)
 		}
 	}
 
-	for appName, value := range raw {
-		valueMap, ok := value.(map[string]any)
-		if !ok {
-			continue
-		}
+	for _, top := range mappingEntries(documentRoot(&rootNode)) {
+		appName := top.key
 		// The dependencies section is a SECTION, not an app, and it is read
 		// separately (see parseBundleDependencies). The skip is structural, not
 		// cosmetic: this loop hands every top-level key to processApp, so
@@ -1322,7 +1341,7 @@ func parseBundleFile(path, version string, aliasMap, imageRepoMap map[string]str
 		if appName == bundleDependenciesKey {
 			continue
 		}
-		processApp(appName, valueMap)
+		processApp(appName, top.node)
 	}
 
 	def := &Def{
@@ -1415,22 +1434,24 @@ func parseBundleDependencies(data []byte, imageRepoMap map[string]string, logger
 }
 
 // collectCiteckApps extracts ecos-apps init container images from a bundle entry.
-func collectCiteckApps(value map[string]any, imageRepoMap map[string]string, citeckApps []AppDef) []AppDef {
-	ecosApps, ok := value["ecosAppsImages"]
-	if !ok {
+//
+// Each element names its image in any shape decodeImageValues knows, and a LIST
+// element resolves to its FIRST rung for the same reason every other reader
+// outside `dependencies:` does — an init container has no pin, no hold and no
+// migration, so the most conservative rung is the only honest reading.
+func collectCiteckApps(entry *yaml.Node, imageRepoMap map[string]string, citeckApps []AppDef) []AppDef {
+	var raw struct {
+		EcosAppsImages []yaml.Node `yaml:"ecosAppsImages"`
+	}
+	if !decodeEntry(entry, &raw) {
 		return citeckApps
 	}
-	ecosAppsList, ok := ecosApps.([]any)
-	if !ok {
-		return citeckApps
-	}
-	for _, ea := range ecosAppsList {
-		eaMap, ok := ea.(map[string]any)
-		if !ok {
+	for i := range raw.EcosAppsImages {
+		values := decodeImageValues(&raw.EcosAppsImages[i])
+		if len(values) == 0 {
 			continue
 		}
-		citeckAppImage := resolveImageURL(strVal(eaMap, "repository"), strVal(eaMap, "tag"), imageRepoMap)
-		if citeckAppImage != "" {
+		if citeckAppImage := resolveImageRefWithRepos(values[0], imageRepoMap); citeckAppImage != "" {
 			citeckApps = append(citeckApps, AppDef{Image: citeckAppImage})
 		}
 	}
@@ -1443,38 +1464,131 @@ func collectCiteckApps(value map[string]any, imageRepoMap map[string]string, cit
 // `dependencies:` section can walk a ladder — there is no pin, no hold and no
 // migration out here — so the only honest reading is the most conservative
 // rung, which is the same rule LegacyImage() follows.
-func extractBundleImage(entry map[string]any, imageRepoMap map[string]string) string {
-	imgObj, ok := entry["image"]
-	if !ok {
-		return ""
+// It answers whether the entry NAMED an image at all alongside the image
+// itself, so that a name the launcher cannot read can be told apart from a key
+// that is simply not an application.
+func extractBundleImage(entry *yaml.Node, imageRepoMap map[string]string) (image string, named bool) {
+	var raw struct {
+		Image yaml.Node `yaml:"image"`
 	}
-	if list, isList := imgObj.([]any); isList {
-		if len(list) == 0 {
-			return ""
-		}
-		imgObj = list[0]
+	if !decodeEntry(entry, &raw) {
+		return "", false
 	}
-	if s, isStr := imgObj.(string); isStr {
-		return resolveImageRefWithRepos(s, imageRepoMap)
+	if raw.Image.IsZero() {
+		return "", false
 	}
-	imgMap, isMap := imgObj.(map[string]any)
-	if !isMap {
-		return ""
+	values := decodeImageValues(&raw.Image)
+	if len(values) == 0 {
+		return "", true
 	}
-	return resolveImageURL(strVal(imgMap, "repository"), strVal(imgMap, "tag"), imageRepoMap)
+	return resolveImageRefWithRepos(values[0], imageRepoMap), true
 }
 
-// strVal safely extracts a string value from a map.
-func strVal(m map[string]any, key string) string {
-	v, ok := m[key]
-	if !ok {
-		return ""
+// decodeEntry decodes one bundle entry's mapping node into out, answering
+// whether anything usable came back.
+//
+// Decoding rather than hand-walking node.Content is what makes YAML's merge key
+// ("<<: *base") keep working: generated bundles inherit an `image:` that way,
+// and the decoder applies the merge where a manual walk would see only the
+// literal keys.
+func decodeEntry(entry *yaml.Node, out any) bool {
+	entry = followAlias(entry)
+	if entry == nil || entry.Kind != yaml.MappingNode {
+		return false
 	}
-	s, ok := v.(string)
-	if !ok {
-		return ""
+	return entry.Decode(out) == nil
+}
+
+// yamlEntry is one key→value pair of a bundle mapping, in document order.
+type yamlEntry struct {
+	key  string
+	node *yaml.Node
+}
+
+// documentRoot unwraps the document node yaml.Unmarshal produces.
+func documentRoot(node *yaml.Node) *yaml.Node {
+	node = followAlias(node)
+	if node != nil && node.Kind == yaml.DocumentNode {
+		if len(node.Content) == 0 {
+			return nil
+		}
+		node = followAlias(node.Content[0])
 	}
-	return s
+	return node
+}
+
+// mappingEntries lists a mapping node's entries in DOCUMENT order, resolving
+// aliased values. Document order rather than map order because two bundle keys
+// can alias-map onto one canonical app id, and which of them wins must not
+// depend on Go's map iteration.
+//
+// A merge key ("<<") is expanded too, so an app list inherited from an anchor
+// is listed like any other. The precedence is YAML's own: a key written in the
+// mapping itself beats the same key coming in through a merge, wherever the
+// merge key sits, and among several merged mappings the first one wins. Merged
+// entries are listed after the explicit ones.
+func mappingEntries(node *yaml.Node) []yamlEntry {
+	node = followAlias(node)
+	if node == nil || node.Kind != yaml.MappingNode {
+		return nil
+	}
+	out := make([]yamlEntry, 0, len(node.Content)/2)
+	at := make(map[string]int, len(node.Content)/2)
+	var merges []*yaml.Node
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		key := node.Content[i]
+		if key.Tag == mergeTag {
+			merges = append(merges, mergedMappings(node.Content[i+1])...)
+			continue
+		}
+		if key.Kind != yaml.ScalarNode {
+			continue
+		}
+		entry := yamlEntry{key: key.Value, node: followAlias(node.Content[i+1])}
+		if idx, dup := at[key.Value]; dup {
+			// A duplicated key keeps its place and takes the LAST value, which
+			// is what decoding the same mapping into a map would have done.
+			out[idx] = entry
+			continue
+		}
+		at[key.Value] = len(out)
+		out = append(out, entry)
+	}
+	for _, merged := range merges {
+		for _, e := range mappingEntries(merged) {
+			if _, taken := at[e.key]; taken {
+				continue
+			}
+			at[e.key] = len(out)
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// mergeTag is the tag yaml.v3 resolves the "<<" merge key to.
+const mergeTag = "!!merge"
+
+// mergedMappings answers the mappings a "<<" value brings in. YAML allows a
+// single mapping or a sequence of them, earlier entries winning.
+func mergedMappings(value *yaml.Node) []*yaml.Node {
+	value = followAlias(value)
+	if value == nil {
+		return nil
+	}
+	if value.Kind == yaml.SequenceNode {
+		out := make([]*yaml.Node, 0, len(value.Content))
+		for _, item := range value.Content {
+			if m := followAlias(item); m != nil && m.Kind == yaml.MappingNode {
+				out = append(out, m)
+			}
+		}
+		return out
+	}
+	if value.Kind == yaml.MappingNode {
+		return []*yaml.Node{value}
+	}
+	return nil
 }
 
 // findBundleFile resolves a bundle key (e.g. "2025.10" or "archive/2025.5")
