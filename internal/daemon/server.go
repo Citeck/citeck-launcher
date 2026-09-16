@@ -726,6 +726,17 @@ func (d *Daemon) doReloadEx(forceGitPull, startNotRegenerate, refreshImages bool
 		wsSyncError = syncErr.Error()
 	}
 
+	// Cache what THIS reload resolved. The load path is not enough on its own:
+	// an edit persists the new bundle ref and then reloads, so a ref that
+	// arrived that way had no cache until the next daemon start — remove the
+	// bundle from the repo in between and the namespace came back with zero
+	// applications. Skipped when the resolve IS the fallback: re-caching the
+	// cache learns nothing, and doing it would hide how long the namespace has
+	// been running on a bundle its repo no longer has.
+	if !bundleFallback && resolveResult != nil && act.runtime != nil {
+		act.runtime.SetCachedBundle(resolveResult.Bundle)
+	}
+
 	// Appfiles are intentionally NOT extracted here — same rule as Start().
 	// writeRuntimeFiles (inside generateAndWriteRuntimeFiles below) is the
 	// single source of truth for bind-mount contents, avoiding a double-write

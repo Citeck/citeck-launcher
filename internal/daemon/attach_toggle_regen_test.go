@@ -220,6 +220,11 @@ func TestAttachToggleHandlerDoesNotSkipItsOwnRegeneration(t *testing.T) {
 		Status: namespace.AppStatusStopped,
 		Def:    appdef.ApplicationDef{Name: appdef.AppAi},
 	})
+	// DETACHED, because that is what this toggle is: attaching an app the
+	// operator had switched off. It also keeps the case reachable on a
+	// namespace that is not running — the per-app lifecycle gate
+	// (requireRunningNamespaceForApp) allows an attach there and nothing else.
+	d.activeNs.runtime.SetManualStoppedApps(map[string]bool{appdef.AppAi: true})
 
 	release := make(chan struct{})
 	rec := gatedResponseWriter{ResponseRecorder: httptest.NewRecorder(), release: release}

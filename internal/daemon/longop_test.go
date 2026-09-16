@@ -34,6 +34,14 @@ type gatedRoute struct {
 	body         string
 
 	tolerantOfLifecycle bool
+	// gatedElsewhere marks a route that this fixture's namespace refuses for a
+	// reason of its own, unrelated to the long-operation lock: the per-app
+	// start/restart routes need a running namespace (or a detached app to
+	// attach), and a fresh Runtime reports STOPPED. For those the tolerance
+	// assertion is on the CODE — the long-op refusal must not be the one that
+	// comes back — because asserting "not 409" would be asserting the other
+	// gate away.
+	gatedElsewhere bool
 }
 
 // gatedRoutes is THE list of routes that start, reshape or destroy the
@@ -52,9 +60,9 @@ func gatedRoutes() []gatedRoute {
 		{handler: "handleStartNamespace", method: "POST", path: api.NamespaceStart, tolerantOfLifecycle: true},
 		{handler: "handleStopNamespace", method: "POST", path: api.NamespaceStop, tolerantOfLifecycle: true},
 		{handler: "handleReloadNamespace", method: "POST", path: api.NamespaceReload},
-		{handler: "handleAppStart", method: "POST", path: api.AppStart("postgres"), tolerantOfLifecycle: true},
+		{handler: "handleAppStart", method: "POST", path: api.AppStart("postgres"), tolerantOfLifecycle: true, gatedElsewhere: true},
 		{handler: "handleAppStop", method: "POST", path: api.AppStop("postgres"), tolerantOfLifecycle: true},
-		{handler: "handleAppRestart", method: "POST", path: api.AppRestart("postgres"), tolerantOfLifecycle: true},
+		{handler: "handleAppRestart", method: "POST", path: api.AppRestart("postgres"), tolerantOfLifecycle: true, gatedElsewhere: true},
 		{handler: "handlePutAppConfig", method: "PUT", path: "/api/v1/apps/postgres/config", body: "name: postgres\n"},
 		{handler: "handleResetAppConfig", method: "POST", path: "/api/v1/apps/postgres/config/reset"},
 		{handler: "handlePutAppFile", method: "PUT", path: "/api/v1/apps/postgres/files/postgres/pg_hba.conf", body: "x"},
@@ -401,9 +409,12 @@ func TestGatedRoutesRefuseLifecycleWorkExceptTheLifecycleRoutes(t *testing.T) {
 				t.Run(rtc.handler, func(t *testing.T) {
 					rec := doGatedRequest(t, mux, rtc)
 					if rtc.tolerantOfLifecycle {
-						assert.NotEqual(t, http.StatusConflict, rec.Code,
+						assert.NotContains(t, rec.Body.String(), api.ErrCodeLongOpInProgress,
 							"%s must proceed alongside %s", rtc.handler, holder)
-						assert.NotContains(t, rec.Body.String(), api.ErrCodeLongOpInProgress)
+						if !rtc.gatedElsewhere {
+							assert.NotEqual(t, http.StatusConflict, rec.Code,
+								"%s must proceed alongside %s", rtc.handler, holder)
+						}
 						return
 					}
 					require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())

@@ -296,6 +296,7 @@ const fr = {
   'table.action.restart': 'Red\u00e9marrer',
   'table.action.stop.rmbRestart': 'Arr\u00eater (clic droit : red\u00e9marrer)',
   'table.action.restart.disabledHint': 'D\u00e9marrez l\'app pour la red\u00e9marrer',
+  'table.action.start.disabledHint': 'Le namespace n\'est pas démarré — démarrez-le d\'abord, puis lancez cette application seule.',
   'table.toast.success': '{action} demand\u00e9 pour {name}',
   'table.cpu.throttled': 'CPU brid\u00e9',
   'table.memory.warning': 'Utilisation m\u00e9moire \u00e9lev\u00e9e',

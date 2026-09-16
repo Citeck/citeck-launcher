@@ -296,6 +296,7 @@ const es = {
   'table.action.restart': 'Reiniciar',
   'table.action.stop.rmbRestart': 'Detener (clic derecho: reiniciar)',
   'table.action.restart.disabledHint': 'Inicia la app para reiniciarla',
+  'table.action.start.disabledHint': 'El namespace no está en ejecución: inícielo primero y después inicie esta aplicación por separado.',
   'table.toast.success': '{action} solicitado para {name}',
   'table.cpu.throttled': 'CPU limitada',
   'table.memory.warning': 'Uso elevado de memoria',

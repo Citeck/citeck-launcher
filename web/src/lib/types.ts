@@ -55,6 +55,10 @@ export interface AppDto {
    * re-deriving it from waitingFor.
    */
   held?: boolean
+  // True when the operator switched this app OFF (detach). Attaching it back
+  // is the one per-app lifecycle action the daemon carries out while the
+  // namespace is stopped, so the row's start button stays live for it.
+  detached?: boolean
 }
 
 /** One dependency an app is held on: its name, and the status it is in. */

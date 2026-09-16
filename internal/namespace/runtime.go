@@ -480,13 +480,45 @@ func (r *Runtime) SetConfig(cfg *Config) {
 	r.config = cfg
 }
 
-// SetCachedBundle updates the cached bundle definition (persisted for fallback on resolve failures).
-func (r *Runtime) SetCachedBundle(def *bundle.Def) {
+// RestoreCachedBundle installs the bundle the LOAD path just resolved, so a
+// later resolve failure has something to fall back on. No persist, for the
+// same reason RestoreDependencyState does not persist: the load path runs
+// before the caller has acted on ShouldStart, and a write there would record
+// r.status while it is still the placeholder STOPPED.
+//
+// An empty bundle is not cached: falling back to one would report a namespace
+// with no Citeck services at all as healthy, and resolveBundleWithCacheFallback
+// refuses an empty cache for the same reason.
+func (r *Runtime) RestoreCachedBundle(def *bundle.Def) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if def != nil && !def.IsEmpty() {
 		r.cachedBundle = def
 	}
+}
+
+// SetCachedBundle records the bundle a RELOAD resolved, and persists it.
+//
+// The persist is the point. Only the load path used to cache at all, so a
+// bundle ref that arrived through an EDIT — which persists the config and then
+// reloads — was never cached: remove that bundle from the repo before the next
+// daemon start and the namespace came back with zero applications, which is
+// precisely what the cache exists to prevent. And an in-memory-only cache
+// would not survive the restart that is the very moment it is needed.
+//
+// Persisting is right HERE and not on the load path (SetDependencyState draws
+// the same line): the runtime exists and its status is live, so the write
+// records the truth rather than a placeholder. The caller has nothing to do
+// with a failed write — the reload itself succeeded — so the error is not
+// returned, but persistUnderLock leaves the write owed and the loop retries it.
+func (r *Runtime) SetCachedBundle(def *bundle.Def) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if def == nil || def.IsEmpty() {
+		return
+	}
+	r.cachedBundle = def
+	_ = r.persistUnderLock("cache-bundle")
 }
 
 // SetManualStoppedApps restores persisted manual stopped apps (called before Start).

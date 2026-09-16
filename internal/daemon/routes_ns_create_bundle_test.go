@@ -52,6 +52,10 @@ func TestCreateFillsTheBundleRefFromTheWorkspace(t *testing.T) {
 	store, err := storage.NewSQLiteStore(t.TempDir())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = store.Close() })
+	t.Setenv("CITECK_HOME", t.TempDir())
+	// The create path now resolves the bundle it is about to pin, so the
+	// version this workspace names has to exist on disk.
+	writeCreatableBundle(t, "ws1", "2026.2")
 
 	d := testDaemon(t, store)
 	d.activeNs = &activeNamespace{
@@ -100,6 +104,8 @@ func TestCreateStampsTheCurrentConfigGeneration(t *testing.T) {
 	store, err := storage.NewSQLiteStore(t.TempDir())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = store.Close() })
+	t.Setenv("CITECK_HOME", t.TempDir())
+	writeCreatableBundle(t, "ws1", "2026.2")
 
 	d := testDaemon(t, store)
 	d.activeNs = &activeNamespace{

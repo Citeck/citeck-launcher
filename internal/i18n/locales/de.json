@@ -538,5 +538,6 @@
   "deps.msg.event.rolledBack": "{id} wurde auf {image} zurückgesetzt",
   "deps.msg.event.rolledBackWithWarning": "{id} wurde auf {image} zurückgesetzt; {error}",
   "deps.msg.action.migrationStarted": "Migration von {id} auf {image} gestartet",
-  "deps.msg.action.rollbackStarted": "Rollback von {id} auf {image} gestartet"
+  "deps.msg.action.rollbackStarted": "Rollback von {id} auf {image} gestartet",
+  "apps.msg.namespaceNotRunning": "Der Namespace läuft nicht — starten Sie ihn zuerst, danach lässt sich die einzelne Anwendung starten."
 }

@@ -538,5 +538,6 @@
   "deps.msg.event.rolledBack": "выполнен откат {id} до {image}",
   "deps.msg.event.rolledBackWithWarning": "выполнен откат {id} до {image}; {error}",
   "deps.msg.action.migrationStarted": "Миграция {id} на {image} запущена",
-  "deps.msg.action.rollbackStarted": "Откат {id} на {image} запущен"
+  "deps.msg.action.rollbackStarted": "Откат {id} на {image} запущен",
+  "apps.msg.namespaceNotRunning": "Неймспейс не запущен — сначала запустите его, а затем запускайте отдельное приложение."
 }

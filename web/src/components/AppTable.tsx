@@ -120,6 +120,18 @@ function GroupRows({ labelKey, apps, allApps, onAction, highlightedApp }: { labe
   const { t, tDynamic } = useTranslation()
   const { contextMenu, showContextMenu, hideContextMenu } = useContextMenu()
   const pullProgress = useDashboardStore((s) => s.pullProgress)
+  // Per-app start/restart need the namespace's runtime loop: its app registry
+  // is built when the namespace starts, and the loop that carries a per-app
+  // transition ends with it. On a stopped namespace the daemon refuses both
+  // with NAMESPACE_NOT_RUNNING, so the row's button is disabled here for the
+  // same reason the Restart item already is — a button whose only outcome is
+  // an error toast is worse than one that says why it cannot be pressed.
+  const nsStatus = useDashboardStore((s) => s.namespace?.status)
+  // A DETACHED app is the exception: attaching it back is a persisted change
+  // of intent (and a regeneration when it gates the composition, like rag
+  // deciding whether qdrant exists), which the daemon carries out with the
+  // namespace stopped — so its button stays live.
+  const nsLoopRuns = nsStatus === 'RUNNING' || nsStatus === 'STARTING' || nsStatus === 'STALLED'
   // Registry pull-auth prompting lives in the namespace-level RegistryAuthBanner
   // (auto-opens the credentials dialog), not as a per-row button here.
 
@@ -297,8 +309,9 @@ function GroupRows({ labelKey, apps, allApps, onAction, highlightedApp }: { labe
                   <IconBtn
                     icon={Play}
                     filled
-                    title={t('table.action.start')}
+                    title={nsLoopRuns || app.detached ? t('table.action.start') : t('table.action.start.disabledHint')}
                     color="hover:text-success"
+                    disabled={!nsLoopRuns && !app.detached}
                     onClick={() => onAction({ type: 'start', appName: app.name })}
                     onContextMenu={(e) => openRestartMenu(e, app.name, false)}
                   />

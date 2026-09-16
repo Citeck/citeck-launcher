@@ -776,7 +776,47 @@ func (d *Daemon) buildNamespaceConfigFromCreate(req api.NamespaceCreateDto, wsID
 		}
 		nsCfg.BundleRef.Key = resolved
 	}
+
+	// A CONCRETE key that does not resolve is refused here, and only here.
+	// A namespace being created has no cached bundle and cannot acquire one,
+	// so persisting this ref produces a namespace with zero applications — the
+	// same outcome the two refusals above exist to prevent, arrived at by a
+	// typo or by a repo that has not been synced. The EDIT path deliberately
+	// keeps accepting an unresolvable ref: an existing namespace may be
+	// running from its cache precisely because the bundle left the repo, and
+	// refusing there would mean it could not even be renamed.
+	//
+	// The resolve may sync, like the LATEST branch above and unlike the
+	// launcher-floor gate: this runs once per create, where waiting for git is
+	// what makes the answer about the repo rather than about the clone.
+	if err := d.requireResolvableBundle(wsID, nsCfg.BundleRef); err != nil {
+		return nil, err
+	}
 	return &nsCfg, nil
+}
+
+// requireResolvableBundle reports why the bundle a namespace is being CREATED
+// on cannot be read, or nil when it can. See the call site for why this is a
+// create-only rule.
+func (d *Daemon) requireResolvableBundle(wsID string, ref bundle.Ref) *createNamespaceError {
+	resolver := bundle.NewResolverWithAuth(config.BundlesDataDir(wsID), makeTokenLookup(d.secretService)).
+		WithWorkspaceRepo(lookupWorkspaceRepoOpts(d.store, d.secretService, wsID)).
+		WithWorkspaceOverlay(workspaceConfigOverlay(d.store, wsID)).
+		WithLauncherVersion(d.version)
+	// Same rule as resolveLatestBundleKey right above: server mode never
+	// auto-pulls, desktop may (throttled by the repo's own pull period).
+	if !config.IsDesktopMode() {
+		resolver.SetOffline(true)
+	}
+	if _, err := resolver.Resolve(ref); err != nil {
+		return &createNamespaceError{
+			status: http.StatusConflict,
+			code:   api.ErrCodeBundleNotSynced,
+			message: fmt.Sprintf("bundle %q is not in the synced copy of repo %q — sync it (Force Update) "+
+				"or pick a version the list offers: %v", ref.Key, ref.Repo, err),
+		}
+	}
+	return nil
 }
 
 // persistNewNamespace serializes the config, re-checks the ID for a collision

@@ -296,6 +296,7 @@ const zh = {
   'table.action.restart': '重启',
   'table.action.stop.rmbRestart': '停止（右键：重启）',
   'table.action.restart.disabledHint': '启动应用后才能重启',
+  'table.action.start.disabledHint': '命名空间未运行——请先启动命名空间，然后再单独启动该应用。',
   'table.toast.success': '已请求对 {name} 执行 {action}',
   'table.cpu.throttled': 'CPU 受限',
   'table.memory.warning': '内存使用率高',

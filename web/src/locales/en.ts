@@ -298,6 +298,7 @@ const en = {
   'table.action.restart': 'Restart',
   'table.action.stop.rmbRestart': 'Stop (right-click: restart)',
   'table.action.restart.disabledHint': 'Start the app to restart it',
+  'table.action.start.disabledHint': 'The namespace is not running — start it first, then start this application on its own.',
   'table.toast.success': '{action} requested for {name}',
   'table.cpu.throttled': 'CPU throttled',
   'table.memory.warning': 'High memory usage',
