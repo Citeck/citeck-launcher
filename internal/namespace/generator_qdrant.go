@@ -33,9 +33,6 @@ func generateQdrant(ctx *NsGenContext) {
 	// Toggling rag decides whether qdrant exists, so the daemon must regenerate
 	// on that toggle — mark it even when rag is currently detached.
 	ctx.MarkGatingApp(appdef.AppRag)
-	if ctx.DetachedApps[appdef.AppRag] {
-		return
-	}
 
 	props := bundle.QdrantProps{}
 	if ctx.WorkspaceConfig != nil && ctx.WorkspaceConfig.Qdrant != nil {
@@ -65,6 +62,15 @@ func generateQdrant(ctx *NsGenContext) {
 	image := resolveDependencyImage(ctx, deps.Qdrant, chain)
 
 	qdrant := ctx.GetOrCreateApp(appdef.AppQdrant)
+	// A detached rag no longer takes its vector store with it. The spec stays
+	// in the namespace — that is what the "stop in launcher, debug locally"
+	// workflow needs, since a rag run from an IDE still has to reach a qdrant
+	// on localhost — and MarkAutoDetached is what keeps it stopped for everyone
+	// who simply switched RAG off: the runtime never starts an auto-detached
+	// app by itself, so a switched-off RAG still costs no memory.
+	if ctx.DetachedApps[appdef.AppRag] {
+		ctx.MarkAutoDetached(appdef.AppQdrant)
+	}
 	qdrant.Image = image
 	qdrant.Kind = appdef.KindThirdParty
 	// The volume comes from the generation counter, NOT from a literal. It used
@@ -84,6 +90,11 @@ func generateQdrant(ctx *NsGenContext) {
 	// STARTING on a desktop stand and rag waits on it forever. Server mode drops
 	// every non-proxy publish (see Generate), so this costs nothing there.
 	qdrant.AddPort(fmt.Sprintf("%d:%d", qdrantHTTPPort, qdrantHTTPPort))
+	// The gRPC port is published for the same reason postgres publishes 14523:
+	// a rag run OUTSIDE the launcher (stopped here, started from an IDE) talks
+	// to the store over gRPC — spring.ai.vectorstore.qdrant.port defaults to
+	// ${QDRANT_GRPC_PORT:6334} — and the port above carries HTTP only.
+	qdrant.AddPort(fmt.Sprintf("%d:%d", grpcPort, grpcPort))
 	// The gRPC port is configuration, so the container has to hear about it too:
 	// rag is told QDRANT_GRPC_PORT and would otherwise dial a port qdrant never
 	// opened (the image defaults to 6334). Qdrant maps QDRANT__<SECTION>__<KEY>
@@ -125,7 +136,12 @@ func generateQdrant(ctx *NsGenContext) {
 	ragApp.AddDependsOn(appdef.AppQdrant)
 
 	// The assistant ships with citeck.ai.rag.enabled=false, so without this flag
-	// a user who starts rag still gets no RAG tools in ai.
+	// a user who starts rag still gets no RAG tools in ai. The flag follows
+	// whether this namespace HAS rag at all — not whether rag happens to be
+	// detached right now. Stopping rag is how you run it from an IDE, and a
+	// namespace that is a RAG namespace stays one across that toggle: gating
+	// the flag on the detach state instead would rewrite (and recreate) the ai
+	// container on every start/stop of rag.
 	if aiApp, ok := ctx.Applications[appdef.AppAi]; ok && !ctx.DetachedApps[appdef.AppAi] {
 		aiApp.AddEnv("CITECK_AI_RAG_ENABLED", "true")
 	}
@@ -146,13 +162,15 @@ func generateQdrant(ctx *NsGenContext) {
 // dangerous direction is answering FALSE wrongly — no pin means the bundle's
 // image is applied to an existing index — so every condition below is one the
 // generator checks before it emits anything.
-func WillGenerateQdrant(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, detached map[string]bool) bool {
+// The detach set is still a PARAMETER (spelled `_`) so this restatement keeps
+// taking exactly what the generator takes and the parity test can hand both the
+// same arguments — but it no longer changes the answer: since the companion
+// rule landed, a detached rag keeps its (auto-detached) qdrant, so the
+// namespace still HAS the dependency and still needs its pin. Do not drop the
+// parameter: a future condition that does depend on it would have to be
+// threaded back through namespaceDependencies and every caller.
+func WillGenerateQdrant(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, _ map[string]bool) bool {
 	if cfg == nil || bun == nil {
-		return false
-	}
-	// generateQdrant returns before doing anything when rag is detached: a
-	// switched-off RAG costs no memory, and starting it regenerates.
-	if detached[appdef.AppRag] {
 		return false
 	}
 	// generateBundleWebapps: the bundle must carry the app, and a non-empty

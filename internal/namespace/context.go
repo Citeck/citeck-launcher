@@ -150,8 +150,15 @@ type NsGenContext struct {
 	// whether OTHER apps are generated at all (as opposed to DetachedApps /
 	// DependsOnDetachedApps, which are about dependency wiring on apps that are
 	// generated either way). Surfaced to the daemon as GenResp.GatingApps.
-	GatingApps   map[string]bool
-	portsCounter atomic.Int32
+	GatingApps map[string]bool
+	// AutoDetachedApps records, via MarkAutoDetached, apps the launcher
+	// generates but must NOT start on its own: a companion (qdrant,
+	// stt-sidecar) whose owner (rag, ai) is detached. The spec has to stay in
+	// the namespace so it can be started deliberately for local debugging, and
+	// it must stay stopped for everyone who simply has the owner switched off.
+	// Surfaced to the daemon as GenResp.AutoDetachedApps.
+	AutoDetachedApps map[string]bool
+	portsCounter     atomic.Int32
 }
 
 // NewNsGenContext creates a new generation context for the given config and bundle.
@@ -169,6 +176,7 @@ func NewNsGenContext(cfg *Config, bun *bundle.Def) *NsGenContext {
 		// the caller can range over whatever the namespace generated.
 		DependencyImages:    make(map[deps.ID]DependencyGen),
 		GatingApps:          make(map[string]bool),
+		AutoDetachedApps:    make(map[string]bool),
 		ConfiguredDependsOn: make(map[string][]string),
 		WorkspaceDependsOn:  make(map[string][]string),
 	}
@@ -205,6 +213,16 @@ func (c *NsGenContext) MarkGatingApp(name string) {
 		c.GatingApps = map[string]bool{}
 	}
 	c.GatingApps[name] = true
+}
+
+// MarkAutoDetached records that `name` is generated but must not be started by
+// the runtime on its own — see NsGenContext.AutoDetachedApps. An explicit
+// start by the operator overrides it; nothing else does.
+func (c *NsGenContext) MarkAutoDetached(name string) {
+	if c.AutoDetachedApps == nil {
+		c.AutoDetachedApps = map[string]bool{}
+	}
+	c.AutoDetachedApps[name] = true
 }
 
 // ProxyHost returns the configured proxy host or "localhost" if blank.

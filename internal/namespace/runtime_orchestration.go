@@ -3,7 +3,6 @@ package namespace
 import (
 	"context"
 	"log/slog"
-	"maps"
 	"sync"
 	"time"
 
@@ -75,8 +74,7 @@ func (r *Runtime) doStart(apps []appdef.ApplicationDef, refreshImages bool) { //
 	// Snapshot the detached set under the SAME lock the seed uses — the later
 	// phases reuse this copy, so every phase of this doStart pass sees one
 	// consistent view.
-	detached := make(map[string]bool, len(r.manualStoppedApps))
-	maps.Copy(detached, r.manualStoppedApps)
+	detached := r.detachedSetLocked()
 	seeded := make(map[string]*AppRuntime, len(apps))
 	for _, appDef := range apps {
 		seeded[appDef.Name] = &AppRuntime{Name: appDef.Name, Status: AppStatusStopped, Def: appDef}
@@ -363,7 +361,7 @@ func (r *Runtime) doRegenerate(apps []appdef.ApplicationDef, refreshImages bool)
 	// Clone the detached set here rather than in a second RLock: the loop is the
 	// single writer, so one critical section gives every phase below the same
 	// consistent view (and mirrors doStart's single seed block).
-	detached := maps.Clone(r.manualStoppedApps)
+	detached := r.detachedSetLocked()
 	// NS status: mark STARTING before the phase-1 I/O below, not after it.
 	// updateNsStatus re-derives RUNNING once the state machine walks any
 	// recreated apps back up (an unchanged-hash-only regenerate re-derives it

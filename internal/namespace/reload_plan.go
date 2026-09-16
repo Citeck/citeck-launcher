@@ -2,7 +2,6 @@ package namespace
 
 import (
 	"context"
-	"maps"
 	"sort"
 
 	"github.com/citeck/citeck-launcher/internal/appdef"
@@ -114,7 +113,7 @@ func splitHashInputLines(s string) []string {
 // (the hash is sha256 of the input) and additionally yields the line diff.
 func (r *Runtime) PlanRegenerate(ctx context.Context, desired []appdef.ApplicationDef) []ReloadPlanEntry {
 	r.mu.RLock()
-	detached := maps.Clone(r.manualStoppedApps)
+	detached := r.detachedSetLocked()
 	currentInputs := make(map[string]string, len(r.apps))
 	for name, app := range r.apps {
 		currentInputs[name] = app.Def.GetHashInput()

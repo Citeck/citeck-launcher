@@ -967,13 +967,16 @@ func generateSttSidecar(ctx *NsGenContext) {
 	if !ok {
 		return
 	}
-	// ai's detach state decides whether stt-sidecar exists at all — toggling it
-	// must regenerate the namespace (see NsGenContext.MarkGatingApp).
+	// ai's detach state decides how stt-sidecar is generated — toggling it must
+	// regenerate the namespace (see NsGenContext.MarkGatingApp).
 	ctx.MarkGatingApp(appdef.AppAi)
-	if ctx.DetachedApps[appdef.AppAi] {
-		// AI off the table → STT serves nothing.
-		return
-	}
+	// A detached ai no longer deletes its sidecar, for the reason generateQdrant
+	// keeps qdrant beside a detached rag: stopping the owner in the launcher is
+	// how it gets run from an IDE instead, and the companion is exactly what the
+	// locally run owner still has to reach. MarkAutoDetached is what keeps it
+	// stopped for everyone who simply switched AI off — the runtime never starts
+	// an auto-detached app by itself.
+	aiDetached := ctx.DetachedApps[appdef.AppAi]
 
 	props := bundle.SttSidecarProps{}
 	if ctx.WorkspaceConfig != nil && ctx.WorkspaceConfig.SttSidecar != nil {
@@ -997,6 +1000,9 @@ func generateSttSidecar(ctx *NsGenContext) {
 	}
 
 	stt := ctx.GetOrCreateApp(appdef.AppSttSidecar)
+	if aiDetached {
+		ctx.MarkAutoDetached(appdef.AppSttSidecar)
+	}
 	stt.Image = image
 	stt.Kind = appdef.KindCiteckAdditional
 	stt.AddEnv("PORT", fmt.Sprintf("%d", port))

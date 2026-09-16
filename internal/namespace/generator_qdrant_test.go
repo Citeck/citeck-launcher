@@ -71,7 +71,12 @@ func TestQdrant_AbsentWhenRagIsNotInTheBundle(t *testing.T) {
 	assert.False(t, ok, "без rag флаг не выставляется")
 }
 
-func TestQdrant_AbsentWhenRagIsDetached(t *testing.T) {
+// TestQdrant_RagRagFlagFollowsPresenceNotDetachState: CITECK_AI_RAG_ENABLED
+// says whether this namespace HAS rag, not whether rag is running right now.
+// Stopping rag is how it is run from an IDE instead, and flipping the flag on
+// that toggle would rewrite — and therefore recreate — the ai container every
+// time.
+func TestQdrant_RagFlagFollowsPresenceNotDetachState(t *testing.T) {
 	config.ResetDesktopMode()
 	resp, err := Generate(basicCfg(), ragBundle(), ragWorkspace(),
 		SystemSecrets{JWT: "j", OIDC: "o"},
@@ -79,12 +84,12 @@ func TestQdrant_AbsentWhenRagIsDetached(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.NotNil(t, findGeneratedApp(resp, appdef.AppRag), "спека rag остаётся, чтобы её можно было включить")
-	assert.Nil(t, findGeneratedApp(resp, appdef.AppQdrant), "выключенный rag не тянет за собой qdrant")
 
 	ai := findGeneratedApp(resp, appdef.AppAi)
 	require.NotNil(t, ai)
-	_, ok := ai.Environments.Get("CITECK_AI_RAG_ENABLED")
-	assert.False(t, ok)
+	enabled, ok := ai.Environments.Get("CITECK_AI_RAG_ENABLED")
+	require.True(t, ok, "неймспейс с rag остаётся rag-неймспейсом и при отцепленном rag")
+	assert.Equal(t, "true", enabled)
 }
 
 func TestQdrant_MarksRagAsGating(t *testing.T) {
@@ -329,4 +334,51 @@ func TestQdrant_VolumeFollowsTheGenerationCounter(t *testing.T) {
 	qdrant := findGeneratedApp(resp, appdef.AppQdrant)
 	require.NotNil(t, qdrant)
 	assert.Contains(t, qdrant.Volumes, "qdrant3:/qdrant/storage")
+}
+
+// TestQdrant_GeneratedButAutoDetachedWhenRagIsDetached pins the rule that
+// replaces "rag detached → no qdrant at all". Taking the vector store away with
+// rag broke the workflow the CloudConfigServer exists for — "stop in launcher,
+// debug locally": stopping rag to run it from an IDE also removed the store it
+// would talk to. The spec now stays in the namespace so it can be started on
+// its own, and the generator names it as AUTO-DETACHED so the runtime never
+// starts it by itself. A switched-off RAG still costs no memory.
+func TestQdrant_GeneratedButAutoDetachedWhenRagIsDetached(t *testing.T) {
+	config.ResetDesktopMode()
+	resp, err := Generate(basicCfg(), ragBundle(), ragWorkspace(),
+		SystemSecrets{JWT: "j", OIDC: "o"},
+		GenerateOpts{DetachedApps: map[string]bool{appdef.AppRag: true}})
+	require.NoError(t, err)
+
+	require.NotNil(t, findGeneratedApp(resp, appdef.AppQdrant),
+		"спека qdrant остаётся, иначе локальный запуск rag не к чему подключать")
+	assert.True(t, resp.AutoDetachedApps[appdef.AppQdrant],
+		"иначе qdrant стартанёт сам на каждом стенде с выключенным rag")
+}
+
+// TestQdrant_NotAutoDetachedWhenRagIsAttached is the other half: with rag on,
+// qdrant is an ordinary app and nothing may hold it back.
+func TestQdrant_NotAutoDetachedWhenRagIsAttached(t *testing.T) {
+	config.ResetDesktopMode()
+	resp, err := Generate(basicCfg(), ragBundle(), ragWorkspace(), SystemSecrets{JWT: "j", OIDC: "o"})
+	require.NoError(t, err)
+	assert.False(t, resp.AutoDetachedApps[appdef.AppQdrant])
+}
+
+// TestQdrant_PublishesGrpcPortForLocalDebugging: citeck-rag reaches qdrant over
+// gRPC (spring.ai.vectorstore.qdrant.port = ${QDRANT_GRPC_PORT:6334}), so a rag
+// run outside the launcher needs 6334 on the host — 6333 is published for the
+// HTTP probe and carries no gRPC. Postgres has published 14523 for this exact
+// reason since the beginning.
+func TestQdrant_PublishesGrpcPortForLocalDebugging(t *testing.T) {
+	t.Setenv("CITECK_DESKTOP", "true")
+	config.ResetDesktopMode()
+	defer config.ResetDesktopMode()
+	resp, err := Generate(basicCfg(), ragBundle(), ragWorkspace(), SystemSecrets{JWT: "j", OIDC: "o"})
+	require.NoError(t, err)
+
+	qdrant := findGeneratedApp(resp, appdef.AppQdrant)
+	require.NotNil(t, qdrant)
+	assert.Contains(t, qdrant.Ports, "6334:6334",
+		"без публикации gRPC-порта локально запущенный rag не найдёт хранилище")
 }

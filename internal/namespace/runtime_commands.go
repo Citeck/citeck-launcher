@@ -458,7 +458,19 @@ func (r *Runtime) ResetEditedFile(appName, relPath string) error {
 //
 // manualStoppedApps[appName]=true is set BEFORE dispatch so the user's
 // detach intent persists even if the stop fails.
-func (r *Runtime) StopApp(appName string) error { //nolint:gocyclo // single-pass dispatch over T19/T19b/T19c branches
+func (r *Runtime) StopApp(appName string) error {
+	return r.stopApp(appName, true)
+}
+
+// stopApp is StopApp's body plus the one thing that is not always true of a
+// stop: whether it is the OPERATOR's.
+//
+// recordIntent=false is the companion path (see SetAutoDetachedApps). The app
+// goes down because its OWNER is detached, so nothing may land in
+// manualStoppedApps — that map is persisted and would outlive the owner's
+// state, leaving a re-attached rag parked in DEPS_WAITING on a qdrant nobody
+// remembers stopping.
+func (r *Runtime) stopApp(appName string, recordIntent bool) error { //nolint:gocyclo // single-pass dispatch over T19/T19b/T19c branches
 	r.mu.Lock()
 	app, ok := r.apps[appName]
 	if !ok {
@@ -468,7 +480,12 @@ func (r *Runtime) StopApp(appName string) error { //nolint:gocyclo // single-pas
 
 	// Mark as detached immediately — the user's intent to detach must be
 	// recorded even if the Docker stop fails (container already gone, etc.).
-	r.manualStoppedApps[appName] = true
+	if recordIntent {
+		r.manualStoppedApps[appName] = true
+		// An explicit stop hands the app back to the companion rule: whatever
+		// the operator started for a debugging session, they have now stopped.
+		delete(r.autoDetachStarted, appName)
+	}
 
 	containerName := r.docker.ContainerName(appName)
 	stopTimeout := r.resolveStopTimeout(app.Def.StopTimeout)
@@ -570,17 +587,20 @@ func (r *Runtime) StartApp(appName string) error {
 		// T27: detached → re-attach. Clear detach flag, transition to
 		// READY_TO_PULL. State machine drives pull/start.
 		delete(r.manualStoppedApps, appName)
+		r.clearAutoDetachLocked(appName)
 		r.resetRetry(appName)
 		r.setAppStatus(app, AppStatusReadyToPull)
 	case AppStatusReadyToPull, AppStatusPullFailed, AppStatusFailed:
 		// T28 (FAILED) — also handles READY_TO_PULL / PULL_FAILED for
 		// idempotency: clear retry and let the state machine pick it up.
 		delete(r.manualStoppedApps, appName)
+		r.clearAutoDetachLocked(appName)
 		r.resetRetry(appName)
 		r.setAppStatus(app, AppStatusReadyToPull)
 	case AppStatusStartFailed:
 		// T29: image is already pulled — go straight to READY_TO_START.
 		delete(r.manualStoppedApps, appName)
+		r.clearAutoDetachLocked(appName)
 		r.resetRetry(appName)
 		r.setAppStatus(app, AppStatusReadyToStart)
 	case AppStatusStoppingFailed:
@@ -589,6 +609,7 @@ func (r *Runtime) StartApp(appName string) error {
 		// any prior canceled stop via the dispatcher (attemptID bump).
 		// UPDATING (not STOPPING) marks this as recreate-in-flight.
 		delete(r.manualStoppedApps, appName)
+		r.clearAutoDetachLocked(appName)
 		app.desiredNext = AppStatusReadyToPull
 		app.initialSweep = false
 		app.stoppingStartedAt = r.nowFunc()
@@ -810,4 +831,15 @@ func (r *Runtime) RestartApp(appName string) error { //nolint:gocyclo // single-
 	}
 	r.signalCh.Flush()
 	return nil
+}
+
+// clearAutoDetachLocked records that the operator started this app on purpose.
+// It leaves the auto-detached set for good — until its owner is attached again,
+// at which point SetAutoDetachedApps drops the override too.
+func (r *Runtime) clearAutoDetachLocked(appName string) {
+	if !r.autoDetachedApps[appName] && !r.autoDetachStarted[appName] {
+		return
+	}
+	delete(r.autoDetachedApps, appName)
+	r.autoDetachStarted[appName] = true
 }

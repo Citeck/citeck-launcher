@@ -856,6 +856,7 @@ func (d *Daemon) doReloadEx(forceGitPull, startNotRegenerate, refreshImages bool
 	act.runtime.SetRegistryAuthFunc(makeRegistryAuthFunc(resolveResult.Workspace, d.secretReaderFunc(), regBindings))
 	act.runtime.SetDependsOnDetachedApps(genResp.DependsOnDetachedApps)
 	act.runtime.SetGatingApps(genResp.GatingApps)
+	act.runtime.SetAutoDetachedApps(genResp.AutoDetachedApps)
 
 	// Phase 3: regenerate runtime with updated config (async stop + start).
 	// When the bundle had to fall back to the cached on-disk copy (e.g. git

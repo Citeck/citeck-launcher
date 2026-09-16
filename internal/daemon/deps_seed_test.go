@@ -744,10 +744,14 @@ func TestNamespaceDependenciesAnswersQdrantFromTheBundle(t *testing.T) {
 		assert.False(t, namespaceDependencies(cfg, bun, ws, nil)[deps.Qdrant],
 			"a stand that will never run rag must not pay a probe for it on every load")
 	})
-	t.Run("a detached rag generates neither", func(t *testing.T) {
+	// A detached rag KEEPS its qdrant (auto-detached, so nothing starts it), so
+	// the namespace still has the dependency — and still needs its pin. The pin
+	// is what the store's existing index is protected by, and the index does
+	// not stop existing because rag was stopped for an afternoon.
+	t.Run("a detached rag keeps its qdrant, and its pin", func(t *testing.T) {
 		detached := map[string]bool{"rag": true}
 		assertPredictionMatchesGenerator(t, cfg, ragBundle(), ragWS(), detached)
-		assert.False(t, namespaceDependencies(cfg, ragBundle(), ragWS(), detached)[deps.Qdrant])
+		assert.True(t, namespaceDependencies(cfg, ragBundle(), ragWS(), detached)[deps.Qdrant])
 	})
 	t.Run("a bundle with rag but no qdrant image generates neither", func(t *testing.T) {
 		bun := ragBundle()

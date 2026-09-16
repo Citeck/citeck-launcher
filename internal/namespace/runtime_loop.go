@@ -178,7 +178,7 @@ func (r *Runtime) stepAllAppsUnderLock() []dispatchPlan { //nolint:gocyclo // si
 	for _, app := range r.apps {
 		// Detached apps are user-intent STOPPED — never advanced by the
 		// state machine. Re-attach happens via StartApp (T27–T30).
-		if r.manualStoppedApps[app.Name] {
+		if r.isDetachedLocked(app.Name) {
 			continue
 		}
 		switch app.Status {
@@ -754,7 +754,7 @@ func (r *Runtime) handleStopResult(res workers.Result) {
 	// records the detach intent. That intent must override any queued
 	// desiredNext — otherwise the app silently routes back up and the user's
 	// stop is lost. Read under the lock we already hold.
-	if r.manualStoppedApps[app.Name] {
+	if r.isDetachedLocked(app.Name) {
 		app.desiredNext = ""
 		r.setAppStatus(app, AppStatusStopped)
 		return
@@ -1528,7 +1528,7 @@ func (r *Runtime) heldByDetachedDepsWalk(app *AppRuntime, visiting map[string]bo
 		return false
 	}
 	for _, dep := range unmet {
-		if r.manualStoppedApps[dep.App] {
+		if r.isDetachedLocked(dep.App) {
 			continue
 		}
 		depApp, ok := r.apps[dep.App]

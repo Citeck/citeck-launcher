@@ -652,6 +652,10 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 	// onlyoffice, alfresco) triggers a namespace regeneration — see
 	// regenOnAttachToggle in internal/daemon/attach_toggle_regen.go.
 	runtime.SetGatingApps(genResp.GatingApps)
+	// Wire AutoDetachedApps so a companion generated beside a DETACHED owner
+	// (qdrant beside rag, stt-sidecar beside ai) is not started by the loop.
+	// It must be installed before the runtime starts, or the seed would queue it.
+	runtime.SetAutoDetachedApps(genResp.AutoDetachedApps)
 
 	// Status recovery hint: caller chooses whether to act on it.
 	// - RUNNING / STARTING / STALLED → ShouldStart=true (re-adopt detached containers).

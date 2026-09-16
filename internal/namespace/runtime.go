@@ -63,6 +63,7 @@ package namespace
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"maps"
 	"sync"
 	"sync/atomic"
@@ -150,20 +151,31 @@ type RegistryAuthFunc func(image string) *docker.RegistryAuth
 // All mutable state is protected by mu. setStatus/setAppStatus must only be called
 // while mu is held by the caller.
 type Runtime struct {
-	mu                    sync.RWMutex
-	status                NsRuntimeStatus
-	config                *Config
-	apps                  map[string]*AppRuntime
-	docker                docker.RuntimeClient
-	running               atomic.Bool
-	nsID                  string
-	volumesBase           string
-	statePersister        NsStatePersister // injected by daemon; nil in unit tests -> persistState is a no-op
-	eventCb               atomic.Pointer[EventCallback]
-	eventCh               chan api.EventDto
-	registryAuthFn        atomic.Pointer[RegistryAuthFunc]
-	history               *OperationHistory
-	manualStoppedApps     map[string]bool
+	mu                sync.RWMutex
+	status            NsRuntimeStatus
+	config            *Config
+	apps              map[string]*AppRuntime
+	docker            docker.RuntimeClient
+	running           atomic.Bool
+	nsID              string
+	volumesBase       string
+	statePersister    NsStatePersister // injected by daemon; nil in unit tests -> persistState is a no-op
+	eventCb           atomic.Pointer[EventCallback]
+	eventCh           chan api.EventDto
+	registryAuthFn    atomic.Pointer[RegistryAuthFunc]
+	history           *OperationHistory
+	manualStoppedApps map[string]bool
+	// autoDetachedApps are apps the GENERATOR emits but the runtime must not
+	// start by itself: a companion (qdrant, stt-sidecar) whose owner (rag, ai)
+	// is detached. It is recomputed from GenResp on every generation and is
+	// deliberately NOT persisted — the owner's own detach state is, and that is
+	// what this is derived from.
+	autoDetachedApps map[string]bool
+	// autoDetachStarted records companions the operator started ON PURPOSE, so
+	// the next generation — which still says "auto-detached", because the owner
+	// is still detached — does not take them away again. Session-scoped: a
+	// restarted launcher goes back to the conservative answer.
+	autoDetachStarted     map[string]bool
 	editedAppPatches      map[string]json.RawMessage       // user-edit deltas over generated app defs (JSON merge patch)
 	editedFileEdits       map[string]FileEdit              // user-edit deltas for mounted files (key: "<app>/<rel-path>", no leading "./")
 	lastGenFiles          map[string][]byte                // last generated (pre-merge) file set; baseline source for the editor + WriteEditedFile template
@@ -532,6 +544,74 @@ func (r *Runtime) SetManualStoppedApps(apps map[string]bool) {
 	}
 }
 
+// SetAutoDetachedApps installs the generator's auto-detach verdict (see
+// Runtime.autoDetachedApps). Called after every generation, exactly where
+// SetDependsOnDetachedApps is.
+//
+// A companion the operator has started on purpose is left alone: that is the
+// whole local-debugging case, and re-detaching it on the next reload would pull
+// the store out from under the app being debugged. Once the owner is attached
+// again the companion leaves the auto set entirely, and with it the override.
+func (r *Runtime) SetAutoDetachedApps(apps map[string]bool) {
+	for _, name := range r.applyAutoDetachedApps(apps) {
+		// A companion that is UP when it becomes auto-detached has to come
+		// down: "a switched-off owner costs no memory" is the promise, and a
+		// container left running while its row reads STOPPED is a ghost
+		// nothing accounts for.
+		if err := r.stopApp(name, false); err != nil {
+			slog.Warn("Cannot stop an auto-detached companion app", "app", name, "err", err)
+		}
+	}
+}
+
+// applyAutoDetachedApps installs the new auto-detach set and answers the
+// companions that were running under the old one and must now be stopped.
+func (r *Runtime) applyAutoDetachedApps(apps map[string]bool) []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	next := make(map[string]bool, len(apps))
+	for name := range apps {
+		if r.autoDetachStarted[name] {
+			continue
+		}
+		next[name] = true
+	}
+	for name := range r.autoDetachStarted {
+		if !apps[name] {
+			delete(r.autoDetachStarted, name)
+		}
+	}
+	var toStop []string
+	for name := range next {
+		if r.autoDetachedApps[name] {
+			continue // already auto-detached; nothing changed for it
+		}
+		if app, ok := r.apps[name]; ok && app.Status != AppStatusStopped {
+			toStop = append(toStop, name)
+		}
+	}
+	r.autoDetachedApps = next
+	return toStop
+}
+
+// isDetachedLocked answers whether an app is excluded from the state machine —
+// because the operator detached it, or because it is a companion of a detached
+// owner. Every gate that used to read manualStoppedApps directly reads this.
+func (r *Runtime) isDetachedLocked(name string) bool {
+	return r.manualStoppedApps[name] || r.autoDetachedApps[name]
+}
+
+// detachedSetLocked is isDetachedLocked as a set, for the phases that snapshot
+// the whole thing once and reuse it.
+func (r *Runtime) detachedSetLocked() map[string]bool {
+	out := make(map[string]bool, len(r.manualStoppedApps)+len(r.autoDetachedApps))
+	maps.Copy(out, r.manualStoppedApps)
+	for name := range r.autoDetachedApps {
+		out[name] = true
+	}
+	return out
+}
+
 // RestoreEditedState installs persisted edit deltas (called before first start).
 func (r *Runtime) RestoreEditedState(appPatches map[string]json.RawMessage, fileEdits map[string]FileEdit) {
 	r.mu.Lock()
@@ -687,6 +767,8 @@ func NewRuntime(cfg *Config, dockerClient docker.RuntimeClient, volumesBase stri
 		nsID:                cfg.ID,
 		volumesBase:         volumesBase,
 		manualStoppedApps:   make(map[string]bool),
+		autoDetachedApps:    make(map[string]bool),
+		autoDetachStarted:   make(map[string]bool),
 		pullAuthBlockedApps: make(map[string]bool),
 		lastLoggedPullErr:   make(map[string]string),
 		editedAppPatches:    make(map[string]json.RawMessage),
