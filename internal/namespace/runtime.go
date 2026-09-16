@@ -594,6 +594,15 @@ func (r *Runtime) applyAutoDetachedApps(apps map[string]bool) []string {
 	return toStop
 }
 
+// IsAppDetached answers isDetachedLocked from outside the runtime: the daemon's
+// per-app gate has to see the same "detached" the app table shows (AppDto.
+// Detached), or it refuses a start button it has just offered.
+func (r *Runtime) IsAppDetached(name string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.isDetachedLocked(name)
+}
+
 // isDetachedLocked answers whether an app is excluded from the state machine —
 // because the operator detached it, or because it is a companion of a detached
 // owner. Every gate that used to read manualStoppedApps directly reads this.
