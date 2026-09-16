@@ -1,3 +1,7 @@
 ## Neue Funktionen
 - **Ein Bundle kann jetzt eine minimale Launcher-Version verlangen.** Das Erstellen oder Bearbeiten eines Namespace wird abgelehnt, wenn das gewählte Bundle einen neueren Launcher benötigt als den installierten — die Meldung nennt die Version, auf die aktualisiert werden muss. Ein Namespace, der bereits mit einem solchen Bundle läuft, ist davon nicht betroffen, und „LATEST" wählt immer das neueste Bundle, das dieser Launcher tatsächlich ausführen kann.
 - **Das Zahnrad der Namespace-Einstellungen zeigt jetzt einen Punkt, wenn im Bundle-Repository eine neuere Version verfügbar ist** — grün, wenn dieser Launcher sie ausführen kann, gelb, wenn zuerst ein neuerer Launcher nötig ist. Beim Überfahren mit der Maus werden Version und nötige Aktion angezeigt.
+
+## Fehlerbehebungen
+- **„Force Update" liest das Workspace-Repository jetzt wirklich neu ein.** Bisher meldete die Schaltfläche Erfolg, holte aber bis zu eine Stunde nach der letzten Synchronisierung nichts ab — eine soeben gepushte Bundle-Version blieb in der Versionsliste und im Hinweis „neueres Bundle" unsichtbar.
+- **Die Schaltfläche ↻ neben der Bundle-Liste aktualisiert jetzt das Repository, das der Launcher tatsächlich liest.** Liegen die Bundle-Repositories im Workspace-Repository — das übliche Layout —, klonte sie zuvor je Repository eine zweite, ungenutzte Kopie und meldete Erfolg, obwohl sich auf dem Bildschirm nichts änderte.

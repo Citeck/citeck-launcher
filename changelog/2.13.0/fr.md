@@ -1,3 +1,7 @@
 ## Nouveautés
 - **Un bundle peut désormais exiger une version minimale du launcher.** La création ou la modification d'un namespace est refusée si le bundle sélectionné nécessite une version du launcher plus récente que celle installée — le message indique la version vers laquelle effectuer la mise à jour. Un namespace déjà exécuté sur un tel bundle n'est pas affecté, et choisir « LATEST » sélectionne toujours le bundle le plus récent que ce launcher peut réellement exécuter.
 - **L'icône des paramètres du namespace affiche désormais un point lorsqu'une version de bundle plus récente est disponible** dans votre dépôt de bundles — vert si ce launcher peut l'exécuter, ambre s'il faut d'abord un launcher plus récent. Survolez l'icône pour connaître la version et l'action à effectuer.
+
+## Corrections
+- **« Force Update » relit réellement le dépôt du workspace.** Le bouton renvoyait un succès sans rien récupérer pendant une heure après la synchronisation précédente : une version de bundle publiée juste avant restait invisible dans la liste des versions comme dans l'indicateur « bundle plus récent ».
+- **Le bouton ↻ à côté de la liste des bundles rafraîchit désormais le dépôt réellement lu par le launcher.** Lorsque les dépôts de bundles se trouvent dans le dépôt du workspace — la disposition habituelle —, il clonait une seconde copie inutilisée par dépôt et signalait un succès alors que rien ne changeait à l'écran.

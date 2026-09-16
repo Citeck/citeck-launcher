@@ -230,9 +230,21 @@ func (d *Daemon) reresolveActiveWorkspace() error {
 	return nil
 }
 
-// resolveActiveWorkspaceConfig force-pulls (PullPeriod=0, bypassing the
+// resolveActiveWorkspaceConfig force-pulls (WithForcePull, bypassing the
 // throttle) and re-resolves the workspace repo config with the current git
-// token. Routed through the wsCfgResolveFn test seam (nil in production) so the
+// token.
+//
+// The force is WithForcePull and NOT a zero PullPeriod on the options: a zero
+// there means "not configured" and resolves to the default throttle
+// (workspaceRepoSettings only takes the option when it is > 0, so that a
+// workspace with no pull period still gets one). Setting it to zero here
+// therefore forced nothing — Force Update answered 200 without a single git
+// fetch for up to an hour after the last sync, which is exactly as long as a
+// freshly pushed bundle version stayed invisible. Guarded by
+// TestForceUpdateActuallyForcesTheWorkspacePull and, on the resolver side, by
+// TestAZeroPullPeriodIsNotAForcePull.
+//
+// Routed through the wsCfgResolveFn test seam (nil in production) so the
 // self-heal read path and the Force-Update button are unit-testable without a
 // real git clone — same pattern as resolveWorkspaceConfigForSwitch.
 func (d *Daemon) resolveActiveWorkspaceConfig(ws storage.WorkspaceDto) (*bundle.WorkspaceConfig, error) {
@@ -240,10 +252,10 @@ func (d *Daemon) resolveActiveWorkspaceConfig(ws storage.WorkspaceDto) (*bundle.
 		return d.wsCfgResolveFn(ws)
 	}
 	opts := buildWorkspaceRepoOpts(ws, d.secretService)
-	opts.PullPeriod = 0 // force a fresh clone/pull with the current token
 	resolver := bundle.NewResolverWithAuth(config.BundlesDataDir(ws.ID), makeTokenLookup(d.secretReaderFunc())).
 		WithWorkspaceRepo(opts).
-		WithWorkspaceOverlay(workspaceConfigOverlay(d.store, ws.ID))
+		WithWorkspaceOverlay(workspaceConfigOverlay(d.store, ws.ID)).
+		WithForcePull()
 	if !config.IsDesktopMode() {
 		resolver.SetOffline(true)
 	}
