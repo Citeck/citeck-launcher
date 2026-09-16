@@ -95,20 +95,14 @@ class NamespaceRuntime(
     internal val detachedApps = Collections.newSetFromMap<String>(ConcurrentHashMap())
 
     /**
-     * Приложения, которые генератор отдал, но запускать сами они не должны:
+     * Приложения, которые генератор отдал, но СТАРТОВАТЬ сами они не должны:
      * companion (qdrant, stt-sidecar) при отцепленном владельце (rag, ai).
-     * Пересчитывается на каждой генерации и НЕ персистится — персистится
-     * состояние владельца, из которого это выводится.
+     * Решает только автозапуск: то, что уже поднято, сюда не попадает, и ничего
+     * здесь контейнеры не останавливает. Пересчитывается на каждой генерации и
+     * НЕ персистится — персистится состояние владельца, из которого это
+     * выводится.
      */
     internal val autoDetachedApps = Collections.newSetFromMap<String>(ConcurrentHashMap())
-
-    /**
-     * Companion'ы, которые оператор поднял НАМЕРЕННО: следующая генерация, всё
-     * ещё говорящая "auto-detached" (владелец по-прежнему отцеплен), не должна
-     * их гасить. Живёт в пределах сессии: перезапуск лончера возвращает
-     * консервативный ответ.
-     */
-    private val autoDetachStarted = Collections.newSetFromMap<String>(ConcurrentHashMap())
 
     private val editedAndLockedApps = Collections.newSetFromMap<String>(ConcurrentHashMap())
     private val editedApps = ConcurrentHashMap<String, ApplicationDef>()
@@ -266,42 +260,33 @@ class NamespaceRuntime(
     }
 
     /**
-     * Ставит вердикт генератора (см. [autoDetachedApps]) и гасит companion'ы,
-     * которые были подняты под старым вердиктом: обещание "выключенный владелец
-     * не стоит памяти" держится именно здесь, а контейнер, оставшийся жить при
-     * статусе STOPPED, — это призрак, которого не видно в UI.
+     * Ставит вердикт генератора (см. [autoDetachedApps]).
      *
-     * Companion, поднятый оператором вручную, не трогается: это и есть локальная
-     * отладка, и повторное отцепление вырвало бы хранилище из-под отлаживаемого
-     * приложения.
+     * Приложение, которое НЕ остановлено, в вердикт не попадает вовсе — и это
+     * одно правило заменяет всю машинерию, которая иначе понадобилась бы.
+     * Останавливать поднятый companion — дело оператора, а не лончера:
+     * "владелец выключен" не повод гасить хранилище, которое потом может читать
+     * и другой сервис, а контейнер, снятый лончером за спиной у оператора, хуже
+     * того, который оператор остановит сам. Из того же правила бесплатно
+     * следует, что явный старт переживает любые последующие генерации.
      */
     private fun setAutoDetachedApps(apps: Set<String>) {
-        val next = apps.filterTo(HashSet()) { !autoDetachStarted.contains(it) }
-        autoDetachStarted.retainAll(apps)
-        val newlyDetached = next.filterTo(HashSet()) { !autoDetachedApps.contains(it) }
+        val runtimesByName = appRuntimes.getValue().associateBy { it.name }
+        val next = apps.filterTo(HashSet()) { name ->
+            val runtime = runtimesByName[name]
+            runtime == null || runtime.status.getValue() == AppRuntimeStatus.STOPPED
+        }
         autoDetachedApps.retainAll(next)
         autoDetachedApps.addAll(next)
-        if (newlyDetached.isEmpty()) {
-            return
-        }
-        for (app in appRuntimes.getValue()) {
-            if (newlyDetached.contains(app.name) && !app.status.getValue().isStoppingState()) {
-                // manual = false: приложение гаснет из-за состояния ВЛАДЕЛЬЦА, и
-                // в персистентный detachedApps это попасть не должно.
-                app.stop()
-            }
-        }
     }
 
     /**
-     * Запомнить, что companion подняли намеренно. Из auto-набора он уходит до
-     * тех пор, пока владельца не подключат обратно — тогда [setAutoDetachedApps]
-     * снимет и пометку.
+     * Снимает запрет на автозапуск в тот момент, когда приложение запускает сам
+     * оператор. Помнить об этом больше ничему не нужно: приложение перестаёт
+     * быть STOPPED, а вердикт добирается только до остановленных.
      */
     private fun clearAutoDetach(appName: String) {
-        if (autoDetachedApps.remove(appName)) {
-            autoDetachStarted.add(appName)
-        }
+        autoDetachedApps.remove(appName)
     }
 
     fun addDetachedApp(appName: String) {
