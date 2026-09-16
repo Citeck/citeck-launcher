@@ -1092,6 +1092,24 @@ func (r *Resolver) SyncBundleRepo(cfg *WorkspaceConfig, repoID string) (string, 
 		// frontend change.
 		return "", r.unknownBundleRepoError(cfg, repoID)
 	}
+	// Sync WHAT RESOLVE READS. Resolve picks the directory with
+	// shouldUseLocalBundles: when the workspace clone carries this repo's path
+	// — the shipped layout, where every bundleRepos entry is a path inside the
+	// workspace repo itself — the bundles are read from that clone and
+	// bundles/<id> is never opened. Cloning into bundles/<id> anyway answered
+	// the operator's ↻ with success while the version they pressed it for
+	// stayed invisible, and left one duplicate clone per declared repo on disk.
+	//
+	// resolveWorkspace IS the sync for that case: it pulls the workspace repo
+	// (forced when WithForcePull is set, throttled otherwise) and returns the
+	// very directory Resolve will read. Asking it here rather than re-deriving
+	// the layout keeps ONE spelling of "where this repo's bundles live".
+	if _, wsRepoDir := r.resolveWorkspace(); shouldUseLocalBundles(wsRepoDir, repo) {
+		if repo.Path != "" {
+			return filepath.Join(wsRepoDir, repo.Path), nil
+		}
+		return wsRepoDir, nil
+	}
 	return r.syncBundleRepo(repoID, *repo), nil
 }
 
