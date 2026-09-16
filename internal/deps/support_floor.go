@@ -52,3 +52,10 @@ func BelowSupportFloor(d Descriptor, image string) bool {
 	}
 	return compareVersions(v, d.SupportFloor()) < 0
 }
+
+// SupportFloor — see postgresDescriptor.SupportFloor.
+//
+// 1.14 is the version RAG shipped with and the oldest that has ever been on a
+// stand: nothing older was released, so an operator choosing one would be
+// choosing a version the platform has never run.
+func (qdrantDescriptor) SupportFloor() Version { return Version{Major: 1, Minor: 14} }

@@ -22,6 +22,7 @@ const (
 	Zookeeper ID = "zookeeper"
 	Keycloak  ID = "keycloak"
 	MongoDB   ID = "mongodb"
+	Qdrant    ID = "qdrant"
 )
 
 // Descriptor is what the launcher knows about one dependency.
@@ -67,6 +68,7 @@ var registry = []Descriptor{
 	zookeeperDescriptor{},
 	keycloakDescriptor{},
 	mongoDescriptor{},
+	qdrantDescriptor{},
 }
 
 // All returns every registered descriptor in display order.

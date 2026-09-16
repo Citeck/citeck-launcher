@@ -1,5 +1,6 @@
 ## 新功能
 - **RAG 语义搜索。** Enterprise bundle 现在提供 `rag` 应用，用于对知识库进行语义搜索，默认关闭。启动它会自动拉起 Qdrant 向量数据库，并为 AI 助手开启知识库访问；关闭状态下的 `rag` 依然不占用额外内存——Qdrant 甚至都不会被创建。Community bundle 不受影响，既不会出现 `rag`，也不会出现 Qdrant。
+- **Qdrant 现在是受管理的依赖，并有专属迁移。** 启动器会固定向量索引实际运行的版本，因此提供了更新次版本的 bundle 会被拦下并上报，而不是被静默应用——Qdrant 只保证跨一个次版本读取自己的存储，跳过次版本不受支持。`citeck deps upgrade qdrant` 随后迁移索引：复制数据卷，升级这份「副本」，核对每个集合、别名和点数，之后才切换——原始卷全程只读不写，`citeck deps rollback qdrant` 可以退回到它。有一个后果需要知晓：数据卷现在叫 `qdrant2` 而不是 `qdrant_storage`，因此曾用预发布版本跑过 `rag` 的环境会以空索引启动，需要重新建立索引。
 - **网页应用依赖可通过配置指定。** 网页应用的 `dependsOn` 现在可以通过 workspace 的 `webapps[].defaultProps.dependsOn` 和 namespace 的 `webapps.<id>.dependsOn` 扩展——配置的依赖会追加到内置依赖之上，而不是替换它们。`dependsOn` 出现循环依赖时，生成现在会以明确的错误失败，而不是让相关应用永远等待下去。
 
 ## 变更

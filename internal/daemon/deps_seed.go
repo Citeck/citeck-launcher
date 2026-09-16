@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/citeck/citeck-launcher/internal/bundle"
 	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/deps"
 	"github.com/citeck/citeck-launcher/internal/namespace"
@@ -172,28 +173,43 @@ func classifyCatFailure(volume, rel string, code int, out string) error {
 }
 
 // namespaceDependencies answers WHICH registered dependencies this namespace
-// actually generates. Two of the five are conditional, and the condition is
-// the namespace CONFIG in both cases (see internal/namespace/generator.go):
-// mongo is emitted only when Config.MongoEnabled(), keycloak only when the
-// namespace authenticates through it.
+// actually generates. Three of the six are conditional (see
+// internal/namespace/generator.go): mongo is emitted only when
+// Config.MongoEnabled(), keycloak only when the namespace authenticates
+// through it, and qdrant only where the RAG webapp is generated.
 //
-// It is derived from the config rather than from a generated app set because
-// the pins are an INPUT to Generate — seeding runs before it on both the load
-// and the reload path, so there is no generated set to consult yet, and the
-// previous generation's would be stale for the very edit that turned one of
-// the two on. The config is what Generate itself reads, so this cannot
-// disagree with it for the run it is seeding; that agreement is pinned by
-// TestNamespaceDependenciesMatchesWhatTheGeneratorEmits, which drives the REAL
-// generator over the configurations that move either switch.
+// The first two conditions are in the namespace CONFIG. Qdrant's is not: RAG
+// comes from the BUNDLE, so answering for it needs the bundle, the workspace
+// config and the detach set as well — which is why they are parameters rather
+// than something this could read off cfg. It is the same shape of question,
+// asked one layer further out.
 //
-// A nil config means nothing is known yet and answers ALL of them: an
-// unnecessary probe costs a Docker call, a missing pin hands data to the
-// candidate image.
-func namespaceDependencies(cfg *namespace.Config) map[deps.ID]bool {
+// It is derived from the configuration rather than from a generated app set
+// because the pins are an INPUT to Generate — seeding runs before it on both
+// the load and the reload path, so there is no generated set to consult yet,
+// and the previous generation's would be stale for the very edit that turned
+// one of them on. What Generate itself reads is what is read here, so this
+// cannot disagree with it for the run it is seeding; that agreement is pinned
+// by TestNamespaceDependenciesMatchesWhatTheGeneratorEmits, which drives the
+// REAL generator over the configurations that move any of the three switches.
+//
+// A nil config means nothing is known yet and answers ALL of them — except
+// qdrant, whose condition is answered from the bundle and stays false when
+// there is no bundle to answer from. The asymmetry is deliberate and follows
+// the cost of being wrong in each direction: a wrongly ABSENT pin hands data
+// to the candidate image, so the default is present; but a namespace with no
+// bundle has no RAG webapp and therefore no vector index to protect, while a
+// wrongly PRESENT qdrant costs a container inspect plus a generation walk on
+// EVERY load of every community stand, forever — the same bill the keycloak
+// filter was written to stop paying.
+func namespaceDependencies(cfg *namespace.Config, bun *bundle.Def,
+	wsCfg *bundle.WorkspaceConfig, detached map[string]bool,
+) map[deps.ID]bool {
 	present := make(map[deps.ID]bool, len(deps.All()))
 	for _, d := range deps.All() {
 		present[d.ID()] = true
 	}
+	present[deps.Qdrant] = namespace.WillGenerateQdrant(cfg, bun, wsCfg, detached)
 	if cfg == nil {
 		return present
 	}

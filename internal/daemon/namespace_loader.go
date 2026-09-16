@@ -408,9 +408,13 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 	if persistedState != nil {
 		maps.Copy(persistedPins, persistedState.Dependencies)
 	}
+	// The detach set is resolved BEFORE the seeding, not after, because the
+	// seeding now needs it: whether this namespace has a Qdrant to pin follows
+	// the RAG webapp, and a detached rag generates neither.
+	detached := detachedAppsOnLoad(persistedState, resolveResult.Workspace, nsCfg)
 	pins, seededPins := resolveDependencyPins(in.context(),
 		persistedPins, dockerDependencyProbe{dc: depsDockerOf(dc), volumesBase: volumesBase},
-		namespaceDependencies(nsCfg))
+		namespaceDependencies(nsCfg, bundleDef, wsCfg, detached))
 	for id, st := range seededPins {
 		slog.Info("Dependency pin seeded", "ns", nsID, "dependency", id, "image", st.Image, "volumeGen", st.Gen())
 	}
@@ -425,24 +429,7 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 	} else {
 		genOpts.ExtraLicenses = collectExtraLicensesFrom(license.NewService(in.SecretService))
 	}
-	if persistedState != nil {
-		genOpts.DetachedApps = make(map[string]bool)
-		for _, name := range persistedState.ManualStoppedApps {
-			genOpts.DetachedApps[name] = true
-		}
-	} else if resolveResult.Workspace != nil && nsCfg.Template != "" {
-		// First start: seed detached apps from workspace template
-		for _, tmpl := range resolveResult.Workspace.NamespaceTemplates {
-			if tmpl.ID == nsCfg.Template && len(tmpl.DetachedApps) > 0 {
-				genOpts.DetachedApps = make(map[string]bool, len(tmpl.DetachedApps))
-				for _, name := range tmpl.DetachedApps {
-					genOpts.DetachedApps[name] = true
-				}
-				slog.Info("Seeded detached apps from template", "template", nsCfg.Template, "apps", tmpl.DetachedApps)
-				break
-			}
-		}
-	}
+	genOpts.DetachedApps = detached
 
 	// File-edit deltas (2.7+) are merged onto their templates inside Generate.
 	var fileEdits map[string]namespace.FileEdit
@@ -855,6 +842,40 @@ func (d *Daemon) installLoadedNamespace(loaded *loadedNamespace, wsID, nsID stri
 // workspace repo changed) into resolving to zero applications: no resolve error
 // is returned for that, so the state that most needs saying was the one state
 // the banner could never reach after boot.
+// detachedAppsOnLoad is the detach set a freshly loaded namespace generates
+// with: what the operator has stopped by hand, or — for a namespace that has
+// never started, so has no persisted state at all — what its workspace
+// template seeds.
+//
+// It is one function rather than two inline blocks because two callers need
+// the answer now: Generate, and the dependency seeding that runs before it.
+func detachedAppsOnLoad(persisted *namespace.NsPersistedState, wsCfg *bundle.WorkspaceConfig,
+	nsCfg *namespace.Config,
+) map[string]bool {
+	if persisted != nil {
+		out := make(map[string]bool, len(persisted.ManualStoppedApps))
+		for _, name := range persisted.ManualStoppedApps {
+			out[name] = true
+		}
+		return out
+	}
+	if wsCfg == nil || nsCfg == nil || nsCfg.Template == "" {
+		return nil
+	}
+	for _, tmpl := range wsCfg.NamespaceTemplates {
+		if tmpl.ID != nsCfg.Template || len(tmpl.DetachedApps) == 0 {
+			continue
+		}
+		out := make(map[string]bool, len(tmpl.DetachedApps))
+		for _, name := range tmpl.DetachedApps {
+			out[name] = true
+		}
+		slog.Info("Seeded detached apps from template", "template", nsCfg.Template, "apps", tmpl.DetachedApps)
+		return out
+	}
+	return nil
+}
+
 func emptyBundleError(bundleDef *bundle.Def, ref bundle.Ref, nsID string) string {
 	if bundleDef == nil || !bundleDef.IsEmpty() {
 		return ""

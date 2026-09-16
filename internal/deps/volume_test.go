@@ -29,6 +29,11 @@ func TestGenerationOneIsTodaysVolumeNames(t *testing.T) {
 		// The generator emits "mongo2:/data/db", so the base is the APP name
 		// and not the dependency id ("mongodb").
 		{MongoDB, "mongo2", "mongo3", "mongo4"},
+		// Qdrant is the one dependency whose generation 1 is NOT what the
+		// generator emitted before it was registered ("qdrant_storage"). It had
+		// no data to keep compatible: RAG has never been released, so the
+		// rename costs a rebuilt index on a dev stand and nothing in the field.
+		{Qdrant, "qdrant2", "qdrant3", "qdrant4"},
 		// Keycloak keeps its state in the PostgreSQL database and has no
 		// volume of its own, at any generation.
 		{Keycloak, "", "", ""},
