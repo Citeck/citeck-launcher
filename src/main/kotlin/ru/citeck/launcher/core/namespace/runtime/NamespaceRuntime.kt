@@ -770,6 +770,16 @@ class NamespaceRuntime(
         runtimesToRemove.addAll(currentRuntimesByName.values)
         currentRuntimesByName.values.forEach { it.stop() }
 
+        // СТРОГО здесь: до цикла запуска новых рантаймов ниже (иначе companion при
+        // отцепленном владельце успеет стартовать) и ВНЕ условия под ним — то
+        // условие ложно ровно в интересном случае: оператор остановил владельца,
+        // состав приложений не изменился, и без этого вызова уже поднятый
+        // companion остался бы работать вопреки обещанию "выключенный владелец не
+        // стоит памяти". Набор именной, поэтому ещё не добавленные в appRuntimes
+        // новые рантаймы он всё равно накрывает, а гасить надо как раз те, что уже
+        // в appRuntimes.
+        setAutoDetachedApps(newGenRes.autoDetachedApps)
+
         if (newRuntimes.isNotEmpty() || currentRuntimesByName.isNotEmpty()) {
 
             val resRuntimes = ArrayList(appRuntimes.getValue())
@@ -786,11 +796,6 @@ class NamespaceRuntime(
             }
 
             appRuntimes.setValue(resRuntimes)
-
-            // Строго ДО цикла запуска ниже: иначе companion при отцепленном
-            // владельце успеет стартовать, и обещание "выключенный владелец не
-            // стоит памяти" нарушится ровно в тот момент, ради которого всё это.
-            setAutoDetachedApps(newGenRes.autoDetachedApps)
 
             if (newRuntimes.isNotEmpty()) {
                 if (!nsStatus.getValue().isStoppingState()) {
