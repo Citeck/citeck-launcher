@@ -1,0 +1,3 @@
+## Fixes
+- **Security: the proxy no longer hands an identity to an unauthenticated request.** With Keycloak authentication, its access script matched the service exceptions against the raw request URI, so a marker smuggled in through the query string (`?probe=/healthcheck/`), through a path segment in the middle, or behind an encoded `../` made it set the trusted `X-ECOS-User` header on a request routed to any gateway endpoint. Matching now happens against the path nginx actually routed, and the `/healthcheck/`, `/rabbitmq`, `/cadvisor/` and metrics-exporter exceptions are gone — those locations carry their own authentication and never ran this script.
+- Updating recreates the proxy container once, so the corrected script takes effect.
