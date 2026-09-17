@@ -261,6 +261,13 @@ class NamespaceRuntime(
     /**
      * Installs the generator's verdict (see [autoDetachedApps]).
      *
+     * Dropping OUT of the verdict starts nothing: the loop never advances a
+     * STOPPED app, so a companion whose consumer was re-attached waits for an
+     * explicit start. That is deliberate -- an auto-start here was written and
+     * reverted, because the cost of leaving it out is one click: the consumer
+     * parks in DEPS_WAITING naming the companion, and starting the companion
+     * carries the consumer to RUNNING on its own.
+     *
      * An app that is NOT stopped never enters the verdict at all, and that one
      * rule replaces all the machinery the alternative would need. Stopping a
      * running companion is the operator's business, not the launcher's: "the
@@ -275,33 +282,8 @@ class NamespaceRuntime(
             val runtime = runtimesByName[name]
             runtime == null || runtime.status.getValue() == AppRuntimeStatus.STOPPED
         }
-        val lifted = autoDetachedApps.filterTo(HashSet()) { !next.contains(it) }
         autoDetachedApps.retainAll(next)
         autoDetachedApps.addAll(next)
-
-        // Lifting the verdict has to hand the app BACK to the state machine, and
-        // that is a start rather than a flag: the loop never advances a STOPPED
-        // app, and the start loop below only ever reaches NEW runtimes. Without
-        // this, re-attaching rag left qdrant STOPPED forever while rag sat in
-        // DEPS_WAITING naming it -- found on a real server. An app the operator
-        // stopped by hand is in detachedApps and is deliberately left alone: the
-        // verdict is not their intent and must not overwrite it. A namespace
-        // that is not up starts nothing, or a regeneration would restart what
-        // the operator stopped.
-        if (lifted.isEmpty() || nsStatus.getValue().isStoppingState()) {
-            return
-        }
-        for (name in lifted) {
-            if (detachedApps.contains(name)) {
-                continue
-            }
-            val runtime = runtimesByName[name] ?: continue
-            if (runtime.status.getValue() != AppRuntimeStatus.STOPPED) {
-                continue
-            }
-            log.info { "Auto-detach lifted for '$name' -- handing it back to the state machine" }
-            runtime.start()
-        }
     }
 
     /**
