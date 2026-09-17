@@ -198,18 +198,19 @@ func classifyCatFailure(volume, rel string, code int, out string) error {
 // there is no bundle to answer from. The asymmetry is deliberate and follows
 // the cost of being wrong in each direction: a wrongly ABSENT pin hands data
 // to the candidate image, so the default is present; but a namespace with no
-// bundle has no RAG webapp and therefore no vector index to protect, while a
+// bundle names no qdrant image and therefore has no vector index to protect,
+// while a
 // wrongly PRESENT qdrant costs a container inspect plus a generation walk on
 // EVERY load of every community stand, forever — the same bill the keycloak
 // filter was written to stop paying.
 func namespaceDependencies(cfg *namespace.Config, bun *bundle.Def,
-	wsCfg *bundle.WorkspaceConfig, detached map[string]bool,
+	wsCfg *bundle.WorkspaceConfig,
 ) map[deps.ID]bool {
 	present := make(map[deps.ID]bool, len(deps.All()))
 	for _, d := range deps.All() {
 		present[d.ID()] = true
 	}
-	present[deps.Qdrant] = namespace.WillGenerateQdrant(cfg, bun, wsCfg, detached)
+	present[deps.Qdrant] = namespace.WillGenerateQdrant(cfg, bun, wsCfg)
 	if cfg == nil {
 		return present
 	}

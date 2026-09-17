@@ -476,13 +476,10 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 	if persistedState != nil {
 		maps.Copy(persistedPins, persistedState.Dependencies)
 	}
-	// The detach set is resolved BEFORE the seeding, not after, because the
-	// seeding now needs it: whether this namespace has a Qdrant to pin follows
-	// the RAG webapp, and a detached rag generates neither.
 	detached := detachedAppsOnLoad(persistedState, resolveResult.Workspace, nsCfg)
 	pins, seededPins := resolveDependencyPins(in.context(),
 		persistedPins, dockerDependencyProbe{dc: depsDockerOf(dc), volumesBase: volumesBase},
-		namespaceDependencies(nsCfg, bundleDef, wsCfg, detached))
+		namespaceDependencies(nsCfg, bundleDef, wsCfg))
 	for id, st := range seededPins {
 		slog.Info("Dependency pin seeded", "ns", nsID, "dependency", id, "image", st.Image, "volumeGen", st.Gen())
 	}

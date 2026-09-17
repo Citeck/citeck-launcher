@@ -94,13 +94,13 @@ func TestIntegration_AutoDetachedCompanionNeverReachesDocker(t *testing.T) {
 	r.Start(apps, false)
 
 	require.True(t, waitForAppStatus(r, companionITOwner, AppStatusRunning, 3*time.Minute),
-		"соседнее приложение должно подняться как обычно")
+		"the neighboring app must come up as usual")
 	assert.False(t, companionITHasContainer(t, dc, companionITCompanion),
-		"auto-detached приложение не должно создать контейнер")
+		"an auto-detached app must create no container")
 
 	require.NoError(t, r.StartApp(companionITCompanion))
 	require.True(t, waitForAppStatus(r, companionITCompanion, AppStatusRunning, 3*time.Minute),
-		"явный старт должен перебить auto-detach")
+		"an explicit start must override auto-detach")
 	assert.True(t, companionITHasContainer(t, dc, companionITCompanion))
 }
 
@@ -118,11 +118,11 @@ func TestIntegration_ARunningCompanionIsLeftAloneWhenItsOwnerDetaches(t *testing
 	r.SetAutoDetachedApps(map[string]bool{companionITCompanion: true})
 
 	assert.Equal(t, AppStatusRunning, r.FindApp(companionITCompanion).Status,
-		"работающий companion остаётся работать")
+		"a running companion keeps running")
 	assert.True(t, companionITHasContainer(t, dc, companionITCompanion),
-		"контейнер должен остаться на месте")
+		"the container must stay where it is")
 	assert.False(t, r.IsAppDetached(companionITCompanion),
-		"и остаться под управлением цикла, а не числиться отцепленным")
+		"and stay under the loop rather than counting as detached")
 	assert.NotContains(t, r.ManualStoppedApps(), companionITCompanion,
-		"вердикт владельца не пишется в персистентный набор оператора")
+		"the verdict is never written into the operator's persisted set")
 }

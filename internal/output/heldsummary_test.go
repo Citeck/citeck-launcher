@@ -32,10 +32,10 @@ func TestFailedSummary_NamesTheHoldBesideTheFailures(t *testing.T) {
 	}
 	for _, c := range cases {
 		if got := FailedSummary(c.key, 3, 9, 2, 4, []string{"zookeeper", "postgres"}); got != c.withHold {
-			t.Errorf("%s: получено %q, ожидалось %q", c.key, got, c.withHold)
+			t.Errorf("%s: got %q, want %q", c.key, got, c.withHold)
 		}
 		if got := FailedSummary(c.key, 3, 9, 2, 0, []string{"zookeeper"}); got != c.withoutHold {
-			t.Errorf("%s: получено %q, ожидалось %q — удержания нет, называть нечего", c.key, got, c.withoutHold)
+			t.Errorf("%s: got %q, want %q -- no hold, nothing to name", c.key, got, c.withoutHold)
 		}
 	}
 }
@@ -51,6 +51,6 @@ func TestHeldSummary_NamesTheRootsAndTheCounts(t *testing.T) {
 	const want = "2 of 9 apps are waiting for dependencies you stopped: zookeeper. " +
 		"Start them to release the rest."
 	if got := HeldSummary(2, 9, []string{"zookeeper"}); got != want {
-		t.Errorf("получено %q, ожидалось %q", got, want)
+		t.Errorf("got %q, want %q", got, want)
 	}
 }

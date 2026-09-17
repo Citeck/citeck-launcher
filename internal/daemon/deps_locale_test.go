@@ -229,8 +229,9 @@ func TestSSEProgressMessagesFollowTheQueryParam(t *testing.T) {
 	assert.False(t, evt.AfterMsg.Empty())
 }
 
-// SERVER MODE, which is what "и учти чтобы в серверном режиме тоже все было
-// переведено" is about: there is no web UI and the CLI may be a different
+// SERVER MODE, which is what the user ruling (translated: "and make sure
+// everything is translated in server mode too") is about: there is no web UI
+// and the CLI may be a different
 // build, so the daemon has to answer an unmarked request in the language the
 // box was configured with. That is daemon.yml's locale, the same setting the
 // CLI reads its own strings from.

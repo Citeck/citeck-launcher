@@ -351,8 +351,7 @@ func (d *Daemon) handleImportSnapshot(w http.ResponseWriter, r *http.Request) {
 			}
 			reseedAfterSnapshotImport(d.bgCtx, rt,
 				dockerDependencyProbe{dc: depsDockerOf(dc), volumesBase: volumesBase},
-				names, namespaceDependencies(act.nsConfig, act.bundleDef, act.workspaceConfig,
-					rt.ManualStoppedApps()))
+				names, namespaceDependencies(act.nsConfig, act.bundleDef, act.workspaceConfig))
 		}
 		d.broadcastEvent(api.EventDto{
 			Type: "snapshot_complete", Timestamp: time.Now().UnixMilli(),

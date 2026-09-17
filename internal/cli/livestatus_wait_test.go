@@ -286,9 +286,9 @@ func TestStreamSingleAppStatus_EndsOnAHeldApp(t *testing.T) {
 	case err := <-done:
 		require.NoError(t, err)
 	case <-time.After(waitTestTimeout):
-		t.Fatal("ожидание удерживаемого приложения не завершилось — оно не завершится никогда")
+		t.Fatal("the wait on a held app never finished, and it never will")
 	}
-	assert.Equal(t, 1, fd.getCount(), "вердикт виден на первом же опросе")
+	assert.Equal(t, 1, fd.getCount(), "the verdict is visible on the very first poll")
 }
 
 // The same app WITHOUT the daemon's held verdict is genuinely pending: the wait
@@ -316,8 +316,8 @@ func TestStreamSingleAppStatus_KeepsWaitingWhenTheAppIsNotHeld(t *testing.T) {
 	case err := <-done:
 		require.NoError(t, err)
 	case <-time.After(waitTestTimeout):
-		t.Fatal("ожидание не завершилось даже после того, как приложение дошло до RUNNING")
+		t.Fatal("the wait did not finish even after the app reached RUNNING")
 	}
 	assert.GreaterOrEqual(t, fd.getCount(), 2,
-		"без вердикта демона DEPS_WAITING — это не терминальное состояние")
+		"without the daemon's verdict DEPS_WAITING is not a terminal state")
 }

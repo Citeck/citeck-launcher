@@ -763,8 +763,7 @@ func (d *Daemon) doReloadEx(forceGitPull, startNotRegenerate, refreshImages bool
 	// and its status is live, so a persist writes the truth.
 	pins, seededPins := resolveDependencyPins(d.bgCtx, act.runtime.DependencyStates(),
 		dockerDependencyProbe{dc: depsDockerOf(act.dockerClient), volumesBase: act.volumesBase},
-		namespaceDependencies(nsCfg, resolveResult.Bundle, resolveResult.Workspace,
-			act.runtime.ManualStoppedApps()))
+		namespaceDependencies(nsCfg, resolveResult.Bundle, resolveResult.Workspace))
 	for id, st := range seededPins {
 		slog.Info("Dependency pin seeded on reload", "ns", nsID, "dependency", id,
 			"image", st.Image, "volumeGen", st.Gen())

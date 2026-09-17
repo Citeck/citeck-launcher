@@ -34,9 +34,9 @@ func TestSttSidecar_GeneratedButAutoDetachedWhenAiIsDetached(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NotNil(t, findGeneratedApp(resp, appdef.AppSttSidecar),
-		"спека сайдкара остаётся, иначе локальному ai не к чему подключаться")
+		"the sidecar's spec stays, or a locally run ai has nothing to reach")
 	assert.True(t, resp.AutoDetachedApps[appdef.AppSttSidecar],
-		"иначе сайдкар стартанёт сам на каждом стенде с выключенным ai")
+		"otherwise the sidecar starts by itself on every stand with ai switched off")
 }
 
 // TestSttSidecar_NotAutoDetachedWhenAiIsAttached is the other half.

@@ -138,8 +138,9 @@ func Breaking(d Descriptor, pinned, candidate string) bool {
 // It says NOTHING about whether the move is held back. That is Breaking's
 // answer and it is deliberately unchanged: a backwards move inside one data
 // format — a bundle reverting a patch bump — applies silently, exactly as it
-// always has (user ruling, 2026-09-09: "патчи не надо откатывать … только
-// «переломы» откатываем"). What direction buys is the REPORT, see BundleOlder.
+// always has (user ruling, 2026-09-09, translated: "patches must not be rolled
+// back ... only breaking changes are"). What direction buys is the REPORT, see
+// BundleOlder.
 func MovesBackwards(from, to Version) bool { return compareVersions(to, from) < 0 }
 
 // BundleOlder reports that a candidate the generator HOLDS BACK is also an

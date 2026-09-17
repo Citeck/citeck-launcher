@@ -38,7 +38,7 @@ func TestWebappDependsOn_FromWorkspaceConfig(t *testing.T) {
 	app := findGeneratedApp(resp, "emodel")
 	require.NotNil(t, app)
 	assert.Contains(t, []string(app.DependsOn), "sidecar")
-	// Захардкоженные зависимости не потеряны.
+	// The hardcoded dependencies are not lost.
 	assert.Contains(t, []string(app.DependsOn), appdef.AppZookeeper)
 	assert.Contains(t, []string(app.DependsOn), appdef.AppRabbitmq)
 }
@@ -58,7 +58,7 @@ func TestWebappDependsOn_NamespaceOverridesWorkspace(t *testing.T) {
 	app := findGeneratedApp(resp, "emodel")
 	require.NotNil(t, app)
 	assert.NotContains(t, []string(app.DependsOn), "sidecar",
-		"пустой список в namespace.yml снимает зависимость из workspace")
+		"an empty list in namespace.yml drops the workspace's dependency")
 }
 
 func TestWebappDependsOn_SelfDependencyIsRejected(t *testing.T) {
@@ -136,7 +136,7 @@ func TestWebappDependsOn_UnknownNamespaceTargetIsReportedNotPruned(t *testing.T)
 
 	_, err := Generate(cfg, bun, nil, SystemSecrets{JWT: "j", OIDC: "o"})
 
-	require.Error(t, err, "опечатка в dependsOn должна быть названа, а не стоить аппу места в неймспейсе")
+	require.Error(t, err, "a typo in dependsOn must be named, not cost the app its place in the namespace")
 	assert.Contains(t, err.Error(), "sidcar")
 	assert.Contains(t, err.Error(), "emodel")
 }
@@ -155,9 +155,9 @@ func TestWebappDependsOn_UnknownWorkspaceTargetStillPrunes(t *testing.T) {
 	resp, err := Generate(basicCfg(), bun, wsWebappWithDeps([]string{"sidcar"}),
 		SystemSecrets{JWT: "j", OIDC: "o"})
 
-	require.NoError(t, err, "неймспейс не должен падать целиком из-за чужого файла")
+	require.NoError(t, err, "one bad file must not bring down the whole namespace")
 	assert.Nil(t, findGeneratedApp(resp, "emodel"),
-		"апп с недостижимой зависимостью по-прежнему вырезается")
+		"an app with an unreachable dependency is still dropped")
 }
 
 // …but it is not silent about it. The prune's own message is the one routine

@@ -120,8 +120,9 @@ func generatePgAdmin(ctx *NsGenContext) {
 
 func generatePostgres(ctx *NsGenContext) {
 	// The launcher's OWN default does not move; a version bump comes from a
-	// BUNDLE ("давай наверное всё-таки дефолт оставим на старой версии, а
-	// повышать будем через бандлы"). A stand whose bundle names no postgres at
+	// BUNDLE (user ruling, translated: "let's keep the default on the older
+	// version after all and raise it through bundles"). A stand whose bundle
+	// names no postgres at
 	// all is not asking for a new major, and offering it one turns the
 	// dependency banner into an upgrade the operator never requested — from a
 	// candidate that exists nowhere but in this line. `community-rc` already

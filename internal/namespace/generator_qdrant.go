@@ -73,8 +73,8 @@ func generateQdrant(ctx *NsGenContext) {
 		// bundle with no qdrant image and no consumer is every community stand,
 		// and an error line on every one of them is noise.
 		if consumerPresent {
-			slog.Error("Bundle has no qdrant image; rag will start without a vector store",
-				"app", appdef.AppQdrant)
+			slog.Error("Bundle has no qdrant image; the apps that need a vector store will start without one",
+				"app", appdef.AppQdrant, "consumers", qdrantConsumers)
 		}
 		return
 	}
@@ -159,11 +159,15 @@ func generateQdrant(ctx *NsGenContext) {
 	// detached hard dependency is a separate decision with a wide blast radius
 	// (it would apply to postgres, zookeeper and every configured dependsOn),
 	// and is deliberately not taken here.
-	if ragApp, ok := ctx.Applications[appdef.AppRag]; ok {
-		ragApp.AddEnv("QDRANT_HOST", appdef.AppQdrant)
-		ragApp.AddEnv("QDRANT_GRPC_PORT", fmt.Sprintf("%d", grpcPort))
-		ragApp.AddDependsOn(appdef.AppQdrant)
+	ragApp, hasRag := ctx.Applications[appdef.AppRag]
+	if !hasRag {
+		// A store with no rag in the namespace: generated, held by nobody, and
+		// wired to nobody. Everything below is rag's own wiring.
+		return
 	}
+	ragApp.AddEnv("QDRANT_HOST", appdef.AppQdrant)
+	ragApp.AddEnv("QDRANT_GRPC_PORT", fmt.Sprintf("%d", grpcPort))
+	ragApp.AddDependsOn(appdef.AppQdrant)
 
 	// The assistant ships with citeck.ai.rag.enabled=false, so without this flag
 	// a user who starts rag still gets no RAG tools in ai. The flag follows
@@ -172,13 +176,9 @@ func generateQdrant(ctx *NsGenContext) {
 	// namespace that is a RAG namespace stays one across that toggle: gating
 	// the flag on the detach state instead would rewrite (and recreate) the ai
 	// container on every start/stop of rag.
-	// The presence test used to be implicit — the whole function returned early
-	// without rag. It is explicit now that the store is generated without one:
-	// a namespace that merely HAS a vector store is not a RAG namespace, and
-	// telling ai otherwise points it at an app that is not there.
-	if _, hasRag := ctx.Applications[appdef.AppRag]; !hasRag {
-		return
-	}
+	// Reached only with rag present (the early return above): a namespace that
+	// merely HAS a vector store is not a RAG namespace, and telling ai
+	// otherwise points it at an app that is not there.
 	if aiApp, ok := ctx.Applications[appdef.AppAi]; ok && !ctx.DetachedApps[appdef.AppAi] {
 		aiApp.AddEnv("CITECK_AI_RAG_ENABLED", "true")
 	}
@@ -208,11 +208,12 @@ func generateQdrant(ctx *NsGenContext) {
 // or absent still HAS the dependency, still runs it on an explicit start, and
 // therefore still needs its pin.
 //
-// The detach set is still a PARAMETER (spelled `_`) so this restatement keeps
-// taking exactly what the generator takes and the parity test can hand both the
-// same arguments. Do not drop it: a future condition that does depend on it
-// would have to be threaded back through namespaceDependencies and every caller.
-func WillGenerateQdrant(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, _ map[string]bool) bool {
+// It used to take the detach set too. That parameter went dead when the store
+// stopped following rag, and a dead parameter kept "for a future condition" is
+// a parameter every caller has to supply and every reader has to rule out — so
+// it is gone from here and from namespaceDependencies. Threading one back is
+// two signatures and three call sites.
+func WillGenerateQdrant(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig) bool {
 	if cfg == nil || bun == nil {
 		return false
 	}

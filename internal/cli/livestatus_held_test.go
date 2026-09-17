@@ -20,7 +20,7 @@ func TestTerminalStartMessage_NamesTheHoldInsteadOfClaimingSuccess(t *testing.T)
 	msg := terminalStartMessage(2, 9, []string{"zookeeper"}, "")
 
 	assert.NotContains(t, msg, "All apps started")
-	assert.Contains(t, msg, "zookeeper", "оператору нужно имя того, что запустить")
+	assert.Contains(t, msg, "zookeeper", "the operator needs the name of the thing to start")
 	assert.Contains(t, msg, "2")
 }
 
@@ -32,7 +32,7 @@ func TestTerminalStartMessage_UnchangedWhenNothingIsHeld(t *testing.T) {
 	assert.Equal(t, "reload done", terminalStartMessage(0, 9, nil, "reload done"))
 	assert.True(t, strings.Contains(terminalStartMessage(0, 9, nil, ""), "started") ||
 		strings.Contains(terminalStartMessage(0, 9, nil, ""), "запущены"),
-		"без удержаний печатается обычная строка успеха")
+		"with no holds the ordinary success line is printed")
 }
 
 // `citeck start <app>` used to name the detached roots of the WHOLE namespace.
@@ -53,10 +53,10 @@ func TestSingleAppHeldMessage_NamesOnlyThisAppsRoot(t *testing.T) {
 
 	msg := singleAppHeldMessage(apps, "emodel")
 
-	assert.Contains(t, msg, "emodel", "сообщение про то приложение, которого ждут")
-	assert.Contains(t, msg, "postgres", "запустить нужно именно его")
+	assert.Contains(t, msg, "emodel", "the message names the app being waited for")
+	assert.Contains(t, msg, "postgres", "that is the one to start")
 	assert.NotContains(t, msg, "onlyoffice",
-		"onlyoffice держит другое приложение — запуск его для emodel бесполезен")
+		"onlyoffice holds a different app, so starting it does nothing for emodel")
 }
 
 // The reason the namespace-wide call was here at all: on a transitive hold the
@@ -75,5 +75,5 @@ func TestSingleAppHeldMessage_WalksThroughAnIntermediateHold(t *testing.T) {
 	msg := singleAppHeldMessage(apps, "proxy")
 
 	assert.Contains(t, msg, "zookeeper")
-	assert.NotContains(t, msg, "gateway", "gateway запустить нельзя — он удерживается тем же правилом")
+	assert.NotContains(t, msg, "gateway", "gateway cannot be started: it is held by the same rule")
 }

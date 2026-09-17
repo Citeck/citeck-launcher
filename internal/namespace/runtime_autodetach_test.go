@@ -31,17 +31,17 @@ func TestAutoDetachedAppIsNeverStartedByItself(t *testing.T) {
 	r.Start(autoDetachApps(), false)
 
 	require.True(t, waitForAppStatus(r, "postgres", AppStatusRunning, 10*time.Second),
-		"соседнее приложение должно подняться как обычно")
+		"the neighboring app must come up as usual")
 
 	qdrant := r.FindApp("qdrant")
-	require.NotNil(t, qdrant, "спека остаётся в неймспейсе — иначе её нечем запустить")
+	require.NotNil(t, qdrant, "the spec stays in the namespace, or there is nothing to start")
 	assert.Equal(t, AppStatusStopped, qdrant.Status)
-	assert.Empty(t, qdrant.ContainerID, "контейнера быть не должно")
+	assert.Empty(t, qdrant.ContainerID, "there must be no container")
 
 	md.mu.Lock()
 	_, created := md.containers["qdrant"]
 	md.mu.Unlock()
-	assert.False(t, created, "auto-detached приложение не создаёт контейнер само")
+	assert.False(t, created, "an auto-detached app creates no container by itself")
 }
 
 // The UI needs to tell "detached, press play" from "stopped and about to be
@@ -61,7 +61,7 @@ func TestAutoDetachedAppReportsItselfDetached(t *testing.T) {
 			return
 		}
 	}
-	t.Fatal("qdrant отсутствует в DTO")
+	t.Fatal("qdrant is missing from the DTO")
 }
 
 // The debug case itself: the operator starts the companion on purpose, and a
@@ -80,11 +80,11 @@ func TestExplicitStartSurvivesTheNextGeneration(t *testing.T) {
 
 	require.NoError(t, r.StartApp("qdrant"))
 	require.True(t, waitForAppStatus(r, "qdrant", AppStatusRunning, 10*time.Second),
-		"явный старт должен перебить auto-detach")
+		"an explicit start must override auto-detach")
 
 	r.SetAutoDetachedApps(map[string]bool{"qdrant": true})
 	assert.Equal(t, AppStatusRunning, r.FindApp("qdrant").Status,
-		"перегенерация не должна гасить то, что оператор поднял руками")
+		"a regeneration must not take down what the operator started by hand")
 }
 
 // Detaching the owner does NOT reach back for a companion that is already
@@ -101,13 +101,13 @@ func TestAutoDetachDoesNotTouchARunningCompanion(t *testing.T) {
 	r.SetAutoDetachedApps(map[string]bool{"qdrant": true})
 
 	assert.Equal(t, AppStatusRunning, r.FindApp("qdrant").Status,
-		"вердикт не должен гасить то, что уже работает")
+		"the verdict must not take down what is already running")
 	md.mu.Lock()
 	_, alive := md.containers["qdrant"]
 	md.mu.Unlock()
-	assert.True(t, alive, "контейнер должен остаться")
+	assert.True(t, alive, "the container must stay")
 	assert.False(t, r.ToNamespaceDto().Apps[0].Detached || r.IsAppDetached("qdrant"),
-		"работающее приложение остаётся под управлением цикла, а не числится отцепленным")
+		"a running app stays under the loop rather than counting as detached")
 }
 
 // ...and nothing about it is recorded as an operator stop either: that map is
@@ -123,5 +123,5 @@ func TestAutoDetachNeverWritesTheOperatorsDetachSet(t *testing.T) {
 	r.SetAutoDetachedApps(map[string]bool{"qdrant": true})
 
 	assert.NotContains(t, r.ManualStoppedApps(), "qdrant",
-		"это состояние владельца, а не намерение оператора")
+		"this is derived state, not the operator's intent")
 }

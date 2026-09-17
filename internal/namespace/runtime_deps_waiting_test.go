@@ -57,7 +57,7 @@ func TestDepsWaiting_StoppedDependencyHoldsDependent(t *testing.T) {
 	r.apps["rag"].Status = AppStatusReadyToStart
 
 	assert.False(t, r.appsDepsSatisfied(r.apps["rag"]),
-		"остановленная зависимость больше не считается удовлетворённой")
+		"a stopped dependency no longer counts as satisfied")
 	// The STATUS is part of the assertion on purpose: the name alone does not
 	// tell the operator whether the dependency is starting or was stopped by
 	// hand, so dropping it would otherwise pass unnoticed. It is compared as a
@@ -75,7 +75,7 @@ func TestDepsWaiting_AbsentDependencyStillSatisfied(t *testing.T) {
 	r.apps["rag"].Status = AppStatusReadyToStart
 
 	assert.True(t, r.appsDepsSatisfied(r.apps["rag"]),
-		"зависимость вне текущей генерации по-прежнему не блокирует")
+		"a dependency outside the current generation still does not block")
 }
 
 // TestDepsWaiting_DtoCarriesTheDependencyAndItsStatus pins the WIRE: the
@@ -169,7 +169,7 @@ func TestAHoldByADetachedDependencyStallsTheNamespace(t *testing.T) {
 	r.checkStatus()
 
 	assert.Equal(t, NsStatusStalled, r.status,
-		"удержание — это проблема, которая сама не решится, а не завершённый старт")
+		"a hold is a problem that will not resolve itself, not a finished start")
 }
 
 // …and the namespace comes back on its own the moment the operator starts the
@@ -193,7 +193,7 @@ func TestStartingTheDependencyAgainLiftsTheStall(t *testing.T) {
 	r.apps["postgres"].Status = AppStatusRunning
 
 	r.checkStatus()
-	assert.Equal(t, NsStatusStarting, r.status, "проблема снята — неймспейс снова поднимается")
+	assert.Equal(t, NsStatusStarting, r.status, "the problem is gone, so the namespace is coming up again")
 
 	r.apps["emodel"].Status = AppStatusRunning
 	r.checkStatus()
@@ -216,11 +216,11 @@ func TestOnlyADetachedDependencyMakesTheHoldSettled(t *testing.T) {
 
 	r.apps["postgres"].Status = AppStatusStarting
 	assert.False(t, r.heldByDetachedDepsUnderLock(r.apps["emodel"]),
-		"зависимость ещё поднимается сама — это ожидание, а не решение пользователя")
+		"the dependency is still coming up on its own: that is waiting, not a user's decision")
 
 	r.apps["postgres"].Status = AppStatusStopped
 	assert.False(t, r.heldByDetachedDepsUnderLock(r.apps["emodel"]),
-		"остановленная, но НЕ отцепленная зависимость — не решение пользователя отцепить")
+		"a stopped but NOT detached dependency is not the user's decision to detach")
 
 	r.manualStoppedApps["postgres"] = true
 	assert.True(t, r.heldByDetachedDepsUnderLock(r.apps["emodel"]))
@@ -240,7 +240,7 @@ func TestAMixedHoldIsNotSettled(t *testing.T) {
 	r.apps["emodel"].Status = AppStatusDepsWaiting
 
 	assert.False(t, r.heldByDetachedDepsUnderLock(r.apps["emodel"]),
-		"одна из зависимостей ещё может подняться сама")
+		"one of the dependencies may still come up on its own")
 }
 
 // An app that is not in DEPS_WAITING at all is never "held" — the predicate
@@ -293,7 +293,7 @@ func TestTheSettlingRuleFollowsTheWholeChain(t *testing.T) {
 	r.status = NsStatusStarting
 
 	assert.True(t, r.heldByDetachedDepsUnderLock(r.apps["proxy"]),
-		"proxy ждёт gateway, который сам удерживается отцепленным zookeeper")
+		"proxy waits on gateway, which is itself held by a detached zookeeper")
 
 	r.checkStatus()
 	assert.Equal(t, NsStatusStalled, r.status)
@@ -326,7 +326,7 @@ func TestTheSettlingWalkTerminatesOnACycle(t *testing.T) {
 	r.apps["b"].Status = AppStatusDepsWaiting
 
 	assert.False(t, r.heldByDetachedDepsUnderLock(r.apps["a"]),
-		"цикл без единой отцепленной зависимости ничем не удерживается")
+		"a cycle with no detached dependency in it is held by nothing")
 }
 
 // The settled verdict travels on the wire as AppDto.Held, because deriving it
@@ -347,8 +347,8 @@ func TestTheDtoCarriesTheHeldVerdict(t *testing.T) {
 	dto := r.ToNamespaceDto()
 
 	assert.True(t, appDtoByName(t, dto, "gateway").Held)
-	assert.True(t, appDtoByName(t, dto, "proxy").Held, "решение должно быть транзитивным и на проводе")
-	assert.False(t, appDtoByName(t, dto, "zookeeper").Held, "сам отцепленный апп не «удерживается»")
+	assert.True(t, appDtoByName(t, dto, "proxy").Held, "the answer must be transitive on the wire too")
+	assert.False(t, appDtoByName(t, dto, "zookeeper").Held, "the detached app itself is not \"held\"")
 }
 
 // appsDepsSatisfied (the gate that parks an app in DEPS_WAITING) and unmetDeps
@@ -375,10 +375,10 @@ func TestTheDepsGateAndTheDepsReportAnswerTheSameQuestion(t *testing.T) {
 		reported := r.unmetDeps(app)
 
 		require.Equal(t, satisfied, len(reported) == 0,
-			"статус %s: гейт и отчёт разошлись — %v против %v", st, satisfied, reported)
+			"status %s: the gate and the report disagree -- %v vs %v", st, satisfied, reported)
 		for _, d := range reported {
 			require.NotEqual(t, "absent-from-this-generation", d.App,
-				"зависимости вне поколения не ждут — она не часть этого неймспейса")
+				"dependencies outside the generation are not waited on: it is not part of this namespace")
 		}
 	}
 }
