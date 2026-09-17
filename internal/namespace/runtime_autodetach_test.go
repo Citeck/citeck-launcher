@@ -125,3 +125,81 @@ func TestAutoDetachNeverWritesTheOperatorsDetachSet(t *testing.T) {
 	assert.NotContains(t, r.ManualStoppedApps(), "qdrant",
 		"this is derived state, not the operator's intent")
 }
+
+// TestLiftingTheVerdictHandsTheAppBackToTheStateMachine is the other direction,
+// and the one a real server found missing: re-attaching the consumer regenerates
+// the namespace, the companion drops out of the verdict — and nothing started
+// it. stepAllApps skips detached apps and has no STOPPED branch, so an app that
+// was held down by the verdict stayed STOPPED forever while the consumer sat in
+// DEPS_WAITING naming it. The operator's only way out was starting the companion
+// by hand, on a namespace that had just been told to run it.
+func TestLiftingTheVerdictHandsTheAppBackToTheStateMachine(t *testing.T) {
+	md := newMockDocker()
+	r := NewRuntime(testConfig(), md, t.TempDir())
+	defer r.Shutdown()
+
+	r.SetAutoDetachedApps(map[string]bool{"qdrant": true})
+	r.Start(autoDetachApps(), false)
+	require.True(t, waitForAppStatus(r, "postgres", AppStatusRunning, 10*time.Second))
+	require.Equal(t, AppStatusStopped, r.FindApp("qdrant").Status)
+
+	// The consumer is re-attached: the next generation names nobody.
+	r.SetAutoDetachedApps(map[string]bool{})
+
+	require.True(t, waitForAppStatus(r, "qdrant", AppStatusRunning, 10*time.Second),
+		"once nothing holds it down the companion must come up on its own")
+	md.mu.Lock()
+	_, created := md.containers["qdrant"]
+	md.mu.Unlock()
+	assert.True(t, created, "and it must be a real container, not just a status")
+}
+
+// The verdict is not the operator's intent and must not overwrite it: an app the
+// operator stopped by hand stays stopped when the verdict is lifted, or a
+// regeneration would undo a deliberate stop.
+func TestLiftingTheVerdictLeavesAManuallyStoppedAppAlone(t *testing.T) {
+	md := newMockDocker()
+	r := NewRuntime(testConfig(), md, t.TempDir())
+	defer r.Shutdown()
+
+	r.Start(autoDetachApps(), false)
+	require.True(t, waitForAppStatus(r, "qdrant", AppStatusRunning, 10*time.Second))
+	require.NoError(t, r.StopApp("qdrant"))
+	require.True(t, waitForAppStatus(r, "qdrant", AppStatusStopped, 10*time.Second))
+
+	r.SetAutoDetachedApps(map[string]bool{"qdrant": true})
+	r.SetAutoDetachedApps(map[string]bool{})
+
+	time.Sleep(500 * time.Millisecond)
+	assert.Equal(t, AppStatusStopped, r.FindApp("qdrant").Status,
+		"the operator stopped it; lifting an unrelated verdict must not start it")
+}
+
+// A stopped namespace must stay stopped. The verdict is recomputed on every
+// generation, and a regeneration can perfectly well happen while nothing is
+// running (a bundle update, a config edit) — handing the app back to the state
+// machine there would start a container on a namespace the operator stopped.
+func TestLiftingTheVerdictStartsNothingOnAStoppedNamespace(t *testing.T) {
+	md := newMockDocker()
+	r := NewRuntime(testConfig(), md, t.TempDir())
+	defer r.Shutdown()
+
+	r.SetAutoDetachedApps(map[string]bool{"qdrant": true})
+	r.Start(autoDetachApps(), false)
+	require.True(t, waitForAppStatus(r, "postgres", AppStatusRunning, 10*time.Second))
+	r.Stop()
+	// The NAMESPACE has to reach STOPPED, not just its apps: while the shutdown
+	// chain is still running (STOPPING) it owns every transition and would mask
+	// a wrong answer here by driving the app back to STOPPED itself.
+	require.True(t, waitForStatus(r, NsStatusStopped, 30*time.Second))
+
+	r.SetAutoDetachedApps(map[string]bool{})
+
+	time.Sleep(500 * time.Millisecond)
+	assert.Equal(t, AppStatusStopped, r.FindApp("qdrant").Status,
+		"a regeneration on a stopped namespace must not start anything")
+	md.mu.Lock()
+	_, created := md.containers["qdrant"]
+	md.mu.Unlock()
+	assert.False(t, created)
+}
