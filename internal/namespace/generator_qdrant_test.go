@@ -74,12 +74,16 @@ func TestQdrant_AbsentWhenTheBundleCarriesNoImage(t *testing.T) {
 	assert.False(t, ok, "без rag флаг не выставляется")
 }
 
-// TestQdrant_GeneratedWithoutRagWhenTheBundleCarriesTheImage is the shape of
-// enterprise/2026.2 and enterprise-rc/2026.3-RC2: a qdrant image and no
-// EcosRagApp anywhere. The store is not private to rag — the launcher offers
-// it, auto-detached so nothing starts it, and whatever is pointed at it next
-// needs only a dependsOn. Before this rule the image in those bundles resolved
-// to nothing at all.
+// TestQdrant_GeneratedWithoutRagWhenTheBundleCarriesTheImage: a qdrant image
+// and no EcosRagApp anywhere. The store is not private to rag — the launcher
+// offers it, auto-detached so nothing starts it, and whatever is pointed at it
+// next needs only a dependsOn.
+//
+// No public bundle has this shape today: running the real parser over all 18
+// files of the public workspace shows every bundle that names qdrant also names
+// EcosRagApp. That is what makes this a test rather than a field report — the
+// case is reachable only through a bundle nobody has written yet, and it is the
+// one the rule exists for.
 func TestQdrant_GeneratedWithoutRagWhenTheBundleCarriesTheImage(t *testing.T) {
 	config.ResetDesktopMode()
 	bun := ragBundle()

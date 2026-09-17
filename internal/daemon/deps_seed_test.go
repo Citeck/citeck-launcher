@@ -776,10 +776,12 @@ func TestNamespaceDependenciesAnswersQdrantFromTheBundle(t *testing.T) {
 		assertPredictionMatchesGenerator(t, disabled, ragBundle(), ragWS(), nil)
 		assert.True(t, namespaceDependencies(disabled, ragBundle(), ragWS(), nil)[deps.Qdrant])
 	})
-	// The enterprise 2026.2 / 2026.3-RC2 shape: the bundle carries a qdrant
-	// image and no EcosRagApp at all. The store is generated and pinned — an
-	// index it may already hold is exactly what a pin protects, and whatever is
-	// pointed at it next is not required to be rag.
+	// A bundle that carries a qdrant image and no EcosRagApp at all. The store
+	// is generated and pinned — an index it may already hold is exactly what a
+	// pin protects, and whatever is pointed at it next is not required to be
+	// rag. No PUBLIC bundle has this shape today (every one that names qdrant
+	// also names EcosRagApp), which is precisely why it needs a test: the case
+	// is reachable only through a bundle nobody has written yet.
 	t.Run("a bundle with qdrant and no rag at all", func(t *testing.T) {
 		bun := ragBundle()
 		delete(bun.Applications, "rag")
