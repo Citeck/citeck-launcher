@@ -118,11 +118,54 @@ class NamespaceGeneratorRagTest {
     }
 
     @Test
-    fun `qdrant is not generated without rag in bundle`() {
+    fun `qdrant is not generated when neither the bundle nor the namespace asks for it`() {
+        // This is what keeps the store off community stands: the bundle names
+        // no qdrant and there is no consumer to hold one.
         val context = createContext(withRagInBundle = false)
         NamespaceGenerator().generateQdrant(context)
 
         assertThat(context.applications).doesNotContainKey(AppName.QDRANT)
+    }
+
+    @Test
+    fun `a bundle that offers qdrant gets one even with no rag anywhere`() {
+        // The enterprise 2026.2 / 2026.3-RC2 shape. The store is not private to
+        // rag: the launcher offers it, auto-detached so nothing starts it, and
+        // whatever is pointed at it next needs only a dependsOn. The bundle is
+        // read for PRESENCE only -- the version stays pinned in this launcher,
+        // which has no dependency gate.
+        val context = createContext(withRagInBundle = false, qdrantImageInBundle = "qdrant/qdrant:v1.14.1")
+        NamespaceGenerator().generateQdrant(context)
+
+        val qdrant = context.applications[AppName.QDRANT]!!.build(false)
+        assertThat(qdrant.image).isEqualTo(pinnedQdrantImage)
+        assertThat(context.autoDetachedApps).contains(AppName.QDRANT)
+        assertThat(context.applications).doesNotContainKey(AppName.RAG)
+    }
+
+    @Test
+    fun `a bundle that names no qdrant still gets one for its rag`() {
+        // Thirteen internal bundles declare EcosRagApp and no qdrant. Making the
+        // bundle key the ONLY condition -- as 2.x can, because the image lives
+        // there -- would have taken the store away from every one of them.
+        val context = createContext(qdrantImageInBundle = "")
+        NamespaceGenerator().generateQdrant(context)
+
+        assertThat(context.applications).containsKey(AppName.QDRANT)
+        assertThat(context.autoDetachedApps).doesNotContain(AppName.QDRANT)
+    }
+
+    @Test
+    fun `a store with no rag does not make the namespace a rag namespace`() {
+        val context = createContext(
+            withRagInBundle = false,
+            qdrantImageInBundle = "qdrant/qdrant:v1.14.1",
+            withAiApp = true
+        )
+        NamespaceGenerator().generateQdrant(context)
+
+        val ai = context.applications[AppName.AI]!!.build(false)
+        assertThat(ai.environments).doesNotContainKey("CITECK_AI_RAG_ENABLED")
     }
 
     @Test

@@ -42,6 +42,13 @@ class NamespaceGenerator {
          * appears once the app is re-attached. Without this, re-attaching one of these apps
          * would not trigger regeneration and its dependents would silently never appear.
          */
+        /**
+         * Приложения, которые читают и пишут векторное хранилище. Хранилище не
+         * принадлежит ни одному из них — список решает только, держит ли его
+         * кто-то сейчас (см. [generateQdrant]).
+         */
+        internal val QDRANT_CONSUMERS = setOf(AppName.RAG)
+
         internal val DEPENDS_ON_DETACHED_APPS = setOf(
             AppName.ONLYOFFICE,
             AppName.AI,
@@ -340,12 +347,38 @@ class NamespaceGenerator {
     }
 
     internal fun generateQdrant(context: NsGenContext) {
-        val ragApp = context.applications[AppName.RAG] ?: return
-        // Отцепленный rag больше не уносит с собой хранилище: остановка rag в
-        // лончере — это и есть способ запустить его из IDE, а локальному rag
-        // всё равно нужен qdrant на localhost. markAutoDetached оставляет его
-        // остановленным у всех, кто просто выключил RAG.
-        if (context.detachedApps.contains(AppName.RAG)) {
+        // Хранилище не принадлежит rag. Оно генерируется, если его предлагает
+        // бандл ИЛИ если в неймспейсе есть потребитель, а [QDRANT_CONSUMERS]
+        // решает ровно один вопрос: держит ли его кто-нибудь ПРЯМО СЕЙЧАС.
+        // Второй потребитель — это строка в списке плюс его собственная
+        // проводка, больше в правиле ничего rag-специфичного нет.
+        var consumerHolds = false
+        var consumerPresent = false
+        for (consumer in QDRANT_CONSUMERS) {
+            if (!context.applications.containsKey(consumer)) {
+                continue
+            }
+            consumerPresent = true
+            if (!context.detachedApps.contains(consumer)) {
+                consumerHolds = true
+            }
+        }
+        // В 2.x условие — образ qdrant в бандле. Здесь версия прибита
+        // константой (гейтлесс лончер не читает версии зависимостей), поэтому
+        // наличия потребителя достаточно: иначе на 13 внутренних бандлах,
+        // которые объявляют EcosRagApp и не объявляют qdrant, хранилище
+        // ИСЧЕЗЛО бы вместе с этой правкой. Наличие ключа в бандле читается,
+        // версия — нет.
+        val bundleOffersStore = context.bundle.applications.containsKey(AppName.QDRANT)
+        if (!bundleOffersStore && !consumerPresent) {
+            return
+        }
+        // Хранилище переживает и отцепление потребителя, и его отсутствие:
+        // остановка rag в лончере — это и есть способ запустить его из IDE, а
+        // локальному rag всё равно нужен qdrant на localhost. markAutoDetached
+        // оставляет его остановленным у всех, кто просто выключил RAG, и у
+        // всех, кому его пока не к чему подключать.
+        if (!consumerHolds) {
             context.markAutoDetached(AppName.QDRANT)
         }
 
@@ -394,10 +427,14 @@ class NamespaceGenerator {
         // `!context.detachedApps.contains(AppName.QDRANT)`. AI works without speech recognition,
         // but rag cannot search or index anything without its vector store -- a "running" rag
         // with qdrant detached would just be silently broken. Do not add that guard here.
+        val ragApp = context.applications[AppName.RAG] ?: return
         ragApp.addEnv("QDRANT_HOST", AppName.QDRANT)
             .addEnv("QDRANT_GRPC_PORT", props.grpcPort.toString())
             .addDependsOn(AppName.QDRANT)
 
+        // Неймспейс, у которого просто ЕСТЬ хранилище, не становится
+        // rag-неймспейсом: раньше эта проверка была неявной — без rag функция
+        // выходила в первой строке.
         val aiApp = context.applications[AppName.AI]
         if (aiApp != null && !context.detachedApps.contains(AppName.AI)) {
             aiApp.addEnv("CITECK_AI_RAG_ENABLED", "true")
