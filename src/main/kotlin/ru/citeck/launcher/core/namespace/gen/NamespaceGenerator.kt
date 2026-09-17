@@ -427,14 +427,15 @@ class NamespaceGenerator {
         // `!context.detachedApps.contains(AppName.QDRANT)`. AI works without speech recognition,
         // but rag cannot search or index anything without its vector store -- a "running" rag
         // with qdrant detached would just be silently broken. Do not add that guard here.
+        // Хранилище без rag в неймспейсе: сгенерировано, никем не удерживается
+        // и ни к кому не подключено — всё ниже относится к самому rag.
         val ragApp = context.applications[AppName.RAG] ?: return
         ragApp.addEnv("QDRANT_HOST", AppName.QDRANT)
             .addEnv("QDRANT_GRPC_PORT", props.grpcPort.toString())
             .addDependsOn(AppName.QDRANT)
 
-        // Неймспейс, у которого просто ЕСТЬ хранилище, не становится
-        // rag-неймспейсом: раньше эта проверка была неявной — без rag функция
-        // выходила в первой строке.
+        // Сюда можно попасть только при наличии rag (выход выше): неймспейс, у
+        // которого просто ЕСТЬ хранилище, не становится rag-неймспейсом.
         val aiApp = context.applications[AppName.AI]
         if (aiApp != null && !context.detachedApps.contains(AppName.AI)) {
             aiApp.addEnv("CITECK_AI_RAG_ENABLED", "true")
