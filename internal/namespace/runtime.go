@@ -553,6 +553,7 @@ func (r *Runtime) SetManualStoppedApps(apps map[string]bool) {
 // No override set, no session state, nothing to keep in sync.
 func (r *Runtime) SetAutoDetachedApps(apps map[string]bool) {
 	r.mu.Lock()
+	defer r.mu.Unlock()
 	next := make(map[string]bool, len(apps))
 	for name := range apps {
 		if app, ok := r.apps[name]; ok && app.Status != AppStatusStopped {
@@ -560,43 +561,7 @@ func (r *Runtime) SetAutoDetachedApps(apps map[string]bool) {
 		}
 		next[name] = true
 	}
-	prev := r.autoDetachedApps
 	r.autoDetachedApps = next
-	// Lifting the verdict has to hand the app BACK to the state machine, and
-	// that is a transition rather than a flag: stepAllApps skips detached apps
-	// and has no STOPPED branch at all, so an app the verdict held down stays
-	// STOPPED forever once it is no longer detached. On a real server that read
-	// as a hang — re-attaching rag regenerated the namespace, qdrant dropped out
-	// of the verdict, nothing started it, and rag sat in DEPS_WAITING naming the
-	// store it was waiting for. This is exactly StartApp's T27 (STOPPED →
-	// READY_TO_PULL) minus the manual-stop clearing: a manually stopped app is
-	// the operator's intent and must survive an unrelated verdict change.
-	// Only a namespace that is actually up hands anything back: a regeneration
-	// can happen while nothing runs (a bundle update, a config edit, the reload
-	// that follows a stop), and starting a container there would restart a
-	// namespace the operator stopped. STOPPING is excluded for the same reason
-	// stepAllApps excludes it — the shutdown chain owns every transition while
-	// it runs.
-	nsIsUp := r.status == NsStatusStarting || r.status == NsStatusRunning || r.status == NsStatusStalled
-	wake := false
-	if r.runCtx != nil && nsIsUp {
-		for name := range prev {
-			if next[name] || r.manualStoppedApps[name] {
-				continue
-			}
-			app, ok := r.apps[name]
-			if !ok || app.Status != AppStatusStopped {
-				continue
-			}
-			r.resetRetry(name)
-			r.setAppStatus(app, AppStatusReadyToPull)
-			wake = true
-		}
-	}
-	r.mu.Unlock()
-	if wake {
-		r.signalCh.Flush()
-	}
 }
 
 // IsAppDetached answers isDetachedLocked from outside the runtime: the daemon's
