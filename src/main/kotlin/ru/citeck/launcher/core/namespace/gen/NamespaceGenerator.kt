@@ -36,19 +36,19 @@ class NamespaceGenerator {
         )
 
         /**
-         * Apps that, even when detached, must still be marked as affecting the namespace's
-         * generated composition: a Start/Regenerate command on a detached app in this set has
-         * to re-run [generate] so that whatever it conditionally produces (e.g. rag -> qdrant)
-         * appears once the app is re-attached. Without this, re-attaching one of these apps
-         * would not trigger regeneration and its dependents would silently never appear.
-         */
-        /**
          * Приложения, которые читают и пишут векторное хранилище. Хранилище не
          * принадлежит ни одному из них — список решает только, держит ли его
          * кто-то сейчас (см. [generateQdrant]).
          */
         internal val QDRANT_CONSUMERS = setOf(AppName.RAG)
 
+        /**
+         * Apps that, even when detached, must still be marked as affecting the namespace's
+         * generated composition: a Start/Regenerate command on a detached app in this set has
+         * to re-run [generate] so that whatever it conditionally produces (e.g. rag -> qdrant)
+         * appears once the app is re-attached. Without this, re-attaching one of these apps
+         * would not trigger regeneration and its dependents would silently never appear.
+         */
         internal val DEPENDS_ON_DETACHED_APPS = setOf(
             AppName.ONLYOFFICE,
             AppName.AI,
