@@ -53,7 +53,10 @@ func TestQdrant_GeneratedWhenRagIsPresent(t *testing.T) {
 	assert.Equal(t, "true", enabled)
 }
 
-func TestQdrant_AbsentWhenRagIsNotInTheBundle(t *testing.T) {
+// TestQdrant_AbsentWhenTheBundleCarriesNoImage is what keeps the store off
+// community stands, and the condition is the IMAGE, not rag: no community
+// bundle names a qdrant image, above the `dependencies:` section or inside it.
+func TestQdrant_AbsentWhenTheBundleCarriesNoImage(t *testing.T) {
 	config.ResetDesktopMode()
 	bun := &bundle.Def{Applications: map[string]bundle.AppDef{
 		"ai": {Image: "harbor.citeck.ru/enterprise/ai:1.12.0"},
@@ -69,6 +72,35 @@ func TestQdrant_AbsentWhenRagIsNotInTheBundle(t *testing.T) {
 	require.NotNil(t, ai)
 	_, ok := ai.Environments.Get("CITECK_AI_RAG_ENABLED")
 	assert.False(t, ok, "без rag флаг не выставляется")
+}
+
+// TestQdrant_GeneratedWithoutRagWhenTheBundleCarriesTheImage is the shape of
+// enterprise/2026.2 and enterprise-rc/2026.3-RC2: a qdrant image and no
+// EcosRagApp anywhere. The store is not private to rag — the launcher offers
+// it, auto-detached so nothing starts it, and whatever is pointed at it next
+// needs only a dependsOn. Before this rule the image in those bundles resolved
+// to nothing at all.
+func TestQdrant_GeneratedWithoutRagWhenTheBundleCarriesTheImage(t *testing.T) {
+	config.ResetDesktopMode()
+	bun := ragBundle()
+	delete(bun.Applications, "rag")
+
+	resp, err := Generate(basicCfg(), bun, ragWorkspace(), SystemSecrets{JWT: "j", OIDC: "o"})
+	require.NoError(t, err)
+
+	qdrant := findGeneratedApp(resp, appdef.AppQdrant)
+	require.NotNil(t, qdrant, "образ в бандле — единственное условие генерации хранилища")
+	assert.Equal(t, "qdrant/qdrant:v1.14.1", qdrant.Image)
+	assert.True(t, resp.AutoDetachedApps[appdef.AppQdrant],
+		"держать хранилище некому, значит само оно не стартует")
+	assert.Nil(t, findGeneratedApp(resp, appdef.AppRag))
+
+	ai := findGeneratedApp(resp, appdef.AppAi)
+	require.NotNil(t, ai)
+	_, ok := ai.Environments.Get("CITECK_AI_RAG_ENABLED")
+	assert.False(t, ok, "хранилище без rag не делает неймспейс rag-неймспейсом")
+	assert.False(t, resp.GatingApps[appdef.AppRag],
+		"нечего перегенерировать по приложению, которого в неймспейсе нет")
 }
 
 // TestQdrant_RagRagFlagFollowsPresenceNotDetachState: CITECK_AI_RAG_ENABLED
@@ -381,4 +413,34 @@ func TestQdrant_PublishesGrpcPortForLocalDebugging(t *testing.T) {
 	require.NotNil(t, qdrant)
 	assert.Contains(t, qdrant.Ports, "6334:6334",
 		"без публикации gRPC-порта локально запущенный rag не найдёт хранилище")
+}
+
+// TestQdrant_HeldByAnyAttachedConsumer states the verdict in the terms the rule
+// is actually written in: the store is auto-detached when NOBODY holds it, and
+// rag is merely the only consumer there is today. A second consumer is one line
+// in qdrantConsumers — this test is what keeps the wiring honest if the list
+// grows: the answer must follow the consumer set, not the name "rag".
+func TestQdrant_HeldByAnyAttachedConsumer(t *testing.T) {
+	config.ResetDesktopMode()
+	restore := qdrantConsumers
+	qdrantConsumers = []string{appdef.AppRag, appdef.AppAi}
+	defer func() { qdrantConsumers = restore }()
+
+	// rag detached, ai attached: the store is held by ai and must come up.
+	resp, err := Generate(basicCfg(), ragBundle(), ragWorkspace(),
+		SystemSecrets{JWT: "j", OIDC: "o"},
+		GenerateOpts{DetachedApps: map[string]bool{appdef.AppRag: true}})
+	require.NoError(t, err)
+	require.NotNil(t, findGeneratedApp(resp, appdef.AppQdrant))
+	assert.False(t, resp.AutoDetachedApps[appdef.AppQdrant],
+		"хранилище держит второй потребитель, вердикт не должен смотреть только на rag")
+	assert.True(t, resp.GatingApps[appdef.AppAi],
+		"переключение потребителя меняет генерацию, значит оно гейтящее")
+
+	// Both detached: nobody holds it.
+	resp, err = Generate(basicCfg(), ragBundle(), ragWorkspace(),
+		SystemSecrets{JWT: "j", OIDC: "o"},
+		GenerateOpts{DetachedApps: map[string]bool{appdef.AppRag: true, appdef.AppAi: true}})
+	require.NoError(t, err)
+	assert.True(t, resp.AutoDetachedApps[appdef.AppQdrant])
 }

@@ -17,24 +17,42 @@ const (
 	qdrantDefaultMemory   = "1g"
 )
 
-// generateQdrant adds the Qdrant vector store for the rag webapp, mirroring
-// generateSttSidecar. Behavior:
-//   - No rag in the generated set → no qdrant (this is what keeps qdrant off
-//     community stands: rag itself only exists when the bundle carries EcosRagApp).
-//   - rag detached → qdrant is still generated, but marked auto-detached: the
-//     spec stays in the namespace (a rag run from an IDE needs a qdrant on
-//     localhost) while the runtime never starts it by itself, so a switched-off
-//     RAG still costs no memory. An explicit `citeck start qdrant` runs it and
-//     it keeps running. Re-attaching rag clears the mark and both come up.
+// qdrantConsumers are the apps that read and write the vector store.
+//
+// The store is NOT private to any of them. It is generated whenever the bundle
+// carries a qdrant image, and this list decides one thing only: whether anyone
+// is currently HOLDING it, which is what the auto-detach verdict below asks.
+// Wiring a second consumer is this line plus that consumer's own env — nothing
+// else in the rule is rag-specific.
+var qdrantConsumers = []string{appdef.AppRag}
+
+// generateQdrant adds the Qdrant vector store. Behavior:
+//   - No qdrant image in the bundle → no qdrant. This — not the presence of
+//     rag — is what keeps the store off community stands: no community bundle
+//     carries the image, in its `dependencies:` section or above it.
+//   - Nobody holding it (no consumer in the namespace, or every consumer
+//     detached) → the store is still generated, but marked auto-detached: the
+//     spec stays in the namespace while the runtime never starts it by itself,
+//     so a switched-off RAG costs no memory and a namespace that has no rag at
+//     all still offers a store anything else can be pointed at. An explicit
+//     `citeck start qdrant` runs it and it keeps running.
+//   - A consumer attached → the store comes up with it.
 //   - Image comes from the bundle only; the version is pinned by the release.
 func generateQdrant(ctx *NsGenContext) {
-	ragApp, ok := ctx.Applications[appdef.AppRag]
-	if !ok {
-		return
+	// Toggling a consumer changes how the store is generated (the verdict
+	// below, and the consumer's own wiring), so the daemon must regenerate on
+	// that toggle — mark it whichever way the consumer is right now.
+	var consumerPresent, consumerHolds bool
+	for _, name := range qdrantConsumers {
+		if _, ok := ctx.Applications[name]; !ok {
+			continue
+		}
+		ctx.MarkGatingApp(name)
+		consumerPresent = true
+		if !ctx.DetachedApps[name] {
+			consumerHolds = true
+		}
 	}
-	// Toggling rag decides whether qdrant exists, so the daemon must regenerate
-	// on that toggle — mark it even when rag is currently detached.
-	ctx.MarkGatingApp(appdef.AppRag)
 
 	props := bundle.QdrantProps{}
 	if ctx.WorkspaceConfig != nil && ctx.WorkspaceConfig.Qdrant != nil {
@@ -51,8 +69,13 @@ func generateQdrant(ctx *NsGenContext) {
 
 	chain := resolveAppImageChain(ctx, appdef.AppQdrant, "", "")
 	if len(chain) == 0 {
-		slog.Error("Bundle has no qdrant image; rag will start without a vector store",
-			"app", appdef.AppQdrant)
+		// Only worth saying when something in this namespace wanted a store. A
+		// bundle with no qdrant image and no consumer is every community stand,
+		// and an error line on every one of them is noise.
+		if consumerPresent {
+			slog.Error("Bundle has no qdrant image; rag will start without a vector store",
+				"app", appdef.AppQdrant)
+		}
 		return
 	}
 	// Qdrant is a registered DEPENDENCY, so the image it actually runs is the
@@ -64,13 +87,16 @@ func generateQdrant(ctx *NsGenContext) {
 	image := resolveDependencyImage(ctx, deps.Qdrant, chain)
 
 	qdrant := ctx.GetOrCreateApp(appdef.AppQdrant)
-	// A detached rag no longer takes its vector store with it. The spec stays
-	// in the namespace — that is what the "stop in launcher, debug locally"
-	// workflow needs, since a rag run from an IDE still has to reach a qdrant
-	// on localhost — and MarkAutoDetached is what keeps it stopped for everyone
-	// who simply switched RAG off: the runtime never starts an auto-detached
-	// app by itself, so a switched-off RAG still costs no memory.
-	if ctx.DetachedApps[appdef.AppRag] {
+	// The store outlives its consumers, both their detach and their absence.
+	// The spec stays in the namespace — that is what the "stop in launcher,
+	// debug locally" workflow needs, since a rag run from an IDE still has to
+	// reach a qdrant on localhost — and MarkAutoDetached is what keeps it
+	// stopped for everyone who simply switched RAG off: the runtime never
+	// starts an auto-detached app by itself, so an unheld store costs no
+	// memory. The verdict is not persisted and not an intent: it only withholds
+	// autostart, so an explicit start survives every later generation
+	// (Runtime.SetAutoDetachedApps drops everything that is not STOPPED).
+	if !consumerHolds {
 		ctx.MarkAutoDetached(appdef.AppQdrant)
 	}
 	qdrant.Image = image
@@ -133,9 +159,11 @@ func generateQdrant(ctx *NsGenContext) {
 	// detached hard dependency is a separate decision with a wide blast radius
 	// (it would apply to postgres, zookeeper and every configured dependsOn),
 	// and is deliberately not taken here.
-	ragApp.AddEnv("QDRANT_HOST", appdef.AppQdrant)
-	ragApp.AddEnv("QDRANT_GRPC_PORT", fmt.Sprintf("%d", grpcPort))
-	ragApp.AddDependsOn(appdef.AppQdrant)
+	if ragApp, ok := ctx.Applications[appdef.AppRag]; ok {
+		ragApp.AddEnv("QDRANT_HOST", appdef.AppQdrant)
+		ragApp.AddEnv("QDRANT_GRPC_PORT", fmt.Sprintf("%d", grpcPort))
+		ragApp.AddDependsOn(appdef.AppQdrant)
+	}
 
 	// The assistant ships with citeck.ai.rag.enabled=false, so without this flag
 	// a user who starts rag still gets no RAG tools in ai. The flag follows
@@ -144,6 +172,13 @@ func generateQdrant(ctx *NsGenContext) {
 	// namespace that is a RAG namespace stays one across that toggle: gating
 	// the flag on the detach state instead would rewrite (and recreate) the ai
 	// container on every start/stop of rag.
+	// The presence test used to be implicit — the whole function returned early
+	// without rag. It is explicit now that the store is generated without one:
+	// a namespace that merely HAS a vector store is not a RAG namespace, and
+	// telling ai otherwise points it at an app that is not there.
+	if _, hasRag := ctx.Applications[appdef.AppRag]; !hasRag {
+		return
+	}
 	if aiApp, ok := ctx.Applications[appdef.AppAi]; ok && !ctx.DetachedApps[appdef.AppAi] {
 		aiApp.AddEnv("CITECK_AI_RAG_ENABLED", "true")
 	}
@@ -155,50 +190,33 @@ func generateQdrant(ctx *NsGenContext) {
 // It exists for the daemon's pin seeding, which runs BEFORE Generate — the pins
 // are an input to it — and must not pay a Docker probe for a dependency this
 // namespace does not have. Qdrant is the third conditional dependency, and the
-// only one whose condition is not in namespace.yml at all: it follows the RAG
-// webapp, which comes from the BUNDLE.
+// only one whose condition is not in namespace.yml at all: it follows the
+// BUNDLE, which either carries a qdrant image or does not.
 //
 // Like namespaceDependencies' two other conditions, this RESTATES a rule that
 // lives in the generator, and the two are checked against each other by running
 // the real thing (TestNamespaceDependenciesMatchesWhatTheGeneratorEmits). The
 // dangerous direction is answering FALSE wrongly — no pin means the bundle's
-// image is applied to an existing index — so every condition below is one the
-// generator checks before it emits anything.
+// image is applied to an existing index — and the condition below is the single
+// one the generator checks before it emits anything.
+//
+// The consumer set is deliberately NOT read here. It used to be: qdrant was
+// generated only beside rag, so the restatement had to repeat generateBundle
+// Webapps' rules (bundle carries the app, workspace webapp list is a filter,
+// webappEnabled) to predict rag. Since the store became independent of its
+// consumers, all of that is gone — a namespace whose consumers are all detached
+// or absent still HAS the dependency, still runs it on an explicit start, and
+// therefore still needs its pin.
+//
 // The detach set is still a PARAMETER (spelled `_`) so this restatement keeps
 // taking exactly what the generator takes and the parity test can hand both the
-// same arguments — but it no longer changes the answer: since the companion
-// rule landed, a detached rag keeps its (auto-detached) qdrant, so the
-// namespace still HAS the dependency and still needs its pin. Do not drop the
-// parameter: a future condition that does depend on it would have to be
-// threaded back through namespaceDependencies and every caller.
+// same arguments. Do not drop it: a future condition that does depend on it
+// would have to be threaded back through namespaceDependencies and every caller.
 func WillGenerateQdrant(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, _ map[string]bool) bool {
 	if cfg == nil || bun == nil {
 		return false
 	}
-	// generateBundleWebapps: the bundle must carry the app, and a non-empty
-	// workspace webapp list is a FILTER over what the bundle carries.
-	if _, ok := bun.Applications[appdef.AppRag]; !ok {
-		return false
-	}
-	if wsCfg != nil && len(wsCfg.Webapps) > 0 {
-		var listed bool
-		for _, w := range wsCfg.Webapps {
-			if w.ID == appdef.AppRag {
-				listed = true
-				break
-			}
-		}
-		if !listed {
-			return false
-		}
-	}
 	ctx := NewNsGenContext(cfg, bun)
 	ctx.WorkspaceConfig = wsCfg
-	// generateWebapp's own first gate, which reads both config layers.
-	if !webappEnabled(appdef.AppRag, ctx) {
-		return false
-	}
-	// And generateQdrant's last one: with no qdrant image anywhere, rag starts
-	// without a vector store and there is no container to pin.
 	return resolveAppImage(ctx, appdef.AppQdrant, "", "") != ""
 }
