@@ -129,11 +129,15 @@ class NamespaceGeneratorRagTest {
 
     @Test
     fun `a bundle that offers qdrant gets one even with no rag anywhere`() {
-        // The enterprise 2026.2 / 2026.3-RC2 shape. The store is not private to
-        // rag: the launcher offers it, auto-detached so nothing starts it, and
-        // whatever is pointed at it next needs only a dependsOn. The bundle is
-        // read for PRESENCE only -- the version stays pinned in this launcher,
-        // which has no dependency gate.
+        // The store is not private to rag: the launcher offers it, auto-detached
+        // so nothing starts it, and whatever is pointed at it next needs only a
+        // dependsOn. The bundle is read for PRESENCE only -- the version stays
+        // pinned in this launcher, which has no dependency gate.
+        //
+        // No public bundle has this shape today (every one that names qdrant
+        // also names EcosRagApp), which is what makes this a test rather than a
+        // field report: the case is reachable only through a bundle nobody has
+        // written yet, and it is the one the rule exists for.
         val context = createContext(withRagInBundle = false, qdrantImageInBundle = "qdrant/qdrant:v1.14.1")
         NamespaceGenerator().generateQdrant(context)
 
