@@ -36,9 +36,9 @@ class NamespaceGenerator {
         )
 
         /**
-         * Приложения, которые читают и пишут векторное хранилище. Хранилище не
-         * принадлежит ни одному из них — список решает только, держит ли его
-         * кто-то сейчас (см. [generateQdrant]).
+         * Apps that read and write the vector store. The store belongs to none
+         * of them: this list answers one question only -- whether anyone is
+         * holding it right now (see [generateQdrant]).
          */
         internal val QDRANT_CONSUMERS = setOf(AppName.RAG)
 
@@ -308,12 +308,12 @@ class NamespaceGenerator {
 
     internal fun generateSttSidecar(context: NsGenContext) {
         val aiApp = context.applications[AppName.AI] ?: return
-        // Отцепленный ai больше не удаляет свой сайдкар — по той же причине, по
-        // которой generateQdrant оставляет qdrant рядом с отцепленным rag:
-        // остановка владельца в лончере и есть способ запустить его из IDE, а
-        // сайдкар — ровно то, к чему такому владельцу надо подключаться.
-        // markAutoDetached оставляет сайдкар остановленным у всех, кто просто
-        // выключил ai.
+        // A detached ai no longer deletes its sidecar, for the same reason
+        // generateQdrant keeps qdrant beside a detached rag: stopping the owner
+        // in the launcher IS how it gets run from an IDE instead, and the
+        // sidecar is exactly what such an owner has to reach. markAutoDetached
+        // is what keeps the sidecar stopped for everyone who simply switched ai
+        // off.
         val props = context.workspaceConfig.sttSidecar
         val port = props.port
         val image = props.image.takeIf { it.isNotBlank() }
@@ -347,11 +347,11 @@ class NamespaceGenerator {
     }
 
     internal fun generateQdrant(context: NsGenContext) {
-        // Хранилище не принадлежит rag. Оно генерируется, если его предлагает
-        // бандл ИЛИ если в неймспейсе есть потребитель, а [QDRANT_CONSUMERS]
-        // решает ровно один вопрос: держит ли его кто-нибудь ПРЯМО СЕЙЧАС.
-        // Второй потребитель — это строка в списке плюс его собственная
-        // проводка, больше в правиле ничего rag-специфичного нет.
+        // The store does not belong to rag. It is generated when the bundle
+        // offers it OR when the namespace has a consumer, and [QDRANT_CONSUMERS]
+        // answers one question only: is anyone holding it RIGHT NOW. A second
+        // consumer is one line in that list plus its own wiring -- nothing else
+        // in the rule is rag-specific.
         var consumerHolds = false
         var consumerPresent = false
         for (consumer in QDRANT_CONSUMERS) {
@@ -363,21 +363,21 @@ class NamespaceGenerator {
                 consumerHolds = true
             }
         }
-        // В 2.x условие — образ qdrant в бандле. Здесь версия прибита
-        // константой (гейтлесс лончер не читает версии зависимостей), поэтому
-        // наличия потребителя достаточно: иначе на 13 внутренних бандлах,
-        // которые объявляют EcosRagApp и не объявляют qdrant, хранилище
-        // ИСЧЕЗЛО бы вместе с этой правкой. Наличие ключа в бандле читается,
-        // версия — нет.
+        // In 2.x the condition is the qdrant image in the bundle. Here the
+        // version is a CONSTANT (a gate-less launcher must not read dependency
+        // versions), so a consumer alone is enough: a bundle-only condition
+        // would have DELETED the store on the 13 internal bundles that declare
+        // EcosRagApp and no qdrant. The bundle is read for the key's presence,
+        // never for the version.
         val bundleOffersStore = context.bundle.applications.containsKey(AppName.QDRANT)
         if (!bundleOffersStore && !consumerPresent) {
             return
         }
-        // Хранилище переживает и отцепление потребителя, и его отсутствие:
-        // остановка rag в лончере — это и есть способ запустить его из IDE, а
-        // локальному rag всё равно нужен qdrant на localhost. markAutoDetached
-        // оставляет его остановленным у всех, кто просто выключил RAG, и у
-        // всех, кому его пока не к чему подключать.
+        // The store outlives both a consumer's detach and its absence:
+        // stopping rag in the launcher IS how it gets run from an IDE, and a
+        // locally run rag still needs a qdrant on localhost. markAutoDetached
+        // keeps it stopped for everyone who simply switched RAG off, and for
+        // everyone who has nothing to point at it yet.
         if (!consumerHolds) {
             context.markAutoDetached(AppName.QDRANT)
         }
@@ -400,11 +400,11 @@ class NamespaceGenerator {
             // rag would wait on it until the failure threshold expired. Every other
             // probed app here publishes the port it is probed on.
             .addPort("$QDRANT_HTTP_PORT:$QDRANT_HTTP_PORT")
-            // gRPC-порт публикуется по той же причине, по которой postgres
-            // публикует 14523: rag, запущенный ВНЕ лончера (остановлен здесь,
-            // поднят из IDE), ходит в хранилище по gRPC —
+            // The gRPC port is published for the same reason postgres
+            // publishes 14523: a rag run OUTSIDE the launcher (stopped here,
+            // started from an IDE) talks to the store over gRPC --
             // spring.ai.vectorstore.qdrant.port = ${QDRANT_GRPC_PORT:6334}, —
-            // а на 6333 только HTTP.
+            // while 6333 carries HTTP only.
             .addPort("${props.grpcPort}:${props.grpcPort}")
             // The gRPC port is configuration, so the container has to hear about it too:
             // rag is told QDRANT_GRPC_PORT and would otherwise dial a port qdrant never
@@ -427,15 +427,15 @@ class NamespaceGenerator {
         // `!context.detachedApps.contains(AppName.QDRANT)`. AI works without speech recognition,
         // but rag cannot search or index anything without its vector store -- a "running" rag
         // with qdrant detached would just be silently broken. Do not add that guard here.
-        // Хранилище без rag в неймспейсе: сгенерировано, никем не удерживается
-        // и ни к кому не подключено — всё ниже относится к самому rag.
+        // A store with no rag in the namespace: generated, held by nobody and
+        // wired to nobody. Everything below is rag's own wiring.
         val ragApp = context.applications[AppName.RAG] ?: return
         ragApp.addEnv("QDRANT_HOST", AppName.QDRANT)
             .addEnv("QDRANT_GRPC_PORT", props.grpcPort.toString())
             .addDependsOn(AppName.QDRANT)
 
-        // Сюда можно попасть только при наличии rag (выход выше): неймспейс, у
-        // которого просто ЕСТЬ хранилище, не становится rag-неймспейсом.
+        // Reached only with rag present (the return above): a namespace that
+        // merely HAS a vector store is not a RAG namespace.
         val aiApp = context.applications[AppName.AI]
         if (aiApp != null && !context.detachedApps.contains(AppName.AI)) {
             aiApp.addEnv("CITECK_AI_RAG_ENABLED", "true")

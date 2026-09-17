@@ -95,12 +95,11 @@ class NamespaceRuntime(
     internal val detachedApps = Collections.newSetFromMap<String>(ConcurrentHashMap())
 
     /**
-     * Приложения, которые генератор отдал, но СТАРТОВАТЬ сами они не должны:
-     * companion (qdrant, stt-sidecar) при отцепленном владельце (rag, ai).
-     * Решает только автозапуск: то, что уже поднято, сюда не попадает, и ничего
-     * здесь контейнеры не останавливает. Пересчитывается на каждой генерации и
-     * НЕ персистится — персистится состояние владельца, из которого это
-     * выводится.
+     * Apps the generator emitted that must NOT start by themselves: a
+     * companion (qdrant, stt-sidecar) nobody is holding. This decides autostart
+     * and nothing else -- an app that is already up never enters the set, and
+     * nothing here stops a container. Recomputed on every generation and NOT
+     * persisted: what is persisted is the state it is derived from.
      */
     internal val autoDetachedApps = Collections.newSetFromMap<String>(ConcurrentHashMap())
 
@@ -252,23 +251,23 @@ class NamespaceRuntime(
     }
 
     /**
-     * Отцеплено ли приложение — самим оператором или потому, что отцеплен его
-     * владелец. Единственная проверка, которую должен делать рантайм.
+     * Whether an app is detached -- by the operator, or because nothing is
+     * holding it. The single check the runtime should ever make.
      */
     fun isAppDetached(appName: String): Boolean {
         return detachedApps.contains(appName) || autoDetachedApps.contains(appName)
     }
 
     /**
-     * Ставит вердикт генератора (см. [autoDetachedApps]).
+     * Installs the generator's verdict (see [autoDetachedApps]).
      *
-     * Приложение, которое НЕ остановлено, в вердикт не попадает вовсе — и это
-     * одно правило заменяет всю машинерию, которая иначе понадобилась бы.
-     * Останавливать поднятый companion — дело оператора, а не лончера:
-     * "владелец выключен" не повод гасить хранилище, которое потом может читать
-     * и другой сервис, а контейнер, снятый лончером за спиной у оператора, хуже
-     * того, который оператор остановит сам. Из того же правила бесплатно
-     * следует, что явный старт переживает любые последующие генерации.
+     * An app that is NOT stopped never enters the verdict at all, and that one
+     * rule replaces all the machinery the alternative would need. Stopping a
+     * running companion is the operator's business, not the launcher's: "the
+     * owner is off" is no reason to take down a store another service may read,
+     * and a container the launcher removes behind the operator's back is worse
+     * than one the operator stops themselves. The same rule gives, for free,
+     * that an explicit start survives every later generation.
      */
     private fun setAutoDetachedApps(apps: Set<String>) {
         val runtimesByName = appRuntimes.getValue().associateBy { it.name }
@@ -281,9 +280,9 @@ class NamespaceRuntime(
     }
 
     /**
-     * Снимает запрет на автозапуск в тот момент, когда приложение запускает сам
-     * оператор. Помнить об этом больше ничему не нужно: приложение перестаёт
-     * быть STOPPED, а вердикт добирается только до остановленных.
+     * Lifts the autostart ban the moment the operator starts the app. Nothing
+     * else has to remember that: the app stops being STOPPED, and the verdict
+     * only ever reaches stopped apps.
      */
     private fun clearAutoDetach(appName: String) {
         autoDetachedApps.remove(appName)
@@ -755,14 +754,15 @@ class NamespaceRuntime(
         runtimesToRemove.addAll(currentRuntimesByName.values)
         currentRuntimesByName.values.forEach { it.stop() }
 
-        // СТРОГО здесь: до цикла запуска новых рантаймов ниже (иначе companion при
-        // отцепленном владельце успеет стартовать) и ВНЕ условия под ним — то
-        // условие ложно ровно в интересном случае: оператор остановил владельца,
-        // состав приложений не изменился, и без этого вызова уже поднятый
-        // companion остался бы работать вопреки обещанию "выключенный владелец не
-        // стоит памяти". Набор именной, поэтому ещё не добавленные в appRuntimes
-        // новые рантаймы он всё равно накрывает, а гасить надо как раз те, что уже
-        // в appRuntimes.
+        // STRICTLY here: before the new-runtime start loop below (or a companion
+        // whose owner is detached gets to start first) and OUTSIDE the condition
+        // under it -- that condition is false in exactly the interesting case:
+        // the operator stopped the owner, the app composition did not change,
+        // and without this call an already running companion would keep running
+        // against the promise that a switched-off owner costs no memory. The set
+        // is by name, so it still covers runtimes not yet added to appRuntimes,
+        // and the ones that need withholding are precisely those already in
+        // appRuntimes.
         setAutoDetachedApps(newGenRes.autoDetachedApps)
 
         if (newRuntimes.isNotEmpty() || currentRuntimesByName.isNotEmpty()) {

@@ -107,11 +107,12 @@ class NamespaceGeneratorAiTest {
 
     @Test
     fun `ai detached - stt-sidecar stays but is auto-detached`() {
-        // Останавливая ai в лончере, его запускают из IDE — и сайдкар нужен
-        // именно тогда. Спека остаётся, автозапуска нет: рантайм не стартует
-        // auto-detached приложения сам. Проводка ai -> stt следует отцепленности
-        // САЙДКАРА, а не ai: иначе каждый старт/стоп ai переписывал бы def ai и
-        // пересоздавал контейнер.
+        // Stopping ai in the launcher is how it gets run from an IDE, and that
+        // is exactly when the sidecar is needed. The spec stays, autostart does
+        // not: the runtime never starts an auto-detached app by itself. The
+        // ai -> stt wiring follows the SIDECAR's detach state, not ai's, or
+        // every start/stop of ai would rewrite ai's def and recreate its
+        // container.
         val context = createContext(detachedApps = setOf(AppName.AI))
         NamespaceGenerator().generateSttSidecar(context)
 

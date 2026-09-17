@@ -5,7 +5,7 @@ import ru.citeck.launcher.core.config.cloud.CloudConfig
 
 class NamespaceGenResp(
     /**
-     * Список приложений, которые будут доступны
+     * The apps that will be available
      */
     val applications: List<ApplicationDef>,
     /**
@@ -20,9 +20,9 @@ class NamespaceGenResp(
     val dependsOnDetachedApps: Set<String>,
 
     /**
-     * Приложения, которые сгенерированы, но которые рантайм не должен запускать
-     * сам: companion (qdrant, stt-sidecar), чей владелец (rag, ai) отцеплен.
-     * Явный старт оператором это перебивает — см. NamespaceRuntime.
+     * Apps that are generated but must not be started by the runtime itself: a
+     * companion (qdrant, stt-sidecar) nobody is holding. An explicit start by
+     * the operator overrides it -- see NamespaceRuntime.
      */
     val autoDetachedApps: Set<String> = emptySet()
 )

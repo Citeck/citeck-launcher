@@ -194,9 +194,9 @@ class NamespaceGeneratorGenerateTest {
     fun `detaching rag keeps qdrant in the result, auto-detached`() {
         val resp = generate(detachedApps = setOf(AppName.RAG))
 
-        // Хранилище остаётся описанным: остановка rag — это способ запустить его
-        // из IDE, и подключаться такому rag надо к qdrant на localhost. Само оно
-        // не стартует — рантайм не запускает auto-detached приложения.
+        // The store stays described: stopping rag is how it gets run from an
+        // IDE, and such a rag has to reach a qdrant on localhost. It does not
+        // start by itself -- the runtime never starts an auto-detached app.
         assertThat(resp.names()).contains(AppName.QDRANT)
         assertThat(resp.autoDetachedApps).contains(AppName.QDRANT)
         assertThat(resp.app(AppName.RAG)!!.dependsOn).contains(AppName.QDRANT)

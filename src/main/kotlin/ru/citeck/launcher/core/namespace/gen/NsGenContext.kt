@@ -20,11 +20,11 @@ class NsGenContext(
     val cloudConfig: MutableCloudConfig = CloudConfigImpl(),
     val links: MutableList<NamespaceLink> = ArrayList(),
     /**
-     * Приложения, которые генерируются, но которые рантайм не должен запускать
-     * сам: companion (qdrant, stt-sidecar), чей владелец (rag, ai) отцеплен.
-     * Спека остаётся в неймспейсе, чтобы её можно было поднять вручную для
-     * локальной отладки владельца, и остаётся остановленной у всех, кто просто
-     * выключил владельца. Уходит наружу как [NamespaceGenResp.autoDetachedApps].
+     * Apps that are generated but must not be started by the runtime itself: a
+     * companion (qdrant, stt-sidecar) nobody is holding. The spec stays in the
+     * namespace so it can be started by hand for local debugging of its
+     * consumer, and stays stopped for everyone who simply switched that
+     * consumer off. Surfaced as [NamespaceGenResp.autoDetachedApps].
      */
     val autoDetachedApps: MutableSet<String> = LinkedHashSet()
 ) {
@@ -66,8 +66,8 @@ class NsGenContext(
     }
 
     /**
-     * Помечает [name] как сгенерированное, но не подлежащее автозапуску —
-     * см. [autoDetachedApps]. Явный старт оператором это перебивает.
+     * Marks [name] as generated but not eligible for autostart -- see
+     * [autoDetachedApps]. An explicit start by the operator overrides it.
      */
     fun markAutoDetached(name: String) {
         autoDetachedApps.add(name)
