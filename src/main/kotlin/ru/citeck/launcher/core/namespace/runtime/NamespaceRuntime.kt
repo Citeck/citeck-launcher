@@ -275,8 +275,33 @@ class NamespaceRuntime(
             val runtime = runtimesByName[name]
             runtime == null || runtime.status.getValue() == AppRuntimeStatus.STOPPED
         }
+        val lifted = autoDetachedApps.filterTo(HashSet()) { !next.contains(it) }
         autoDetachedApps.retainAll(next)
         autoDetachedApps.addAll(next)
+
+        // Lifting the verdict has to hand the app BACK to the state machine, and
+        // that is a start rather than a flag: the loop never advances a STOPPED
+        // app, and the start loop below only ever reaches NEW runtimes. Without
+        // this, re-attaching rag left qdrant STOPPED forever while rag sat in
+        // DEPS_WAITING naming it -- found on a real server. An app the operator
+        // stopped by hand is in detachedApps and is deliberately left alone: the
+        // verdict is not their intent and must not overwrite it. A namespace
+        // that is not up starts nothing, or a regeneration would restart what
+        // the operator stopped.
+        if (lifted.isEmpty() || nsStatus.getValue().isStoppingState()) {
+            return
+        }
+        for (name in lifted) {
+            if (detachedApps.contains(name)) {
+                continue
+            }
+            val runtime = runtimesByName[name] ?: continue
+            if (runtime.status.getValue() != AppRuntimeStatus.STOPPED) {
+                continue
+            }
+            log.info { "Auto-detach lifted for '$name' -- handing it back to the state machine" }
+            runtime.start()
+        }
     }
 
     /**
