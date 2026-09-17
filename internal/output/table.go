@@ -279,11 +279,11 @@ func HeldRootsForApp(apps []api.AppDto, appName string) []string {
 //
 // For a HELD app every unmet dependency is by construction either the detached
 // app itself or another app held by the same rule (see
-// Runtime.heldByDetachedDepsWalk), so "not DEPS_WAITING" is exactly the set of
+// Runtime.heldByStoppedDepsWalk), so "not DEPS_WAITING" is exactly the set of
 // detached roots. The filter is NOT `== "STOPPED"`: StopApp records the detach
 // in manualStoppedApps synchronously, BEFORE the stop can fail, so a detached
 // root can sit persistently in STOPPING_FAILED — and that spelling would then
-// produce "dependencies you stopped: ." with an empty list.
+// produce "stopped dependencies: ." with an empty list.
 func heldRootsOf(app api.AppDto) []string {
 	var roots []string
 	for _, dep := range app.WaitingFor {

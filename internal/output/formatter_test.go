@@ -467,7 +467,7 @@ func TestFormatAppTable_HeldDepsNamesTheDetachedRoots(t *testing.T) {
 // A detached root can sit persistently in STOPPING_FAILED: StopApp records the
 // detach in manualStoppedApps synchronously, BEFORE the stop can fail. Matching
 // only "STOPPED" dropped it from the list, and the sentence built from that list
-// then read "dependencies you stopped: ." with nothing after the colon.
+// then read "stopped dependencies: ." with nothing after the colon.
 func TestFormatAppTable_HeldDepsCoverADetachedRootThatFailedToStop(t *testing.T) {
 	apps := []api.AppDto{
 		{Name: "zookeeper", Status: "STOPPING_FAILED"},

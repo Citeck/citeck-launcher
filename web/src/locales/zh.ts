@@ -12,7 +12,7 @@ const zh = {
   'dashboard.openInBrowser.disabled': '应用程序未运行。请启动它以便在浏览器中打开。',
   'dashboard.openInBrowser.starting': '应用程序正在启动。请稍候...',
   'dashboard.openInBrowser.stalled': '应用程序已停止响应。请尝试重新启动。',
-  'dashboard.openInBrowser.held': '部分应用正在等待您停止的依赖。启动这些依赖后应用才可访问。',
+  'dashboard.openInBrowser.held': '部分应用正在等待已停止的依赖。启动这些依赖后应用才可访问。',
 
   // -- Docker not available screen --
   'dockerUnavailable.title': 'Docker 不可用',

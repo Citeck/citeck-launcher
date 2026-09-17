@@ -12,7 +12,7 @@ const de = {
   'dashboard.openInBrowser.disabled': 'Die Anwendung läuft nicht. Starten Sie sie, um im Browser zu öffnen.',
   'dashboard.openInBrowser.starting': 'Die Anwendung startet. Bitte warten...',
   'dashboard.openInBrowser.stalled': 'Die Anwendung hängt. Bitte versuchen Sie, sie erneut zu starten.',
-  'dashboard.openInBrowser.held': 'Einige Apps warten auf von Ihnen gestoppte Abhängigkeiten. Starten Sie diese, damit die Anwendung verfügbar wird.',
+  'dashboard.openInBrowser.held': 'Einige Apps warten auf gestoppte Abhängigkeiten. Starten Sie diese, damit die Anwendung verfügbar wird.',
 
   // -- Docker not available screen --
   'dockerUnavailable.title': 'Docker ist nicht verfügbar',

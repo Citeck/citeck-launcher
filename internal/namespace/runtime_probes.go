@@ -32,7 +32,7 @@ func (r *Runtime) checkStatus() {
 		if app.Status == AppStatusStartFailed || app.Status == AppStatusPullFailed {
 			anyStuck = true
 		}
-		if r.heldByDetachedDepsUnderLock(app) {
+		if r.heldByStoppedDepsUnderLock(app) {
 			anyStuck = true
 		}
 	}

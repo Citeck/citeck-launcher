@@ -48,7 +48,7 @@ func TestHeldSummary_NamesTheRootsAndTheCounts(t *testing.T) {
 
 	// Whole line, for the reason spelled out above: "9 of 2 apps" contains the
 	// same two digits as "2 of 9 apps".
-	const want = "2 of 9 apps are waiting for dependencies you stopped: zookeeper. " +
+	const want = "2 of 9 apps are waiting for stopped dependencies: zookeeper. " +
 		"Start them to release the rest."
 	if got := HeldSummary(2, 9, []string{"zookeeper"}); got != want {
 		t.Errorf("got %q, want %q", got, want)

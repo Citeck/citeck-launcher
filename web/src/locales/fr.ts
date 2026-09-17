@@ -12,7 +12,7 @@ const fr = {
   'dashboard.openInBrowser.disabled': 'L\u2019application n\u2019est pas en cours d\u2019ex\u00e9cution. D\u00e9marrez-la pour l\u2019ouvrir dans le navigateur.',
   'dashboard.openInBrowser.starting': 'L\u2019application d\u00e9marre. Veuillez patienter...',
   'dashboard.openInBrowser.stalled': 'L\u2019application est bloqu\u00e9e. Veuillez essayer de la red\u00e9marrer.',
-  'dashboard.openInBrowser.held': 'Certaines applications attendent des dépendances que vous avez arrêtées. Démarrez-les pour rendre l’application accessible.',
+  'dashboard.openInBrowser.held': 'Certaines applications attendent des dépendances arrêtées. Démarrez-les pour rendre l\'application disponible.',
 
   // -- Docker not available screen --
   'dockerUnavailable.title': 'Docker n\'est pas disponible',

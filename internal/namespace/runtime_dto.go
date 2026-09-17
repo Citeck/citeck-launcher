@@ -43,7 +43,7 @@ func (r *Runtime) ToNamespaceDto() api.NamespaceDto {
 			InitTotal:        initTotal,
 			InitName:         initName,
 			WaitingFor:       r.appWaitingForDeps(app),
-			Held:             r.heldByDetachedDepsUnderLock(app),
+			Held:             r.heldByStoppedDepsUnderLock(app),
 			Detached:         r.isDetachedLocked(app.Name),
 		})
 	}
