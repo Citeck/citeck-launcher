@@ -23,7 +23,7 @@ func (r *Runtime) checkStatus() {
 	anyStuck := false
 	for _, app := range r.apps {
 		// Skip manually-stopped apps — they are intentionally detached
-		if r.manualStoppedApps[app.Name] {
+		if r.isDetachedLocked(app.Name) {
 			continue
 		}
 		if app.Status != AppStatusRunning {
@@ -32,7 +32,7 @@ func (r *Runtime) checkStatus() {
 		if app.Status == AppStatusStartFailed || app.Status == AppStatusPullFailed {
 			anyStuck = true
 		}
-		if r.heldByDetachedDepsUnderLock(app) {
+		if r.heldByStoppedDepsUnderLock(app) {
 			anyStuck = true
 		}
 	}

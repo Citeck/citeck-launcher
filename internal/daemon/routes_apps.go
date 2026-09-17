@@ -348,9 +348,10 @@ func perAppLifecycleAllowed(status namespace.NsRuntimeStatus) bool {
 // stepAllApps already guards against internally.
 //
 // The ONE thing a per-app start can still carry out with the loop down is
-// ATTACHING a detached app — clearing its user-intent STOPPED flag is a
-// persisted decision, and for an app that gates the composition (rag deciding
-// whether qdrant exists, ai, onlyoffice) it also regenerates. The app then
+// ATTACHING a detached app — clearing its STOPPED flag is a persisted decision
+// (or, for a companion the generator detached, a session one), and for an app
+// that gates the composition (rag deciding whether qdrant exists, ai,
+// onlyoffice) it also regenerates. The app then
 // starts with the namespace, which is what attaching means. That case is
 // allowed, and it needs the app to be in the runtime's registry: a namespace
 // that has never been started in this process has none, so there is nothing
@@ -359,7 +360,11 @@ func (d *Daemon) requireRunningNamespaceForApp(w http.ResponseWriter, r *http.Re
 	if rt == nil || perAppLifecycleAllowed(rt.Status()) {
 		return true
 	}
-	if rt.FindApp(name) != nil && rt.ManualStoppedApps()[name] {
+	// The EFFECTIVE detach answer (manual OR auto), because that is the one the
+	// app table's start button is enabled from: a companion the generator
+	// detached — qdrant beside a stopped rag — is exactly the app somebody
+	// starts here, to point a locally run rag at this stand's store.
+	if rt.FindApp(name) != nil && rt.IsAppDetached(name) {
 		return true
 	}
 	writeErrorCode(w, http.StatusConflict, api.ErrCodeNamespaceNotRunning,

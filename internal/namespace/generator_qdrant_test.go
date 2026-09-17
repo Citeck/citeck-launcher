@@ -32,7 +32,7 @@ func TestQdrant_GeneratedWhenRagIsPresent(t *testing.T) {
 	require.NoError(t, err)
 
 	qdrant := findGeneratedApp(resp, appdef.AppQdrant)
-	require.NotNil(t, qdrant, "qdrant генерируется вместе с rag")
+	require.NotNil(t, qdrant, "qdrant is generated alongside rag")
 	assert.Equal(t, "qdrant/qdrant:v1.14.1", qdrant.Image)
 	assert.Equal(t, appdef.KindThirdParty, qdrant.Kind)
 
@@ -49,11 +49,14 @@ func TestQdrant_GeneratedWhenRagIsPresent(t *testing.T) {
 	ai := findGeneratedApp(resp, appdef.AppAi)
 	require.NotNil(t, ai)
 	enabled, ok := ai.Environments.Get("CITECK_AI_RAG_ENABLED")
-	require.True(t, ok, "иначе ассистент не воспользуется rag: флаг в ai по умолчанию false")
+	require.True(t, ok, "without it the assistant never uses rag: ai ships with the flag false")
 	assert.Equal(t, "true", enabled)
 }
 
-func TestQdrant_AbsentWhenRagIsNotInTheBundle(t *testing.T) {
+// TestQdrant_AbsentWhenTheBundleCarriesNoImage is what keeps the store off
+// community stands, and the condition is the IMAGE, not rag: no community
+// bundle names a qdrant image, above the `dependencies:` section or inside it.
+func TestQdrant_AbsentWhenTheBundleCarriesNoImage(t *testing.T) {
 	config.ResetDesktopMode()
 	bun := &bundle.Def{Applications: map[string]bundle.AppDef{
 		"ai": {Image: "harbor.citeck.ru/enterprise/ai:1.12.0"},
@@ -62,29 +65,67 @@ func TestQdrant_AbsentWhenRagIsNotInTheBundle(t *testing.T) {
 	resp, err := Generate(basicCfg(), bun, ragWorkspace(), SystemSecrets{JWT: "j", OIDC: "o"})
 	require.NoError(t, err)
 
-	assert.Nil(t, findGeneratedApp(resp, appdef.AppRag), "community-бандл не должен приносить rag")
+	assert.Nil(t, findGeneratedApp(resp, appdef.AppRag), "a community bundle must not bring rag")
 	assert.Nil(t, findGeneratedApp(resp, appdef.AppQdrant))
 
 	ai := findGeneratedApp(resp, appdef.AppAi)
 	require.NotNil(t, ai)
 	_, ok := ai.Environments.Get("CITECK_AI_RAG_ENABLED")
-	assert.False(t, ok, "без rag флаг не выставляется")
+	assert.False(t, ok, "no rag, no flag")
 }
 
-func TestQdrant_AbsentWhenRagIsDetached(t *testing.T) {
+// TestQdrant_GeneratedWithoutRagWhenTheBundleCarriesTheImage: a qdrant image
+// and no EcosRagApp anywhere. The store is not private to rag — the launcher
+// offers it, auto-detached so nothing starts it, and whatever is pointed at it
+// next needs only a dependsOn.
+//
+// No public bundle has this shape today: running the real parser over all 18
+// files of the public workspace shows every bundle that names qdrant also names
+// EcosRagApp. That is what makes this a test rather than a field report — the
+// case is reachable only through a bundle nobody has written yet, and it is the
+// one the rule exists for.
+func TestQdrant_GeneratedWithoutRagWhenTheBundleCarriesTheImage(t *testing.T) {
+	config.ResetDesktopMode()
+	bun := ragBundle()
+	delete(bun.Applications, "rag")
+
+	resp, err := Generate(basicCfg(), bun, ragWorkspace(), SystemSecrets{JWT: "j", OIDC: "o"})
+	require.NoError(t, err)
+
+	qdrant := findGeneratedApp(resp, appdef.AppQdrant)
+	require.NotNil(t, qdrant, "the bundle's image is the only condition for generating the store")
+	assert.Equal(t, "qdrant/qdrant:v1.14.1", qdrant.Image)
+	assert.True(t, resp.AutoDetachedApps[appdef.AppQdrant],
+		"nobody holds the store, so it does not start by itself")
+	assert.Nil(t, findGeneratedApp(resp, appdef.AppRag))
+
+	ai := findGeneratedApp(resp, appdef.AppAi)
+	require.NotNil(t, ai)
+	_, ok := ai.Environments.Get("CITECK_AI_RAG_ENABLED")
+	assert.False(t, ok, "a store without rag does not make this a RAG namespace")
+	assert.False(t, resp.GatingApps[appdef.AppRag],
+		"nothing to regenerate for an app that is not in the namespace")
+}
+
+// TestQdrant_RagRagFlagFollowsPresenceNotDetachState: CITECK_AI_RAG_ENABLED
+// says whether this namespace HAS rag, not whether rag is running right now.
+// Stopping rag is how it is run from an IDE instead, and flipping the flag on
+// that toggle would rewrite — and therefore recreate — the ai container every
+// time.
+func TestQdrant_RagFlagFollowsPresenceNotDetachState(t *testing.T) {
 	config.ResetDesktopMode()
 	resp, err := Generate(basicCfg(), ragBundle(), ragWorkspace(),
 		SystemSecrets{JWT: "j", OIDC: "o"},
 		GenerateOpts{DetachedApps: map[string]bool{appdef.AppRag: true}})
 	require.NoError(t, err)
 
-	assert.NotNil(t, findGeneratedApp(resp, appdef.AppRag), "спека rag остаётся, чтобы её можно было включить")
-	assert.Nil(t, findGeneratedApp(resp, appdef.AppQdrant), "выключенный rag не тянет за собой qdrant")
+	assert.NotNil(t, findGeneratedApp(resp, appdef.AppRag), "rag's spec stays so it can be switched back on")
 
 	ai := findGeneratedApp(resp, appdef.AppAi)
 	require.NotNil(t, ai)
-	_, ok := ai.Environments.Get("CITECK_AI_RAG_ENABLED")
-	assert.False(t, ok)
+	enabled, ok := ai.Environments.Get("CITECK_AI_RAG_ENABLED")
+	require.True(t, ok, "a namespace with rag stays a RAG namespace across rag's detach")
+	assert.Equal(t, "true", enabled)
 }
 
 func TestQdrant_MarksRagAsGating(t *testing.T) {
@@ -92,7 +133,7 @@ func TestQdrant_MarksRagAsGating(t *testing.T) {
 	resp, err := Generate(basicCfg(), ragBundle(), ragWorkspace(), SystemSecrets{JWT: "j", OIDC: "o"})
 	require.NoError(t, err)
 	assert.True(t, resp.GatingApps[appdef.AppRag],
-		"без этого Start на rag не перегенерирует неймспейс и qdrant не появится")
+		"without this a Start on rag does not regenerate the namespace and qdrant never appears")
 }
 
 // TestQdrant_MarksRagAsGating_EvenWhenRagIsDetached closes a gap the reviewer
@@ -110,7 +151,7 @@ func TestQdrant_MarksRagAsGating_EvenWhenRagIsDetached(t *testing.T) {
 		GenerateOpts{DetachedApps: map[string]bool{appdef.AppRag: true}})
 	require.NoError(t, err)
 	assert.True(t, resp.GatingApps[appdef.AppRag],
-		"rag detached всё равно должен остаться gating — иначе Start на нём не перегенерирует неймспейс")
+		"a detached rag must stay gating, or a Start on it does not regenerate the namespace")
 }
 
 // TestQdrant_DetachedQdrant_RagKeepsHardDependency pins the decision from
@@ -135,17 +176,17 @@ func TestQdrant_DetachedQdrant_RagKeepsHardDependency(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NotNil(t, findGeneratedApp(resp, appdef.AppQdrant),
-		"спека qdrant остаётся даже detached, как у stt-sidecar")
+		"qdrant's spec stays even when detached, like stt-sidecar's")
 
 	rag := findGeneratedApp(resp, appdef.AppRag)
 	require.NotNil(t, rag)
 	host, ok := rag.Environments.Get("QDRANT_HOST")
-	require.True(t, ok, "detached qdrant не должен вырезать зависимость rag — иначе rag стартует молча сломанным")
+	require.True(t, ok, "a detached qdrant must not drop rag's dependency, or rag starts silently broken")
 	assert.Equal(t, appdef.AppQdrant, host)
 	_, ok = rag.Environments.Get("QDRANT_GRPC_PORT")
 	require.True(t, ok)
 	assert.Contains(t, []string(rag.DependsOn), appdef.AppQdrant,
-		"без dependsOn rag не встанет в DEPS_WAITING, а стартует без векторной БД")
+		"without dependsOn rag never parks in DEPS_WAITING and starts with no vector store")
 }
 
 // TestQdrant_ContainerShapeIsPinned covers what the rest of this file leaves to
@@ -329,4 +370,84 @@ func TestQdrant_VolumeFollowsTheGenerationCounter(t *testing.T) {
 	qdrant := findGeneratedApp(resp, appdef.AppQdrant)
 	require.NotNil(t, qdrant)
 	assert.Contains(t, qdrant.Volumes, "qdrant3:/qdrant/storage")
+}
+
+// TestQdrant_GeneratedButAutoDetachedWhenRagIsDetached pins the rule that
+// replaces "rag detached → no qdrant at all". Taking the vector store away with
+// rag broke the workflow the CloudConfigServer exists for — "stop in launcher,
+// debug locally": stopping rag to run it from an IDE also removed the store it
+// would talk to. The spec now stays in the namespace so it can be started on
+// its own, and the generator names it as AUTO-DETACHED so the runtime never
+// starts it by itself. A switched-off RAG still costs no memory.
+func TestQdrant_GeneratedButAutoDetachedWhenRagIsDetached(t *testing.T) {
+	config.ResetDesktopMode()
+	resp, err := Generate(basicCfg(), ragBundle(), ragWorkspace(),
+		SystemSecrets{JWT: "j", OIDC: "o"},
+		GenerateOpts{DetachedApps: map[string]bool{appdef.AppRag: true}})
+	require.NoError(t, err)
+
+	require.NotNil(t, findGeneratedApp(resp, appdef.AppQdrant),
+		"qdrant's spec stays, or a locally run rag has nothing to reach")
+	assert.True(t, resp.AutoDetachedApps[appdef.AppQdrant],
+		"otherwise qdrant starts by itself on every stand with rag switched off")
+}
+
+// TestQdrant_NotAutoDetachedWhenRagIsAttached is the other half: with rag on,
+// qdrant is an ordinary app and nothing may hold it back.
+func TestQdrant_NotAutoDetachedWhenRagIsAttached(t *testing.T) {
+	config.ResetDesktopMode()
+	resp, err := Generate(basicCfg(), ragBundle(), ragWorkspace(), SystemSecrets{JWT: "j", OIDC: "o"})
+	require.NoError(t, err)
+	assert.False(t, resp.AutoDetachedApps[appdef.AppQdrant])
+}
+
+// TestQdrant_PublishesGrpcPortForLocalDebugging: citeck-rag reaches qdrant over
+// gRPC (spring.ai.vectorstore.qdrant.port = ${QDRANT_GRPC_PORT:6334}), so a rag
+// run outside the launcher needs 6334 on the host — 6333 is published for the
+// HTTP probe and carries no gRPC. Postgres has published 14523 for this exact
+// reason since the beginning.
+func TestQdrant_PublishesGrpcPortForLocalDebugging(t *testing.T) {
+	t.Setenv("CITECK_DESKTOP", "true")
+	config.ResetDesktopMode()
+	defer config.ResetDesktopMode()
+	resp, err := Generate(basicCfg(), ragBundle(), ragWorkspace(), SystemSecrets{JWT: "j", OIDC: "o"})
+	require.NoError(t, err)
+
+	qdrant := findGeneratedApp(resp, appdef.AppQdrant)
+	require.NotNil(t, qdrant)
+	assert.Contains(t, qdrant.Ports, "6334:6334",
+		"without the published gRPC port a locally run rag cannot find the store")
+}
+
+// TestQdrant_HeldByAnyAttachedConsumer states the verdict in the terms the rule
+// is actually written in: the store is auto-detached when NOBODY holds it, and
+// rag is merely the only consumer there is today. A second consumer is one line
+// in qdrantConsumers — this test is what keeps the wiring honest if the list
+// grows: the answer must follow the consumer set, not the name "rag".
+func TestQdrant_HeldByAnyAttachedConsumer(t *testing.T) {
+	config.ResetDesktopMode()
+	// Swapping the package-level list is safe because nothing in this package
+	// calls t.Parallel; if that ever changes, this test has to grow its own
+	// context instead.
+	restore := qdrantConsumers
+	qdrantConsumers = []string{appdef.AppRag, appdef.AppAi}
+	defer func() { qdrantConsumers = restore }()
+
+	// rag detached, ai attached: the store is held by ai and must come up.
+	resp, err := Generate(basicCfg(), ragBundle(), ragWorkspace(),
+		SystemSecrets{JWT: "j", OIDC: "o"},
+		GenerateOpts{DetachedApps: map[string]bool{appdef.AppRag: true}})
+	require.NoError(t, err)
+	require.NotNil(t, findGeneratedApp(resp, appdef.AppQdrant))
+	assert.False(t, resp.AutoDetachedApps[appdef.AppQdrant],
+		"a second consumer holds the store; the verdict must not look at rag alone")
+	assert.True(t, resp.GatingApps[appdef.AppAi],
+		"toggling a consumer changes the generation, so it is gating")
+
+	// Both detached: nobody holds it.
+	resp, err = Generate(basicCfg(), ragBundle(), ragWorkspace(),
+		SystemSecrets{JWT: "j", OIDC: "o"},
+		GenerateOpts{DetachedApps: map[string]bool{appdef.AppRag: true, appdef.AppAi: true}})
+	require.NoError(t, err)
+	assert.True(t, resp.AutoDetachedApps[appdef.AppQdrant])
 }

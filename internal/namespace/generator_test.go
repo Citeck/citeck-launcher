@@ -1592,16 +1592,16 @@ func TestGatingApps_ReportedByGenerator(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.True(t, resp.GatingApps["ai"],
-		"переключение ai меняет состав неймспейса, значит требует регенерации")
+		"toggling ai changes the namespace composition, so it needs a regeneration")
 	assert.True(t, resp.GatingApps[appdef.AppOnlyoffice],
-		"переключение onlyoffice меняет ONLYOFFICE_TARGET на proxy, значит требует регенерации")
+		"toggling onlyoffice changes ONLYOFFICE_TARGET on proxy, so it needs a regeneration")
 	assert.True(t, resp.GatingApps[appdef.AppAlfresco],
-		"переключение alfresco меняет PROXY_TARGET/ALFRESCO_ENABLED на proxy, значит требует регенерации")
+		"toggling alfresco changes PROXY_TARGET/ALFRESCO_ENABLED on proxy, so it needs a regeneration")
 	// The sidecar decides whether AI gets CITECK_AI_CALLRECORDING_STT_SIDECARURL
 	// and DependsOn(stt-sidecar) at all (generateSttSidecar). It was in the
 	// hardcoded set this field replaced, and dropping it means a re-attached
 	// sidecar is never wired back into AI — speech-to-text stays silently dead
 	// until an unrelated reload.
 	assert.True(t, resp.GatingApps[appdef.AppSttSidecar],
-		"переключение stt-sidecar меняет env и dependsOn у ai, значит требует регенерации")
+		"toggling stt-sidecar changes ai's env and dependsOn, so it needs a regeneration")
 }

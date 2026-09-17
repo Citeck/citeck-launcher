@@ -395,8 +395,9 @@ func TestPinSurvivesAWorkspaceConfigWithNoWebapps(t *testing.T) {
 // KindThirdParty image that already exists locally).
 //
 // None of them MOVES, either: a version bump is a bundle's decision, not the
-// launcher's ("давай наверное всё-таки дефолт оставим на старой версии, а
-// повышать будем через бандлы"). postgres:18 was proposed as a default on this
+// launcher's (user ruling, translated: "let's keep the default on the older
+// version after all and raise it through bundles"). postgres:18 was proposed as
+// a default on this
 // branch and withdrawn before release — a bundle that names no postgres is not
 // asking for a new major, and it was the one thing that could put an upgrade
 // banner on a stand with nothing behind it. Every value here is what Kotlin
@@ -527,9 +528,10 @@ func TestAnUnparsableCandidateIsNotReportedAsBundleOlder(t *testing.T) {
 }
 
 // The user's ruling, stated from the generator side: a PATCH revert is not a
-// data move, so it applies silently and is not reported at all. ("патчи не
-// надо откатывать. В патчах как правило все ок с совместимостью. Только
-// «переломы» откатываем.") Holding it would additionally be a dead end — the
+// data move, so it applies silently and is not reported at all. (User ruling,
+// translated: "patches must not be rolled back. Patches are generally fine for
+// compatibility. Only breaking changes are rolled back.") Holding it would
+// additionally be a dead end — the
 // only door back would be `citeck deps upgrade`, which never moves data
 // backwards.
 func TestAPatchRevertAppliesSilently(t *testing.T) {

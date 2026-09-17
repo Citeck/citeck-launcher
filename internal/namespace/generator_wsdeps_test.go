@@ -288,7 +288,7 @@ func TestWorkspaceDependencyImageOverriddenByTheBundleIsReported(t *testing.T) {
 
 	assert.Equal(t, "postgres:17.5",
 		discardedWorkspaceImage(ctx, "postgres", "postgres:17.11"),
-		"проигравшее значение из workspace должно быть названо")
+		"the workspace value that lost must be named")
 }
 
 // Two cases that must stay silent: the workspace names the SAME image the

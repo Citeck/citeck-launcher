@@ -11,8 +11,9 @@ import (
 )
 
 // TestDoStart_AppsVisibleBeforeSnapshotPrePull pins the start-latency contract
-// behind the user-visible bug "все висит в Остановлен какое-то время (до
-// десятков секунд) и только потом статусы начинают меняться".
+// behind the user-visible bug (report translated: "everything hangs in
+// Stopped for a while, up to tens of seconds, and only then do the statuses
+// start changing").
 //
 // doStart used to publish nothing until its phase-3 commit: r.apps was left
 // empty (Runtime.Start blanks it) while phase-1 I/O ran — and the dominant

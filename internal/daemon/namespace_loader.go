@@ -476,13 +476,10 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 	if persistedState != nil {
 		maps.Copy(persistedPins, persistedState.Dependencies)
 	}
-	// The detach set is resolved BEFORE the seeding, not after, because the
-	// seeding now needs it: whether this namespace has a Qdrant to pin follows
-	// the RAG webapp, and a detached rag generates neither.
 	detached := detachedAppsOnLoad(persistedState, resolveResult.Workspace, nsCfg)
 	pins, seededPins := resolveDependencyPins(in.context(),
 		persistedPins, dockerDependencyProbe{dc: depsDockerOf(dc), volumesBase: volumesBase},
-		namespaceDependencies(nsCfg, bundleDef, wsCfg, detached))
+		namespaceDependencies(nsCfg, bundleDef, wsCfg))
 	for id, st := range seededPins {
 		slog.Info("Dependency pin seeded", "ns", nsID, "dependency", id, "image", st.Image, "volumeGen", st.Gen())
 	}
@@ -652,6 +649,10 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 	// onlyoffice, alfresco) triggers a namespace regeneration — see
 	// regenOnAttachToggle in internal/daemon/attach_toggle_regen.go.
 	runtime.SetGatingApps(genResp.GatingApps)
+	// Wire AutoDetachedApps so a companion generated beside a DETACHED owner
+	// (qdrant beside rag, stt-sidecar beside ai) is not started by the loop.
+	// It must be installed before the runtime starts, or the seed would queue it.
+	runtime.SetAutoDetachedApps(genResp.AutoDetachedApps)
 
 	// Status recovery hint: caller chooses whether to act on it.
 	// - RUNNING / STARTING / STALLED → ShouldStart=true (re-adopt detached containers).

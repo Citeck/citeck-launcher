@@ -2,6 +2,7 @@ package namespace
 
 import (
 	"testing"
+	"time"
 
 	"github.com/citeck/citeck-launcher/internal/api"
 	"github.com/citeck/citeck-launcher/internal/appdef"
@@ -57,7 +58,7 @@ func TestDepsWaiting_StoppedDependencyHoldsDependent(t *testing.T) {
 	r.apps["rag"].Status = AppStatusReadyToStart
 
 	assert.False(t, r.appsDepsSatisfied(r.apps["rag"]),
-		"остановленная зависимость больше не считается удовлетворённой")
+		"a stopped dependency no longer counts as satisfied")
 	// The STATUS is part of the assertion on purpose: the name alone does not
 	// tell the operator whether the dependency is starting or was stopped by
 	// hand, so dropping it would otherwise pass unnoticed. It is compared as a
@@ -75,7 +76,7 @@ func TestDepsWaiting_AbsentDependencyStillSatisfied(t *testing.T) {
 	r.apps["rag"].Status = AppStatusReadyToStart
 
 	assert.True(t, r.appsDepsSatisfied(r.apps["rag"]),
-		"зависимость вне текущей генерации по-прежнему не блокирует")
+		"a dependency outside the current generation still does not block")
 }
 
 // TestDepsWaiting_DtoCarriesTheDependencyAndItsStatus pins the WIRE: the
@@ -169,7 +170,7 @@ func TestAHoldByADetachedDependencyStallsTheNamespace(t *testing.T) {
 	r.checkStatus()
 
 	assert.Equal(t, NsStatusStalled, r.status,
-		"удержание — это проблема, которая сама не решится, а не завершённый старт")
+		"a hold is a problem that will not resolve itself, not a finished start")
 }
 
 // …and the namespace comes back on its own the moment the operator starts the
@@ -193,21 +194,30 @@ func TestStartingTheDependencyAgainLiftsTheStall(t *testing.T) {
 	r.apps["postgres"].Status = AppStatusRunning
 
 	r.checkStatus()
-	assert.Equal(t, NsStatusStarting, r.status, "проблема снята — неймспейс снова поднимается")
+	assert.Equal(t, NsStatusStarting, r.status, "the problem is gone, so the namespace is coming up again")
 
 	r.apps["emodel"].Status = AppStatusRunning
 	r.checkStatus()
 	assert.Equal(t, NsStatusRunning, r.status)
 }
 
-// The narrow shape of that rule, asserted on the predicate itself rather than
-// on the namespace status: in checkStatus a dependency that is merely slow is
-// ALSO not RUNNING, so it keeps the namespace in STARTING on its own and a
-// status-level test would pass no matter how wide the predicate got (verified
-// by mutation — widening it to "every DEPS_WAITING app is settled" left such a
-// test green). What must hold here is the meaning: only a hold the user created
-// counts as settled.
-func TestOnlyADetachedDependencyMakesTheHoldSettled(t *testing.T) {
+// The shape of that rule, asserted on the predicate itself rather than on the
+// namespace status: in checkStatus a dependency that is merely slow is ALSO not
+// RUNNING, so it keeps the namespace in STARTING on its own and a status-level
+// test would pass no matter how wide the predicate got (verified by mutation —
+// widening it to "every DEPS_WAITING app is settled" left such a test green).
+// What must hold here is the meaning: a dependency that is STANDING STILL is a
+// hold, one that can still move on its own is not.
+//
+// The middle case USED to assert the opposite ("a stopped but not detached
+// dependency is not the user's decision to detach"), on the reading that only a
+// hold the user created counts. The auto-detach verdict showed that reading was
+// wrong: nothing in the runtime advances a STOPPED app — stepAllApps has no
+// STOPPED branch, the reconciler and the liveness probes only ever look at
+// RUNNING apps — so whoever stopped it, the wait ends only when somebody starts
+// it. Calling that "still coming up" reported a namespace RUNNING with a service
+// parked in it.
+func TestAStandingStillDependencyMakesTheHoldSettled(t *testing.T) {
 	r := newTestRuntimeWithApps(t, map[string]appdef.ApplicationDef{
 		"postgres": {Name: "postgres"},
 		"emodel":   {Name: "emodel", DependsOn: appdef.StringSet{"postgres"}},
@@ -215,15 +225,15 @@ func TestOnlyADetachedDependencyMakesTheHoldSettled(t *testing.T) {
 	r.apps["emodel"].Status = AppStatusDepsWaiting
 
 	r.apps["postgres"].Status = AppStatusStarting
-	assert.False(t, r.heldByDetachedDepsUnderLock(r.apps["emodel"]),
-		"зависимость ещё поднимается сама — это ожидание, а не решение пользователя")
+	assert.False(t, r.heldByStoppedDepsUnderLock(r.apps["emodel"]),
+		"the dependency is still coming up on its own: that is waiting, not a hold")
 
 	r.apps["postgres"].Status = AppStatusStopped
-	assert.False(t, r.heldByDetachedDepsUnderLock(r.apps["emodel"]),
-		"остановленная, но НЕ отцепленная зависимость — не решение пользователя отцепить")
+	assert.True(t, r.heldByStoppedDepsUnderLock(r.apps["emodel"]),
+		"a stopped dependency moves only on an explicit start, whoever stopped it")
 
 	r.manualStoppedApps["postgres"] = true
-	assert.True(t, r.heldByDetachedDepsUnderLock(r.apps["emodel"]))
+	assert.True(t, r.heldByStoppedDepsUnderLock(r.apps["emodel"]))
 }
 
 // A dependent waiting on two dependencies, one detached and one still starting,
@@ -239,8 +249,8 @@ func TestAMixedHoldIsNotSettled(t *testing.T) {
 	r.apps["zookeeper"].Status = AppStatusStarting
 	r.apps["emodel"].Status = AppStatusDepsWaiting
 
-	assert.False(t, r.heldByDetachedDepsUnderLock(r.apps["emodel"]),
-		"одна из зависимостей ещё может подняться сама")
+	assert.False(t, r.heldByStoppedDepsUnderLock(r.apps["emodel"]),
+		"one of the dependencies may still come up on its own")
 }
 
 // An app that is not in DEPS_WAITING at all is never "held" — the predicate
@@ -255,7 +265,7 @@ func TestOnlyADepsWaitingAppCanBeHeld(t *testing.T) {
 	r.apps["postgres"].Status = AppStatusStopped
 	r.apps["emodel"].Status = AppStatusStartFailed
 
-	assert.False(t, r.heldByDetachedDepsUnderLock(r.apps["emodel"]))
+	assert.False(t, r.heldByStoppedDepsUnderLock(r.apps["emodel"]))
 }
 
 // A DEPS_WAITING app whose dependencies are all satisfied is about to move to
@@ -270,7 +280,7 @@ func TestAnAppWithNoUnmetDependenciesIsNotHeld(t *testing.T) {
 	r.apps["postgres"].Status = AppStatusRunning
 	r.apps["emodel"].Status = AppStatusDepsWaiting
 
-	assert.False(t, r.heldByDetachedDepsUnderLock(r.apps["emodel"]))
+	assert.False(t, r.heldByStoppedDepsUnderLock(r.apps["emodel"]))
 }
 
 // The settling rule has to be TRANSITIVE, or it only moves the hang one link up
@@ -292,8 +302,8 @@ func TestTheSettlingRuleFollowsTheWholeChain(t *testing.T) {
 	r.apps["proxy"].Status = AppStatusDepsWaiting
 	r.status = NsStatusStarting
 
-	assert.True(t, r.heldByDetachedDepsUnderLock(r.apps["proxy"]),
-		"proxy ждёт gateway, который сам удерживается отцепленным zookeeper")
+	assert.True(t, r.heldByStoppedDepsUnderLock(r.apps["proxy"]),
+		"proxy waits on gateway, which is itself held by a detached zookeeper")
 
 	r.checkStatus()
 	assert.Equal(t, NsStatusStalled, r.status)
@@ -311,7 +321,7 @@ func TestAChainWithALiveLinkIsNotSettled(t *testing.T) {
 	r.apps["gateway"].Status = AppStatusDepsWaiting
 	r.apps["proxy"].Status = AppStatusDepsWaiting
 
-	assert.False(t, r.heldByDetachedDepsUnderLock(r.apps["proxy"]))
+	assert.False(t, r.heldByStoppedDepsUnderLock(r.apps["proxy"]))
 }
 
 // A dependency cycle is rejected at generation, but the predicate walks the
@@ -325,8 +335,8 @@ func TestTheSettlingWalkTerminatesOnACycle(t *testing.T) {
 	r.apps["a"].Status = AppStatusDepsWaiting
 	r.apps["b"].Status = AppStatusDepsWaiting
 
-	assert.False(t, r.heldByDetachedDepsUnderLock(r.apps["a"]),
-		"цикл без единой отцепленной зависимости ничем не удерживается")
+	assert.False(t, r.heldByStoppedDepsUnderLock(r.apps["a"]),
+		"a cycle with no detached dependency in it is held by nothing")
 }
 
 // The settled verdict travels on the wire as AppDto.Held, because deriving it
@@ -347,8 +357,8 @@ func TestTheDtoCarriesTheHeldVerdict(t *testing.T) {
 	dto := r.ToNamespaceDto()
 
 	assert.True(t, appDtoByName(t, dto, "gateway").Held)
-	assert.True(t, appDtoByName(t, dto, "proxy").Held, "решение должно быть транзитивным и на проводе")
-	assert.False(t, appDtoByName(t, dto, "zookeeper").Held, "сам отцепленный апп не «удерживается»")
+	assert.True(t, appDtoByName(t, dto, "proxy").Held, "the answer must be transitive on the wire too")
+	assert.False(t, appDtoByName(t, dto, "zookeeper").Held, "the detached app itself is not \"held\"")
 }
 
 // appsDepsSatisfied (the gate that parks an app in DEPS_WAITING) and unmetDeps
@@ -375,10 +385,54 @@ func TestTheDepsGateAndTheDepsReportAnswerTheSameQuestion(t *testing.T) {
 		reported := r.unmetDeps(app)
 
 		require.Equal(t, satisfied, len(reported) == 0,
-			"статус %s: гейт и отчёт разошлись — %v против %v", st, satisfied, reported)
+			"status %s: the gate and the report disagree -- %v vs %v", st, satisfied, reported)
 		for _, d := range reported {
 			require.NotEqual(t, "absent-from-this-generation", d.App,
-				"зависимости вне поколения не ждут — она не часть этого неймспейса")
+				"dependencies outside the generation are not waited on: it is not part of this namespace")
 		}
 	}
+}
+
+// TestAStoppedDependencyHoldsItsConsumerToo closes the gap the auto-detach
+// verdict opened. A companion the launcher held down and then RELEASED (the
+// consumer was re-attached) is STOPPED and NOT detached, and nothing advances a
+// STOPPED app on its own. Before this, the walk called such a dependency "still
+// moving": the consumer waited forever while checkStatus reported the namespace
+// RUNNING — a whole-and-usable namespace with a service parked in it.
+func TestAStoppedDependencyHoldsItsConsumerToo(t *testing.T) {
+	md := newMockDocker()
+	r := NewRuntime(testConfig(), md, t.TempDir())
+	defer r.Shutdown()
+
+	apps := []appdef.ApplicationDef{
+		simpleApp("postgres", "postgres:17"),
+		simpleApp("qdrant", "qdrant/qdrant:v1.19.1"),
+		simpleApp("rag", "rag:1", "qdrant"),
+	}
+	// The verdict holds the companion down; its consumer is detached too.
+	r.SetAutoDetachedApps(map[string]bool{"qdrant": true})
+	r.SetManualStoppedApps(map[string]bool{"rag": true})
+	r.Start(apps, false)
+	require.True(t, waitForStatus(r, NsStatusRunning, 20*time.Second))
+
+	// The operator re-attaches the consumer, and the next generation releases
+	// the companion — which stays STOPPED, because releasing is not starting.
+	require.NoError(t, r.StartApp("rag"))
+	r.SetAutoDetachedApps(map[string]bool{})
+
+	require.True(t, waitForStatus(r, NsStatusStalled, 20*time.Second),
+		"a namespace with a service waiting on a stopped app is not whole")
+
+	dto := r.ToNamespaceDto()
+	rag := appDtoByName(t, dto, "rag")
+	assert.Equal(t, "DEPS_WAITING", rag.Status)
+	assert.True(t, rag.Held, "the wait is a hold: only an explicit start ends it")
+	require.Len(t, rag.WaitingFor, 1)
+	assert.Equal(t, "qdrant", rag.WaitingFor[0].App,
+		"and the operator is told which app to start")
+
+	// Starting it is the whole recovery path, and the namespace comes back.
+	require.NoError(t, r.StartApp("qdrant"))
+	assert.True(t, waitForStatus(r, NsStatusRunning, 20*time.Second),
+		"once the dependency runs, the consumer follows and the hold is gone")
 }

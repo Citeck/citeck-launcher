@@ -178,7 +178,7 @@ func (r *Runtime) stepAllAppsUnderLock() []dispatchPlan { //nolint:gocyclo // si
 	for _, app := range r.apps {
 		// Detached apps are user-intent STOPPED — never advanced by the
 		// state machine. Re-attach happens via StartApp (T27–T30).
-		if r.manualStoppedApps[app.Name] {
+		if r.isDetachedLocked(app.Name) {
 			continue
 		}
 		switch app.Status {
@@ -754,7 +754,7 @@ func (r *Runtime) handleStopResult(res workers.Result) {
 	// records the detach intent. That intent must override any queued
 	// desiredNext — otherwise the app silently routes back up and the user's
 	// stop is lost. Read under the lock we already hold.
-	if r.manualStoppedApps[app.Name] {
+	if r.isDetachedLocked(app.Name) {
 		app.desiredNext = ""
 		r.setAppStatus(app, AppStatusStopped)
 		return
@@ -1480,8 +1480,9 @@ func (r *Runtime) handleLivenessProbeResult(res workers.Result) {
 	r.signalCh.Flush()
 }
 
-// heldByDetachedDepsUnderLock reports whether app is parked in DEPS_WAITING
-// solely because the user detached something it (transitively) depends on.
+// heldByStoppedDepsUnderLock reports whether app is parked in DEPS_WAITING
+// solely because something it (transitively) depends on is standing still —
+// detached by the operator, or stopped and waiting for one.
 //
 // Such an app is STUCK, not pending, and the difference is load-bearing:
 // checkStatus counted a non-RUNNING app as "not there yet" and only a FAILED one
@@ -1494,10 +1495,19 @@ func (r *Runtime) handleLivenessProbeResult(res workers.Result) {
 // means whole and usable, STALLED means a problem that will not resolve itself.
 // The same answer rides out as AppDto.Held so a client's wait loop can end.
 //
-// The rule is deliberately narrow: EVERY unmet dependency must be detached — or
-// itself held by this same rule. A dependency that is merely slow can still move
-// on its own, and calling that settled would report a namespace RUNNING while
-// half of it is coming up.
+// The rule is deliberately narrow: EVERY unmet dependency must be STANDING STILL
+// — detached, or simply STOPPED, or itself held by this same rule. A dependency
+// that is merely slow can still move on its own, and calling that settled would
+// report a namespace RUNNING while half of it is coming up.
+//
+// "Detached" alone was too narrow, and the auto-detach verdict is what exposed
+// it: a companion the launcher held down and then released is STOPPED and NOT
+// detached, and nothing in the runtime will advance it (stepAllApps has no
+// STOPPED branch — only an explicit start does). Its consumer therefore waits
+// forever on a dependency this walk called "still moving", so the namespace
+// reported RUNNING with a service parked. The owner's ruling: "stalled если не
+// все поднялось - это тоже ок" (translated: "stalled when not everything came
+// up is fine too").
 //
 // The walk is TRANSITIVE because a one-level rule only moves the hang one link
 // up: every webapp depends on zookeeper and rabbitmq and the proxy depends on
@@ -1507,11 +1517,11 @@ func (r *Runtime) handleLivenessProbeResult(res workers.Result) {
 // or a future generator bug must not spin the runtime loop).
 //
 // Caller must hold r.mu (read or write).
-func (r *Runtime) heldByDetachedDepsUnderLock(app *AppRuntime) bool {
-	return r.heldByDetachedDepsWalk(app, map[string]bool{})
+func (r *Runtime) heldByStoppedDepsUnderLock(app *AppRuntime) bool {
+	return r.heldByStoppedDepsWalk(app, map[string]bool{})
 }
 
-func (r *Runtime) heldByDetachedDepsWalk(app *AppRuntime, visiting map[string]bool) bool {
+func (r *Runtime) heldByStoppedDepsWalk(app *AppRuntime, visiting map[string]bool) bool {
 	if app.Status != AppStatusDepsWaiting {
 		return false
 	}
@@ -1528,11 +1538,21 @@ func (r *Runtime) heldByDetachedDepsWalk(app *AppRuntime, visiting map[string]bo
 		return false
 	}
 	for _, dep := range unmet {
-		if r.manualStoppedApps[dep.App] {
+		if r.isDetachedLocked(dep.App) {
 			continue
 		}
 		depApp, ok := r.apps[dep.App]
-		if !ok || !r.heldByDetachedDepsWalk(depApp, visiting) {
+		if !ok {
+			return false
+		}
+		// Not detached, but not going anywhere either: only an explicit start
+		// moves an app out of STOPPED, so waiting on one is a hold and not
+		// patience. STOPPING_FAILED is deliberately NOT here — that app is a
+		// failure in its own right and already stalls the namespace on its own.
+		if depApp.Status == AppStatusStopped {
+			continue
+		}
+		if !r.heldByStoppedDepsWalk(depApp, visiting) {
 			return false
 		}
 	}

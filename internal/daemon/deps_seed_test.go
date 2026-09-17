@@ -711,9 +711,10 @@ func TestNamespaceDependenciesMatchesWhatTheGeneratorEmits(t *testing.T) {
 }
 
 // The QDRANT half of the same contract, and it needs its own cases because its
-// switch is not in namespace.yml at all: qdrant follows the RAG webapp, which
-// comes from the BUNDLE, from the workspace webapp list that filters it, and
-// from the detach set.
+// switch is not in namespace.yml at all: the store follows the BUNDLE, which
+// either carries a qdrant image or does not. It no longer follows rag — a store
+// nobody is holding is generated (auto-detached) rather than dropped, so the
+// cases that take rag away must now predict it PRESENT.
 //
 // Wrongly predicting it ABSENT is the dangerous direction — no pin means the
 // bundle's image is applied to an existing vector index, across a minor Qdrant
@@ -734,51 +735,71 @@ func TestNamespaceDependenciesAnswersQdrantFromTheBundle(t *testing.T) {
 
 	t.Run("a rag bundle has a qdrant to pin", func(t *testing.T) {
 		assertPredictionMatchesGenerator(t, cfg, ragBundle(), ragWS(), nil)
-		assert.True(t, namespaceDependencies(cfg, ragBundle(), ragWS(), nil)[deps.Qdrant])
+		assert.True(t, namespaceDependencies(cfg, ragBundle(), ragWS())[deps.Qdrant])
 	})
 	t.Run("a community bundle has none", func(t *testing.T) {
 		bun := &bundle.Def{Applications: map[string]bundle.AppDef{
 			"emodel": {Image: "harbor.citeck.ru/community/emodel:1.0"}}}
 		ws := &bundle.WorkspaceConfig{Webapps: []bundle.WebappConfig{{ID: "emodel"}}}
 		assertPredictionMatchesGenerator(t, cfg, bun, ws, nil)
-		assert.False(t, namespaceDependencies(cfg, bun, ws, nil)[deps.Qdrant],
+		assert.False(t, namespaceDependencies(cfg, bun, ws)[deps.Qdrant],
 			"a stand that will never run rag must not pay a probe for it on every load")
 	})
-	t.Run("a detached rag generates neither", func(t *testing.T) {
+	// A detached rag KEEPS its qdrant (auto-detached, so nothing starts it), so
+	// the namespace still has the dependency — and still needs its pin. The pin
+	// is what the store's existing index is protected by, and the index does
+	// not stop existing because rag was stopped for an afternoon.
+	t.Run("a detached rag keeps its qdrant, and its pin", func(t *testing.T) {
 		detached := map[string]bool{"rag": true}
 		assertPredictionMatchesGenerator(t, cfg, ragBundle(), ragWS(), detached)
-		assert.False(t, namespaceDependencies(cfg, ragBundle(), ragWS(), detached)[deps.Qdrant])
+		assert.True(t, namespaceDependencies(cfg, ragBundle(), ragWS())[deps.Qdrant])
 	})
 	t.Run("a bundle with rag but no qdrant image generates neither", func(t *testing.T) {
 		bun := ragBundle()
 		delete(bun.Applications, "qdrant")
 		assertPredictionMatchesGenerator(t, cfg, bun, ragWS(), nil)
-		assert.False(t, namespaceDependencies(cfg, bun, ragWS(), nil)[deps.Qdrant])
+		assert.False(t, namespaceDependencies(cfg, bun, ragWS())[deps.Qdrant])
 	})
-	t.Run("a workspace list that filters rag out", func(t *testing.T) {
+	// Taking rag away no longer takes the store away, so each of these three
+	// still has a container to pin. They are kept apart because each used to be
+	// a separate FALSE, restated from generateBundleWebapps' rules, and each is
+	// a way the restatement could drift back into predicting absence.
+	t.Run("a workspace list that filters rag out still has a store", func(t *testing.T) {
 		ws := &bundle.WorkspaceConfig{Webapps: []bundle.WebappConfig{{ID: "emodel"}}}
 		assertPredictionMatchesGenerator(t, cfg, ragBundle(), ws, nil)
-		assert.False(t, namespaceDependencies(cfg, ragBundle(), ws, nil)[deps.Qdrant])
+		assert.True(t, namespaceDependencies(cfg, ragBundle(), ws)[deps.Qdrant])
 	})
-	t.Run("rag disabled in namespace.yml", func(t *testing.T) {
+	t.Run("rag disabled in namespace.yml still leaves a store", func(t *testing.T) {
 		off := false
 		disabled := &namespace.Config{ID: "ns", Webapps: map[string]namespace.WebappProps{
 			"rag": {Enabled: &off}}}
 		assertPredictionMatchesGenerator(t, disabled, ragBundle(), ragWS(), nil)
-		assert.False(t, namespaceDependencies(disabled, ragBundle(), ragWS(), nil)[deps.Qdrant])
+		assert.True(t, namespaceDependencies(disabled, ragBundle(), ragWS())[deps.Qdrant])
 	})
-	// A namespace loaded before its bundle has resolved: no bundle means no RAG
-	// webapp and so no index to protect, which is why qdrant is the one
+	// A bundle that carries a qdrant image and no EcosRagApp at all. The store
+	// is generated and pinned — an index it may already hold is exactly what a
+	// pin protects, and whatever is pointed at it next is not required to be
+	// rag. No PUBLIC bundle has this shape today (every one that names qdrant
+	// also names EcosRagApp), which is precisely why it needs a test: the case
+	// is reachable only through a bundle nobody has written yet.
+	t.Run("a bundle with qdrant and no rag at all", func(t *testing.T) {
+		bun := ragBundle()
+		delete(bun.Applications, "rag")
+		assertPredictionMatchesGenerator(t, cfg, bun, ragWS(), nil)
+		assert.True(t, namespaceDependencies(cfg, bun, ragWS())[deps.Qdrant])
+	})
+	// A namespace loaded before its bundle has resolved: no bundle means no
+	// qdrant image and so no index to protect, which is why qdrant is the one
 	// dependency a nil answer does NOT default to present.
 	t.Run("no bundle at all", func(t *testing.T) {
-		assert.False(t, namespaceDependencies(cfg, nil, nil, nil)[deps.Qdrant])
-		assert.True(t, namespaceDependencies(nil, nil, nil, nil)[deps.Postgres],
+		assert.False(t, namespaceDependencies(cfg, nil, nil)[deps.Qdrant])
+		assert.True(t, namespaceDependencies(nil, nil, nil)[deps.Postgres],
 			"the other five still default to present")
 	})
 }
 
 // assertPredictionMatchesGenerator runs the REAL generator and demands that the
-// seeding filter名 exactly the dependencies it emitted.
+// seeding filter names exactly the dependencies it emitted.
 func assertPredictionMatchesGenerator(t *testing.T, cfg *namespace.Config, bun *bundle.Def,
 	wsCfg *bundle.WorkspaceConfig, detached map[string]bool,
 ) {
@@ -792,7 +813,7 @@ func assertPredictionMatchesGenerator(t *testing.T, cfg *namespace.Config, bun *
 		generated[id] = true
 	}
 	predicted := map[deps.ID]bool{}
-	for id, ok := range namespaceDependencies(cfg, bun, wsCfg, detached) {
+	for id, ok := range namespaceDependencies(cfg, bun, wsCfg) {
 		if ok {
 			predicted[id] = true
 		}

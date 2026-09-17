@@ -14,7 +14,7 @@ const en = {
   'dashboard.openInBrowser.disabled': 'The application is not running. Start it to open in the browser.',
   'dashboard.openInBrowser.starting': 'The application is starting. Please wait...',
   'dashboard.openInBrowser.stalled': 'The application is stalled. Please try to start it again.',
-  'dashboard.openInBrowser.held': 'Some apps are waiting for dependencies you stopped. Start those dependencies to make the application available.',
+  'dashboard.openInBrowser.held': 'Some apps are waiting for stopped dependencies. Start those dependencies to make the application available.',
 
   // -- Docker not available screen --
   'dockerUnavailable.title': 'Docker is not available',

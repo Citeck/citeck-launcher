@@ -570,17 +570,20 @@ func (r *Runtime) StartApp(appName string) error {
 		// T27: detached → re-attach. Clear detach flag, transition to
 		// READY_TO_PULL. State machine drives pull/start.
 		delete(r.manualStoppedApps, appName)
+		r.clearAutoDetachLocked(appName)
 		r.resetRetry(appName)
 		r.setAppStatus(app, AppStatusReadyToPull)
 	case AppStatusReadyToPull, AppStatusPullFailed, AppStatusFailed:
 		// T28 (FAILED) — also handles READY_TO_PULL / PULL_FAILED for
 		// idempotency: clear retry and let the state machine pick it up.
 		delete(r.manualStoppedApps, appName)
+		r.clearAutoDetachLocked(appName)
 		r.resetRetry(appName)
 		r.setAppStatus(app, AppStatusReadyToPull)
 	case AppStatusStartFailed:
 		// T29: image is already pulled — go straight to READY_TO_START.
 		delete(r.manualStoppedApps, appName)
+		r.clearAutoDetachLocked(appName)
 		r.resetRetry(appName)
 		r.setAppStatus(app, AppStatusReadyToStart)
 	case AppStatusStoppingFailed:
@@ -589,6 +592,7 @@ func (r *Runtime) StartApp(appName string) error {
 		// any prior canceled stop via the dispatcher (attemptID bump).
 		// UPDATING (not STOPPING) marks this as recreate-in-flight.
 		delete(r.manualStoppedApps, appName)
+		r.clearAutoDetachLocked(appName)
 		app.desiredNext = AppStatusReadyToPull
 		app.initialSweep = false
 		app.stoppingStartedAt = r.nowFunc()
@@ -810,4 +814,11 @@ func (r *Runtime) RestartApp(appName string) error { //nolint:gocyclo // single-
 	}
 	r.signalCh.Flush()
 	return nil
+}
+
+// clearAutoDetachLocked lifts the autostart hold the moment the operator starts
+// the app themselves. Nothing else has to remember that: the app stops being
+// STOPPED, so the next generation's verdict skips it (SetAutoDetachedApps).
+func (r *Runtime) clearAutoDetachLocked(appName string) {
+	delete(r.autoDetachedApps, appName)
 }

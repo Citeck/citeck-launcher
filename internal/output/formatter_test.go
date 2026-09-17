@@ -460,14 +460,14 @@ func TestFormatAppTable_HeldDepsNamesTheDetachedRoots(t *testing.T) {
 		t.Errorf("held = %d, want 2", r.Held)
 	}
 	if len(r.HeldDeps) != 1 || r.HeldDeps[0] != "zookeeper" {
-		t.Errorf("heldDeps = %v, want [zookeeper] — только отцепленный корень", r.HeldDeps)
+		t.Errorf("heldDeps = %v, want [zookeeper] -- the detached root only", r.HeldDeps)
 	}
 }
 
 // A detached root can sit persistently in STOPPING_FAILED: StopApp records the
 // detach in manualStoppedApps synchronously, BEFORE the stop can fail. Matching
 // only "STOPPED" dropped it from the list, and the sentence built from that list
-// then read "dependencies you stopped: ." with nothing after the colon.
+// then read "stopped dependencies: ." with nothing after the colon.
 func TestFormatAppTable_HeldDepsCoverADetachedRootThatFailedToStop(t *testing.T) {
 	apps := []api.AppDto{
 		{Name: "zookeeper", Status: "STOPPING_FAILED"},
@@ -479,7 +479,7 @@ func TestFormatAppTable_HeldDepsCoverADetachedRootThatFailedToStop(t *testing.T)
 	r := FormatAppTable(apps)
 
 	if len(r.HeldDeps) != 1 || r.HeldDeps[0] != "zookeeper" {
-		t.Errorf("heldDeps = %v, want [zookeeper] — отцепленный корень остаётся корнем, как бы ни закончилась остановка", r.HeldDeps)
+		t.Errorf("heldDeps = %v, want [zookeeper] -- a detached root stays the root however the stop ended", r.HeldDeps)
 	}
 }
 
@@ -498,13 +498,13 @@ func TestHeldRootsForApp_NamesOnlyTheRootsBehindThatApp(t *testing.T) {
 	}
 
 	if got := HeldRootsForApp(apps, "emodel"); !slices.Equal(got, []string{"postgres"}) {
-		t.Errorf("roots(emodel) = %v, want [postgres] — onlyoffice держит другое приложение", got)
+		t.Errorf("roots(emodel) = %v, want [postgres] -- onlyoffice holds a different app", got)
 	}
 	if got := HeldRootsForApp(apps, "proxy"); !slices.Equal(got, []string{"onlyoffice"}) {
 		t.Errorf("roots(proxy) = %v, want [onlyoffice]", got)
 	}
 	if got := HeldDeps(apps); !slices.Equal(got, []string{"onlyoffice", "postgres"}) {
-		t.Errorf("HeldDeps = %v, want [onlyoffice postgres] — у неймспейсного вопроса ответ другой", got)
+		t.Errorf("HeldDeps = %v, want [onlyoffice postgres] -- the namespace-wide question has a different answer", got)
 	}
 }
 
@@ -522,7 +522,7 @@ func TestHeldRootsForApp_WalksThroughIntermediateHeldApps(t *testing.T) {
 	}
 
 	if got := HeldRootsForApp(apps, "proxy"); !slices.Equal(got, []string{"zookeeper"}) {
-		t.Errorf("roots(proxy) = %v, want [zookeeper] — gateway оператор не останавливал и запустить не может", got)
+		t.Errorf("roots(proxy) = %v, want [zookeeper] -- the operator never stopped gateway and cannot start it", got)
 	}
 }
 
@@ -537,7 +537,7 @@ func TestHeldRootsForApp_TerminatesOnACycle(t *testing.T) {
 	}
 
 	if got := HeldRootsForApp(apps, "a"); len(got) != 0 {
-		t.Errorf("roots(a) = %v, want [] — у цикла нет корня, который можно назвать", got)
+		t.Errorf("roots(a) = %v, want [] -- a cycle has no root that can be named", got)
 	}
 }
 
@@ -551,7 +551,7 @@ func TestHeldRootsForApp_AnswersNothingForAnAppThatIsNotHeld(t *testing.T) {
 	}
 
 	if got := HeldRootsForApp(apps, "emodel"); got != nil {
-		t.Errorf("roots(emodel) = %v, want nil — один DEPS_WAITING удержанием не является", got)
+		t.Errorf("roots(emodel) = %v, want nil -- a lone DEPS_WAITING is not a hold", got)
 	}
 	if got := HeldRootsForApp(apps, "nosuchapp"); got != nil {
 		t.Errorf("roots(nosuchapp) = %v, want nil", got)
