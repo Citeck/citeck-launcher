@@ -46,6 +46,17 @@ var secretEnvKeyRe = regexp.MustCompile(
 // every entry written to the archive.
 type secretRedactor struct {
 	values []string // unique; finalize() sorts longest-first
+	// published are values the SAME containers expose in NON-secret fields —
+	// POSTGRES_USER, POSTGRES_DB, an app name. A string that is published in
+	// the clear beside its own "secret" is not one, and masking it corrupts the
+	// dump far past the point of protecting anything: measured on a real stand,
+	// the postgres password is the word "postgres", so every artifact in the
+	// archive came out with `***REDACTED***:17.5` where the image should be and
+	// `***REDACTED***-***REDACTED***` where a container name should be.
+	//
+	// finalize() drops these from values. A real secret — a random string — is
+	// never published, so nothing this rule removes was ever protecting data.
+	published []string
 }
 
 func newSecretRedactor() *secretRedactor { return &secretRedactor{} }
@@ -72,8 +83,17 @@ func (r *secretRedactor) addValue(v string) {
 func (r *secretRedactor) harvestEnv(env []string) {
 	for _, kv := range env {
 		k, v, ok := strings.Cut(kv, "=")
-		if ok && secretEnvKeyRe.MatchString(k) {
+		if !ok {
+			continue
+		}
+		if secretEnvKeyRe.MatchString(k) {
 			r.addValue(v)
+			continue
+		}
+		// Everything else this container publishes about itself — read so that
+		// finalize can tell a password from a word the archive is full of.
+		if v = strings.TrimSpace(v); v != "" {
+			r.published = append(r.published, v)
 		}
 	}
 }
@@ -81,6 +101,16 @@ func (r *secretRedactor) harvestEnv(env []string) {
 // finalize sorts harvested values longest-first so a secret that is a substring
 // of another doesn't leave the longer one partially exposed.
 func (r *secretRedactor) finalize() {
+	if len(r.published) > 0 {
+		kept := r.values[:0]
+		for _, v := range r.values {
+			if slices.Contains(r.published, v) {
+				continue
+			}
+			kept = append(kept, v)
+		}
+		r.values = kept
+	}
 	sort.Slice(r.values, func(i, j int) bool {
 		return len(r.values[i]) > len(r.values[j])
 	})

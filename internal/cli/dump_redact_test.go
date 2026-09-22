@@ -6,6 +6,8 @@ import (
 	"io"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // TestDumpWriter_RedactsEntries verifies the wiring: once a redactor is set on
@@ -128,4 +130,43 @@ func TestSecretRedactor_RedactsLongestFirst(t *testing.T) {
 	if strings.Contains(out, "abcdef") {
 		t.Fatalf("a secret value survived redaction: %s", out)
 	}
+}
+
+// A value the same container publishes in the clear is not a secret, and
+// masking it destroys the dump.
+//
+// Measured on a real stand: the launcher gives its internal databases a
+// password equal to their user name ("postgres", "observer"), so every artifact
+// in the archive came back with `***REDACTED***:17.5` for an image and
+// `***REDACTED***-***REDACTED***` for a container name — including the
+// migration report, whose whole job is to be readable.
+func TestAPublishedValueIsNotTreatedAsASecret(t *testing.T) {
+	r := newSecretRedactor()
+	r.harvestEnv([]string{
+		"POSTGRES_USER=observer",
+		"POSTGRES_DB=observer",
+		"POSTGRES_PASSWORD=observer",
+		"KC_BOOTSTRAP_ADMIN_PASSWORD=7f3Kq2Lm9XvTb1Rn",
+	})
+	r.finalize()
+
+	out := string(r.redact([]byte("observer-postgres runs postgres:18.1 for observer; admin pass 7f3Kq2Lm9XvTb1Rn")))
+	assert.Contains(t, out, "observer-postgres runs postgres:18.1 for observer",
+		"a word the container itself advertises must survive")
+	assert.NotContains(t, out, "7f3Kq2Lm9XvTb1Rn", "a real secret is still masked")
+	assert.Contains(t, out, redactPlaceholder)
+}
+
+// The rule must not weaken redaction for a secret that merely LOOKS ordinary:
+// only an exact match with something published in the clear is spared.
+func TestOnlyAnExactPublishedValueIsSpared(t *testing.T) {
+	r := newSecretRedactor()
+	r.harvestEnv([]string{
+		"POSTGRES_USER=observer",
+		"POSTGRES_PASSWORD=observer-secret",
+	})
+	r.finalize()
+
+	out := string(r.redact([]byte("user observer with password observer-secret")))
+	assert.Contains(t, out, "user observer with password "+redactPlaceholder)
 }
