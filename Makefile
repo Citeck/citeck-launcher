@@ -15,6 +15,13 @@ BINARY   := $(BUILDDIR)/citeck-server
 DESKTOP  := $(BUILDDIR)/citeck-launcher
 GO_BUILD_FLAGS := -ldflags "-s -w -X main.version=$(VERSION) -X main.gitCommit=$(COMMIT) -X main.buildDate=$(BUILD_DATE)"
 WEBDIST  := internal/daemon/webdist
+# Captured `go test -cover` output for the coverage-floor gate. It lives inside
+# the working copy (dist/ is gitignored) and NOT in /tmp: a fixed /tmp path is
+# shared by every checkout on the machine, so two `make check` runs from two
+# worktrees overwrite each other's capture and the floors fail on numbers that
+# belong to the other tree. Steps [3/10] and [4/10] are separate shells, so the
+# path has to be a make variable rather than a shell one.
+COVERAGE_TXT := dist/coverage.txt
 
 # Go tools path
 ifeq (,$(shell go env GOBIN))
@@ -43,16 +50,16 @@ all: test build
 # the same packages the CI test job installs.
 check:
 	@command -v $(GOLANGCI_LINT) >/dev/null 2>&1 || { echo "ERROR: $(GOLANGCI_LINT) not found — run 'make tools' first"; exit 1; }
-	@mkdir -p $(WEBDIST)
+	@mkdir -p $(WEBDIST) $(dir $(COVERAGE_TXT))
 	@test -f $(WEBDIST)/index.html || echo '<html></html>' > $(WEBDIST)/index.html
 	@echo "==> [1/10] go vet"
 	go vet ./...
 	@echo "==> [2/10] golangci-lint (v2.11.4 pinned)"
 	$(GOLANGCI_LINT) run ./...
 	@echo "==> [3/10] go test -race -cover ./internal/... (slow: namespace ~160s)"
-	set -o pipefail; go test -race -cover ./internal/... | tee /tmp/citeck-cover.txt
+	set -o pipefail; go test -race -cover ./internal/... | tee $(COVERAGE_TXT)
 	@echo "==> [4/10] coverage floors"
-	bash scripts/ci/coverage-floor.sh /tmp/citeck-cover.txt
+	bash scripts/ci/coverage-floor.sh $(COVERAGE_TXT)
 	@echo "==> [5/10] govulncheck (reachable-vuln gate)"
 	bash scripts/ci/govulncheck.sh
 	@echo "==> [6/10] deadcode (needs CGO + GTK3 headers)"
