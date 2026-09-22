@@ -211,8 +211,8 @@ func TestStartingTheDependencyAgainLiftsTheStall(t *testing.T) {
 //
 // The middle case USED to assert the opposite ("a stopped but not detached
 // dependency is not the user's decision to detach"), on the reading that only a
-// hold the user created counts. The auto-detach verdict showed that reading was
-// wrong: nothing in the runtime advances a STOPPED app — stepAllApps has no
+// hold the user created counts. That reading is wrong: nothing in the runtime
+// advances a STOPPED app — stepAllApps has no
 // STOPPED branch, the reconciler and the liveness probes only ever look at
 // RUNNING apps — so whoever stopped it, the wait ends only when somebody starts
 // it. Calling that "still coming up" reported a namespace RUNNING with a service
@@ -393,12 +393,14 @@ func TestTheDepsGateAndTheDepsReportAnswerTheSameQuestion(t *testing.T) {
 	}
 }
 
-// TestAStoppedDependencyHoldsItsConsumerToo closes the gap the auto-detach
-// verdict opened. A companion the launcher held down and then RELEASED (the
-// consumer was re-attached) is STOPPED and NOT detached, and nothing advances a
-// STOPPED app on its own. Before this, the walk called such a dependency "still
-// moving": the consumer waited forever while checkStatus reported the namespace
-// RUNNING — a whole-and-usable namespace with a service parked in it.
+// TestAStoppedDependencyHoldsItsConsumerToo covers the arm of the walk that is
+// about a dependency which is merely STOPPED rather than detached. Nothing
+// advances a STOPPED app on its own — stepAllApps has no branch for it, and the
+// reconciler and the liveness probes only ever look at RUNNING apps — so the
+// wait ends only when somebody starts it, whoever stopped it. Before this arm
+// existed the walk called such a dependency "still coming up": the consumer
+// waited forever while checkStatus reported the namespace RUNNING — a
+// whole-and-usable namespace with a service parked in it.
 func TestAStoppedDependencyHoldsItsConsumerToo(t *testing.T) {
 	md := newMockDocker()
 	r := NewRuntime(testConfig(), md, t.TempDir())
@@ -409,16 +411,19 @@ func TestAStoppedDependencyHoldsItsConsumerToo(t *testing.T) {
 		simpleApp("qdrant", "qdrant/qdrant:v1.19.1"),
 		simpleApp("rag", "rag:1", "qdrant"),
 	}
-	// The verdict holds the companion down; its consumer is detached too.
-	r.SetAutoDetachedApps(map[string]bool{"qdrant": true})
-	r.SetManualStoppedApps(map[string]bool{"rag": true})
+	// Both start out detached, so the namespace comes up without either.
+	r.SetManualStoppedApps(map[string]bool{"rag": true, "qdrant": true})
 	r.Start(apps, false)
 	require.True(t, waitForStatus(r, NsStatusRunning, 20*time.Second))
 
-	// The operator re-attaches the consumer, and the next generation releases
-	// the companion — which stays STOPPED, because releasing is not starting.
+	// The operator starts the consumer, which parks on its dependency, and then
+	// the detach set is replaced without that dependency — what a reload does
+	// when the persisted set no longer names it. qdrant is now STOPPED and NOT
+	// detached, which is the state under test: releasing is not starting.
 	require.NoError(t, r.StartApp("rag"))
-	r.SetAutoDetachedApps(map[string]bool{})
+	require.True(t, waitForAppStatus(r, "rag", AppStatusDepsWaiting, 20*time.Second))
+	r.SetManualStoppedApps(map[string]bool{})
+	require.False(t, r.IsAppDetached("qdrant"), "the dependency is merely stopped now")
 
 	require.True(t, waitForStatus(r, NsStatusStalled, 20*time.Second),
 		"a namespace with a service waiting on a stopped app is not whole")

@@ -476,6 +476,10 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 	if persistedState != nil {
 		maps.Copy(persistedPins, persistedState.Dependencies)
 	}
+	// Register whatever PostgreSQL clusters this workspace declares BEFORE the
+	// seeding below reads the registry — a declared database with no pin is a
+	// bundle image applied to an existing cluster.
+	installWorkspaceDependencies(resolveResult.Workspace)
 	detached := detachedAppsOnLoad(persistedState, resolveResult.Workspace, nsCfg)
 	pins, seededPins := resolveDependencyPins(in.context(),
 		persistedPins, dockerDependencyProbe{dc: depsDockerOf(dc), volumesBase: volumesBase},
@@ -560,6 +564,42 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 	}
 	slog.Info("Generated namespace", "apps", len(genResp.Applications), "files", len(genResp.Files))
 
+	// A bundle release can ADD an app to a namespace that has been running for
+	// months, and an optional one must not start itself just because it is new:
+	// the workspace template says which apps are off by default, and until now
+	// that list was consulted only for a namespace that had never started. The
+	// presence probe here is Docker, because the runtime below does not exist
+	// yet — its app table cannot tell an app that arrived with this bundle from
+	// one this stand has been running all along.
+	if detached == nil {
+		detached = map[string]bool{}
+	}
+	newApps := decideNewAppDetach(knownAppsOf(persistedState), genResp.Applications, nsCfg,
+		resolveResult.Workspace, forcePullTemplateLookup(in.Store, in.SecretService, wsID),
+		dockerPresence(in.context(), depsDockerOf(dc)))
+	// Only what the set does not already say: on the FIRST load of a fresh
+	// namespace the template has just seeded these very apps, and regenerating
+	// to say the same thing twice writes the whole file set for nothing.
+	newlyDetached := false
+	for _, name := range newApps.Detach {
+		if !detached[name] {
+			detached[name] = true
+			newlyDetached = true
+		}
+	}
+	if newlyDetached {
+		// Regenerate once: the detach set is an INPUT to generation — the proxy
+		// drops the upstream of a detached app, ai's STT wiring follows the
+		// sidecar — so applying it only to the runtime would leave the files
+		// and defs describing an app that is not going to run.
+		genOpts.DetachedApps = detached
+		genResp, genErr = generateAndWriteRuntimeFiles(nsCfg, resolveResult, systemSecrets, genOpts, volumesBase, legacySkip)
+		if genErr != nil {
+			closeOwnedDockerClient()
+			return nil, genErr
+		}
+	}
+
 	appDefs := genResp.Applications
 	runtime := namespace.NewRuntime(nsCfg, dc, volumesBase)
 	runtime.SetStatePersister(nsStatePersister{store: in.Store, wsID: wsID, nsID: nsID})
@@ -626,6 +666,16 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 		// First start with template detached apps — apply to runtime
 		runtime.SetManualStoppedApps(genOpts.DetachedApps)
 	}
+	// New apps the template detaches land in the OPERATOR's set — there is
+	// deliberately no second kind of "detached" — so this has to run after the
+	// restore above, which would otherwise put the persisted set back. Both
+	// this and the known-app set reach disk with the next ordinary persist, for
+	// the reason the seeded dependency pins do: writing here would persist
+	// r.status, which is still STOPPED before the caller acts on ShouldStart.
+	if newlyDetached {
+		runtime.SetManualStoppedApps(detached)
+	}
+	runtime.SetKnownApps(newApps.Known)
 
 	// Dependency state, always (a namespace with no persisted state still has
 	// the pins seeded above). Installed through RestoreDependencyState, which
@@ -649,10 +699,6 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 	// onlyoffice, alfresco) triggers a namespace regeneration — see
 	// regenOnAttachToggle in internal/daemon/attach_toggle_regen.go.
 	runtime.SetGatingApps(genResp.GatingApps)
-	// Wire AutoDetachedApps so a companion generated beside a DETACHED owner
-	// (qdrant beside rag, stt-sidecar beside ai) is not started by the loop.
-	// It must be installed before the runtime starts, or the seed would queue it.
-	runtime.SetAutoDetachedApps(genResp.AutoDetachedApps)
 
 	// Status recovery hint: caller chooses whether to act on it.
 	// - RUNNING / STARTING / STALLED → ShouldStart=true (re-adopt detached containers).

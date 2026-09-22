@@ -25,8 +25,6 @@ func TestGeneratedImagesRespectBundleAndExplicitEdit(t *testing.T) {
 			cfg.Proxy.Image = "namespace/proxy:1"
 			cfg.PgAdmin.Image = "namespace/pgadmin:1"
 			cfg.MongoDB.Image = "namespace/mongo:1"
-			cfg.Observer.Enabled = true
-			cfg.Observer.Image = "namespace/observer:1"
 			cfg.Webapps = map[string]WebappProps{
 				appdef.AppAi: {Image: "namespace/ai:1"},
 			}
@@ -48,9 +46,10 @@ func TestGeneratedImagesRespectBundleAndExplicitEdit(t *testing.T) {
 				appdef.AppProxy:      "namespace/proxy:1",
 				appdef.AppPgadmin:    "namespace/pgadmin:1",
 				appdef.AppMongodb:    "namespace/mongo:1",
-				appdef.AppObserver:   "namespace/observer:1",
 				appdef.AppSttSidecar: "workspace/stt:1",
 			}
+			// The observer has no fallback of its own (see the assertion
+			// below), but it takes the bundle's image like everything else.
 			for name := range fallbacks {
 				if source != "fallback" {
 					bun.Applications[name] = bundle.AppDef{Image: "bundle/" + name + ":1"}
@@ -58,6 +57,12 @@ func TestGeneratedImagesRespectBundleAndExplicitEdit(t *testing.T) {
 				if source == "dependencies" {
 					bun.Dependencies[name] = bundle.AppDef{Image: "section/" + name + ":1"}
 				}
+			}
+			if source != "fallback" {
+				bun.Applications[appdef.AppObserver] = bundle.AppDef{Image: "bundle/" + appdef.AppObserver + ":1"}
+			}
+			if source == "dependencies" {
+				bun.Dependencies[appdef.AppObserver] = bundle.AppDef{Image: "section/" + appdef.AppObserver + ":1"}
 			}
 			opts := GenerateOpts{}
 			if source == "edit" {
@@ -67,6 +72,21 @@ func TestGeneratedImagesRespectBundleAndExplicitEdit(t *testing.T) {
 			}
 			resp, err := Generate(cfg, bun, ws, SystemSecrets{JWT: "j", OIDC: "o"}, opts)
 			require.NoError(t, err)
+			// The observer has no namespace-level image and no launcher default
+			// — the bundle is its only source — so it is asserted separately
+			// from the table above, which is keyed on a per-app fallback.
+			if source == "fallback" {
+				assert.Nil(t, findAppByName(resp.Applications, appdef.AppObserver),
+					"no observer image in the bundle means no observer at all")
+			} else {
+				obs := findAppByName(resp.Applications, appdef.AppObserver)
+				require.NotNil(t, obs, appdef.AppObserver)
+				wantObs := "bundle/" + appdef.AppObserver + ":1"
+				if source == "dependencies" {
+					wantObs = "section/" + appdef.AppObserver + ":1"
+				}
+				assert.Equal(t, wantObs, obs.Image)
+			}
 			for name, fallback := range fallbacks {
 				want := "bundle/" + name + ":1"
 				switch source {

@@ -34,9 +34,9 @@ func TestEveryMigratableDependencyHasAMigratorAndARollback(t *testing.T) {
 		_, hasR := RollbackFor(d.ID())
 		assert.True(t, hasR, "%s claims Migratable() but no rollback is wired for it", d.ID())
 	}
-	assert.Equal(t, 4, migratable,
-		"postgres, rabbitmq, zookeeper and qdrant are the four this release migrates — "+
-			"adding or removing one is a deliberate act, not a side effect")
+	assert.Equal(t, 5, migratable,
+		"postgres, rabbitmq, zookeeper, qdrant and the observer's postgres are the five "+
+			"this release migrates — adding or removing one is a deliberate act, not a side effect")
 }
 
 // A dependency that is not registered at all has no plan and no undo. The two

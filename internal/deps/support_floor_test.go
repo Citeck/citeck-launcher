@@ -21,6 +21,8 @@ func TestEveryDependencyHasTheAgreedSupportFloor(t *testing.T) {
 		Keycloak:  {Major: 26, Minor: 4},
 		MongoDB:   {Major: 4},
 		Qdrant:    {Major: 1, Minor: 14},
+		// One floor for every PostgreSQL cluster in the namespace.
+		ObserverPostgres: {Major: 17},
 	}
 	got := make(map[ID]Version, len(All()))
 	for _, d := range All() {

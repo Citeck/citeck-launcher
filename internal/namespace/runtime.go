@@ -64,6 +64,7 @@ import (
 	"context"
 	"encoding/json"
 	"maps"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -164,13 +165,11 @@ type Runtime struct {
 	registryAuthFn    atomic.Pointer[RegistryAuthFunc]
 	history           *OperationHistory
 	manualStoppedApps map[string]bool
-	// autoDetachedApps are apps the GENERATOR emits but the runtime must not
-	// START by itself: a companion (qdrant, stt-sidecar) whose owner (rag, ai)
-	// is detached. It decides autostart and NOTHING else — an app that is
-	// already up is never in it, and nothing here ever stops a container.
-	// Recomputed from GenResp on every generation and deliberately NOT
-	// persisted: the owner's own detach state is, and this is derived from it.
-	autoDetachedApps      map[string]bool
+	// knownApps is the persisted "this namespace has already produced these
+	// apps" set (NsPersistedState.KnownApps). It lives on the Runtime for one
+	// reason: persistState rebuilds the whole record from Runtime fields, so a
+	// set kept anywhere else would be erased by the next unrelated write.
+	knownApps             map[string]bool
 	editedAppPatches      map[string]json.RawMessage       // user-edit deltas over generated app defs (JSON merge patch)
 	editedFileEdits       map[string]FileEdit              // user-edit deltas for mounted files (key: "<app>/<rel-path>", no leading "./")
 	lastGenFiles          map[string][]byte                // last generated (pre-merge) file set; baseline source for the editor + WriteEditedFile template
@@ -539,31 +538,6 @@ func (r *Runtime) SetManualStoppedApps(apps map[string]bool) {
 	}
 }
 
-// SetAutoDetachedApps installs the generator's auto-detach verdict (see
-// Runtime.autoDetachedApps). Called after every generation, exactly where
-// SetDependsOnDetachedApps is.
-//
-// An app that is NOT stopped is left out of the verdict entirely, and that one
-// rule replaces every piece of machinery this could otherwise need. Stopping a
-// companion that is up is the operator's move, not the launcher's — "the owner
-// is off" is not a reason to take down a store something else may be reading —
-// and a container the launcher stopped behind their back is worse than one they
-// stop themselves. It also means an explicit start survives every later
-// generation on its own: the app is running, so the verdict does not reach it.
-// No override set, no session state, nothing to keep in sync.
-func (r *Runtime) SetAutoDetachedApps(apps map[string]bool) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	next := make(map[string]bool, len(apps))
-	for name := range apps {
-		if app, ok := r.apps[name]; ok && app.Status != AppStatusStopped {
-			continue
-		}
-		next[name] = true
-	}
-	r.autoDetachedApps = next
-}
-
 // IsAppDetached answers isDetachedLocked from outside the runtime: the daemon's
 // per-app gate has to see the same "detached" the app table shows (AppDto.
 // Detached), or it refuses a start button it has just offered.
@@ -573,21 +547,19 @@ func (r *Runtime) IsAppDetached(name string) bool {
 	return r.isDetachedLocked(name)
 }
 
-// isDetachedLocked answers whether an app is excluded from the state machine —
-// because the operator detached it, or because it is a companion of a detached
-// owner. Every gate that used to read manualStoppedApps directly reads this.
+// isDetachedLocked answers whether an app is excluded from the state machine:
+// the operator stopped it by hand. It is the single reader of
+// manualStoppedApps, so every gate — the loop, the probes, the held-by-stopped-
+// deps walk, the DTO, doStart / doRegenerate — asks the same question.
 func (r *Runtime) isDetachedLocked(name string) bool {
-	return r.manualStoppedApps[name] || r.autoDetachedApps[name]
+	return r.manualStoppedApps[name]
 }
 
 // detachedSetLocked is isDetachedLocked as a set, for the phases that snapshot
 // the whole thing once and reuse it.
 func (r *Runtime) detachedSetLocked() map[string]bool {
-	out := make(map[string]bool, len(r.manualStoppedApps)+len(r.autoDetachedApps))
+	out := make(map[string]bool, len(r.manualStoppedApps))
 	maps.Copy(out, r.manualStoppedApps)
-	for name := range r.autoDetachedApps {
-		out[name] = true
-	}
 	return out
 }
 
@@ -720,6 +692,30 @@ func (r *Runtime) ClearRestartEvents(appName string) {
 	_ = r.persistUnderLock("clear-restart-events")
 }
 
+// SetKnownApps records which apps this namespace has already produced (see
+// NsPersistedState.KnownApps). Installed after every generation, from
+// DecideNewAppDetach's answer, and persisted with the next ordinary write —
+// like the seeded dependency pins, it is derived state that must reach disk but
+// must not force a write of its own on the load path, where r.status is still
+// STOPPED and the caller has not acted on ShouldStart yet.
+func (r *Runtime) SetKnownApps(apps []string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	next := make(map[string]bool, len(apps))
+	for _, name := range apps {
+		next[name] = true
+	}
+	r.knownApps = next
+	r.dirty.Store(true)
+}
+
+// KnownApps returns the persisted known-app set as a slice, sorted.
+func (r *Runtime) KnownApps() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return slices.Sorted(maps.Keys(r.knownApps))
+}
+
 // SetDependsOnDetachedApps stores which detached apps trigger regeneration when restarted.
 // Takes a defensive copy — the generator's map may be reused.
 func (r *Runtime) SetDependsOnDetachedApps(apps map[string]bool) {
@@ -746,7 +742,7 @@ func NewRuntime(cfg *Config, dockerClient docker.RuntimeClient, volumesBase stri
 		nsID:                cfg.ID,
 		volumesBase:         volumesBase,
 		manualStoppedApps:   make(map[string]bool),
-		autoDetachedApps:    make(map[string]bool),
+		knownApps:           make(map[string]bool),
 		pullAuthBlockedApps: make(map[string]bool),
 		lastLoggedPullErr:   make(map[string]string),
 		editedAppPatches:    make(map[string]json.RawMessage),

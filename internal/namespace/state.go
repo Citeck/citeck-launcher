@@ -15,6 +15,14 @@ type NsPersistedState struct {
 	Status            NsRuntimeStatus `json:"status"`
 	ManualStoppedApps []string        `json:"manualStoppedApps,omitempty"`
 
+	// KnownApps is every app id this namespace has already produced at least
+	// once. Its only job is to tell an app that arrives with a new bundle
+	// release from one the operator has been running all along: a NEW app whose
+	// workspace template lists it in detachedApps starts detached instead of
+	// starting itself. Absent means the state predates the field, and
+	// namespace.BaselineKnownApps() stands in for it — see DecideNewAppDetach.
+	KnownApps []string `json:"knownApps,omitempty"`
+
 	// Delta model (2.7+). EditedAppPatches[name] is a JSON merge patch over the
 	// generated ApplicationDef; EditedFileEdits[key] is a per-file delta
 	// (key = "<app>/<rel>", no leading "./").

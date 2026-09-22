@@ -202,12 +202,14 @@ func (res *PreflightResult) checkRetainedDataVersion(
 // be read: the pin says the namespace really ran it, so it is still a valid
 // target, but there is nothing to compare the data against.
 //
-// PostgreSQL is named explicitly rather than through a Descriptor method for
-// the same reason CopyPreflight passes "" to checkExistingTarget: one
-// dependency out of five has a marker, and a seam on the registry for it would
-// be an interface every descriptor has to answer "no" to.
+// The PostgreSQL FAMILY is named explicitly rather than through a Descriptor
+// method for the same reason CopyPreflight passes "" to checkExistingTarget:
+// only PostgreSQL writes a marker, and a seam on the registry for it would be
+// an interface every other descriptor has to answer "no" to. It is a family
+// test and not an id comparison because a namespace can hold more than one
+// cluster — the stand's own and the observer's — and both write PG_VERSION.
 func retainedVersionMarker(d deps.Descriptor, prev deps.DependencyState) (rel string, major int, ok bool) {
-	if d.ID() != deps.Postgres {
+	if !deps.IsPostgresFamily(d) {
 		return "", 0, false
 	}
 	v, parsed := d.ParseVersion(prev.Image)

@@ -12,7 +12,7 @@ func TestRegistryOrderAndLookup(t *testing.T) {
 	for _, d := range All() {
 		ids = append(ids, d.ID())
 	}
-	assert.Equal(t, []ID{Postgres, RabbitMQ, Zookeeper, Keycloak, MongoDB, Qdrant}, ids)
+	assert.Equal(t, []ID{Postgres, RabbitMQ, Zookeeper, Keycloak, MongoDB, Qdrant, ObserverPostgres}, ids)
 
 	d, ok := Lookup(Postgres)
 	require.True(t, ok)
@@ -83,7 +83,13 @@ func TestBreakingRules(t *testing.T) {
 // test (TestEveryMigratableDependencyHasAMigratorAndARollback) is what checks
 // the other half.
 func TestWhichDependenciesAreMigratable(t *testing.T) {
-	migratable := map[ID]bool{Postgres: true, RabbitMQ: true, Zookeeper: true, Qdrant: true}
+	migratable := map[ID]bool{
+		Postgres: true, RabbitMQ: true, Zookeeper: true, Qdrant: true,
+		// The observer's database takes the same dump/restore plan as the
+		// stand's own — it IS a PostgreSQL cluster, and nothing about the plan
+		// cares whose data is in it.
+		ObserverPostgres: true,
+	}
 	for _, d := range All() {
 		assert.Equal(t, migratable[d.ID()], d.Migratable(), string(d.ID()))
 		assert.NotEmpty(t, d.LegacyImage(), string(d.ID()))

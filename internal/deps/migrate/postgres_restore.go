@@ -1,6 +1,50 @@
 package migrate
 
-import "strings"
+import (
+	"slices"
+	"strings"
+
+	"github.com/citeck/citeck-launcher/internal/appdef"
+)
+
+// pgCreds is who this plan talks to a cluster AS.
+//
+// It exists because a namespace can hold more than one PostgreSQL and they do
+// NOT share a superuser. The official image creates the role named by
+// POSTGRES_USER (default "postgres") and a database named by POSTGRES_DB
+// (default: the same name), so the observer's cluster — POSTGRES_USER=observer
+// — has no "postgres" role and no "postgres" database at all. Every psql,
+// pg_dumpall, pg_isready and vacuumdb the plan runs therefore names the
+// CLUSTER'S OWN user and maintenance database instead of the constant that
+// worked while there was exactly one cluster.
+//
+// Measured, not deduced: with the constant in place the observer's migration
+// hung in `start-source` until the 5-minute readiness deadline and rolled back,
+// because `pg_isready -U postgres` against a cluster that has no such role
+// never reports ready.
+type pgCreds struct {
+	User string
+	DB   string
+}
+
+// defaultPgCreds is what the image does with neither variable set.
+var defaultPgCreds = pgCreds{User: "postgres", DB: "postgres"}
+
+// pgCredsFromDef reads them off the namespace's OWN generated def — the same
+// def the temp containers are built from, so the plan cannot disagree with the
+// container it just started. It mirrors the image's rule: POSTGRES_DB defaults
+// to POSTGRES_USER, which itself defaults to "postgres".
+func pgCredsFromDef(def appdef.ApplicationDef) pgCreds {
+	c := defaultPgCreds
+	if u, ok := def.Environments.Get("POSTGRES_USER"); ok && u != "" {
+		c.User = u
+		c.DB = u
+	}
+	if db, ok := def.Environments.Get("POSTGRES_DB"); ok && db != "" {
+		c.DB = db
+	}
+	return c
+}
 
 // RestoreCommandPrefix is the psql invocation the restore step runs. It reads
 // the dump over a pipe (gunzip's stdout), never a "-f <dump>" flag, so this is
@@ -18,9 +62,15 @@ import "strings"
 // A fresh slice per call: RestoreScript joins it into its own script rather
 // than appending to it, but the fresh-slice contract is kept so a caller that
 // still appends (as the step used to) cannot corrupt a shared backing array.
-func RestoreCommandPrefix() []string {
-	return []string{"psql", "-h", "127.0.0.1", "-U", "postgres", "-d", "postgres", "-q", "-o", "/dev/null"}
+func RestoreCommandPrefix(c pgCreds) []string {
+	return []string{"psql", "-h", "127.0.0.1", "-U", c.User, "-d", c.DB, "-q", "-o", "/dev/null"}
 }
+
+// DefaultRestoreCommandPrefix is RestoreCommandPrefix for a cluster with the
+// image's own defaults. It exists for the real-Docker integration test, which
+// has to identify the restore's stderr among every command the migration ran
+// and migrates the stand's own database.
+func DefaultRestoreCommandPrefix() []string { return RestoreCommandPrefix(defaultPgCreds) }
 
 // gzipLevel is the compression the dump is written at.
 //
@@ -40,18 +90,18 @@ const gzipLevel = "1"
 // read from the same half-dumped source. /bin/sh in the postgres image is
 // dash, which only grew pipefail in 0.5.12; bash is present (5.2) and has had
 // it since forever, so bash is the one that cannot be wrong on an older base.
-func DumpScript(outPath string) []string {
+func DumpScript(c pgCreds, outPath string) []string {
 	return []string{"bash", "-c", "set -o pipefail; " +
-		"pg_dumpall -h 127.0.0.1 -U postgres | gzip -" + gzipLevel + " > " + shellQuote(outPath)}
+		"pg_dumpall -h 127.0.0.1 -U " + c.User + " | gzip -" + gzipLevel + " > " + shellQuote(outPath)}
 }
 
 // RestoreScript is the command the restore step runs: the archive decompressed
 // into the SAME psql invocation RestoreCommandPrefix names — so the flags have
 // one source and the integration test can still identify the restore's own
 // stderr by that prefix, now as a substring of this script.
-func RestoreScript(dumpPath string) []string {
+func RestoreScript(c pgCreds, dumpPath string) []string {
 	return []string{"bash", "-c", "set -o pipefail; " +
-		"gunzip -c " + shellQuote(dumpPath) + " | " + strings.Join(RestoreCommandPrefix(), " ")}
+		"gunzip -c " + shellQuote(dumpPath) + " | " + strings.Join(RestoreCommandPrefix(c), " ")}
 }
 
 // shellQuote wraps a path in single quotes for the two scripts above. The
@@ -75,21 +125,38 @@ func shellQuote(s string) string {
 // replaying a pg_dumpall script into a fresh cluster.
 //
 // psql is run WITHOUT ON_ERROR_STOP on purpose: pg_dumpall emits
-// `CREATE ROLE postgres` even for the bootstrap superuser and the PostgreSQL
-// documentation calls that failure harmless ("it won't hurt for the CREATE to
-// fail"), so that one error is tolerated and every other one fails the
-// restore. Stopping at the first error instead would abort a restore that is
-// in fact perfect, on the very first statement of every dump.
+// `CREATE ROLE <bootstrap superuser>` and the PostgreSQL documentation calls
+// that failure harmless ("it won't hurt for the CREATE to fail"), so it is
+// tolerated and every other error fails the restore. Stopping at the first
+// error instead would abort a restore that is in fact perfect, on the very
+// first statement of every dump.
+//
+// TOLERATED IS EXACTLY WHAT THE IMAGE ITSELF CREATED, by name — the role
+// POSTGRES_USER names and the database POSTGRES_DB names — and nothing else.
+// The second one only became visible with a SECOND cluster: for the stand's own
+// database POSTGRES_DB is unset, so pg_dumpall emits no `CREATE DATABASE
+// postgres` and the case never arose, while the observer's cluster is created
+// with POSTGRES_DB=observer and its dump says `CREATE DATABASE observer` about
+// a database `initdb` has just made (measured on a real stand: the migration
+// failed at `restore` with exactly these two lines). Restoring INTO that
+// database is what the dump does next, so the data lands where it should; what
+// is lost is only what CREATE DATABASE would have set, and tolerating the
+// specific name cannot hide a target volume that was not empty, because a
+// fresh cluster holds no other database.
 //
 // The match is case-sensitive: psql spells its severities upper-case, while a
 // lower-case "error:" is text being replayed out of the dumped data.
-func restoreErrors(output string) []string {
+func restoreErrors(output string, c pgCreds) []string {
+	tolerated := []string{
+		`role "` + c.User + `" already exists`,
+		`database "` + c.DB + `" already exists`,
+	}
 	var out []string
 	for line := range strings.SplitSeq(output, "\n") {
 		if !strings.Contains(line, "ERROR:") {
 			continue
 		}
-		if strings.Contains(line, `role "postgres" already exists`) {
+		if slices.ContainsFunc(tolerated, func(t string) bool { return strings.Contains(line, t) }) {
 			continue
 		}
 		out = append(out, strings.TrimSpace(line))

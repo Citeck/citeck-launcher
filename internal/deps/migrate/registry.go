@@ -45,10 +45,14 @@ type Migrator interface {
 // why TestEveryMigratableDependencyHasAMigratorAndARollback pins the two
 // against each other.
 var migrators = map[deps.ID]Migrator{
-	deps.Postgres:  PostgresMigrator{},
+	deps.Postgres:  PostgresMigrator{ID: deps.Postgres},
 	deps.RabbitMQ:  RabbitMigrator{},
 	deps.Zookeeper: ZookeeperMigrator{},
 	deps.Qdrant:    QdrantMigrator{},
+	// The observer's database takes the SAME plan as the stand's own, keyed to
+	// its own id: same dump/restore into a new volume, same rollback, its own
+	// pin and its own volume generation.
+	deps.ObserverPostgres: PostgresMigrator{ID: deps.ObserverPostgres},
 }
 
 // rollbacks is the same wiring for a journal found at boot.
@@ -60,10 +64,11 @@ var migrators = map[deps.ID]Migrator{
 // Migrator would tie "can I start this" to "can I finish undoing that", which
 // are not the same question and must not fail together.
 var rollbacks = map[deps.ID]func(context.Context, Env, *deps.MigrationJournal) error{
-	deps.Postgres:  RollbackPostgres,
-	deps.RabbitMQ:  RollbackCopyUpgrade,
-	deps.Zookeeper: RollbackCopyUpgrade,
-	deps.Qdrant:    RollbackCopyUpgrade,
+	deps.Postgres:         RollbackPostgres,
+	deps.RabbitMQ:         RollbackCopyUpgrade,
+	deps.Zookeeper:        RollbackCopyUpgrade,
+	deps.Qdrant:           RollbackCopyUpgrade,
+	deps.ObserverPostgres: RollbackPostgres,
 }
 
 // MigratorFor answers the migrator for a dependency. ok == false means this

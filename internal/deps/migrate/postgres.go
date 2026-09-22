@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"path"
 	"path/filepath"
 	"strconv"
@@ -50,7 +51,27 @@ var dumpProgressPoll = 2 * time.Second
 // only ever READ, so the rollback is "delete what we made" and the previous
 // version keeps working; that is also why an in-place pg_upgrade — which
 // rewrites the old cluster — is not what this does.
-type PostgresMigrator struct{}
+// It is INSTANTIATED PER CLUSTER rather than being a singleton: a namespace can
+// hold more than one PostgreSQL (the stand's own database and the observer's),
+// and every step below — which pin to read, which volumes to name, which app
+// def to build a temp container from, which dump directory to use — is keyed by
+// the id this value carries. The registry holds one instance per registered
+// PostgreSQL dependency.
+type PostgresMigrator struct {
+	// ID is the dependency this migrator moves. The zero value is deliberately
+	// NOT the main postgres: a migrator built without an id would migrate the
+	// wrong cluster's data, so `dep()` refuses it.
+	ID deps.ID
+}
+
+// dep resolves the descriptor this migrator was built for, refusing an
+// unregistered or unset id rather than defaulting to the stand's own database.
+func (m PostgresMigrator) dep() (deps.Descriptor, bool) {
+	if m.ID == "" {
+		return nil, false
+	}
+	return deps.Lookup(m.ID)
+}
 
 // Preflight checks everything that can be checked before anything is stopped
 // or created. It never mutates.
@@ -90,7 +111,7 @@ func (m PostgresMigrator) Preflight(ctx context.Context, env Env, route Path) Pr
 	from, to := route.From(), route.To()
 	res := NewPreflightResult(from, to)
 	res.WasRunning = env.IsRunning()
-	fromV, toV, problems := versionProblems(deps.Postgres, from, to)
+	fromV, toV, problems := versionProblems(m.ID, from, to)
 	if len(problems) > 0 {
 		res.Problems = append(res.Problems, problems...)
 		return res
@@ -99,8 +120,8 @@ func (m PostgresMigrator) Preflight(ctx context.Context, env Env, route Path) Pr
 		res.Problems = append(res.Problems, pairRefusal(problem, from, to))
 		return res
 	}
-	d, _ := deps.Lookup(deps.Postgres) // registered: versionProblems just asked
-	srcVolume, dstVolume, _ := migrationVolumes(d, env.DependencyState(deps.Postgres))
+	d, _ := m.dep() // registered: versionProblems just asked
+	srcVolume, dstVolume, _ := migrationVolumes(d, env.DependencyState(m.ID))
 	oldLayout := deps.PostgresLayoutFor(fromV.Major)
 	newLayout := deps.PostgresLayoutFor(toV.Major)
 
@@ -161,9 +182,16 @@ func (res *PreflightResult) checkDataVersion(ctx context.Context, env Env, layou
 // step compares against. The engine runs steps sequentially on one goroutine,
 // which is what makes that hand-off safe.
 type pgRun struct {
-	env  Env
-	path Path
-	opts PlanOptions
+	env Env
+	// id is the CLUSTER this run moves. Every def it asks the Env to generate
+	// is keyed by it: a namespace can hold more than one PostgreSQL, and a
+	// temp container built from the wrong one would mount the wrong volume.
+	id deps.ID
+	// creds is who this cluster is talked to AS — read off its own generated
+	// def, because the clusters do not share a superuser (see pgCreds).
+	creds pgCreds
+	path  Path
+	opts  PlanOptions
 	// fromGen is the generation the SOURCE cluster lives in — always the
 	// namespace's own pin, read once. toGen is the generation the FINAL
 	// cluster lands in; every intermediate rung lives in scratchVolume
@@ -214,20 +242,32 @@ func (m PostgresMigrator) Plan(ctx context.Context, env Env, route Path, opts Pl
 	if pre.ExistingTargetVolume != nil && !opts.ReplaceExistingVolume {
 		return nil, deps.MigrationJournal{}, refusePlan(existingVolumeRefusal(pre.ExistingTargetVolume.Name))
 	}
-	d, ok := deps.Lookup(deps.Postgres)
+	d, ok := m.dep()
 	if !ok {
-		return nil, deps.MigrationJournal{}, refusePlan(NotRegisteredProblem(deps.Postgres))
+		return nil, deps.MigrationJournal{}, refusePlan(NotRegisteredProblem(m.ID))
 	}
 	// The pin is read ONCE, here, and both volume names and the generation the
 	// commit will move to are derived from that one reading — the journal then
 	// carries them, so nothing later has to re-derive them from a world the
 	// migration is rewriting. The scratch volume is a function of toGen alone
 	// (see deps.ScratchVolumeName) and does not vary with the ladder's length.
-	state := env.DependencyState(deps.Postgres)
+	state := env.DependencyState(m.ID)
 	srcVolume, dstVolume, toGen := migrationVolumes(d, state)
-	dumpDir := env.DumpDir(deps.Postgres)
+	dumpDir := env.DumpDir(m.ID)
+	// The creds come from the namespace's OWN def for this cluster: the temp
+	// containers are built from it, so reading them anywhere else would let the
+	// plan address a server it just started under a role that does not exist
+	// there. A def that cannot be generated leaves the image's defaults, and
+	// the very first container step then fails with the real reason.
+	creds := defaultPgCreds
+	if def, defErr := env.GenerateDefFor(m.ID, state); defErr == nil {
+		creds = pgCredsFromDef(def)
+	} else {
+		slog.Warn("Could not read the cluster's credentials from its definition; "+
+			"assuming the image defaults", "dependency", m.ID, "err", defErr)
+	}
 	r := &pgRun{
-		env: env, path: route, opts: opts,
+		env: env, id: m.ID, creds: creds, path: route, opts: opts,
 		fromGen:         state.Gen(),
 		toGen:           toGen,
 		srcVolume:       srcVolume,
@@ -239,7 +279,7 @@ func (m PostgresMigrator) Plan(ctx context.Context, env Env, route Path, opts Pl
 		dumpBind:        dumpDir + ":" + dumpMount,
 	}
 	j := deps.MigrationJournal{
-		ID: deps.Postgres, From: route.From(), To: route.To(), DumpDir: dumpDir,
+		ID: m.ID, From: route.From(), To: route.To(), DumpDir: dumpDir,
 		ToVolumeGen: toGen, SourceVolume: srcVolume,
 		WasRunning: env.IsRunning(), StartedAt: time.Now(),
 	}
@@ -277,6 +317,7 @@ func (m PostgresMigrator) Plan(ctx context.Context, env Env, route Path, opts Pl
 		)
 	}
 	plan := &Plan{
+		Diagnose: tempContainerDiagnostics(env),
 		Steps:    steps,
 		Rollback: func(ctx context.Context, j *deps.MigrationJournal) error { return RollbackPostgres(ctx, env, j) },
 		// Only OldVolume, and it is read from the JOURNAL rather than from the
@@ -339,7 +380,7 @@ func (r *pgRun) startTargetAt(i int, image string) func(context.Context, *Journa
 // to strip: two temp containers and the namespace's own postgres would
 // otherwise fight over one host port.
 func (r *pgRun) startTemp(ctx context.Context, image string, gen int, name string, p StepProgress) error {
-	def, err := r.env.GenerateDefFor(deps.Postgres, deps.DependencyState{Image: image, VolumeGen: gen})
+	def, err := r.env.GenerateDefFor(r.id, deps.DependencyState{Image: image, VolumeGen: gen})
 	if err != nil {
 		return fmt.Errorf("generate the %s definition: %w", image, err)
 	}
@@ -373,7 +414,7 @@ func (r *pgRun) startTempOnVolume(ctx context.Context, image, volume, name strin
 				"an intermediate rung must run on the scratch volume, never on the data this plan promises only to read",
 			name, volume)
 	}
-	def, err := r.env.GenerateDefForVolume(deps.Postgres, deps.DependencyState{Image: image}, volume)
+	def, err := r.env.GenerateDefForVolume(r.id, deps.DependencyState{Image: image}, volume)
 	if err != nil {
 		return fmt.Errorf("generate the %s definition: %w", image, err)
 	}
@@ -386,7 +427,7 @@ func (r *pgRun) runTemp(ctx context.Context, def appdef.ApplicationDef, name str
 	}); err != nil {
 		return fmt.Errorf("start %s: %w", name, err)
 	}
-	return waitReady(ctx, r.env, name, readyTimeout, readyPoll, p)
+	return waitReady(ctx, r.env, name, r.creds, readyTimeout, readyPoll, p)
 }
 
 // dumpFromSource is the bottom dump: it also captures the "before" inventory,
@@ -395,7 +436,7 @@ func (r *pgRun) dumpFromSource(ctx context.Context, _ *Journal, p StepProgress) 
 	// The source inventory is read from the SOURCE SERVER, not from the dump:
 	// it is the "before" half of the verify, and reading it here means the
 	// comparison is between two live clusters, not between a file and a guess.
-	inv, err := readInventory(ctx, r.env, SrcContainer)
+	inv, err := readInventory(ctx, r.env, SrcContainer, r.creds)
 	if err != nil {
 		return fmt.Errorf("read the source inventory: %w", err)
 	}
@@ -418,7 +459,7 @@ func (r *pgRun) runDump(ctx context.Context, container string, p StepProgress) e
 	// renderers already draw 0 as indeterminate — the same choice the
 	// volume-copy step makes.
 	stop := watchFileGrowth(ctx, r.env, r.dumpHostPath, 0, dumpProgressPoll, p)
-	_, stderr, code, err := r.env.Exec(ctx, container, DumpScript(r.dumpInContainer))
+	_, stderr, code, err := r.env.Exec(ctx, container, DumpScript(r.creds, r.dumpInContainer))
 	stop()
 	if err != nil {
 		return fmt.Errorf("pg_dumpall: %w", err)
@@ -514,11 +555,11 @@ func (r *pgRun) restoreAt(i int) func(context.Context, *Journal, StepProgress) e
 	return func(ctx context.Context, _ *Journal, p StepProgress) error {
 		size, _ := r.env.FileSize(r.dumpHostPath)
 		p(0, msg.New("deps.msg.progress.restoring", "size", fsutil.FormatBytes(size)))
-		_, stderr, code, err := r.env.Exec(ctx, DstContainer, RestoreScript(r.dumpInContainer))
+		_, stderr, code, err := r.env.Exec(ctx, DstContainer, RestoreScript(r.creds, r.dumpInContainer))
 		if err != nil {
 			return fmt.Errorf("psql: %w", err)
 		}
-		if errs := restoreErrors(stderr); len(errs) > 0 {
+		if errs := restoreErrors(stderr, r.creds); len(errs) > 0 {
 			return fmt.Errorf("restore reported %d error(s): %s", len(errs), strings.Join(errs, " | "))
 		}
 		if code != 0 {
@@ -539,7 +580,7 @@ func (r *pgRun) restoreAt(i int) func(context.Context, *Journal, StepProgress) e
 // hours on the new major run on default estimates and look like a regression
 // the migration caused.
 func (r *pgRun) verify(ctx context.Context, _ *Journal, p StepProgress) error {
-	target, err := readInventory(ctx, r.env, DstContainer)
+	target, err := readInventory(ctx, r.env, DstContainer, r.creds)
 	if err != nil {
 		return fmt.Errorf("read the target inventory: %w", err)
 	}
@@ -548,7 +589,7 @@ func (r *pgRun) verify(ctx context.Context, _ *Journal, p StepProgress) error {
 	}
 	p(50, msg.New("deps.msg.progress.analyzing"))
 	_, stderr, code, err := r.env.Exec(ctx, DstContainer,
-		[]string{"vacuumdb", "-h", "127.0.0.1", "-U", "postgres", "--all", "--analyze", "-q"})
+		[]string{"vacuumdb", "-h", "127.0.0.1", "-U", r.creds.User, "--all", "--analyze", "-q"})
 	if err != nil {
 		return fmt.Errorf("vacuumdb: %w", err)
 	}
@@ -659,7 +700,7 @@ func volumesToRemove(j *deps.MigrationJournal) []string {
 // only by the final server (the embedded pg_hba.conf has
 // `host all all 127.0.0.1/32 trust`), and the `select 1` behind pg_isready is
 // what proves the server accepts connections rather than merely listening.
-func waitReady(ctx context.Context, env Env, container string, timeout, poll time.Duration, p StepProgress) error {
+func waitReady(ctx context.Context, env Env, container string, c pgCreds, timeout, poll time.Duration, p StepProgress) error {
 	deadline := time.Now().Add(timeout)
 	for {
 		running, err := env.ContainerRunning(ctx, container)
@@ -669,7 +710,7 @@ func waitReady(ctx context.Context, env Env, container string, timeout, poll tim
 		if !running {
 			return fmt.Errorf("container %s is not running", container)
 		}
-		if postgresAnswers(ctx, env, container) {
+		if postgresAnswers(ctx, env, container, c) {
 			return nil
 		}
 		if time.Now().After(deadline) {
@@ -684,12 +725,12 @@ func waitReady(ctx context.Context, env Env, container string, timeout, poll tim
 	}
 }
 
-func postgresAnswers(ctx context.Context, env Env, container string) bool {
+func postgresAnswers(ctx context.Context, env Env, container string, c pgCreds) bool {
 	if _, _, code, err := env.Exec(ctx, container,
-		[]string{"pg_isready", "-h", "127.0.0.1", "-U", "postgres"}); err != nil || code != 0 {
+		[]string{"pg_isready", "-h", "127.0.0.1", "-U", c.User}); err != nil || code != 0 {
 		return false
 	}
-	_, _, code, err := env.Exec(ctx, container, psqlArgs("postgres", "select 1"))
+	_, _, code, err := env.Exec(ctx, container, psqlArgs(c, c.DB, "select 1"))
 	return err == nil && code == 0
 }
 

@@ -636,7 +636,7 @@ func TestIntegration_Postgres17To18(t *testing.T) {
 	e.seed(ctx, t)
 	e.requireReadableCluster(ctx, t)
 
-	pre := migrate.PostgresMigrator{}.Preflight(ctx, e.env, migrate.Path{itFromImage, itToImage})
+	pre := migrate.PostgresMigrator{ID: deps.Postgres}.Preflight(ctx, e.env, migrate.Path{itFromImage, itToImage})
 	require.True(t, pre.OK, "preflight problems: %v", pre.Problems)
 	require.Empty(t, pre.Warnings, "a fresh namespace has no leftover target volume")
 	assert.False(t, pre.WasRunning, "the harness never starts the namespace")
@@ -644,7 +644,7 @@ func TestIntegration_Postgres17To18(t *testing.T) {
 
 	// Wired exactly as handleDependencyMigrate wires it: plan from the
 	// migrator, engine over the namespace Runtime as the journal store.
-	plan, journal, err := migrate.PostgresMigrator{}.Plan(ctx, e.env, migrate.Path{itFromImage, itToImage}, migrate.PlanOptions{})
+	plan, journal, err := migrate.PostgresMigrator{ID: deps.Postgres}.Plan(ctx, e.env, migrate.Path{itFromImage, itToImage}, migrate.PlanOptions{})
 	require.NoError(t, err)
 
 	timer := newStepTimer()
@@ -667,9 +667,9 @@ func TestIntegration_Postgres17To18(t *testing.T) {
 	// must FAIL rather than skip — "no stderr recorded" is exactly what a
 	// broken lookup looks like, and it would delete this assertion with a
 	// green run.
-	restoreLog, ok := e.env.stderrFor(strings.Join(migrate.RestoreCommandPrefix(), " "))
+	restoreLog, ok := e.env.stderrFor(strings.Join(migrate.DefaultRestoreCommandPrefix(), " "))
 	require.Truef(t, ok, "no command matching the restore prefix %q produced stderr; recorded: %v",
-		strings.Join(migrate.RestoreCommandPrefix(), " "), e.env.recordedCommands())
+		strings.Join(migrate.DefaultRestoreCommandPrefix(), " "), e.env.recordedCommands())
 	t.Logf("restore stderr (exit %d):\n%s", restoreLog.code, strings.TrimSpace(restoreLog.stderr))
 	assert.Contains(t, restoreLog.stderr, `role "postgres" already exists`,
 		"the one error the restore tolerates is the one a real dump always produces")
@@ -733,7 +733,7 @@ func TestIntegration_RollbackOnBadTarget(t *testing.T) {
 	// at a step EARLIER than the one this test is about.
 	require.NoError(t, e.env.PullImage(ctx, itBadImage, func(float64) {}))
 
-	plan, journal, err := migrate.PostgresMigrator{}.Plan(ctx, e.env, migrate.Path{itFromImage, itToImage}, migrate.PlanOptions{})
+	plan, journal, err := migrate.PostgresMigrator{ID: deps.Postgres}.Plan(ctx, e.env, migrate.Path{itFromImage, itToImage}, migrate.PlanOptions{})
 	require.NoError(t, err)
 
 	// What the world looked like at the moment of failure, so the assertions

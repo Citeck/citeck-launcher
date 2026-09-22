@@ -30,7 +30,6 @@ type GenResp struct {
 	CloudConfig           map[string]map[string]any // per-app ext cloud config for CloudConfigServer
 	DependsOnDetachedApps map[string]bool           // apps whose reattachment triggers regeneration
 	GatingApps            map[string]bool           // apps whose detach state changes WHICH apps exist
-	AutoDetachedApps      map[string]bool           // generated apps the runtime must not start on its own
 	CustomLinks           []bundle.WorkspaceLink    // workspace-config custom quick links (with dependsOn gating)
 	DependencyUpgrades    []DependencyUpgrade       // candidates held back by a pin (registry order)
 	Dependencies          map[deps.ID]DependencyGen // effective vs candidate image per dependency
@@ -138,6 +137,10 @@ func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secre
 	}
 	generateAlfresco(ctx)
 	generateObserver(ctx)
+	// Declared PostgreSQL clusters (generator_database.go) come AFTER the
+	// services that own them: a declaration may name its owner with
+	// `requiredBy`, and the built-in observer database does.
+	generateDatabases(ctx)
 
 	generateBundleWebapps(ctx, bun, wsCfg)
 
@@ -274,7 +277,6 @@ func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secre
 		CloudConfig:           ctx.CloudConfig,
 		DependsOnDetachedApps: dependsOnDetached,
 		GatingApps:            ctx.GatingApps,
-		AutoDetachedApps:      ctx.AutoDetachedApps,
 		CustomLinks:           customLinks,
 		DependencyUpgrades:    sortedUpgrades(ctx),
 		Dependencies:          ctx.DependencyImages,

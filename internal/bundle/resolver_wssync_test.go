@@ -125,3 +125,47 @@ func TestResolveWorkspace_SuccessClearsPreviousError(t *testing.T) {
 	require.Len(t, cfg.BundleRepos, 1)
 	assert.NoError(t, r.WorkspaceSyncError(), "second pass loaded a config — error cleared")
 }
+
+// TestWorkspacePullError_ReportsAFailedPullEvenOverAGoodCache pins the gap the
+// two accessors above leave open, and the reason WorkspacePullError exists.
+//
+// resolveWorkspace returns at its priority-2 load — the cached clone — BEFORE
+// it records anything into wsSyncErr, so a pull that failed over a usable cache
+// is silent in WorkspaceSyncError *and* in WorkspaceSyncErrorAny. That silence
+// is right for the callers those were written for (a stale config beats a 502)
+// and wrong for anyone asking "is what I just read CURRENT" — the new-app
+// detach decision must not record a brand-new app as "the template says nothing
+// about it" on the strength of a list it could not refresh.
+func TestWorkspacePullError_ReportsAFailedPullEvenOverAGoodCache(t *testing.T) {
+	srv := newUnauthorizedGitServer(t)
+	dataDir := t.TempDir()
+
+	wsRepoDir := filepath.Join(dataDir, "bundles", "workspace")
+	require.NoError(t, os.MkdirAll(wsRepoDir, 0o755))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(wsRepoDir, "workspace-v1.yml"),
+		[]byte("bundleRepos:\n  - id: community\n"), 0o644))
+
+	r := NewResolver(dataDir).WithWorkspaceRepo(WorkspaceRepoOpts{URL: srv.URL + "/citeck/ws.git"})
+	cfg := r.ResolveWorkspaceOnly()
+
+	require.NotNil(t, cfg)
+	require.Len(t, cfg.BundleRepos, 1, "the cached config is still served")
+	assert.NoError(t, r.WorkspaceSyncError(), "unchanged: a usable cache keeps this one quiet")
+	assert.NoError(t, r.WorkspaceSyncErrorAny(), "and this one too — it reads the same field")
+
+	err := r.WorkspacePullError()
+	require.Error(t, err, "but the config being served is NOT current, and that must be sayable")
+	assert.Contains(t, err.Error(), "authentication required")
+}
+
+// Offline attempts no sync at all, so there is no failure to report — a
+// server-mode stand, where git is the operator's to drive, must not read as
+// "stale" on every load.
+func TestWorkspacePullError_IsNilWhenNoSyncWasAttempted(t *testing.T) {
+	r := NewResolver(t.TempDir()).WithWorkspaceRepo(WorkspaceRepoOpts{URL: "https://unreachable.example.com/ws.git"})
+	r.SetOffline(true)
+
+	require.NotNil(t, r.ResolveWorkspaceOnly())
+	assert.NoError(t, r.WorkspacePullError())
+}

@@ -1,10 +1,6 @@
 package deps
 
-import (
-	"strconv"
-
-	"github.com/citeck/citeck-launcher/internal/appdef"
-)
+import "strconv"
 
 // PostgresLegacyImage is what launchers before the pin ran (Kotlin 1.x and
 // Go 2.x both defaulted to 17.x; only the major matters for the layout).
@@ -120,11 +116,34 @@ func KnownPostgresDataPaths() []string {
 	return out
 }
 
-type postgresDescriptor struct{}
+// postgresDescriptor describes ONE PostgreSQL cluster. A namespace can run more
+// than one — the stand's own database and the observer's — and they share every
+// rule (what a breaking move is, which layout a major uses, how a pin is seeded
+// from PG_VERSION, which migration plan applies) while differing only in id,
+// container name and volume stem. So the type carries those three as FIELDS
+// rather than being a singleton: a second cluster is a registry entry, not a
+// second copy of the rules.
+//
+// Everything that has to recognize "a PostgreSQL cluster, whichever one" asks
+// IsPostgresFamily instead of comparing against the Postgres id.
+type postgresDescriptor struct {
+	id         ID
+	appName    string
+	volumeBase string
+}
 
-func (postgresDescriptor) ID() ID             { return Postgres }
-func (postgresDescriptor) AppName() string    { return appdef.AppPostgres }
-func (postgresDescriptor) VolumeBase() string { return "postgres" }
+// IsPostgresFamily reports whether a dependency is a PostgreSQL cluster — the
+// question the seeding probe, the migration plan and the rollback's version
+// marker actually ask. They used to ask `d.ID() != Postgres`, which was the
+// same thing only while there was exactly one.
+func IsPostgresFamily(d Descriptor) bool {
+	_, ok := d.(postgresDescriptor)
+	return ok
+}
+
+func (d postgresDescriptor) ID() ID             { return d.id }
+func (d postgresDescriptor) AppName() string    { return d.appName }
+func (d postgresDescriptor) VolumeBase() string { return d.volumeBase }
 func (postgresDescriptor) ParseVersion(image string) (Version, bool) {
 	return ParseImageVersion(image)
 }

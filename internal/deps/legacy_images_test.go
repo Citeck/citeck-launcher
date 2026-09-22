@@ -48,6 +48,14 @@ func TestLegacyImagesAreTheExactReferencesProbed(t *testing.T) {
 		Keycloak:  "keycloak/keycloak:26.4",
 		MongoDB:   "mongo:4.0",
 		Qdrant:    "qdrant/qdrant:v1.14.1",
+		// The observer's database shares the PostgreSQL family's legacy
+		// reference. It is deliberately the CONSERVATIVE answer rather than a
+		// historical one: a pin the launcher had to invent, because a probe
+		// failed, holds a newer bundle image back instead of applying it to
+		// data nobody could read — which is the safe direction for every
+		// dependency here. (Its pre-registration volume was outside the
+		// generation counter, so the probe never finds data to contradict it.)
+		ObserverPostgres: "postgres:17",
 	}
 	for _, d := range All() {
 		assert.Equal(t, want[d.ID()], d.LegacyImage(), string(d.ID()))

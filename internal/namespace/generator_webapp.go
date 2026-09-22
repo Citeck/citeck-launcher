@@ -393,19 +393,19 @@ func webappEnabled(name string, ctx *NsGenContext) bool {
 // workspace layer, overridden wholesale by namespace.yml when that file mentions
 // the app at all (an empty list there deliberately clears them).
 func webappDependsOn(name string, ctx *NsGenContext) []string {
-	var deps []string
+	var dependsOn []string
 	if ctx.WorkspaceConfig != nil {
 		for _, wsCfg := range ctx.WorkspaceConfig.Webapps {
 			if wsCfg.ID == name {
-				deps = wsCfg.DefaultProps.DependsOn
+				dependsOn = wsCfg.DefaultProps.DependsOn
 				break
 			}
 		}
 	}
 	if wp, ok := ctx.Config.Webapps[name]; ok && wp.DependsOn != nil {
-		deps = wp.DependsOn
+		dependsOn = wp.DependsOn
 	}
-	return deps
+	return dependsOn
 }
 
 // applyConfiguredDependsOn adds the configured dependencies from
@@ -764,12 +764,32 @@ func generateAlfresco(ctx *NsGenContext) {
 	alfSolr.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: "2560m"}}
 }
 
+// generateObserver adds citeck-observer and its own PostgreSQL. Behavior:
+//   - No observer image in the bundle → no observer. That is the ONLY
+//     condition: it replaced a namespace.yml flag (`observer.enabled`), for the
+//     reason qdrant follows its bundle image too — whether a stand HAS a
+//     service is a property of the release it runs, and a flag in a per-stand
+//     file is a second place to keep that in sync.
+//   - The observer and its database are ordinary apps: they start with the
+//     namespace, and a stand that should not run them says so the same way it
+//     does for anything else (`citeck stop observer`, or a `detachedApps` entry
+//     in the workspace template — both of them, owner and database, see
+//     docs/app-startup-and-detach.md).
+//   - Its DATABASE is not generated here at all: it is a declared cluster
+//     (generator_database.go), so its image, credentials, published port,
+//     memory limit and server settings come from configuration — the launcher's
+//     built-in defaults, overridable by the workspace's `databases:` section —
+//     and adding another service's database needs no launcher code. What this
+//     function takes from that declaration is only what it must AGREE with: the
+//     credentials and the port it tells the observer to connect to.
 func generateObserver(ctx *NsGenContext) {
-	if !ctx.Config.Observer.Enabled {
+	obsImage := resolveAppImage(ctx, appdef.AppObserver, "", "")
+	if obsImage == "" {
 		return
 	}
-
-	obsImage := resolveAppImage(ctx, appdef.AppObserver, ctx.Config.Observer.Image, "citeck/observer:1.1.0")
+	// The one declaration both halves read, so the service and its database
+	// cannot disagree about the password or the port.
+	db := databaseSpecFor(ctx, appdef.AppObsPostgres)
 
 	const (
 		// Observer ports: 17014–17017 (KC mgmt 17013 sits below; ZK admin 17018, Alfresco 17019, webapps 17020+)
@@ -777,62 +797,9 @@ func generateObserver(ctx *NsGenContext) {
 		obsOTLPHTTP = 17015 // OTLP HTTP/protobuf receiver
 		obsHTTP     = 17016 // HTTP API + embedded UI
 		obsGRPC     = 17017 // OTLP gRPC receiver
-		obsPGPort   = 14524 // published port for observer-postgres (local debugging)
-		obsDBName   = "observer"
-		obsDBUser   = "observer"
-		obsDBPass   = "observer"
 	)
-
-	// 1. Observer Postgres — separate instance tuned for observability workload:
-	// heavy writes (span/metric ingestion), aggregation queries, JSONB GIN lookups
-	//
-	// Its image does NOT go through resolveDependencyImage and it keeps the
-	// legacy data layout (explicit PGDATA under the volume) on purpose: this is
-	// the observer's own database, and the dependency registry knows exactly one
-	// postgres per namespace — deps.Postgres is keyed to the "postgres" app, and
-	// the pin, the data probe and the migration engine all name that container
-	// and its volumes (postgres2/postgres3). So nothing pins, seeds or migrates
-	// this one, which means nothing would ever move its data to a new layout
-	// either; naming PGDATA explicitly is what keeps a future image bump from
-	// starting an empty cluster in the image's new default directory beside the
-	// existing data. alf-postgres is in the same position for the same reason.
-	obsPg := ctx.GetOrCreateApp(appdef.AppObsPostgres)
-	obsPg.Image = "postgres:18"
-	obsPg.Kind = appdef.KindThirdParty
-	obsPg.AddEnv("POSTGRES_DB", obsDBName)
-	obsPg.AddEnv("POSTGRES_USER", obsDBUser)
-	obsPg.AddEnv("POSTGRES_PASSWORD", obsDBPass)
-	obsPg.AddEnv("PGDATA", "/var/lib/postgresql/data")
-	obsPg.AddPort(fmt.Sprintf("%d:%d", obsPGPort, PGPort))
-	obsPg.AddVolume("obs_postgres:/var/lib/postgresql/data")
-	obsPg.Cmd = []string{
-		"-c", "shared_buffers=256MB",
-		"-c", "work_mem=32MB",
-		"-c", "maintenance_work_mem=128MB",
-		"-c", "effective_cache_size=1GB",
-		"-c", "random_page_cost=1.1",
-		"-c", "checkpoint_completion_target=0.9",
-		"-c", "wal_buffers=16MB",
-		"-c", "max_wal_size=1GB",
-		"-c", "min_wal_size=256MB",
-	}
-	obsPg.StartupConditions = []appdef.StartupCondition{
-		{Log: &appdef.LogStartupCondition{Pattern: ".*database system is ready to accept connections.*"}},
-		{Probe: &appdef.AppProbeDef{
-			Exec: &appdef.ExecProbeDef{
-				Command: []string{"/bin/sh", "-c", fmt.Sprintf("pg_isready -U %s || exit 1", obsDBUser)},
-			},
-			PeriodSeconds:    10,
-			FailureThreshold: 60,
-			TimeoutSeconds:   5,
-		}},
-	}
-	obsPg.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: "512m"}}
-	obsPg.LivenessProbe = &appdef.AppProbeDef{
-		Exec:             &appdef.ExecProbeDef{Command: []string{"pg_isready", "-U", obsDBUser}},
-		FailureThreshold: livenessFailureThreshold,
-		TimeoutSeconds:   5,
-	}
+	obsPGPort := db.Port
+	obsDBName, obsDBUser, obsDBPass := db.DB, db.User, db.Password
 
 	// 2. citeck-observer — env var names match the observer's Config struct
 	// (reflection-based: database.host → DATABASE_HOST, zookeeper.hosts → ZOOKEEPER_HOSTS, etc.)
@@ -940,6 +907,29 @@ func generateObserver(ctx *NsGenContext) {
 	ctx.CloudConfig[appdef.AppObserver] = extCloudConfig
 }
 
+// WillGenerateObserver answers, WITHOUT generating, whether a namespace with
+// this configuration emits an observer — and with it the observer's database,
+// which is a registered dependency and therefore needs a pin.
+//
+// Same shape, and same reason, as WillGenerateQdrant: the daemon's pin seeding
+// runs BEFORE Generate (the pins are an input to it) and must not pay a Docker
+// probe for a dependency this namespace does not have. It RESTATES the
+// generator's entry condition, and the two are checked against each other by
+// running the real thing (TestNamespaceDependenciesMatchesWhatTheGeneratorEmits).
+//
+// The dangerous direction is answering FALSE wrongly: no pin means the bundle's
+// image is applied to an existing cluster, across a major PostgreSQL will not
+// read. The condition below is the single one the generator checks before it
+// emits anything.
+func WillGenerateObserver(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig) bool {
+	if cfg == nil || bun == nil {
+		return false
+	}
+	ctx := NewNsGenContext(cfg, bun)
+	ctx.WorkspaceConfig = wsCfg
+	return resolveAppImage(ctx, appdef.AppObserver, "", "") != ""
+}
+
 // STT sidecar defaults — match the Kotlin SttSidecarProps.DEFAULT:
 //   - port 14080 lives in the infrastructure cluster (below the 17020+
 //     dynamic webapp range), so it never collides with a counter-allocated
@@ -955,9 +945,10 @@ const (
 // for the AI app. Kotlin parity, see SttSidecarProps + NamespaceGenerator
 // .generateSttSidecar in v1.4+. Behavior:
 //   - No AI app in the generated set → no STT (it only serves AI).
-//   - AI detached → the STT spec is still generated, but marked auto-detached:
-//     the runtime never starts it by itself, while an explicit start works (the
-//     sidecar is what an AI run from an IDE has to reach).
+//   - AI detached → the STT spec is still generated and started like any other
+//     app (the sidecar is what an AI run from an IDE has to reach); a stand
+//     that should not pay for it stops it, or lists it in the template's
+//     detachedApps, exactly as it would for any other app.
 //   - STT detached → the STT spec is still generated (so the user can re-attach
 //     it from the UI without losing the AppRuntime), but the AI app does NOT
 //     get the env var or dependency so AI keeps starting without the sidecar.
@@ -969,16 +960,10 @@ func generateSttSidecar(ctx *NsGenContext) {
 	if !ok {
 		return
 	}
-	// ai's detach state decides how stt-sidecar is generated — toggling it must
-	// regenerate the namespace (see NsGenContext.MarkGatingApp).
+	// ai's detach state decides the proxy's AI upstream (generator_proxy.go) and
+	// the RAG flag in generateQdrant — toggling it must regenerate the namespace
+	// (see NsGenContext.MarkGatingApp).
 	ctx.MarkGatingApp(appdef.AppAi)
-	// A detached ai no longer deletes its sidecar, for the reason generateQdrant
-	// keeps qdrant beside a detached rag: stopping the owner in the launcher is
-	// how it gets run from an IDE instead, and the companion is exactly what the
-	// locally run owner still has to reach. MarkAutoDetached is what keeps it
-	// stopped for everyone who simply switched AI off — the runtime never starts
-	// an auto-detached app by itself.
-	aiDetached := ctx.DetachedApps[appdef.AppAi]
 
 	props := bundle.SttSidecarProps{}
 	if ctx.WorkspaceConfig != nil && ctx.WorkspaceConfig.SttSidecar != nil {
@@ -1001,10 +986,13 @@ func generateSttSidecar(ctx *NsGenContext) {
 		return
 	}
 
+	// A detached ai no longer deletes its sidecar: stopping the owner in the
+	// launcher is how it gets run from an IDE instead, and the companion is
+	// exactly what the locally run owner still has to reach. The sidecar starts
+	// with the namespace either way — a stand that should not pay its 2g says so
+	// with `citeck stop stt-sidecar`, or with a `detachedApps:` template entry
+	// (the shipped workspace template lists it next to ai).
 	stt := ctx.GetOrCreateApp(appdef.AppSttSidecar)
-	if aiDetached {
-		ctx.MarkAutoDetached(appdef.AppSttSidecar)
-	}
 	stt.Image = image
 	stt.Kind = appdef.KindCiteckAdditional
 	stt.AddEnv("PORT", fmt.Sprintf("%d", port))
@@ -1022,7 +1010,7 @@ func generateSttSidecar(ctx *NsGenContext) {
 
 	// Detaching the sidecar removes AI's env + dependency below, so the daemon
 	// must regenerate on that toggle too — mark it whichever way it is right
-	// now, exactly as generateQdrant marks rag. Without this the re-attached
+	// now. Without this the re-attached
 	// sidecar never gets wired back into AI (speech-to-text stays silently dead
 	// until an unrelated reload), which is the regression the old hardcoded
 	// {onlyoffice, ai, stt-sidecar} set in attach_toggle_regen.go prevented.

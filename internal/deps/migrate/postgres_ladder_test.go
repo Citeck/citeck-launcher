@@ -74,7 +74,7 @@ func assertNeverCoexist(t *testing.T, trace []migratetest.TraceEvent, kindA, kin
 // The single-hop plan is the 10 steps it has always been.
 func TestPostgresSingleHopPlanIsUnchanged(t *testing.T) {
 	env := newPostgresFakeEnv(t, "postgres:17.5", 1)
-	plan, j, err := PostgresMigrator{}.Plan(context.Background(), env,
+	plan, j, err := PostgresMigrator{ID: deps.Postgres}.Plan(context.Background(), env,
 		Path{"postgres:17.5", "postgres:18.6"}, PlanOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, PostgresStepIDs(), stepIDs(plan))
@@ -95,7 +95,7 @@ func TestPostgresSingleHopPlanIsUnchanged(t *testing.T) {
 func TestPostgresThreeRungPlanReusesOneScratchVolume(t *testing.T) {
 	env := newPostgresFakeEnv(t, "postgres:17.5", 1)
 	path := Path{"postgres:17.5", "postgres:18.6", "postgres:19.2", "postgres:20.1"}
-	plan, j, err := PostgresMigrator{}.Plan(context.Background(), env, path, PlanOptions{})
+	plan, j, err := PostgresMigrator{ID: deps.Postgres}.Plan(context.Background(), env, path, PlanOptions{})
 	require.NoError(t, err)
 
 	ids := stepIDs(plan)
@@ -152,8 +152,8 @@ func TestRollbackPostgresStillWorksForAJournalWithNoScratchField(t *testing.T) {
 // Raising the requirement instead would refuse a migration that fits.
 func TestPostgresLadderAsksForNoMoreDiskThanOneHop(t *testing.T) {
 	env := newPostgresFakeEnv(t, "postgres:17.5", 1)
-	one := PostgresMigrator{}.Preflight(context.Background(), env, Path{"postgres:17.5", "postgres:18.6"})
-	many := PostgresMigrator{}.Preflight(context.Background(), env,
+	one := PostgresMigrator{ID: deps.Postgres}.Preflight(context.Background(), env, Path{"postgres:17.5", "postgres:18.6"})
+	many := PostgresMigrator{ID: deps.Postgres}.Preflight(context.Background(), env,
 		Path{"postgres:17.5", "postgres:18.6", "postgres:19.2", "postgres:20.1"})
 
 	require.True(t, one.OK, one.Problems)
@@ -171,7 +171,7 @@ func TestPostgresLadderAsksForNoMoreDiskThanOneHop(t *testing.T) {
 func TestPostgresLadderDeletesEachDumpBeforeTakingTheNext(t *testing.T) {
 	env := newPostgresFakeEnv(t, "postgres:17.5", 1)
 	path := Path{"postgres:17.5", "postgres:18.6", "postgres:19.2", "postgres:20.1"}
-	plan, j, err := PostgresMigrator{}.Plan(context.Background(), env, path, PlanOptions{})
+	plan, j, err := PostgresMigrator{ID: deps.Postgres}.Plan(context.Background(), env, path, PlanOptions{})
 	require.NoError(t, err)
 
 	require.NoError(t, runPlanAgainstFake(t, j, plan))
@@ -189,7 +189,7 @@ func TestPostgresLadderDeletesEachDumpBeforeTakingTheNext(t *testing.T) {
 func TestEveryRungsDumpIsCompressed(t *testing.T) {
 	env := newPostgresFakeEnv(t, "postgres:17.5", 1)
 	path := Path{"postgres:17.5", "postgres:18.6", "postgres:19.2"}
-	plan, j, err := PostgresMigrator{}.Plan(context.Background(), env, path, PlanOptions{})
+	plan, j, err := PostgresMigrator{ID: deps.Postgres}.Plan(context.Background(), env, path, PlanOptions{})
 	require.NoError(t, err)
 	require.NoError(t, runPlanAgainstFake(t, j, plan))
 
@@ -256,7 +256,7 @@ func TestPostgresLadderRung1MountsScratchVolumeNotSource(t *testing.T) {
 	base := newPostgresFakeEnv(t, "postgres:17.5", 1)
 	env := newGenRecordingEnv(base)
 	path := Path{"postgres:17.5", "postgres:18.6", "postgres:19.2", "postgres:20.1"}
-	plan, j, err := PostgresMigrator{}.Plan(context.Background(), env, path, PlanOptions{})
+	plan, j, err := PostgresMigrator{ID: deps.Postgres}.Plan(context.Background(), env, path, PlanOptions{})
 	require.NoError(t, err)
 	// ScratchVolume/CreatedVolume are write-ahead fields, journalled by the
 	// STEP that is about to create them — see TestPostgresThreeRungPlanReusesOneScratchVolume
@@ -292,7 +292,7 @@ func TestPostgresLadderToleratesASameMajorIntermediateRung(t *testing.T) {
 	env := newPostgresFakeEnv(t, "postgres:17.5", 1)
 	route := Path{"postgres:17.5", "postgres:17.9", "postgres:18.6"}
 
-	res := PostgresMigrator{}.Preflight(context.Background(), env, route)
+	res := PostgresMigrator{ID: deps.Postgres}.Preflight(context.Background(), env, route)
 
 	assert.True(t, res.OK, "a same-major rung inside a forward ladder must not be refused: %v", res.Problems)
 	assert.Empty(t, res.Problems)

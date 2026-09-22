@@ -22,7 +22,6 @@ func TestExportDirOnEveryApp(t *testing.T) {
 	cfg := &Config{
 		Authentication: AuthenticationProps{Type: AuthKeycloak, Users: []string{"admin"}},
 		Proxy:          ProxyProps{Port: 80},
-		Observer:       ObserverProps{Enabled: true, Image: "citeck/observer:1.0"},
 	}
 	bun := &bundle.Def{Applications: map[string]bundle.AppDef{"emodel": {Image: "nexus.citeck.ru/emodel:1.0"}}}
 	wsCfg := &bundle.WorkspaceConfig{Webapps: []bundle.WebappConfig{{ID: "emodel"}}}

@@ -23,7 +23,7 @@ func inventoryEnv(t *testing.T, exec migratetest.ExecFunc) *migratetest.FakeEnv 
 func TestReadInventoryCollectsDatabasesRolesAndTableCounts(t *testing.T) {
 	env := inventoryEnv(t, migratetest.PostgresExec(
 		map[string]migratetest.PostgresInventory{"": migratetest.HealthyPostgres()}))
-	inv, err := readInventory(context.Background(), env, SrcContainer)
+	inv, err := readInventory(context.Background(), env, SrcContainer, defaultPgCreds)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"citeck_emodel", "citeck_keycloak"}, inv.Databases)
 	assert.Equal(t, []string{"citeck_emodel", "postgres"}, inv.Roles)
@@ -38,7 +38,7 @@ func TestReadInventoryParsesStdoutOnly(t *testing.T) {
 			map[string]migratetest.PostgresInventory{"": migratetest.HealthyPostgres()})("", cmdline)
 		return out, "NOTICE:  something entirely unrelated\nnot_a_database", code, err
 	})
-	inv, err := readInventory(context.Background(), env, SrcContainer)
+	inv, err := readInventory(context.Background(), env, SrcContainer, defaultPgCreds)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"citeck_emodel", "citeck_keycloak"}, inv.Databases)
 }
@@ -47,7 +47,7 @@ func TestReadInventoryFailsOnANonZeroExit(t *testing.T) {
 	env := inventoryEnv(t, func(string, string) (string, string, int, error) {
 		return "", "psql: FATAL:  the database system is starting up", 2, nil
 	})
-	_, err := readInventory(context.Background(), env, SrcContainer)
+	_, err := readInventory(context.Background(), env, SrcContainer, defaultPgCreds)
 	require.ErrorContains(t, err, "list databases")
 	require.ErrorContains(t, err, "starting up")
 }
@@ -60,7 +60,7 @@ func TestReadInventoryFailsOnACountThatIsNotANumber(t *testing.T) {
 		}
 		return base(c, cmdline)
 	})
-	_, err := readInventory(context.Background(), env, SrcContainer)
+	_, err := readInventory(context.Background(), env, SrcContainer, defaultPgCreds)
 	require.ErrorContains(t, err, "not a number")
 }
 

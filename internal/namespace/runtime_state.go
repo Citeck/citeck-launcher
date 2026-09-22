@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"slices"
 	"time"
 
 	"github.com/citeck/citeck-launcher/internal/api"
@@ -29,6 +30,9 @@ func (r *Runtime) persistState() error {
 	}
 	for name := range r.manualStoppedApps {
 		state.ManualStoppedApps = append(state.ManualStoppedApps, name)
+	}
+	if len(r.knownApps) > 0 {
+		state.KnownApps = slices.Sorted(maps.Keys(r.knownApps))
 	}
 	if len(r.editedAppPatches) > 0 {
 		state.EditedAppPatches = make(map[string]json.RawMessage, len(r.editedAppPatches))

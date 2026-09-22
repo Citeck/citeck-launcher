@@ -527,7 +527,7 @@ func TestADowngradeGetsItsOwnMessageNotALauncherUpdate(t *testing.T) {
 	// unreachable through both routes.
 	env := migratetest.New()
 	env.Volumes[postgresVolume(2)] = map[string]string{"18/docker/PG_VERSION": "18\n"}
-	pre := migrate.PostgresMigrator{}.Preflight(context.Background(), env, migrate.Path{"postgres:18", "postgres:17"})
+	pre := migrate.PostgresMigrator{ID: deps.Postgres}.Preflight(context.Background(), env, migrate.Path{"postgres:18", "postgres:17"})
 	assert.False(t, pre.OK)
 	assert.Contains(t, renderProblems(englishForLogs, pre.Problems), "does not migrate data backwards")
 }

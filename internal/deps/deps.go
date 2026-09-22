@@ -9,6 +9,8 @@ package deps
 import (
 	"slices"
 	"strconv"
+
+	"github.com/citeck/citeck-launcher/internal/appdef"
 )
 
 // ID names a dependency. It is the key of the per-namespace pin map and the
@@ -23,6 +25,11 @@ const (
 	Keycloak  ID = "keycloak"
 	MongoDB   ID = "mongodb"
 	Qdrant    ID = "qdrant"
+	// ObserverPostgres is the observer's OWN database — a second PostgreSQL
+	// cluster in the same namespace, with its own pin, its own volume
+	// generation and its own migrations. It exists only where the bundle names
+	// an observer image.
+	ObserverPostgres ID = "observer-postgres"
 )
 
 // Descriptor is what the launcher knows about one dependency.
@@ -63,24 +70,43 @@ type Descriptor interface {
 
 // registry is fixed and ordered: the order is the display order everywhere.
 var registry = []Descriptor{
-	postgresDescriptor{},
+	postgresDescriptor{id: Postgres, appName: appdef.AppPostgres, volumeBase: "postgres"},
 	rabbitDescriptor{},
 	zookeeperDescriptor{},
 	keycloakDescriptor{},
 	mongoDescriptor{},
 	qdrantDescriptor{},
+	// The observer's database is last because it is conditional (no observer
+	// image in the bundle, no dependency) and because the order here is the
+	// display order of `citeck deps`: the stand's own infrastructure first.
+	//
+	// Its volume stem is "obs_postgres", which is what the generator emitted
+	// before the counter existed — so generation 1 is "obs_postgres2", beside
+	// the old un-suffixed volume rather than on top of it. That is the same
+	// one-time break registering qdrant made, and for the same reason: a volume
+	// outside the counter can never be migrated, because a copy upgrade builds
+	// the next generation next to the current one.
+	postgresDescriptor{id: ObserverPostgres, appName: appdef.AppObsPostgres, volumeBase: "obs_postgres"},
 }
 
-// All returns every registered descriptor in display order.
+// All returns every registered descriptor in display order: the built-ins
+// first, then whatever the active workspace declared (see extra.go).
 func All() []Descriptor {
-	out := make([]Descriptor, len(registry))
-	copy(out, registry)
+	ex := extraDescriptors()
+	out := make([]Descriptor, 0, len(registry)+len(ex))
+	out = append(out, registry...)
+	out = append(out, ex...)
 	return out
 }
 
-// Lookup finds a descriptor by id.
+// Lookup finds a descriptor by id, built-in or workspace-declared.
 func Lookup(id ID) (Descriptor, bool) {
 	for _, d := range registry {
+		if d.ID() == id {
+			return d, true
+		}
+	}
+	for _, d := range extraDescriptors() {
 		if d.ID() == id {
 			return d, true
 		}

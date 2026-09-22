@@ -31,27 +31,27 @@ type pgInventory struct {
 //
 // -q silences the greeting, -At prints unaligned, header-less rows: one value
 // per line, which is what makes the output machine-parsable.
-func psqlArgs(db, sql string) []string {
-	return []string{"psql", "-h", "127.0.0.1", "-U", "postgres", "-d", db, "-q", "-At", "-c", sql}
+func psqlArgs(c pgCreds, db, sql string) []string {
+	return []string{"psql", "-h", "127.0.0.1", "-U", c.User, "-d", db, "-q", "-At", "-c", sql}
 }
 
 // readInventory lists what the cluster in container holds.
-func readInventory(ctx context.Context, env Env, container string) (pgInventory, error) {
+func readInventory(ctx context.Context, env Env, container string, c pgCreds) (pgInventory, error) {
 	inv := pgInventory{Tables: map[string]int{}}
-	dbs, err := execLines(ctx, env, container, psqlArgs("postgres",
+	dbs, err := execLines(ctx, env, container, psqlArgs(c, c.DB,
 		"SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY 1"))
 	if err != nil {
 		return inv, fmt.Errorf("list databases: %w", err)
 	}
 	inv.Databases = dbs
-	roles, err := execLines(ctx, env, container, psqlArgs("postgres",
+	roles, err := execLines(ctx, env, container, psqlArgs(c, c.DB,
 		`SELECT rolname FROM pg_roles WHERE rolname NOT LIKE 'pg\_%' ORDER BY 1`))
 	if err != nil {
 		return inv, fmt.Errorf("list roles: %w", err)
 	}
 	inv.Roles = roles
 	for _, db := range dbs {
-		out, err := execLines(ctx, env, container, psqlArgs(db,
+		out, err := execLines(ctx, env, container, psqlArgs(c, db,
 			"SELECT count(*) FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog','information_schema')"))
 		if err != nil {
 			return inv, fmt.Errorf("count tables in %s: %w", db, err)

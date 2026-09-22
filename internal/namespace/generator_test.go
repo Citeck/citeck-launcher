@@ -899,12 +899,13 @@ func TestGeneratorLivenessProbes(t *testing.T) {
 	cfg := &Config{
 		Authentication: AuthenticationProps{Type: AuthKeycloak, Users: []string{"admin"}},
 		Proxy:          ProxyProps{Port: 80},
-		Observer:       ObserverProps{Enabled: true, Image: "citeck/observer:1.0"},
 	}
 	bun := &bundle.Def{
 		Applications: map[string]bundle.AppDef{
 			"emodel":  {Image: "nexus.citeck.ru/emodel:1.0"},
 			"gateway": {Image: "nexus.citeck.ru/gateway:1.0"},
+			// The observer follows the BUNDLE image now, not a namespace flag.
+			appdef.AppObserver: {Image: "citeck/observer:1.0"},
 		},
 	}
 	wsCfg := &bundle.WorkspaceConfig{
@@ -1011,7 +1012,6 @@ func TestGeneratorStartupThresholds(t *testing.T) {
 	cfg := &Config{
 		Authentication: AuthenticationProps{Type: AuthKeycloak, Users: []string{"admin"}},
 		Proxy:          ProxyProps{Port: 80},
-		Observer:       ObserverProps{Enabled: true, Image: "citeck/observer:1.0"},
 	}
 	bun := &bundle.Def{
 		Applications: map[string]bundle.AppDef{
@@ -1065,7 +1065,6 @@ func TestGeneratorLivenessTolerance(t *testing.T) {
 	cfg := &Config{
 		Authentication: AuthenticationProps{Type: AuthKeycloak, Users: []string{"admin"}},
 		Proxy:          ProxyProps{Port: 80},
-		Observer:       ObserverProps{Enabled: true, Image: "citeck/observer:1.0"},
 	}
 	bun := &bundle.Def{
 		Applications: map[string]bundle.AppDef{
@@ -1167,11 +1166,13 @@ func TestCiteckSAWiring(t *testing.T) {
 	cfg := &Config{
 		Authentication: AuthenticationProps{Type: AuthKeycloak, Users: []string{"admin"}},
 		Proxy:          ProxyProps{Port: 80},
-		Observer:       ObserverProps{Enabled: true, Image: "citeck/observer:1.0"},
 	}
 	bun := &bundle.Def{
 		Applications: map[string]bundle.AppDef{
 			"emodel": {Image: "nexus.citeck.ru/emodel:1.0"},
+			// The observer is what assertion 3 below is about, and it exists
+			// only where the bundle names its image.
+			appdef.AppObserver: {Image: "citeck/observer:1.0"},
 		},
 	}
 	wsCfg := &bundle.WorkspaceConfig{

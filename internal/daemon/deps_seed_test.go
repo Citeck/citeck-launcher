@@ -168,12 +168,19 @@ func TestSeedAssumesTheLegacyImageWhenTheContainerProbeFailsOverExistingData(t *
 		volumes: map[string]map[string]string{
 			"postgres2": {"PG_VERSION": "17\n"}, "rabbitmq2": {}, "zookeeper2": {}, "mongo2": {},
 			"qdrant2": {},
+			// The observer's cluster is a SECOND PostgreSQL, probed in its own
+			// volumes and answering with its own version — deliberately a
+			// different major here, so sharing one evidence read between the
+			// two would fail this test rather than pass it silently.
+			"obs_postgres2": {"18/docker/PG_VERSION": "18\n"},
 		},
 	}
 	got := seedDependencyPins(context.Background(), nil, p, nil, nil)
 	assert.Equal(t, "postgres:17", got[deps.Postgres].Image, "the data still answers when the container probe cannot")
+	assert.Equal(t, "postgres:18", got[deps.ObserverPostgres].Image,
+		"the observer's cluster is pinned from ITS data, not from the stand database's")
 	for _, d := range deps.All() {
-		if d.ID() == deps.Postgres {
+		if d.ID() == deps.Postgres || d.ID() == deps.ObserverPostgres {
 			continue
 		}
 		assert.Equal(t, d.LegacyImage(), got[d.ID()].Image, string(d.ID()))
@@ -713,8 +720,8 @@ func TestNamespaceDependenciesMatchesWhatTheGeneratorEmits(t *testing.T) {
 // The QDRANT half of the same contract, and it needs its own cases because its
 // switch is not in namespace.yml at all: the store follows the BUNDLE, which
 // either carries a qdrant image or does not. It no longer follows rag — a store
-// nobody is holding is generated (auto-detached) rather than dropped, so the
-// cases that take rag away must now predict it PRESENT.
+// nobody is using is generated rather than dropped, so the cases that take rag
+// away must now predict it PRESENT.
 //
 // Wrongly predicting it ABSENT is the dangerous direction — no pin means the
 // bundle's image is applied to an existing vector index, across a minor Qdrant
@@ -745,8 +752,7 @@ func TestNamespaceDependenciesAnswersQdrantFromTheBundle(t *testing.T) {
 		assert.False(t, namespaceDependencies(cfg, bun, ws)[deps.Qdrant],
 			"a stand that will never run rag must not pay a probe for it on every load")
 	})
-	// A detached rag KEEPS its qdrant (auto-detached, so nothing starts it), so
-	// the namespace still has the dependency — and still needs its pin. The pin
+	// A detached rag KEEPS its qdrant, so the namespace still has the dependency — and still needs its pin. The pin
 	// is what the store's existing index is protected by, and the index does
 	// not stop existing because rag was stopped for an afternoon.
 	t.Run("a detached rag keeps its qdrant, and its pin", func(t *testing.T) {
@@ -916,10 +922,10 @@ func TestSeedProbesABoundedNumberOfGenerations(t *testing.T) {
 		require.LessOrEqual(t, gen, deps.MaxProbedVolumeGen)
 		perDependency[id]++
 	}
-	// postgres, rabbitmq, zookeeper, mongodb and qdrant have volumes; keycloak
-	// does not and must never be probed with an empty name (in server mode that
-	// stats the volumes ROOT, which always exists).
-	assert.Len(t, perDependency, 5)
+	// postgres, rabbitmq, zookeeper, mongodb, qdrant and the observer's postgres
+	// have volumes; keycloak does not and must never be probed with an empty
+	// name (in server mode that stats the volumes ROOT, which always exists).
+	assert.Len(t, perDependency, 6)
 	assert.NotContains(t, perDependency, deps.Keycloak)
 	for id, n := range perDependency {
 		assert.Equal(t, deps.MaxProbedVolumeGen, n, "%s", id)
@@ -980,4 +986,39 @@ func keycloakLegacyImage(t *testing.T) string {
 	d, ok := deps.Lookup(deps.Keycloak)
 	require.True(t, ok)
 	return d.LegacyImage()
+}
+
+// The OBSERVER's database is the second dependency whose switch is not in
+// namespace.yml: it exists where the bundle names an observer image, and its
+// pin is what protects an existing observability cluster from a bundle's newer
+// PostgreSQL major.
+func TestNamespaceDependenciesAnswersTheObserverDatabaseFromTheBundle(t *testing.T) {
+	cfg := &namespace.Config{ID: "ns"}
+	ws := &bundle.WorkspaceConfig{Webapps: []bundle.WebappConfig{{ID: "emodel"}}}
+	plain := func() *bundle.Def {
+		return &bundle.Def{Applications: map[string]bundle.AppDef{
+			"emodel": {Image: "harbor.citeck.ru/community/emodel:1.0"}}}
+	}
+	withObserver := func() *bundle.Def {
+		bun := plain()
+		bun.Applications["observer"] = bundle.AppDef{Image: "citeck/observer:1.1.0"}
+		bun.Dependencies = map[string]bundle.AppDef{"observer-postgres": {Image: "postgres:18.1"}}
+		return bun
+	}
+
+	t.Run("a bundle that ships the observer has its database to pin", func(t *testing.T) {
+		assertPredictionMatchesGenerator(t, cfg, withObserver(), ws, nil)
+		assert.True(t, namespaceDependencies(cfg, withObserver(), ws)[deps.ObserverPostgres])
+	})
+	t.Run("a bundle without it has none", func(t *testing.T) {
+		assertPredictionMatchesGenerator(t, cfg, plain(), ws, nil)
+		assert.False(t, namespaceDependencies(cfg, plain(), ws)[deps.ObserverPostgres],
+			"a stand with no observer must not pay a probe for its database on every load")
+	})
+	t.Run("a detached observer keeps its database, and its pin", func(t *testing.T) {
+		detached := map[string]bool{"observer": true, "observer-postgres": true}
+		assertPredictionMatchesGenerator(t, cfg, withObserver(), ws, detached)
+		assert.True(t, namespaceDependencies(cfg, withObserver(), ws)[deps.ObserverPostgres],
+			"the cluster does not stop existing because the operator stopped it")
+	})
 }

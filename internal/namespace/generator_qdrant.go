@@ -20,37 +20,30 @@ const (
 // qdrantConsumers are the apps that read and write the vector store.
 //
 // The store is NOT private to any of them. It is generated whenever the bundle
-// carries a qdrant image, and this list decides one thing only: whether anyone
-// is currently HOLDING it, which is what the auto-detach verdict below asks.
-// Wiring a second consumer is this line plus that consumer's own env — nothing
-// else in the rule is rag-specific.
+// carries a qdrant image, and this list decides one thing only: whether the
+// "bundle names no qdrant image" error is worth logging at all. Wiring a second
+// consumer is this line plus that consumer's own env — nothing else in the rule
+// is rag-specific.
 var qdrantConsumers = []string{appdef.AppRag}
 
 // generateQdrant adds the Qdrant vector store. Behavior:
 //   - No qdrant image in the bundle → no qdrant. This — not the presence of
 //     rag — is what keeps the store off community stands: no community bundle
 //     carries the image, in its `dependencies:` section or above it.
-//   - Nobody holding it (no consumer in the namespace, or every consumer
-//     detached) → the store is still generated, but marked auto-detached: the
-//     spec stays in the namespace while the runtime never starts it by itself,
-//     so a switched-off RAG costs no memory and a namespace that has no rag at
-//     all still offers a store anything else can be pointed at. An explicit
-//     `citeck start qdrant` runs it and it keeps running.
-//   - A consumer attached → the store comes up with it.
+//   - The store follows NO consumer. It is generated and started like any
+//     other app, whether rag is in the namespace, attached, or detached — a
+//     namespace that has no rag at all still offers a store anything else can
+//     be pointed at, and a rag run from an IDE still finds one on localhost.
+//     Stopping it (and paying no memory for it) is the operator's own
+//     `citeck stop qdrant`, which persists like every other detach.
 //   - Image comes from the bundle only; the version is pinned by the release.
 func generateQdrant(ctx *NsGenContext) {
-	// Toggling a consumer changes how the store is generated (the verdict
-	// below, and the consumer's own wiring), so the daemon must regenerate on
-	// that toggle — mark it whichever way the consumer is right now.
-	var consumerPresent, consumerHolds bool
+	// Only used to decide whether the "no qdrant image" error below is worth
+	// logging: nothing about the store's shape depends on its consumers.
+	consumerPresent := false
 	for _, name := range qdrantConsumers {
-		if _, ok := ctx.Applications[name]; !ok {
-			continue
-		}
-		ctx.MarkGatingApp(name)
-		consumerPresent = true
-		if !ctx.DetachedApps[name] {
-			consumerHolds = true
+		if _, ok := ctx.Applications[name]; ok {
+			consumerPresent = true
 		}
 	}
 
@@ -86,19 +79,19 @@ func generateQdrant(ctx *NsGenContext) {
 	// candidate applies unchanged.
 	image := resolveDependencyImage(ctx, deps.Qdrant, chain)
 
+	// The store outlives its consumers, both their detach and their absence:
+	// the spec stays in the namespace whatever rag is doing, which is what the
+	// "stop in launcher, debug locally" workflow needs — a rag run from an IDE
+	// still has to reach a qdrant on localhost. It also STARTS with the
+	// namespace like any other app. The launcher used to withhold that start
+	// while no consumer held the store (NsGenContext.MarkAutoDetached); the
+	// concept was removed because it bought a narrow memory saving — the store
+	// is only held down across a namespace restart, never at the moment rag is
+	// stopped — at the price of a second kind of "detached" nobody could tell
+	// from the operator's own. A namespace that should come up without a store
+	// says so the same way it says it about any other app: `citeck stop qdrant`,
+	// or a `detachedApps:` entry in the workspace template.
 	qdrant := ctx.GetOrCreateApp(appdef.AppQdrant)
-	// The store outlives its consumers, both their detach and their absence.
-	// The spec stays in the namespace — that is what the "stop in launcher,
-	// debug locally" workflow needs, since a rag run from an IDE still has to
-	// reach a qdrant on localhost — and MarkAutoDetached is what keeps it
-	// stopped for everyone who simply switched RAG off: the runtime never
-	// starts an auto-detached app by itself, so an unheld store costs no
-	// memory. The verdict is not persisted and not an intent: it only withholds
-	// autostart, so an explicit start survives every later generation
-	// (Runtime.SetAutoDetachedApps drops everything that is not STOPPED).
-	if !consumerHolds {
-		ctx.MarkAutoDetached(appdef.AppQdrant)
-	}
 	qdrant.Image = image
 	qdrant.Kind = appdef.KindThirdParty
 	// The volume comes from the generation counter, NOT from a literal. It used

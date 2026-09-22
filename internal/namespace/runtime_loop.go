@@ -1500,10 +1500,10 @@ func (r *Runtime) handleLivenessProbeResult(res workers.Result) {
 // that is merely slow can still move on its own, and calling that settled would
 // report a namespace RUNNING while half of it is coming up.
 //
-// "Detached" alone was too narrow, and the auto-detach verdict is what exposed
-// it: a companion the launcher held down and then released is STOPPED and NOT
-// detached, and nothing in the runtime will advance it (stepAllApps has no
-// STOPPED branch — only an explicit start does). Its consumer therefore waits
+// "Detached" alone was too narrow: an app that is STOPPED without being
+// detached — the state a reload leaves behind when the persisted detach set no
+// longer names it — is advanced by nothing in the runtime (stepAllApps has no
+// STOPPED branch; only an explicit start does). Its consumer therefore waits
 // forever on a dependency this walk called "still moving", so the namespace
 // reported RUNNING with a service parked. The owner's ruling: "stalled если не
 // все поднялось - это тоже ок" (translated: "stalled when not everything came

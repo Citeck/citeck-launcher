@@ -66,7 +66,7 @@ func envWith17Data() *migratetest.FakeEnv {
 // otherwise recorded in two unrelated sequences.
 func runPlan(t *testing.T, env *migratetest.FakeEnv, opts PlanOptions) (*fakeStore, error) {
 	t.Helper()
-	plan, j, err := PostgresMigrator{}.Plan(context.Background(), env, Path{from17, to18}, opts)
+	plan, j, err := PostgresMigrator{ID: deps.Postgres}.Plan(context.Background(), env, Path{from17, to18}, opts)
 	require.NoError(t, err)
 	st := &fakeStore{onSet: func(rec deps.MigrationJournal) {
 		if rec.CreatedVolume != "" {
@@ -79,7 +79,7 @@ func runPlan(t *testing.T, env *migratetest.FakeEnv, opts PlanOptions) (*fakeSto
 func TestPreflightHappyPath(t *testing.T) {
 	env := envWith17Data()
 	env.Running = true
-	res := PostgresMigrator{}.Preflight(context.Background(), env, Path{from17, to18})
+	res := PostgresMigrator{ID: deps.Postgres}.Preflight(context.Background(), env, Path{from17, to18})
 	assert.True(t, res.OK, res.Problems)
 	assert.Empty(t, res.Problems)
 	assert.Empty(t, res.Warnings)
@@ -105,7 +105,7 @@ func TestPreflightHappyPath(t *testing.T) {
 // pinned where the rendering happens: TestRenderedPreflightMarshalsEmptyListsNotNull.
 func TestPreflightKeepsEmptyListsNonNil(t *testing.T) {
 	env := envWith17Data()
-	res := PostgresMigrator{}.Preflight(context.Background(), env, Path{from17, to18})
+	res := PostgresMigrator{ID: deps.Postgres}.Preflight(context.Background(), env, Path{from17, to18})
 	require.True(t, res.OK, res.Problems)
 	assert.NotNil(t, res.Problems)
 	assert.NotNil(t, res.Warnings)
@@ -127,7 +127,7 @@ func TestExistingTargetVolumeIsReportedOnlyAsAStructuredField(t *testing.T) {
 	env := envWith17Data()
 	env.Volumes[newVol] = map[string]string{"18/docker/PG_VERSION": "18\n"}
 	env.VolSize[newVol] = 1 << 30
-	res := PostgresMigrator{}.Preflight(context.Background(), env, Path{from17, to18})
+	res := PostgresMigrator{ID: deps.Postgres}.Preflight(context.Background(), env, Path{from17, to18})
 	require.NotNil(t, res.ExistingTargetVolume)
 	assert.Equal(t, newVol, res.ExistingTargetVolume.Name)
 	assert.Equal(t, "18", res.ExistingTargetVolume.Version)
@@ -144,7 +144,7 @@ func TestExistingTargetVolumeIsReportedOnlyAsAStructuredField(t *testing.T) {
 func TestEighteenToNineteenIsNowSupported(t *testing.T) {
 	env := envWith17Data()
 	env.Volumes[oldVol] = map[string]string{"18/docker/PG_VERSION": "18\n"}
-	res := PostgresMigrator{}.Preflight(context.Background(), env, Path{to18, "postgres:19"})
+	res := PostgresMigrator{ID: deps.Postgres}.Preflight(context.Background(), env, Path{to18, "postgres:19"})
 	assert.True(t, res.OK, res.Problems)
 	assert.Empty(t, res.Problems)
 }
@@ -158,7 +158,7 @@ func TestSameLayoutMajorsMigrateIntoTheNextGeneration(t *testing.T) {
 	env := envWith17Data()
 	env.Volumes[oldVol]["PG_VERSION"] = "16\n"
 	env.ExecFn = migratetest.PostgresExec(map[string]migratetest.PostgresInventory{"": migratetest.HealthyPostgres()})
-	plan, j, err := PostgresMigrator{}.Plan(context.Background(), env, Path{"postgres:16", "postgres:17"}, PlanOptions{})
+	plan, j, err := PostgresMigrator{ID: deps.Postgres}.Plan(context.Background(), env, Path{"postgres:16", "postgres:17"}, PlanOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, oldVol, j.SourceVolume)
 	assert.Equal(t, 2, j.ToVolumeGen)
@@ -191,7 +191,7 @@ func TestUnsupportedPairProblemNamesTheOnlyLeverTheOperatorHas(t *testing.T) {
 // accurate one with "update the launcher".
 func TestPostgresSupportsEveryForwardMajor(t *testing.T) {
 	v := func(major int) deps.Version { return deps.Version{Major: major} }
-	m := PostgresMigrator{}
+	m := PostgresMigrator{ID: deps.Postgres}
 	for _, c := range []struct {
 		from, to int
 		want     bool
@@ -213,40 +213,40 @@ func TestPostgresSupportsEveryForwardMajor(t *testing.T) {
 func TestPreflightProblems(t *testing.T) {
 	ctx := context.Background()
 	t.Run("unreadable version", func(t *testing.T) {
-		res := PostgresMigrator{}.Preflight(ctx, envWith17Data(), Path{"postgres:latest", to18})
+		res := PostgresMigrator{ID: deps.Postgres}.Preflight(ctx, envWith17Data(), Path{"postgres:latest", to18})
 		assert.False(t, res.OK)
 		assert.Contains(t, joinEN(res.Problems), "current image")
 	})
 	t.Run("not breaking", func(t *testing.T) {
-		res := PostgresMigrator{}.Preflight(ctx, envWith17Data(), Path{from17, "postgres:17.11"})
+		res := PostgresMigrator{ID: deps.Postgres}.Preflight(ctx, envWith17Data(), Path{from17, "postgres:17.11"})
 		assert.False(t, res.OK)
 		assert.Contains(t, joinEN(res.Problems), "does not need a migration")
 	})
 	t.Run("downgrade", func(t *testing.T) {
 		env := envWith17Data()
 		env.Volumes[oldVol]["PG_VERSION"] = "18\n"
-		res := PostgresMigrator{}.Preflight(ctx, env, Path{to18, from17})
+		res := PostgresMigrator{ID: deps.Postgres}.Preflight(ctx, env, Path{to18, from17})
 		assert.False(t, res.OK)
 		assert.Contains(t, joinEN(res.Problems), "downgrade")
 	})
 	t.Run("data major mismatch", func(t *testing.T) {
 		env := envWith17Data()
 		env.Volumes[oldVol]["PG_VERSION"] = "16\n"
-		res := PostgresMigrator{}.Preflight(ctx, env, Path{from17, to18})
+		res := PostgresMigrator{ID: deps.Postgres}.Preflight(ctx, env, Path{from17, to18})
 		assert.False(t, res.OK)
 		assert.Contains(t, joinEN(res.Problems), "PG_VERSION")
 	})
 	t.Run("unreadable PG_VERSION", func(t *testing.T) {
 		env := envWith17Data()
 		delete(env.Volumes[oldVol], "PG_VERSION")
-		res := PostgresMigrator{}.Preflight(ctx, env, Path{from17, to18})
+		res := PostgresMigrator{ID: deps.Postgres}.Preflight(ctx, env, Path{from17, to18})
 		assert.False(t, res.OK)
 		assert.Contains(t, joinEN(res.Problems), "PG_VERSION")
 	})
 	t.Run("no space on host", func(t *testing.T) {
 		env := envWith17Data()
 		env.FreeHost = 1 << 30
-		res := PostgresMigrator{}.Preflight(ctx, env, Path{from17, to18})
+		res := PostgresMigrator{ID: deps.Postgres}.Preflight(ctx, env, Path{from17, to18})
 		assert.False(t, res.OK)
 		joined := joinEN(res.Problems)
 		assert.Contains(t, joined, "host")
@@ -255,7 +255,7 @@ func TestPreflightProblems(t *testing.T) {
 	t.Run("no space on volume filesystem", func(t *testing.T) {
 		env := envWith17Data()
 		env.FreeVolume = 1 << 30
-		res := PostgresMigrator{}.Preflight(ctx, env, Path{from17, to18})
+		res := PostgresMigrator{ID: deps.Postgres}.Preflight(ctx, env, Path{from17, to18})
 		assert.False(t, res.OK)
 		assert.Contains(t, joinEN(res.Problems), "volume")
 	})
@@ -263,7 +263,7 @@ func TestPreflightProblems(t *testing.T) {
 		env := envWith17Data()
 		env.Volumes[newVol] = map[string]string{"18/docker/PG_VERSION": "18\n"}
 		env.VolSize[newVol] = 7 << 20
-		res := PostgresMigrator{}.Preflight(ctx, env, Path{from17, to18})
+		res := PostgresMigrator{ID: deps.Postgres}.Preflight(ctx, env, Path{from17, to18})
 		assert.True(t, res.OK, "an existing volume is confirmable, not fatal")
 		require.NotNil(t, res.ExistingTargetVolume)
 		assert.Equal(t, api.ExistingVolume{Name: newVol, SizeBytes: 7 << 20, Version: "18"}, *res.ExistingTargetVolume)
@@ -272,7 +272,7 @@ func TestPreflightProblems(t *testing.T) {
 	t.Run("existing but empty target volume reports no version", func(t *testing.T) {
 		env := envWith17Data()
 		env.Volumes[newVol] = map[string]string{}
-		res := PostgresMigrator{}.Preflight(ctx, env, Path{from17, to18})
+		res := PostgresMigrator{ID: deps.Postgres}.Preflight(ctx, env, Path{from17, to18})
 		require.NotNil(t, res.ExistingTargetVolume)
 		assert.Equal(t, "empty", res.ExistingTargetVolume.Version)
 	})
@@ -331,7 +331,7 @@ func TestPostgresPlanHappyPath(t *testing.T) {
 // copy that drifts the first time a step is renamed.
 func TestPostgresStepIDsAreThePlansOwnSteps(t *testing.T) {
 	env := envWith17Data()
-	plan, _, err := PostgresMigrator{}.Plan(context.Background(), env, Path{from17, to18}, PlanOptions{})
+	plan, _, err := PostgresMigrator{ID: deps.Postgres}.Plan(context.Background(), env, Path{from17, to18}, PlanOptions{})
 	require.NoError(t, err)
 	ids := make([]string, 0, len(plan.Steps))
 	for _, st := range plan.Steps {
@@ -421,9 +421,9 @@ func TestRestoreRunsTheExportedCommandPrefix(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, restoreCmd, "the plan ran no restore")
 	assert.True(t, strings.HasPrefix(restoreCmd, "bash -c "), "the restore runs via bash -c, not sh -c: %q", restoreCmd)
-	assert.Contains(t, restoreCmd, strings.Join(RestoreCommandPrefix(), " "),
+	assert.Contains(t, restoreCmd, strings.Join(RestoreCommandPrefix(defaultPgCreds), " "),
 		"restore ran %q, which does not contain the exported prefix %q",
-		restoreCmd, strings.Join(RestoreCommandPrefix(), " "))
+		restoreCmd, strings.Join(RestoreCommandPrefix(defaultPgCreds), " "))
 	assert.Contains(t, restoreCmd, "gunzip -c '/citeck/depsmig/dump.sql.gz'",
 		"the dump is decompressed straight into the psql invocation above: %q", restoreCmd)
 	assert.NotContains(t, restoreCmd, "-f ", "psql reads the pipe, not a file: %q", restoreCmd)
@@ -492,7 +492,7 @@ func TestVerifyFailsWhenARoleDidNotSurvive(t *testing.T) {
 func TestExistingTargetVolumeRequiresConfirmation(t *testing.T) {
 	env := envWith17Data()
 	env.Volumes[newVol] = map[string]string{"18/docker/PG_VERSION": "18\n"}
-	_, _, err := PostgresMigrator{}.Plan(context.Background(), env, Path{from17, to18}, PlanOptions{})
+	_, _, err := PostgresMigrator{ID: deps.Postgres}.Plan(context.Background(), env, Path{from17, to18}, PlanOptions{})
 	assert.Contains(t, planProblemsEN(t, err), "already exists")
 
 	st, err := runPlan(t, env, PlanOptions{ReplaceExistingVolume: true})
@@ -508,7 +508,7 @@ func TestExistingTargetVolumeRequiresConfirmation(t *testing.T) {
 // leaves that volume's data alone.
 func TestCreateVolumeRefusesAVolumeThatAppearedAfterThePreflight(t *testing.T) {
 	env := envWith17Data()
-	plan, j, err := PostgresMigrator{}.Plan(context.Background(), env, Path{from17, to18}, PlanOptions{})
+	plan, j, err := PostgresMigrator{ID: deps.Postgres}.Plan(context.Background(), env, Path{from17, to18}, PlanOptions{})
 	require.NoError(t, err)
 	env.Volumes[newVol] = map[string]string{"18/docker/PG_VERSION": "18\n"}
 
@@ -591,7 +591,7 @@ func TestRollbackLeavesTheNamespaceStoppedWhenATempContainerSurvived(t *testing.
 func TestPlanRefusesWhenPreflightFails(t *testing.T) {
 	env := envWith17Data()
 	env.FreeHost = 1 << 20
-	_, _, err := PostgresMigrator{}.Plan(context.Background(), env, Path{from17, to18}, PlanOptions{})
+	_, _, err := PostgresMigrator{ID: deps.Postgres}.Plan(context.Background(), env, Path{from17, to18}, PlanOptions{})
 	require.ErrorContains(t, err, "preflight failed")
 }
 
@@ -629,16 +629,16 @@ func TestReadinessWaitsForTheTCPServerNotJustPgIsready(t *testing.T) {
 		}
 		return "", "", 0, nil
 	}
-	err := waitReady(ctx, env, SrcContainer, 20*time.Millisecond, time.Millisecond, noProgress)
+	err := waitReady(ctx, env, SrcContainer, defaultPgCreds, 20*time.Millisecond, time.Millisecond, noProgress)
 	require.ErrorContains(t, err, "did not become ready")
 
 	tcpUp.Store(true)
-	require.NoError(t, waitReady(ctx, env, SrcContainer, time.Second, time.Millisecond, noProgress))
+	require.NoError(t, waitReady(ctx, env, SrcContainer, defaultPgCreds, time.Second, time.Millisecond, noProgress))
 }
 
 func TestReadinessFailsAtOnceWhenTheContainerIsGone(t *testing.T) {
 	env := migratetest.New()
-	err := waitReady(context.Background(), env, SrcContainer, time.Minute, time.Minute, noProgress)
+	err := waitReady(context.Background(), env, SrcContainer, defaultPgCreds, time.Minute, time.Minute, noProgress)
 	require.ErrorContains(t, err, "is not running")
 }
 
@@ -648,7 +648,7 @@ func TestReadinessStopsWhenTheContextIsCanceled(t *testing.T) {
 	env.Containers[SrcContainer] = appdef.ApplicationDef{Name: "postgres"}
 	env.ExecFn = func(string, string) (string, string, int, error) { return "", "down", 2, nil }
 	cancel()
-	require.ErrorIs(t, waitReady(ctx, env, SrcContainer, time.Hour, time.Millisecond, noProgress), context.Canceled)
+	require.ErrorIs(t, waitReady(ctx, env, SrcContainer, defaultPgCreds, time.Hour, time.Millisecond, noProgress), context.Canceled)
 }
 
 func TestDumpProgressFollowsTheGrowingFile(t *testing.T) {
@@ -768,7 +768,7 @@ func TestPreflightNeverMutates(t *testing.T) {
 	env := envWith17Data()
 	env.Running = true
 	env.Volumes[newVol] = map[string]string{} // the interesting case: it has work it could do
-	res := PostgresMigrator{}.Preflight(ctx, env, Path{from17, to18})
+	res := PostgresMigrator{ID: deps.Postgres}.Preflight(ctx, env, Path{from17, to18})
 	require.True(t, res.OK, res.Problems)
 	require.NotNil(t, res.ExistingTargetVolume, "the leftover volume is reported")
 
@@ -815,7 +815,7 @@ func TestReadinessFailsWhenDockerCannotAnswer(t *testing.T) {
 	env := migratetest.New()
 	env.Containers[SrcContainer] = appdef.ApplicationDef{Name: "postgres"}
 	env.FailOn["running:"+SrcContainer] = errors.New("docker daemon is not responding")
-	err := waitReady(context.Background(), env, SrcContainer, time.Minute, time.Millisecond, noProgress)
+	err := waitReady(context.Background(), env, SrcContainer, defaultPgCreds, time.Minute, time.Millisecond, noProgress)
 	require.ErrorContains(t, err, "docker daemon is not responding")
 	require.ErrorContains(t, err, "check "+SrcContainer)
 	assert.NotContains(t, err.Error(), "is not running", "an unanswerable question is not an answer")
@@ -862,14 +862,14 @@ func TestDumpProgressStopWaitsForTheReporterToReturn(t *testing.T) {
 // less I/O — and at gzip -1 the CPU cost is small enough that reading the
 // smaller file back can pay for it.
 func TestDumpAndRestoreAreCompressed(t *testing.T) {
-	dump := DumpScript("/dump/hop0-dump.sql.gz")
+	dump := DumpScript(defaultPgCreds, "/dump/hop0-dump.sql.gz")
 	assert.Equal(t, "bash", dump[0])
 	assert.Equal(t, "-c", dump[1])
 	assert.Contains(t, dump[2], "pg_dumpall")
 	assert.Contains(t, dump[2], "gzip -1")
 	assert.Contains(t, dump[2], "/dump/hop0-dump.sql.gz")
 
-	restore := RestoreScript("/dump/hop0-dump.sql.gz")
+	restore := RestoreScript(defaultPgCreds, "/dump/hop0-dump.sql.gz")
 	assert.Equal(t, "bash", restore[0])
 	assert.Equal(t, "-c", restore[1])
 	// The brief's own draft of this assertion checked for the path
@@ -880,7 +880,7 @@ func TestDumpAndRestoreAreCompressed(t *testing.T) {
 	// The psql invocation is the SAME one RestoreCommandPrefix names, so the
 	// integration test's identification of the restore's stderr keeps working
 	// and the flags have one source.
-	assert.Contains(t, restore[2], strings.Join(RestoreCommandPrefix(), " "))
+	assert.Contains(t, restore[2], strings.Join(RestoreCommandPrefix(defaultPgCreds), " "))
 	assert.NotContains(t, restore[2], "-f ", "psql reads the pipe, not a file")
 }
 
@@ -891,8 +891,8 @@ func TestDumpAndRestoreAreCompressed(t *testing.T) {
 // psql exits 0 on the empty input it got.
 func TestBothScriptsFailOnAnyStageOfThePipe(t *testing.T) {
 	for _, script := range [][]string{
-		DumpScript("/dump/d.sql.gz"),
-		RestoreScript("/dump/d.sql.gz"),
+		DumpScript(defaultPgCreds, "/dump/d.sql.gz"),
+		RestoreScript(defaultPgCreds, "/dump/d.sql.gz"),
 	} {
 		assert.Contains(t, script[2], "set -o pipefail")
 		assert.Equal(t, "bash", script[0],
@@ -979,7 +979,7 @@ func TestRealDumpStepReportsIndeterminateProgress(t *testing.T) {
 		return base(c, cmd)
 	}
 
-	plan, j, err := PostgresMigrator{}.Plan(context.Background(), env, Path{from17, to18}, PlanOptions{})
+	plan, j, err := PostgresMigrator{ID: deps.Postgres}.Plan(context.Background(), env, Path{from17, to18}, PlanOptions{})
 	require.NoError(t, err)
 
 	var mu sync.Mutex

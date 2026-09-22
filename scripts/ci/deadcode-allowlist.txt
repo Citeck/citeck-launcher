@@ -16,3 +16,12 @@ internal/desktop/wailswin/windows.go: unreachable func: OSDescription
 # config.IsDesktopMode() when the option is absent, so no call site injects
 # it explicitly yet (see the option's doc comment).
 internal/docker/client.go: unreachable func: WithDesktopVolumeNaming
+
+# The restore invocation for a cluster with the image's own defaults, used ONLY
+# by the real-Docker migration test (internal/daemon/deps_integration_test.go),
+# which is behind the `integration` build tag this scan does not include. It
+# exists so that test identifies the restore's own stderr from ONE source
+# instead of a hand-copied literal that would stop matching the day a flag
+# changes — and it cannot call RestoreCommandPrefix directly, whose argument
+# type (pgCreds) is unexported on purpose.
+internal/deps/migrate/postgres_restore.go: unreachable func: DefaultRestoreCommandPrefix

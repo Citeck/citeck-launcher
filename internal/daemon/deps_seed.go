@@ -211,6 +211,16 @@ func namespaceDependencies(cfg *namespace.Config, bun *bundle.Def,
 		present[d.ID()] = true
 	}
 	present[deps.Qdrant] = namespace.WillGenerateQdrant(cfg, bun, wsCfg)
+	// Declared PostgreSQL clusters — the observer's built-in one and anything a
+	// workspace adds in `databases:` — answer their own condition: a cluster is
+	// present when the app it was declared FOR is in the namespace. Restated
+	// here for the same reason qdrant is (the seeding runs before Generate and
+	// must not pay a Docker probe for a dependency the namespace does not
+	// have), and from the same pure function the generator uses, so the two
+	// cannot drift.
+	for id, ok := range namespace.WillGenerateDatabases(cfg, bun, wsCfg) {
+		present[deps.ID(id)] = ok
+	}
 	if cfg == nil {
 		return present
 	}
@@ -329,7 +339,9 @@ func seedDependencyPins(ctx context.Context, existing map[deps.ID]deps.Dependenc
 	pgRead := false
 	postgresEvidence := func() dataEvidence {
 		if !pgRead {
-			pgEvidence = postgresPinFromData(ctx, probe, preferVolumes)
+			if d, ok := deps.Lookup(deps.Postgres); ok {
+				pgEvidence = postgresPinFromData(ctx, probe, d, preferVolumes)
+			}
 			pgRead = true
 		}
 		return pgEvidence
@@ -350,9 +362,17 @@ func seedDependencyPins(ctx context.Context, existing map[deps.ID]deps.Dependenc
 		}
 
 		var ev dataEvidence
-		switch d.ID() {
-		case deps.Postgres, deps.Keycloak:
+		switch {
+		case d.ID() == deps.Postgres, d.ID() == deps.Keycloak:
+			// The stand's own database answers for Keycloak too, whose state
+			// lives in it; read at most once for the pair.
 			ev = postgresEvidence()
+		case deps.IsPostgresFamily(d):
+			// Every OTHER PostgreSQL cluster in the namespace — today the
+			// observer's — is probed the same way, in its own volumes. Sharing
+			// the cached evidence above would pin it to the stand database's
+			// version and generation, which are not its.
+			ev = postgresPinFromData(ctx, probe, d, preferVolumes)
 		default:
 			ev = volumePinFromData(ctx, probe, d, preferVolumes)
 		}
@@ -481,9 +501,10 @@ func volumePinFromData(ctx context.Context, probe dependencyProbe, d deps.Descri
 // volume that holds a cluster — not merely the highest that exists, since a
 // half-built volume left behind by a rollback that could not finish has no
 // PG_VERSION — and the MAJOR read out of that volume is the pin's image.
-func postgresPinFromData(ctx context.Context, probe dependencyProbe, preferVolumes map[string]bool) dataEvidence {
-	d, ok := deps.Lookup(deps.Postgres)
-	if !ok {
+func postgresPinFromData(ctx context.Context, probe dependencyProbe, d deps.Descriptor,
+	preferVolumes map[string]bool,
+) dataEvidence {
+	if d == nil {
 		return dataEvidence{verdict: seedNoData}
 	}
 	failed := false

@@ -21,6 +21,10 @@ package deps
 
 // SupportFloor is the oldest version of the dependency this launcher supports.
 // See the file comment for what that means and where it is asked.
+//
+// One value for every PostgreSQL cluster in the namespace, the stand's own and
+// the observer's: the floor is a statement about the DEPENDENCY, not about who
+// keeps data in it.
 func (postgresDescriptor) SupportFloor() Version { return Version{Major: 17} }
 
 // SupportFloor — see postgresDescriptor.SupportFloor.

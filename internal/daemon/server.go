@@ -761,6 +761,10 @@ func (d *Daemon) doReloadEx(forceGitPull, startNotRegenerate, refreshImages bool
 	// a volume restored by hand) gets its pin before this generation runs.
 	// Persisting here is right, unlike on the load path: the runtime exists
 	// and its status is live, so a persist writes the truth.
+	// Same as on the load path, and for the same reason: the workspace config
+	// this reload just resolved may declare clusters the registry does not know
+	// yet, and the seeding below reads the registry.
+	installWorkspaceDependencies(resolveResult.Workspace)
 	pins, seededPins := resolveDependencyPins(d.bgCtx, act.runtime.DependencyStates(),
 		dockerDependencyProbe{dc: depsDockerOf(act.dockerClient), volumesBase: act.volumesBase},
 		namespaceDependencies(nsCfg, resolveResult.Bundle, resolveResult.Workspace))
@@ -788,6 +792,33 @@ func (d *Daemon) doReloadEx(forceGitPull, startNotRegenerate, refreshImages bool
 	if genErr != nil {
 		return genErr
 	}
+	// This is where an app added by a new bundle release actually arrives —
+	// Update & Start is a reload, not a load — so the "new app the template
+	// detaches must not start itself" rule has to run here as well as on the
+	// load path. Presence comes from the runtime's own app table: an app it
+	// knows is one this operator has already been offered, whatever its status.
+	newApps := decideNewAppDetach(act.runtime.KnownApps(), genResp.Applications, nsCfg,
+		resolveResult.Workspace, forcePullTemplateLookup(d.store, d.secretReaderFunc(), act.workspaceID),
+		runtimePresence(d.bgCtx, act.runtime, depsDockerOf(act.dockerClient)))
+	merged := act.runtime.ManualStoppedApps()
+	newlyDetached := false
+	for _, name := range newApps.Detach {
+		if !merged[name] {
+			merged[name] = true
+			newlyDetached = true
+		}
+	}
+	if newlyDetached {
+		act.runtime.SetManualStoppedApps(merged)
+		// Regenerate with the new detach set for the same reason the load path
+		// does: it is an input to generation, not just to the runtime.
+		genOpts.DetachedApps = merged
+		genResp, genErr = generateAndWriteRuntimeFiles(nsCfg, resolveResult, sysSecrets, genOpts, act.volumesBase, nil)
+		if genErr != nil {
+			return genErr
+		}
+	}
+	act.runtime.SetKnownApps(newApps.Known)
 	act.runtime.SetLastGenFiles(genResp.BaselineFiles)
 	act.runtime.SetGeneratedDefs(genResp.BaselineApplications)
 	act.runtime.SetCustomLinks(genResp.CustomLinks)
@@ -855,7 +886,6 @@ func (d *Daemon) doReloadEx(forceGitPull, startNotRegenerate, refreshImages bool
 	act.runtime.SetRegistryAuthFunc(makeRegistryAuthFunc(resolveResult.Workspace, d.secretReaderFunc(), regBindings))
 	act.runtime.SetDependsOnDetachedApps(genResp.DependsOnDetachedApps)
 	act.runtime.SetGatingApps(genResp.GatingApps)
-	act.runtime.SetAutoDetachedApps(genResp.AutoDetachedApps)
 
 	// Phase 3: regenerate runtime with updated config (async stop + start).
 	// When the bundle had to fall back to the cached on-disk copy (e.g. git
