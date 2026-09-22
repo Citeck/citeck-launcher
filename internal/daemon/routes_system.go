@@ -134,6 +134,13 @@ func (d *Daemon) writeSystemDumpZip(ctx context.Context, w http.ResponseWriter, 
 		}
 	}
 
+	// reports/ — the durable record of every dependency migration this stand
+	// has run (see deps_report.go). They are the whole reason a "it would not
+	// update" can be answered from the dump instead of from a screenshot: the
+	// containers a failed migration built, and their logs, are gone by the time
+	// anybody asks.
+	addReports(zw)
+
 	// Daemon logs (daemon.log + rotated variants)
 	addRotatedLogs(zw, config.DaemonLogPath(), "daemon-logs")
 
@@ -188,6 +195,33 @@ const maxDumpLogSize = 2 * 1024 * 1024 // 2MB cap per file
 // a file that does not exist is skipped silently, because the daemon log is
 // present in both modes while the wrapper log exists only on desktop, and a
 // server-mode dump must not report that absence as a failure.
+// addReports puts every migration report into the ZIP under reports/. A
+// directory that is not there (no migration has ever run) adds nothing, which
+// is why the read error is ignored rather than reported: an absent report is
+// not a dump failure.
+func addReports(zw *zip.Writer) {
+	dir := config.ReportsDir()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		data, readErr := os.ReadFile(filepath.Join(dir, e.Name())) //nolint:gosec // G304: path is the launcher's own reports dir
+		if readErr != nil {
+			continue
+		}
+		if len(data) > maxDumpLogSize {
+			data = data[len(data)-maxDumpLogSize:]
+		}
+		if fw, createErr := zw.Create("reports/" + e.Name()); createErr == nil {
+			_, _ = fw.Write(data)
+		}
+	}
+}
+
 func addRotatedLogs(zw *zip.Writer, logPath, dirName string) {
 	for _, suffix := range []string{"", ".1", ".2", ".3"} {
 		logFile := logPath + suffix

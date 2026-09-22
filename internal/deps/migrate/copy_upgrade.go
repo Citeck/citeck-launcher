@@ -267,7 +267,8 @@ func BuildCopyUpgrade(env Env, spec CopySpec, path Path, opts PlanOptions, pre P
 		}
 	}
 	plan := &Plan{
-		Steps: steps,
+		Diagnose: tempContainerDiagnostics(env),
+		Steps:    steps,
 		Rollback: func(ctx context.Context, j *deps.MigrationJournal) error {
 			return RollbackCopyUpgrade(ctx, env, j)
 		},

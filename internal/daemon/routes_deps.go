@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/citeck/citeck-launcher/internal/api"
@@ -686,6 +687,20 @@ func (d *Daemon) handleDependencyMigrate(w http.ResponseWriter, r *http.Request)
 		ReplaceExistingVolume: req.ReplaceExistingVolume,
 	})
 	if err != nil {
+		// A refusal is reported too, and it is the most common shape of "it
+		// would not update": the operator sees a dialog, closes it, and what
+		// they can hand somebody else afterwards is this file. Written before
+		// the response, so the record exists even if the client is gone.
+		refused := migrationReport{
+			Kind: "upgrade", Namespace: nsID, Dependency: string(id), From: from, To: to,
+			Launcher: d.version, StartedAt: time.Now(), FinishedAt: time.Now(),
+			Outcome: "refused by the pre-checks", Err: err.Error(),
+		}
+		if path, wErr := writeMigrationReport(refused); wErr != nil {
+			slog.Warn("Could not write the dependency migration report", "err", wErr)
+		} else {
+			slog.Info("Dependency migration refused; report written", "path", path)
+		}
 		// The refusal is the answer to THIS request, so the preparing state
 		// goes with it — leaving it published would show a migration that is
 		// not happening to every client until the next one starts.
@@ -716,7 +731,18 @@ func (d *Daemon) handleDependencyMigrate(w http.ResponseWriter, r *http.Request)
 		defer d.longOp.Unlock()
 		defer d.setDepsMigration(nsID, nil)
 		d.broadcastEvent(evt(api.EventDepsMigrationStart, "", 0, steps, 0, versionPairMessage(from, to)))
+		// Every attempt gets a durable report (see deps_report.go): the steps it
+		// reached are recorded as the engine announces them, because after a
+		// failure the containers that knew why are gone.
+		startedAt := time.Now()
+		var seenSteps []reportStep
+		var stepsMu sync.Mutex
 		progress := func(step string, i, n int, pct float64, m msg.Message) {
+			stepsMu.Lock()
+			if len(seenSteps) == 0 || seenSteps[len(seenSteps)-1].ID != step {
+				seenSteps = append(seenSteps, reportStep{ID: step, Index: i})
+			}
+			stepsMu.Unlock()
 			d.setDepsMigration(nsID, &api.DependencyMigrationDto{
 				ID: string(id), Step: step, StepIndex: i, StepCount: n, Percent: pct, MessageMsg: m,
 				StepIDs: stepIDs,
@@ -724,14 +750,23 @@ func (d *Daemon) handleDependencyMigrate(w http.ResponseWriter, r *http.Request)
 			d.broadcastEvent(evt(api.EventDepsMigrationProgress, step, i, n, pct, m))
 		}
 		runErr := migrate.Run(d.bgCtx, rt, journal, plan, progress)
+		rep := migrationReport{
+			Kind: "upgrade", Namespace: nsID, Dependency: string(id), From: from, To: to,
+			Launcher: d.version, StartedAt: startedAt, FinishedAt: time.Now(), StepCount: steps,
+		}
+		stepsMu.Lock()
+		rep.Steps = reportStepsFrom(seenSteps, runErr != nil)
+		stepsMu.Unlock()
 		var fe *migrate.FinalizeError
 		switch {
 		case runErr == nil:
+			rep.Outcome = "succeeded"
 			//nolint:gosec // G706: id passed deps.Lookup (a fixed registry) and the images come from the resolved bundle/pins
 			slog.Info("Dependency migration finished", "dependency", id, "from", from, "to", to)
 			d.broadcastEvent(evt(api.EventDepsMigrationComplete, "", steps, steps, 100,
 				msg.New("deps.msg.event.migrated", "id", string(id), "image", to)))
 		case errors.As(runErr, &fe):
+			rep.Outcome, rep.Err = "succeeded with a finalize warning", fe.Err.Error()
 			// The data has moved and the pin says so; only the tidy-up or the
 			// restart failed, so this is a completion with a warning.
 			//nolint:gosec // G706: id passed deps.Lookup (a fixed registry)
@@ -742,10 +777,23 @@ func (d *Daemon) handleDependencyMigrate(w http.ResponseWriter, r *http.Request)
 		default:
 			//nolint:gosec // G706: id passed deps.Lookup (a fixed registry)
 			slog.Error("Dependency migration failed", "dependency", id, "err", runErr)
+			rep.Outcome, rep.Err = "failed", runErr.Error()
+			var sf *migrate.StepFailure
+			if errors.As(runErr, &sf) {
+				rep.Diagnostics = sf.Diagnostics
+			}
 			// The failure is a step's own error — a docker refusal, a psql
 			// stderr, a wrapped cancellation — and it is already final text.
 			d.broadcastEvent(evt(api.EventDepsMigrationError, "", 0, steps, 0,
 				msg.New("deps.msg.passthrough", "text", runErr.Error())))
+		}
+		// Written for EVERY outcome, not just failures: the report of the
+		// migration that worked is what a later "it broke after the update" is
+		// read against.
+		if path, wErr := writeMigrationReport(rep); wErr != nil {
+			slog.Warn("Could not write the dependency migration report", "err", wErr)
+		} else {
+			slog.Info("Dependency migration report written", "path", path, "outcome", rep.Outcome)
 		}
 	})
 	w.Header().Set("Content-Type", "application/json")

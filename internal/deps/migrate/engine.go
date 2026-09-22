@@ -31,6 +31,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/citeck/citeck-launcher/internal/deps"
@@ -119,7 +120,39 @@ type Plan struct {
 	Rollback func(ctx context.Context, j *deps.MigrationJournal) error
 	Result   func(j *deps.MigrationJournal) deps.MigrationResult
 	Finalize func(ctx context.Context, j *deps.MigrationJournal) error
+	// Diagnose collects evidence that will not survive the rollback — the temp
+	// containers' own output, which is where a database that refused to start
+	// says why. It runs BEFORE Rollback, on a step failure only, and its answer
+	// reaches the caller inside a *StepFailure.
+	//
+	// Optional, and deliberately best-effort: a plan that cannot collect
+	// anything returns nothing, and a Diagnose that fails must not turn a
+	// rollback that would have worked into a failure.
+	Diagnose func(ctx context.Context, j *deps.MigrationJournal) []Diagnostic
 }
+
+// Diagnostic is one piece of evidence about a failure, named so a reader knows
+// what they are looking at.
+type Diagnostic struct {
+	Name string
+	Text string
+}
+
+// StepFailure is what Run returns when a step failed: the same error it has
+// always returned, plus whatever the plan could collect before the rollback
+// removed the containers that knew.
+//
+// It WRAPS rather than replaces — Error() is the inner error's text and Unwrap
+// returns it — so every existing caller, message and errors.Is/As keeps working
+// and only a caller that ASKS for the diagnostics (errors.As) sees them.
+type StepFailure struct {
+	Step        string
+	Err         error
+	Diagnostics []Diagnostic
+}
+
+func (e *StepFailure) Error() string { return e.Err.Error() }
+func (e *StepFailure) Unwrap() error { return e.Err }
 
 // validate refuses a plan the engine could only handle by panicking. It runs
 // before the journal is opened, so a malformed plan changes nothing.
@@ -221,6 +254,13 @@ func failAndRollback(ctx context.Context, store JournalStore, plan *Plan, jj *Jo
 	slog.Warn("Dependency migration failed; rolling back", "dependency", jj.ID, "step", jj.Step, "err", cause)
 	rbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), RollbackTimeout)
 	defer cancel()
+	// BEFORE the rollback: everything it is about to delete is also the only
+	// record of why this failed. On a canceled migration the context is
+	// already dead, hence rbCtx (WithoutCancel) here too.
+	var diags []Diagnostic
+	if plan.Diagnose != nil {
+		diags = plan.Diagnose(rbCtx, &jj.MigrationJournal)
+	}
 	res := deps.MigrationResult{ID: jj.ID, From: jj.From, To: jj.To, FinishedAt: time.Now(), Error: cause.Error()}
 	rbErr := plan.Rollback(rbCtx, &jj.MigrationJournal)
 	if rbErr != nil {
@@ -231,9 +271,10 @@ func failAndRollback(ctx context.Context, store JournalStore, plan *Plan, jj *Jo
 		slog.Error("Failed to record migration failure", "dependency", jj.ID, "err", err)
 	}
 	if rbErr != nil {
-		return errors.Join(cause, fmt.Errorf("rollback failed: %w", rbErr))
+		return &StepFailure{Step: jj.Step, Diagnostics: diags,
+			Err: errors.Join(cause, fmt.Errorf("rollback failed: %w", rbErr))}
 	}
-	return cause
+	return &StepFailure{Step: jj.Step, Err: cause, Diagnostics: diags}
 }
 
 // recordVerdict is the one place that decides what happens to the journal: a
@@ -303,4 +344,38 @@ func RollbackInterrupted(ctx context.Context, store JournalStore, rollback func(
 		return true, errors.Join(rbErr, err)
 	}
 	return true, rbErr
+}
+
+// tempContainerLogTail is how much of a temp container's output is kept as
+// evidence: enough for a startup failure, which always says why in its last
+// lines, and small enough that a report stays readable and a hung container's
+// retry chatter does not bury the cause.
+const tempContainerLogTail = 200
+
+// tempContainerDiagnostics is the Diagnose both plans use: the last lines each
+// temp container printed.
+//
+// It exists because of a real, measured dead end. The observer's first
+// migration failed with `container depsmig-src did not become ready within
+// 5m0s` — and the container that knew the reason (`role "postgres" does not
+// exist`, its user being another one) was removed by the rollback before anyone
+// could read it. The launcher then had nothing to tell an operator but the
+// timeout, which is the same thing it would say for a slow disk, a bad image or
+// a full volume.
+//
+// A container that is already gone, or a Docker that will not answer, is simply
+// skipped: this runs while a migration is already failing, and it may not add a
+// second failure on top.
+func tempContainerDiagnostics(env Env) func(context.Context, *deps.MigrationJournal) []Diagnostic {
+	return func(ctx context.Context, _ *deps.MigrationJournal) []Diagnostic {
+		var out []Diagnostic
+		for _, name := range []string{SrcContainer, DstContainer} {
+			logs, err := env.ContainerLogs(ctx, name, tempContainerLogTail)
+			if err != nil || strings.TrimSpace(logs) == "" {
+				continue
+			}
+			out = append(out, Diagnostic{Name: "logs of " + name, Text: logs})
+		}
+		return out
+	}
 }

@@ -53,6 +53,8 @@ type fakeDepsDocker struct {
 
 	inspect    map[string]container.InspectResponse
 	inspectErr map[string]error
+	logs       map[string]string
+	logsErr    map[string]error
 
 	execStdout string
 	execStderr string
@@ -93,6 +95,8 @@ func newFakeDepsDocker() *fakeDepsDocker {
 		newID:       "cid-1",
 		inspect:     map[string]container.InspectResponse{},
 		inspectErr:  map[string]error{},
+		logs:        map[string]string{},
+		logsErr:     map[string]error{},
 		volumes:     map[string]*volume.Volume{},
 		volSize:     map[string]int64{},
 		localImages: map[string]bool{},
@@ -112,6 +116,19 @@ func (f *fakeDepsDocker) Calls() []string {
 }
 
 func (f *fakeDepsDocker) ContainerName(app string) string { return "citeck_" + app + "_ns1" }
+
+// ContainerLogs answers from logs, keyed by the CONTAINER name (what the Env
+// passes after ContainerName), so a test can arrange what a failed temp
+// container printed.
+func (f *fakeDepsDocker) ContainerLogs(_ context.Context, id string, _ int) (string, error) {
+	f.record("logs:" + id)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.logsErr[id]; err != nil {
+		return "", err
+	}
+	return f.logs[id], nil
+}
 
 func (f *fakeDepsDocker) CreateNetwork(context.Context) (string, error) {
 	f.record("network")

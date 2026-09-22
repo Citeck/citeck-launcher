@@ -205,7 +205,28 @@ func (d *Daemon) runRollback(run rollbackRun) {
 	ctx := d.bgCtx
 	steps := migrate.RollbackStepIDs()
 	total := len(steps)
+	// A rollback is reported like a migration, and for the same reason: it is
+	// the other half of "the update went wrong", and the operator who took it
+	// is the one who will be asked what happened.
+	rep := migrationReport{
+		Kind: "rollback", Namespace: run.nsID, Dependency: string(run.id),
+		From: run.cur.Image, To: run.prev.Image, Launcher: d.version,
+		StartedAt: time.Now(), StepCount: total,
+	}
+	finish := func(outcome string, err error) {
+		rep.Outcome, rep.FinishedAt = outcome, time.Now()
+		rep.Steps = reportStepsFrom(rep.Steps, err != nil)
+		if err != nil {
+			rep.Err = err.Error()
+		}
+		if path, wErr := writeMigrationReport(rep); wErr != nil {
+			slog.Warn("Could not write the dependency rollback report", "err", wErr)
+		} else {
+			slog.Info("Dependency rollback report written", "path", path, "outcome", outcome)
+		}
+	}
 	progress := func(i int, m msg.Message) {
+		rep.Steps = append(rep.Steps, reportStep{ID: steps[i-1], Index: i})
 		dto := &api.DependencyMigrationDto{
 			ID: string(run.id), Step: steps[i-1], StepIndex: i, StepCount: total, MessageMsg: m,
 		}
@@ -214,6 +235,7 @@ func (d *Daemon) runRollback(run rollbackRun) {
 			steps[i-1], i, total, 0, m))
 	}
 	fail := func(err error) {
+		finish("failed", err)
 		//nolint:gosec // G706: id came from deps.Lookup (a fixed registry)
 		slog.Error("Dependency rollback failed", "dependency", run.id, "err", err)
 		// A step's own error, already final text — see deps.msg.passthrough.
@@ -261,11 +283,13 @@ func (d *Daemon) runRollback(run rollbackRun) {
 		//nolint:gosec // G706: id came from deps.Lookup (a fixed registry)
 		slog.Warn("Dependency rollback committed but the namespace did not come back up",
 			"dependency", run.id, "err", err)
+		finish("succeeded, but the namespace did not come back up", err)
 		d.broadcastEvent(depsEvent(api.EventDepsMigrationComplete, run.nsID, run.id, "", total, total, 100,
 			msg.New("deps.msg.event.rolledBackWithWarning",
 				"id", string(run.id), "image", run.prev.Image, "error", err.Error())))
 		return
 	}
+	finish("succeeded", nil)
 	//nolint:gosec // G706: id came from deps.Lookup (a fixed registry) and the images come from the pin
 	slog.Info("Dependency rollback finished", "dependency", run.id,
 		"from", run.cur.Image, "to", run.prev.Image)

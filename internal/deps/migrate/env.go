@@ -68,6 +68,13 @@ type Env interface {
 	// while a restore's errors are scanned on stderr, where psql prints them
 	// even on an exit code of 0.
 	Exec(ctx context.Context, name string, cmd []string) (stdout, stderr string, exitCode int, err error)
+	// ContainerLogs returns the last tail lines a container printed. It is the
+	// only way to say WHY a temp container never became ready: the rollback
+	// removes it moments later, and after that the reason is gone for good.
+	// A container that does not exist, or a daemon that will not answer, is
+	// reported as an error — the caller degrades to "no logs", never to a
+	// failure of the migration itself.
+	ContainerLogs(ctx context.Context, name string, tail int) (string, error)
 	// StopRemove stops and removes the named container; not-found is success.
 	StopRemove(ctx context.Context, name string) error
 

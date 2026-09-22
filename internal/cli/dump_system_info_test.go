@@ -11,6 +11,10 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/citeck/citeck-launcher/internal/config"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestDumpSystemInfo_ArchiveStructure exercises the per-step collectors
@@ -277,4 +281,44 @@ func keys(m map[string]string) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// The dump is what an operator actually sends when they say "it would not
+// update", and a failed migration's own report is the only place the reason
+// survives — the containers that knew are removed by the rollback.
+func TestDumpCollectsMigrationReports(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CITECK_HOME", home)
+
+	dir := config.ReportsDir()
+	require.NoError(t, os.MkdirAll(dir, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "deps-upgrade-observer-postgres-20260922-071241.log"),
+		[]byte("outcome    : failed\nlogs of depsmig-src\nFATAL: role \"postgres\" does not exist\n"), 0o600))
+
+	var buf bytes.Buffer
+	dw := newDumpWriter(&buf)
+	collectReports(dw)
+	require.NoError(t, dw.zw.Close())
+
+	zr, err := zip.NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
+	require.NoError(t, err)
+	require.Len(t, zr.File, 1)
+	assert.Equal(t, "reports/deps-upgrade-observer-postgres-20260922-071241.log", zr.File[0].Name)
+	rc, err := zr.File[0].Open()
+	require.NoError(t, err)
+	defer rc.Close()
+	body, err := io.ReadAll(rc)
+	require.NoError(t, err)
+	assert.Contains(t, string(body), `role "postgres" does not exist`)
+}
+
+// A stand that has never migrated anything has no reports directory, and that
+// is not a dump failure.
+func TestDumpWithNoReportsDirectoryIsFine(t *testing.T) {
+	t.Setenv("CITECK_HOME", t.TempDir())
+	var buf bytes.Buffer
+	dw := newDumpWriter(&buf)
+	collectReports(dw)
+	require.NoError(t, dw.zw.Close())
+	assert.Empty(t, dw.errs)
 }

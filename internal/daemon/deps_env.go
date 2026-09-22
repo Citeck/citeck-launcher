@@ -44,6 +44,7 @@ type depsDocker interface {
 	StopAndRemoveContainer(ctx context.Context, name string, timeoutSec int) error
 	InspectContainer(ctx context.Context, id string) (container.InspectResponse, error)
 	ExecInContainerSplit(ctx context.Context, containerID string, cmd []string) (stdout, stderr string, exitCode int, err error)
+	ContainerLogs(ctx context.Context, containerID string, tail int) (string, error)
 	PullImageWithProgress(ctx context.Context, img string, auth *docker.RegistryAuth, progressFn docker.PullProgressFn) error
 	ImageExists(ctx context.Context, img string) bool
 	EnsureUtilsImage(ctx context.Context) error
@@ -276,6 +277,20 @@ const depsStopContainerTimeout = 30
 
 // StopRemove stops and removes the named temp container; not-found is success,
 // which is what makes the rollback idempotent.
+// ContainerLogs answers with the temp container's own output, which is the only
+// place the reason a database refused to start is written down — and the
+// rollback removes that container seconds later.
+func (e *depsEnv) ContainerLogs(ctx context.Context, name string, tail int) (string, error) {
+	if e.dc == nil {
+		return "", errors.New("no docker client")
+	}
+	out, err := e.dc.ContainerLogs(ctx, e.dc.ContainerName(name), tail)
+	if err != nil {
+		return "", fmt.Errorf("logs of %s: %w", name, err)
+	}
+	return out, nil
+}
+
 func (e *depsEnv) StopRemove(ctx context.Context, name string) error {
 	if e.dc == nil {
 		return errors.New("no docker client")

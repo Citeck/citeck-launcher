@@ -49,6 +49,7 @@ type FakeEnv struct {
 
 	Containers map[string]appdef.ApplicationDef // name → def (present = running)
 	Volumes    map[string]map[string]string     // volume → rel path → content
+	Logs       map[string]string                // container → what ContainerLogs answers
 	VolSize    map[string]int64
 	Files      map[string]int64 // host path → size
 	Dirs       map[string]bool
@@ -152,6 +153,7 @@ func New() *FakeEnv {
 	return &FakeEnv{
 		NS:             "ns1",
 		Containers:     map[string]appdef.ApplicationDef{},
+		Logs:           map[string]string{},
 		Volumes:        map[string]map[string]string{},
 		VolSize:        map[string]int64{},
 		Files:          map[string]int64{},
@@ -462,6 +464,21 @@ func dumpRedirectTarget(script string) (string, bool) {
 		return "", false
 	}
 	return strings.TrimSuffix(rest, "'"), true
+}
+
+// ContainerLogs answers from Logs, keyed by container name. An unknown
+// container is an error, exactly as a removed one is for the real Env.
+func (f *FakeEnv) ContainerLogs(_ context.Context, name string, _ int) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.failUnderLock("logs", name); err != nil {
+		return "", err
+	}
+	out, ok := f.Logs[name]
+	if !ok {
+		return "", fmt.Errorf("no such container: %s", name)
+	}
+	return out, nil
 }
 
 // StopRemove forgets the container; removing an unknown one succeeds.

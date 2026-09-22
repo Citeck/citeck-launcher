@@ -235,6 +235,9 @@ func runDumpSystemInfo(ctx context.Context, info BuildInfo, full bool) error {
 	prog.step("Collecting daemon/namespace.yml")
 	collectFile(dw, "daemon/namespace.yml", config.NamespaceConfigPath())
 
+	prog.step("Collecting reports/ (dependency migrations)")
+	collectReports(dw)
+
 	prog.step("Collecting desktop/ update artifacts")
 	collectDesktopUpdateArtifacts(dw, full)
 
@@ -714,4 +717,25 @@ func trimHeadTail(s string, head, tail int) string {
 	fmt.Fprintf(&b, "... [skipped %d lines — rerun with --full for complete logs] ...\n", len(lines)-head-tail)
 	b.WriteString(strings.Join(lines[len(lines)-tail:], "\n"))
 	return b.String()
+}
+
+// collectReports puts every dependency-migration report into the archive.
+//
+// This is the whole point of writing them: a failed migration removes the
+// containers that knew why, so the report is the only remaining answer to "it
+// would not update" — and the dump is what an operator actually sends. There is
+// nothing to collect on a stand that has never migrated anything, and that is
+// not an error.
+func collectReports(dw *dumpWriter) {
+	dir := config.ReportsDir()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		collectFile(dw, "reports/"+e.Name(), filepath.Join(dir, e.Name()))
+	}
 }

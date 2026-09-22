@@ -164,6 +164,19 @@ func UpdatesDir() string {
 	return filepath.Join(HomeDir(), "updates")
 }
 
+// ReportsDir is where the launcher writes a durable record of an operation that
+// a user may later have to explain to somebody else — today one file per
+// dependency migration (see daemon.writeMigrationReport).
+//
+// It is separate from the rolling daemon log on purpose: a migration's own
+// story (what was attempted, every step, the verdict, and the logs of the
+// containers it built and then removed) must survive log rotation and must be
+// findable without grepping, because the person who needs it is usually the one
+// saying "it would not update". The system dump ships the whole directory.
+func ReportsDir() string {
+	return filepath.Join(LogDir(), "reports")
+}
+
 // DaemonLogPath returns the path to the daemon log file.
 func DaemonLogPath() string {
 	return filepath.Join(LogDir(), "daemon.log")
