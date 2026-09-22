@@ -203,8 +203,7 @@ func runInstall(info BuildInfo, workspaceZip string, offline bool) (retErr error
 
 	nsCfg := namespace.DefaultNamespaceConfig()
 	// Stamp the config generation the same way the create API does — this is a
-	// brand-new namespace, so it gets the current generation's defaults (today:
-	// no MongoDB container). See namespace.ConfigVersionCurrent.
+	// brand-new namespace. MongoDB compatibility is decided after release selection.
 	nsCfg.APIVersion = namespace.CurrentAPIVersion()
 	nsCfg.Template = "default"    // links to workspace template for detachedApps on first start
 	nsCfg.PgAdmin.Enabled = false // default off (use pgAdmin separately if needed)
@@ -301,6 +300,10 @@ hostStep:
 		}
 
 		break
+	}
+
+	if err := applyInstallMongoDefault(&nsCfg); err != nil {
+		return err
 	}
 
 	// --- Step 7: Save configuration (automatic — no prompt) ---
@@ -1250,4 +1253,17 @@ func openFirewallPort(port int) {
 	}
 
 	output.PrintText("   No supported firewall detected (ufw/firewalld). Please open port %s manually.", portStr)
+}
+
+// applyInstallMongoDefault runs after the final release choice, including any
+// trips back from registry setup, and before the namespace is persisted.
+func applyInstallMongoDefault(cfg *namespace.Config) error {
+	resolver := bundle.NewResolver(config.DataDir())
+	resolver.SetOffline(true)
+	resolved, err := resolver.Resolve(cfg.BundleRef)
+	if err != nil {
+		return fmt.Errorf("resolve bundle for MongoDB compatibility: %w", err)
+	}
+	namespace.ApplyNewNamespaceMongoDefault(cfg, resolved.Bundle)
+	return nil
 }

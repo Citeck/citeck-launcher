@@ -193,7 +193,8 @@ func (c *Config) Version() int {
 // workspace template. With the key absent the answer comes from the config
 // generation: namespaces created before generation 2 keep mongo (their eproc
 // may predate 2.33.0, and may still hold unmigrated data — turning it off under
-// them would break a working stand), newer ones do without it.
+// them would break a working stand). Creation explicitly enables mongo for
+// older or unknown eproc versions; other new namespaces do without it.
 func (c *Config) MongoEnabled() bool {
 	if c.MongoDB.Enabled != nil {
 		return *c.MongoDB.Enabled

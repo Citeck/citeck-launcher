@@ -789,16 +789,17 @@ func (d *Daemon) buildNamespaceConfigFromCreate(req api.NamespaceCreateDto, wsID
 	// The resolve may sync, like the LATEST branch above and unlike the
 	// launcher-floor gate: this runs once per create, where waiting for git is
 	// what makes the answer about the repo rather than about the clone.
-	if err := d.requireResolvableBundle(wsID, nsCfg.BundleRef); err != nil {
+	resolved, err := d.resolveBundleForCreate(wsID, nsCfg.BundleRef)
+	if err != nil {
 		return nil, err
 	}
+	namespace.ApplyNewNamespaceMongoDefault(&nsCfg, resolved.Bundle)
 	return &nsCfg, nil
 }
 
-// requireResolvableBundle reports why the bundle a namespace is being CREATED
-// on cannot be read, or nil when it can. See the call site for why this is a
-// create-only rule.
-func (d *Daemon) requireResolvableBundle(wsID string, ref bundle.Ref) *createNamespaceError {
+// resolveBundleForCreate returns the selected bundle or a create-time refusal
+// when it cannot be read. The caller also uses it for compatibility defaults.
+func (d *Daemon) resolveBundleForCreate(wsID string, ref bundle.Ref) (*bundle.ResolveResult, *createNamespaceError) {
 	resolver := bundle.NewResolverWithAuth(config.BundlesDataDir(wsID), makeTokenLookup(d.secretService)).
 		WithWorkspaceRepo(lookupWorkspaceRepoOpts(d.store, d.secretService, wsID)).
 		WithWorkspaceOverlay(workspaceConfigOverlay(d.store, wsID)).
@@ -808,15 +809,16 @@ func (d *Daemon) requireResolvableBundle(wsID string, ref bundle.Ref) *createNam
 	if !config.IsDesktopMode() {
 		resolver.SetOffline(true)
 	}
-	if _, err := resolver.Resolve(ref); err != nil {
-		return &createNamespaceError{
+	resolved, err := resolver.Resolve(ref)
+	if err != nil {
+		return nil, &createNamespaceError{
 			status: http.StatusConflict,
 			code:   api.ErrCodeBundleNotSynced,
 			message: fmt.Sprintf("bundle %q is not in the synced copy of repo %q — sync it (Force Update) "+
 				"or pick a version the list offers: %v", ref.Key, ref.Repo, err),
 		}
 	}
-	return nil
+	return resolved, nil
 }
 
 // persistNewNamespace serializes the config, re-checks the ID for a collision
