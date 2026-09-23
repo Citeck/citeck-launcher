@@ -1,0 +1,2 @@
+## Changes
+- **A Qdrant upgrade waits for the store to settle before each version step.** Before a node is replaced by the next version, the launcher waits while any collection is still optimizing (up to 30 minutes, shown on the migration screen), and stops at once — rolling back, with the namespace's own data untouched — if an optimizer reports an error or a collection is in a failed state. This is the vendor's rule for moving one minor at a time, and it matters most across 1.17, where Qdrant drops its old RocksDB storage.
