@@ -42,7 +42,7 @@ func TestSttSidecar_SpecStaysWhenAiIsDetached(t *testing.T) {
 // TestSttSidecar_AiStaysGating is the half of the old wiring that is still
 // load-bearing without the verdict: ai's detach state DOES change the
 // generation — the proxy drops its AI upstream (generator_proxy.go) and
-// generateQdrant withholds CITECK_AI_RAG_ENABLED — so toggling ai must
+// wireAi withholds CITECK_AI_RAG_ENABLED — so toggling ai must
 // regenerate the namespace.
 func TestSttSidecar_AiStaysGating(t *testing.T) {
 	config.ResetDesktopMode()

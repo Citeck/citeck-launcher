@@ -453,3 +453,34 @@ func TestNamespaceEdit_MongoToggle(t *testing.T) {
 		assert.False(t, *stored.MongoDB.Enabled, "an absent field means unchanged, as for tls/pgAdmin")
 	})
 }
+
+// Deleting a namespace deletes the secret values it owns — and nothing else:
+// another namespace's copy and a user credential stay.
+func TestDeleteNamespaceDeletesItsOwnSecrets(t *testing.T) {
+	config.SetDesktopMode(true)
+	t.Cleanup(config.ResetDesktopMode)
+	t.Setenv("CITECK_HOME", t.TempDir())
+	d, mux := newNsCrudTestDaemon(t)
+	require.NoError(t, d.persistNamespaceConfig("wsMain", "nsdel",
+		[]byte("id: nsdel\nname: Doomed\nproxy:\n  port: 80\n")))
+	_, err := loadNamespaceSecrets(d.secretService, "wsMain", "nsdel", wsSecrets("db", "v"), true)
+	require.NoError(t, err)
+	_, err = loadNamespaceSecrets(d.secretService, "wsMain", "nskeep", wsSecrets("db", "v"), true)
+	require.NoError(t, err)
+	require.NoError(t, d.secretService.SaveSecret(storage.Secret{
+		SecretMeta: storage.SecretMeta{ID: "user-token", Name: "token", Type: storage.SecretGitToken},
+		Value:      "t",
+	}))
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest("DELETE", "/api/v1/namespaces/nsdel", http.NoBody))
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+	metas, err := d.secretService.ListSecrets()
+	require.NoError(t, err)
+	scopes := make([]string, 0, len(metas))
+	for _, m := range metas {
+		scopes = append(scopes, m.Scope+"|"+m.Name)
+	}
+	assert.ElementsMatch(t, []string{namespaceSecretScope("wsMain", "nskeep") + "|db", "global|token"}, scopes)
+}

@@ -10,14 +10,15 @@ import (
 	"github.com/citeck/citeck-launcher/internal/deps"
 )
 
-// A namespace runs the stand's own PostgreSQL and, since the observer arrived,
-// at least one more. This file generates every OTHER cluster from a
-// DECLARATION rather than from Go code, so that adding a database is a
-// workspace-config change: `databases:` in workspace-v1.yml (bundle.DatabaseProps).
+// A namespace runs the stand's own PostgreSQL and any number of others a
+// workspace declares — the observer's, today. This file generates every OTHER
+// cluster.
 //
-// The launcher still ships built-in defaults for the cluster it knows — the
-// observer's — so nothing depends on a config change landing first; a workspace
-// entry with the same id overrides those defaults field by field.
+// WHETHER a cluster exists is decided by the BUNDLE naming its image — the same
+// rule as qdrant, and the reason there is no switch to keep in sync: a release
+// that does not ship the service does not ship its database either. HOW it is
+// configured comes from its `additionalApps:` entry with `type: POSTGRES`. The
+// launcher knows no such cluster by itself.
 //
 // The stand's own `postgres` is deliberately NOT expressible here: it carries a
 // volume name every launcher ever shipped agrees on, an init script per webapp
@@ -34,117 +35,51 @@ type DatabaseSpec struct {
 	VolumeBase string
 	Image      string // launcher/workspace fallback; a bundle entry outranks it
 	User       string
-	// Password is NOT configurable: see bundle.DatabaseProps. It defaults to
+	// Password is the declaration's `password:` — usually a `${secret:<id>}`
+	// reference, resolved when the container is generated — and defaults to
 	// the user's name, which is what these internal, unpublished clusters have
 	// always used.
 	Password    string
 	DB          string
 	Port        int
 	MemoryLimit string
-	// RequiredBy is the app this database exists for; "" means unconditional.
-	RequiredBy string
 	// Settings are `-c key=value` server settings, applied in key order so the
 	// generated command — and with it the deployment hash — cannot depend on
 	// map iteration.
 	Settings map[string]string
 }
 
-// builtinDatabases are the clusters this launcher knows without being told.
+// DatabaseSpecs answers which clusters this configuration declares: one per
+// `additionalApps:` entry of type POSTGRES, with the image's own defaults
+// applied to what the entry leaves out. Exported because the daemon registers
+// them as dependencies before it generates anything.
 //
-// The observer's is here rather than in generateObserver so that it is the SAME
-// code path a workspace-declared database takes: one generator, one set of
-// rules, and a change to either applies to both.
-func builtinDatabases() []DatabaseSpec {
-	return []DatabaseSpec{{
-		ID:         appdef.AppObsPostgres,
-		VolumeBase: "obs_postgres",
-		// The launcher's own default matches generatePostgres's, pinned to the
-		// patch: a bundle's `dependencies:` entry is how the version moves.
-		Image:      "postgres:17.5",
-		User:       "observer",
-		Password:   "observer",
-		DB:         "observer",
-		Port:       14524,
-		RequiredBy: appdef.AppObserver,
-		// Tuned for the observability workload: heavy writes (span/metric
-		// ingestion), aggregating queries, JSONB GIN lookups.
-		Settings: map[string]string{
-			"shared_buffers":               "256MB",
-			"work_mem":                     "32MB",
-			"maintenance_work_mem":         "128MB",
-			"effective_cache_size":         "1GB",
-			"random_page_cost":             "1.1",
-			"checkpoint_completion_target": "0.9",
-			"wal_buffers":                  "16MB",
-			"max_wal_size":                 "1GB",
-			"min_wal_size":                 "256MB",
-		},
-	}}
-}
-
-// DatabaseSpecs answers which clusters this configuration declares, built-ins
-// merged with the workspace's own — exported because the daemon registers them
-// as dependencies before it generates anything.
-//
-// The merge is FIELD BY FIELD: a workspace that only wants a different memory
-// limit writes that one key and keeps every other default. A workspace entry
-// with an unknown id simply adds a cluster.
+// Declaring a cluster is not the same as running it — an entry here still only
+// produces a container where the bundle names its image (generateDatabases).
 func DatabaseSpecs(wsCfg *bundle.WorkspaceConfig) []DatabaseSpec {
-	out := builtinDatabases()
 	if wsCfg == nil {
-		return out
+		return nil
 	}
-	for _, decl := range wsCfg.Databases {
-		if decl.ID == "" {
+	var out []DatabaseSpec
+	for _, entry := range wsCfg.AdditionalApps {
+		if entry.Type != bundle.AppTypePostgres || entry.Postgres == nil || !entry.IsEnabled() {
 			continue
 		}
-		i := slices.IndexFunc(out, func(s DatabaseSpec) bool { return s.ID == decl.ID })
-		if i < 0 {
-			out = append(out, dbSpecFromDecl(decl))
-			continue
+		decl := *entry.Postgres
+		if decl.Name == "" || slices.ContainsFunc(out, func(s DatabaseSpec) bool { return s.ID == decl.Name }) {
+			continue // validation refuses a duplicate name; the first one wins here
 		}
-		out[i] = mergeDBSpec(out[i], decl)
-	}
-	for i := range out {
-		out[i] = out[i].withDefaults()
+		out = append(out, dbSpecFromDecl(decl).withDefaults())
 	}
 	return out
 }
 
-func dbSpecFromDecl(d bundle.DatabaseProps) DatabaseSpec {
+func dbSpecFromDecl(d bundle.PostgresAppProps) DatabaseSpec {
 	return DatabaseSpec{
-		ID: d.ID, VolumeBase: d.VolumeBase, Image: string(d.Image),
-		User: d.User, DB: d.DB, Port: d.Port,
-		MemoryLimit: d.MemoryLimit, RequiredBy: d.RequiredBy, Settings: d.Settings,
+		ID: d.Name, VolumeBase: d.VolumeBase, Image: string(d.Image),
+		User: d.User, Password: d.Password, DB: d.DB, Port: d.Port,
+		MemoryLimit: d.MemoryLimit, Settings: d.Settings,
 	}
-}
-
-func mergeDBSpec(base DatabaseSpec, d bundle.DatabaseProps) DatabaseSpec {
-	if d.VolumeBase != "" {
-		base.VolumeBase = d.VolumeBase
-	}
-	if d.Image != "" {
-		base.Image = string(d.Image)
-	}
-	if d.User != "" {
-		base.User = d.User
-	}
-	if d.DB != "" {
-		base.DB = d.DB
-	}
-	if d.Port != 0 {
-		base.Port = d.Port
-	}
-	if d.MemoryLimit != "" {
-		base.MemoryLimit = d.MemoryLimit
-	}
-	if d.RequiredBy != "" {
-		base.RequiredBy = d.RequiredBy
-	}
-	if len(d.Settings) > 0 {
-		base.Settings = d.Settings
-	}
-	return base
 }
 
 // withDefaults applies the image's own rules to what the declaration left out,
@@ -174,43 +109,33 @@ func (s DatabaseSpec) Descriptor() deps.Descriptor {
 	return deps.NewPostgresDescriptor(deps.ID(s.ID), s.ID, s.VolumeBase)
 }
 
-// databaseOwnerPresent answers RequiredBy, and it is deliberately a PURE
-// function of the configuration — the same one the daemon's pin seeding calls
-// before Generate has run. Asking `ctx.Applications` instead would make the
-// generator's answer unpredictable from outside, which is the trap
-// WillGenerateQdrant exists to document: a restatement that drifts hands an
-// existing cluster to a bundle's image with no pin to hold it back.
-func databaseOwnerPresent(ctx *NsGenContext, owner string) bool {
-	if owner == "" {
-		return true
-	}
-	if resolveAppImage(ctx, owner, "", "") != "" {
-		return true
-	}
-	if ctx.WorkspaceConfig != nil {
-		for _, app := range ctx.WorkspaceConfig.AdditionalApps {
-			if app.Name == owner {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// generateDatabases emits every declared cluster whose owner this namespace has.
+// generateDatabases emits every known cluster the bundle names an image for.
 //
-// Each one goes through the dependency gate exactly as the stand's own database
-// does: the image is the gate's answer (a breaking bundle version is held back
-// and reported), the volume comes from the generation counter, and the data
-// LAYOUT follows the major that will run — an explicit PGDATA up to 17, the
-// image's parent-mount default from 18.
+// The image is the whole condition, exactly as it is for qdrant and for the
+// observer: a stand has the service its release ships, and nothing else. It is
+// also read through resolveAppImage rather than from ctx.Applications, so the
+// answer is a pure function of the configuration and WillGenerateDatabases can
+// restate it for the daemon's pin seeding before Generate has run.
+//
+// Each cluster then goes through the dependency gate exactly as the stand's own
+// database does: the image is the gate's answer (a breaking bundle version is
+// held back and reported), the volume comes from the generation counter, and
+// the data LAYOUT follows the major that will run — an explicit PGDATA up to
+// 17, the image's parent-mount default from 18.
 func generateDatabases(ctx *NsGenContext) {
 	for _, s := range DatabaseSpecs(ctx.WorkspaceConfig) {
-		if !databaseOwnerPresent(ctx, s.RequiredBy) {
+		if !databaseImageNamed(ctx, s) {
 			continue
 		}
 		generateDatabase(ctx, s)
 	}
+}
+
+// databaseImageNamed answers whether anything names an image for this cluster:
+// the bundle's `dependencies:` section in practice, a workspace entry's own
+// `image:` as a fallback for a stand that pins it there.
+func databaseImageNamed(ctx *NsGenContext, s DatabaseSpec) bool {
+	return resolveAppImage(ctx, s.ID, "", s.Image) != ""
 }
 
 func generateDatabase(ctx *NsGenContext, s DatabaseSpec) {
@@ -228,7 +153,7 @@ func generateDatabase(ctx *NsGenContext, s DatabaseSpec) {
 	app.Kind = appdef.KindThirdParty
 	app.AddEnv("POSTGRES_DB", s.DB)
 	app.AddEnv("POSTGRES_USER", s.User)
-	app.AddEnv("POSTGRES_PASSWORD", s.Password)
+	app.AddEnv("POSTGRES_PASSWORD", resolveTemplateVarsWithContext(s.Password, ctx))
 	if layout.PGData != "" {
 		app.AddEnv("PGDATA", layout.PGData)
 	}
@@ -265,32 +190,26 @@ func generateDatabase(ctx *NsGenContext, s DatabaseSpec) {
 	}
 }
 
-// WillGenerateDatabases answers, WITHOUT generating, which declared clusters a
+// WillGenerateDatabases answers, WITHOUT generating, which known clusters a
 // namespace with this configuration emits — the set the daemon must seed pins
 // for. It is the same pure condition generateDatabases applies.
 func WillGenerateDatabases(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig) map[string]bool {
-	out := map[string]bool{}
+	specs := DatabaseSpecs(wsCfg)
+	out := make(map[string]bool, len(specs))
+	// Answered with a false rather than left out, for the same reason the
+	// qdrant restatement is: the caller defaults every registered dependency to
+	// present, and a cluster missing from this map would be probed on every
+	// load of every stand whose release does not ship it.
+	for _, s := range specs {
+		out[s.ID] = false
+	}
 	if cfg == nil || bun == nil {
 		return out
 	}
 	ctx := NewNsGenContext(cfg, bun)
 	ctx.WorkspaceConfig = wsCfg
-	for _, s := range DatabaseSpecs(wsCfg) {
-		out[s.ID] = databaseOwnerPresent(ctx, s.RequiredBy)
+	for _, s := range specs {
+		out[s.ID] = databaseImageNamed(ctx, s)
 	}
 	return out
-}
-
-// databaseSpecFor answers one cluster's declaration by id, for a generator that
-// has to AGREE with it — the observer's, which must tell its service the
-// credentials and the port its database was declared with. An id nothing
-// declares yields the zero spec with the image's own defaults applied, so a
-// caller never has to nil-check.
-func databaseSpecFor(ctx *NsGenContext, id string) DatabaseSpec {
-	for _, s := range DatabaseSpecs(ctx.WorkspaceConfig) {
-		if s.ID == id {
-			return s
-		}
-	}
-	return DatabaseSpec{ID: id}.withDefaults()
 }

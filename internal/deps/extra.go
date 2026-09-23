@@ -33,6 +33,13 @@ func NewPostgresDescriptor(id ID, appName, volumeBase string) Descriptor {
 	return postgresDescriptor{id: id, appName: appName, volumeBase: volumeBase}
 }
 
+// NewQdrantDescriptor builds a descriptor for a Qdrant store declared outside
+// this package, under the same rule as NewPostgresDescriptor: the type stays
+// unexported so every instance answers the vendor's one-minor rule identically.
+func NewQdrantDescriptor(id ID, appName, volumeBase string) Descriptor {
+	return qdrantDescriptor{id: id, appName: appName, volumeBase: volumeBase}
+}
+
 // SetExtraDependencies installs the dependencies the active workspace declares,
 // replacing whatever the previous workspace declared.
 //

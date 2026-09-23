@@ -3,13 +3,20 @@ package namespace
 import (
 	"testing"
 
-	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/bundle"
 	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/deps"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// pgEntry is an additionalApps entry of type POSTGRES, built the way the YAML
+// parser builds one (the typed payload plus the name/type the list is indexed
+// by), so these tests exercise the same value generation sees in the field.
+func pgEntry(p bundle.PostgresAppProps) bundle.AdditionalAppProps {
+	p.Type = bundle.AppTypePostgres
+	return bundle.AdditionalAppProps{Name: p.Name, Type: bundle.AppTypePostgres, Postgres: &p}
+}
 
 // The point of the whole file: a database nothing in Go names. A workspace
 // declares it, and it gets a container, a registered dependency, a pinned
@@ -20,14 +27,14 @@ func TestAWorkspaceCanDeclareADatabaseNoGoCodeKnows(t *testing.T) {
 	t.Cleanup(deps.ResetExtraDependencies)
 
 	ws := observerWorkspace()
-	ws.Databases = []bundle.DatabaseProps{{
-		ID:          "billing-postgres",
+	ws.AdditionalApps = []bundle.AdditionalAppProps{pgEntry(bundle.PostgresAppProps{
+		Name:        "billing-postgres",
 		Image:       "postgres:17.5",
 		User:        "billing",
 		Port:        14777,
 		MemoryLimit: "256m",
 		Settings:    map[string]string{"work_mem": "8MB", "shared_buffers": "64MB"},
-	}}
+	})}
 	// The registry learns it exactly as the daemon does before generating.
 	for _, s := range DatabaseSpecs(ws) {
 		if s.ID == "billing-postgres" {
@@ -39,7 +46,7 @@ func TestAWorkspaceCanDeclareADatabaseNoGoCodeKnows(t *testing.T) {
 	require.NoError(t, err)
 
 	db := findGeneratedApp(resp, "billing-postgres")
-	require.NotNil(t, db, "an unconditional declaration is generated wherever the workspace is used")
+	require.NotNil(t, db, "an entry that names its own image runs wherever the workspace is used")
 	assert.Equal(t, "postgres:17.5", db.Image)
 	user, _ := db.Environments.Get("POSTGRES_USER")
 	assert.Equal(t, "billing", user)
@@ -58,61 +65,60 @@ func TestAWorkspaceCanDeclareADatabaseNoGoCodeKnows(t *testing.T) {
 		"a declared cluster must be reported as a dependency, or nothing pins or migrates it")
 }
 
-// A declaration may say which app it exists for; without that app the namespace
-// pays nothing for it.
-func TestADeclaredDatabaseFollowsItsOwner(t *testing.T) {
+// The entry describes HOW a cluster is configured; the BUNDLE decides whether
+// it exists — the same rule as qdrant and the observer. This is what replaced
+// the old requiredBy switch: a release that does not ship the service does not
+// ship its database, with nothing to keep in sync.
+func TestADatabaseExistsWhereTheBundleNamesItsImage(t *testing.T) {
 	config.ResetDesktopMode()
 	t.Cleanup(deps.ResetExtraDependencies)
 
 	ws := observerWorkspace()
-	ws.Databases = []bundle.DatabaseProps{{ID: "billing-postgres", RequiredBy: "billing"}}
-	deps.SetExtraDependencies([]deps.Descriptor{DatabaseSpecs(ws)[1].Descriptor()})
+	ws.AdditionalApps = []bundle.AdditionalAppProps{pgEntry(bundle.PostgresAppProps{
+		Name: "billing-postgres", MemoryLimit: "256m",
+	})}
+	for _, s := range DatabaseSpecs(ws) {
+		if s.ID == "billing-postgres" {
+			deps.SetExtraDependencies([]deps.Descriptor{s.Descriptor()})
+		}
+	}
 
-	noOwner, err := Generate(basicCfg(), &bundle.Def{}, ws, SystemSecrets{JWT: "j", OIDC: "o"})
+	noImage, err := Generate(basicCfg(), &bundle.Def{}, ws, SystemSecrets{JWT: "j", OIDC: "o"})
 	require.NoError(t, err)
-	assert.Nil(t, findGeneratedApp(noOwner, "billing-postgres"))
+	assert.Nil(t, findGeneratedApp(noImage, "billing-postgres"),
+		"settings alone must not conjure a database onto every stand using this workspace")
 	assert.False(t, WillGenerateDatabases(basicCfg(), &bundle.Def{}, ws)["billing-postgres"],
 		"and the seeding must agree, or an absent cluster is probed on every load")
 
-	withOwner := &bundle.Def{Applications: map[string]bundle.AppDef{"billing": {Image: "citeck/billing:1.0"}}}
-	resp, err := Generate(basicCfg(), withOwner, ws, SystemSecrets{JWT: "j", OIDC: "o"})
-	require.NoError(t, err)
-	assert.NotNil(t, findGeneratedApp(resp, "billing-postgres"))
-	assert.True(t, WillGenerateDatabases(basicCfg(), withOwner, ws)["billing-postgres"])
-}
-
-// The observer's database is the same mechanism with the launcher's own
-// defaults, so a workspace can retune it without the launcher knowing — and
-// what it changes must reach BOTH halves, or the service and its database
-// disagree about the password.
-func TestTheWorkspaceCanOverrideABuiltInDatabaseFieldByField(t *testing.T) {
-	config.ResetDesktopMode()
-	ws := observerWorkspace()
-	ws.Databases = []bundle.DatabaseProps{{
-		ID: appdef.AppObsPostgres, User: "obs2", MemoryLimit: "1g",
+	withImage := &bundle.Def{Dependencies: map[string]bundle.AppDef{
+		"billing-postgres": {Image: "postgres:18.6"},
 	}}
-
-	resp, err := Generate(basicCfg(), observerBundle(), ws, SystemSecrets{JWT: "j", OIDC: "o"})
+	resp, err := Generate(basicCfg(), withImage, ws, SystemSecrets{JWT: "j", OIDC: "o"})
 	require.NoError(t, err)
-
-	db := findGeneratedApp(resp, appdef.AppObsPostgres)
+	db := findGeneratedApp(resp, "billing-postgres")
 	require.NotNil(t, db)
-	user, _ := db.Environments.Get("POSTGRES_USER")
-	assert.Equal(t, "obs2", user)
-	assert.Equal(t, "1g", db.Resources.Limits.Memory)
-	name, _ := db.Environments.Get("POSTGRES_DB")
-	assert.Equal(t, "observer", name, "an untouched field keeps the launcher's default")
-
-	obs := findGeneratedApp(resp, appdef.AppObserver)
-	require.NotNil(t, obs)
-	obsUser, _ := obs.Environments.Get("DATABASE_USER")
-	assert.Equal(t, "obs2", obsUser,
-		"the service reads the same declaration, or it cannot log in to its own database")
+	assert.Equal(t, "postgres:18.6", db.Image, "the bundle entry outranks anything the workspace names")
+	assert.Equal(t, "256m", db.Resources.Limits.Memory, "and the workspace entry still configures it")
+	assert.True(t, WillGenerateDatabases(basicCfg(), withImage, ws)["billing-postgres"])
 }
 
-// Defaults: the smallest usable declaration is a bare id.
-func TestABareIdIsAUsableDeclaration(t *testing.T) {
-	specs := DatabaseSpecs(&bundle.WorkspaceConfig{Databases: []bundle.DatabaseProps{{ID: "x-postgres"}}})
+// A declared cluster the release does not ship is not generated, however
+// complete its declaration: the bundle naming its image is what says it exists.
+func TestADeclaredDatabaseNeedsTheBundleToo(t *testing.T) {
+	config.ResetDesktopMode()
+
+	resp, err := Generate(basicCfg(), &bundle.Def{}, observerWorkspace(), SystemSecrets{JWT: "j", OIDC: "o"},
+		observerSecrets())
+	require.NoError(t, err)
+	assert.Nil(t, findGeneratedApp(resp, observerDB))
+	assert.False(t, WillGenerateDatabases(basicCfg(), &bundle.Def{}, observerWorkspace())[observerDB])
+}
+
+// Defaults: the smallest usable entry is a name and a type.
+func TestABareNameIsAUsableEntry(t *testing.T) {
+	specs := DatabaseSpecs(&bundle.WorkspaceConfig{
+		AdditionalApps: []bundle.AdditionalAppProps{pgEntry(bundle.PostgresAppProps{Name: "x-postgres"})},
+	})
 	var got DatabaseSpec
 	for _, s := range specs {
 		if s.ID == "x-postgres" {

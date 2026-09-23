@@ -31,7 +31,6 @@ const (
 	MongoPort      = 27017
 	MailhogHost    = "mailhog"
 	OnlyofficeHost = "onlyoffice"
-	ObsPGHost      = "observer-postgres"
 
 	// Keycloak 26+ exposes its health/metrics on a dedicated management
 	// interface (container port 9000). KCManagementHostPort is the host-side
@@ -110,6 +109,8 @@ type NsGenContext struct {
 	// license.Service. Merged with WorkspaceConfig.Licenses in the eapps cloud
 	// config so UI-added licenses actually reach the running webapps.
 	ExtraLicenses []bundle.LicenseInstance
+	// NamespaceSecrets resolve `${secret:<id>}`; see GenerateOpts.NamespaceSecrets.
+	NamespaceSecrets map[string]string
 	// EditedFileEdits / DiskContent drive file-edit merging in Generate: each
 	// delta is applied onto its generated template so both the on-disk file and
 	// VolumesContentHash reflect the merged result. DiskContent supplies the

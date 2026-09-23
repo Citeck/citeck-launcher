@@ -173,6 +173,11 @@ func (d *Daemon) handleDeleteNamespace(w http.ResponseWriter, r *http.Request) {
 	if dc := act.dockerClient; dc != nil {
 		dc.PurgeNamespace(r.Context(), nsID, wsID)
 	}
+	// Its own secret values go with it — they belong to this namespace alone
+	// (unlike a user credential, which may be shared).
+	if d.secretService != nil {
+		deleteNamespaceSecrets(d.secretService, wsID, nsID)
+	}
 
 	writeJSON(w, api.ActionResultDto{Success: true, Message: "namespace deleted"})
 }

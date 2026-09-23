@@ -12,6 +12,7 @@ import (
 
 	"github.com/citeck/citeck-launcher/internal/api"
 	"github.com/citeck/citeck-launcher/internal/appdef"
+	"github.com/citeck/citeck-launcher/internal/bundle"
 	"github.com/citeck/citeck-launcher/internal/namespace"
 	"github.com/citeck/citeck-launcher/internal/storage"
 )
@@ -299,6 +300,43 @@ func TestUnlockStartsDeferredNamespace(t *testing.T) {
 	assert.False(t, d.activeNs.deferredForSecrets, "deferredForSecrets must be cleared after starting")
 }
 
+// TestUnlockRegeneratesANamespaceDeferredForItsOwnSecrets: when the workspace
+// gives the namespace secret values, the deferred definitions were generated
+// without the apps that reference them (the vault was locked). Unlock must
+// regenerate and start THAT — the reload's start branch — not the stale set.
+func TestUnlockRegeneratesANamespaceDeferredForItsOwnSecrets(t *testing.T) {
+	d, mux := secretsTestMux(t)
+	rt := namespace.NewRuntime(&namespace.Config{ID: "ns1"}, nil, t.TempDir())
+	t.Cleanup(rt.Shutdown)
+
+	var startCalls int
+	d.runtimeStartFn = func(_ *namespace.Runtime, _ []appdef.ApplicationDef) { startCalls++ }
+	type reloadCall struct{ force, start, refresh bool }
+	var reloads []reloadCall
+	d.reloadExFn = func(force, start, refresh bool) error {
+		reloads = append(reloads, reloadCall{force, start, refresh})
+		return nil
+	}
+	d.activeNs = &activeNamespace{
+		nsConfig:           &namespace.Config{ID: "ns1"},
+		runtime:            rt,
+		appDefs:            []appdef.ApplicationDef{{Name: "app1"}},
+		workspaceConfig:    &bundle.WorkspaceConfig{Secrets: []bundle.SecretDefault{{ID: "db", Value: "v"}}},
+		deferredForSecrets: true,
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", api.SecretsUnlock, strings.NewReader(`{"password":"test-master"}`))
+	req.Header.Set("Content-Type", "application/json")
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	assert.Equal(t, []reloadCall{{force: false, start: true, refresh: false}}, reloads,
+		"one reload that STARTS the regenerated set")
+	assert.Zero(t, startCalls, "the stale deferred definitions are not started")
+	assert.False(t, d.activeNs.deferredForSecrets)
+}
+
 // TestUnlockDoesNotStartNamespace_WhenNotDeferred: an active namespace that
 // was never deferred (the common case) must not have its runtime started by
 // unlock — Start is only for the withheld-auto-start scenario.
@@ -362,4 +400,29 @@ func TestHandleResetSecrets_ClearsPendingBlob(t *testing.T) {
 	}
 	require.NoError(t, json.NewDecoder(statusRec.Body).Decode(&status))
 	assert.False(t, status.HasPendingSecrets, "migration prompt must not return after reset")
+}
+
+// A namespace's own infrastructure secret is not the user's credential: it is
+// not listed on the secrets page, and it never counts as "the user has secrets
+// to protect" — the flag the UI reads to ask for a master password.
+func TestNamespaceSecretsAreNotUserSecrets(t *testing.T) {
+	d, mux := secretsTestMux(t)
+	_, err := loadNamespaceSecrets(d.secretService, "ws", "ns", wsSecrets("observer-db", "observer"), true)
+	require.NoError(t, err)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest("GET", api.Secrets, http.NoBody))
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.JSONEq(t, `[]`, rec.Body.String(), "the list shows user credentials only")
+
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest("GET", api.MigrationStatus, http.NoBody))
+	require.Equal(t, http.StatusOK, rec.Code)
+	var status map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &status))
+	assert.Equal(t, false, status["hasSecrets"])
+
+	// And a registry or git credential lookup never picks one up.
+	lookup := makeTokenLookup(d.secretService)
+	assert.Empty(t, lookup(string(storage.SecretNamespace)))
 }

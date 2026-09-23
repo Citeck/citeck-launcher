@@ -210,14 +210,16 @@ func namespaceDependencies(cfg *namespace.Config, bun *bundle.Def,
 	for _, d := range deps.All() {
 		present[d.ID()] = true
 	}
-	present[deps.Qdrant] = namespace.WillGenerateQdrant(cfg, bun, wsCfg)
-	// Declared PostgreSQL clusters — the observer's built-in one and anything a
-	// workspace adds in `databases:` — answer their own condition: a cluster is
-	// present when the app it was declared FOR is in the namespace. Restated
-	// here for the same reason qdrant is (the seeding runs before Generate and
-	// must not pay a Docker probe for a dependency the namespace does not
-	// have), and from the same pure function the generator uses, so the two
-	// cannot drift.
+	for id, ok := range namespace.WillGenerateQdrants(cfg, bun, wsCfg) {
+		present[deps.ID(id)] = ok
+	}
+	// PostgreSQL clusters — the observer's built-in one and anything an
+	// `additionalApps:` entry of type POSTGRES adds — answer their own
+	// condition: a cluster is present where the bundle names its image.
+	// Restated here for the same reason qdrant is (the seeding runs before
+	// Generate and must not pay a Docker probe for a dependency the namespace
+	// does not have), and from the same pure function the generator uses, so
+	// the two cannot drift.
 	for id, ok := range namespace.WillGenerateDatabases(cfg, bun, wsCfg) {
 		present[deps.ID(id)] = ok
 	}

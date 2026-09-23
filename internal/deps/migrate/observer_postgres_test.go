@@ -14,6 +14,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// observerPostgres is the observer's database, which a WORKSPACE declares
+// (`additionalApps:` entry of type POSTGRES) — the launcher registers it only
+// then, through deps.SetExtraDependencies.
+const observerPostgres deps.ID = "observer-postgres"
+
+// declareObserverPostgres registers the cluster the way the daemon does for a
+// workspace that declares it, and unregisters it when the test ends.
+func declareObserverPostgres(t *testing.T) {
+	t.Helper()
+	deps.SetExtraDependencies([]deps.Descriptor{
+		deps.NewPostgresDescriptor(observerPostgres, string(observerPostgres), "obs_postgres"),
+	})
+	t.Cleanup(deps.ResetExtraDependencies)
+}
+
 // The observer's database is a SECOND PostgreSQL cluster in the same namespace.
 // It takes the same plan — that is the point of keying the migrator by id
 // instead of by the "postgres" constant — and every volume, dump directory and
@@ -21,7 +36,8 @@ import (
 // database here would dump and restore the wrong data.
 func newObserverPostgresFakeEnv(t *testing.T, image string, gen int) *migratetest.FakeEnv {
 	t.Helper()
-	d, ok := deps.Lookup(deps.ObserverPostgres)
+	declareObserverPostgres(t)
+	d, ok := deps.Lookup(observerPostgres)
 	require.True(t, ok, "the observer's database must be registered")
 	v, ok := d.ParseVersion(image)
 	require.True(t, ok, "unparsable seed image %q", image)
@@ -29,7 +45,7 @@ func newObserverPostgresFakeEnv(t *testing.T, image string, gen int) *migratetes
 	env := migratetest.New()
 	// Both clusters exist, on different versions and different generations:
 	// anything that reads the wrong one shows up as a wrong volume below.
-	env.States[deps.ObserverPostgres] = deps.DependencyState{Image: image, VolumeGen: gen}
+	env.States[observerPostgres] = deps.DependencyState{Image: image, VolumeGen: gen}
 	env.States[deps.Postgres] = deps.DependencyState{Image: "postgres:17.5", VolumeGen: 1}
 
 	obsVol := deps.VolumeName(d, gen)
@@ -46,15 +62,15 @@ func newObserverPostgresFakeEnv(t *testing.T, image string, gen int) *migratetes
 func TestObserverPostgresMigratesInItsOwnVolumes(t *testing.T) {
 	env := newObserverPostgresFakeEnv(t, "postgres:17.5", 1)
 
-	plan, j, err := PostgresMigrator{ID: deps.ObserverPostgres}.Plan(context.Background(), env,
+	plan, j, err := PostgresMigrator{ID: observerPostgres}.Plan(context.Background(), env,
 		Path{"postgres:17.5", "postgres:18.6"}, PlanOptions{})
 	require.NoError(t, err)
 
-	assert.Equal(t, deps.ObserverPostgres, j.ID, "the journal must name the cluster being moved")
+	assert.Equal(t, observerPostgres, j.ID, "the journal must name the cluster being moved")
 	assert.Equal(t, "obs_postgres2", j.SourceVolume,
 		"the source is the observer's own generation, never the stand database's postgres2")
 	assert.Equal(t, 2, j.ToVolumeGen)
-	assert.Contains(t, j.DumpDir, string(deps.ObserverPostgres),
+	assert.Contains(t, j.DumpDir, string(observerPostgres),
 		"two clusters migrating must not share one dump directory")
 	assert.Equal(t, PostgresStepIDs(), stepIDs(plan), "the same plan, step for step")
 
@@ -71,11 +87,12 @@ func TestObserverPostgresMigratesInItsOwnVolumes(t *testing.T) {
 // with no plan wired is a "the launcher offered an upgrade it cannot perform"
 // bug that only surfaces after the operator presses the button.
 func TestObserverPostgresHasAMigratorAndARollbackOfItsOwn(t *testing.T) {
-	m, ok := MigratorFor(deps.ObserverPostgres)
+	declareObserverPostgres(t)
+	m, ok := MigratorFor(observerPostgres)
 	require.True(t, ok)
-	assert.Equal(t, PostgresMigrator{ID: deps.ObserverPostgres}, m,
+	assert.Equal(t, PostgresMigrator{ID: observerPostgres}, m,
 		"it must be the postgres plan keyed to the observer's cluster, not to the stand's")
-	_, ok = RollbackFor(deps.ObserverPostgres)
+	_, ok = RollbackFor(observerPostgres)
 	assert.True(t, ok)
 }
 
@@ -148,7 +165,7 @@ func TestAFailedStepCollectsTheTempContainerLogsBeforeTheRollback(t *testing.T) 
 	// the real failure (a readiness probe against a role that does not exist).
 	env.FailOn["running:"+SrcContainer] = errors.New("container is gone")
 
-	plan, j, err := PostgresMigrator{ID: deps.ObserverPostgres}.Plan(context.Background(), env,
+	plan, j, err := PostgresMigrator{ID: observerPostgres}.Plan(context.Background(), env,
 		Path{"postgres:17.5", "postgres:18.6"}, PlanOptions{})
 	require.NoError(t, err)
 

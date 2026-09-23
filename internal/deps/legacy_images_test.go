@@ -55,7 +55,6 @@ func TestLegacyImagesAreTheExactReferencesProbed(t *testing.T) {
 		// data nobody could read — which is the safe direction for every
 		// dependency here. (Its pre-registration volume was outside the
 		// generation counter, so the probe never finds data to contradict it.)
-		ObserverPostgres: "postgres:17",
 	}
 	for _, d := range All() {
 		assert.Equal(t, want[d.ID()], d.LegacyImage(), string(d.ID()))

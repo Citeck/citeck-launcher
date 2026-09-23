@@ -421,12 +421,15 @@ func (d *Daemon) handleDeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 	// logs and never blocks; selection is by label so the non-active workspace's
 	// resources are cleaned via the active client (single desktop engine).
 	act := d.active()
-	if dc := act.dockerClient; dc != nil {
-		if nss, lerr := d.store.ListNamespaces(id); lerr != nil {
-			slog.Warn("Workspace delete: list namespaces for Docker purge failed", "wsID", id, "err", lerr) //nolint:gosec // G706: id passed validateID
-		} else {
-			for _, ns := range nss {
+	if nss, lerr := d.store.ListNamespaces(id); lerr != nil {
+		slog.Warn("Workspace delete: list namespaces for cleanup failed", "wsID", id, "err", lerr) //nolint:gosec // G706: id passed validateID
+	} else {
+		for _, ns := range nss {
+			if dc := act.dockerClient; dc != nil {
 				dc.PurgeNamespace(r.Context(), ns.ID, id)
+			}
+			if d.secretService != nil {
+				deleteNamespaceSecrets(d.secretService, id, ns.ID)
 			}
 		}
 	}
@@ -434,7 +437,8 @@ func (d *Daemon) handleDeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 		writeInternalError(w, err)
 		return
 	}
-	// Secrets are deliberately NOT touched here. A secret referenced via
+	// User secrets are deliberately NOT touched here (the namespaces' OWN
+	// secret values were removed above, with the namespaces). A secret referenced via
 	// ws.SecretID is SHARED (other workspaces may use the same token) and must
 	// never be auto-deleted with a workspace; the legacy per-workspace
 	// "ws:{id}:repo" secret is likewise left alone (harmless orphan, and the

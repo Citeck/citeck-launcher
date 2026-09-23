@@ -1058,12 +1058,12 @@ func TestIntegration_Qdrant114To115(t *testing.T) {
 	before := e.volumeManifest(ctx, t, src)
 	require.NotEmpty(t, before)
 
-	pre := migrate.QdrantMigrator{}.Preflight(ctx, e.env, migrate.Path{itQdrantFrom, itQdrantTo})
+	pre := migrate.QdrantMigrator{ID: deps.Qdrant}.Preflight(ctx, e.env, migrate.Path{itQdrantFrom, itQdrantTo})
 	require.True(t, pre.OK, "preflight problems: %v", pre.Problems)
 	t.Logf("preflight: data %d B, required on the volume filesystem %d B, free %d B",
 		pre.DataSizeBytes, pre.RequiredVolumeBytes, pre.FreeVolumeBytes)
 
-	plan, journal, err := migrate.QdrantMigrator{}.Plan(ctx, e.env, migrate.Path{itQdrantFrom, itQdrantTo}, migrate.PlanOptions{})
+	plan, journal, err := migrate.QdrantMigrator{ID: deps.Qdrant}.Plan(ctx, e.env, migrate.Path{itQdrantFrom, itQdrantTo}, migrate.PlanOptions{})
 	require.NoError(t, err)
 	timer := newStepTimer()
 	started := time.Now()
@@ -1255,7 +1255,7 @@ func TestIntegration_QdrantApiKeyFailsSafely(t *testing.T) {
 			`{"environments":{"QDRANT__SERVICE__API_KEY":"an-operator-set-key"}}`),
 	}, nil)
 
-	plan, journal, err := migrate.QdrantMigrator{}.Plan(ctx, e.env, migrate.Path{itQdrantFrom, itQdrantTo}, migrate.PlanOptions{})
+	plan, journal, err := migrate.QdrantMigrator{ID: deps.Qdrant}.Plan(ctx, e.env, migrate.Path{itQdrantFrom, itQdrantTo}, migrate.PlanOptions{})
 	require.NoError(t, err)
 	timer := newStepTimer()
 	runErr := migrate.Run(ctx, e.rt, journal, plan, timer.progress)
@@ -1401,12 +1401,12 @@ func TestIntegration_QdrantLadder114To116(t *testing.T) {
 	require.NotEmpty(t, before)
 
 	path := migrate.Path{itQdrantFrom, itQdrantTo, itQdrantLadderTop}
-	pre := migrate.QdrantMigrator{}.Preflight(ctx, e.env, path)
+	pre := migrate.QdrantMigrator{ID: deps.Qdrant}.Preflight(ctx, e.env, path)
 	require.True(t, pre.OK, "preflight problems: %v", pre.Problems)
 	t.Logf("preflight: data %d B, required on the volume filesystem %d B, free %d B",
 		pre.DataSizeBytes, pre.RequiredVolumeBytes, pre.FreeVolumeBytes)
 
-	plan, journal, err := migrate.QdrantMigrator{}.Plan(ctx, e.env, path, migrate.PlanOptions{})
+	plan, journal, err := migrate.QdrantMigrator{ID: deps.Qdrant}.Plan(ctx, e.env, path, migrate.PlanOptions{})
 	require.NoError(t, err)
 
 	// --- observe the middle rung while it is actually running ---------------

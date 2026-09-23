@@ -17,7 +17,19 @@ const (
 	SecretRegistryAuth SecretType = "REGISTRY_AUTH" //nolint:gosec // G101: constant name, not a credential
 	// SecretSystem identifies a system-managed secret (JWT, OIDC).
 	SecretSystem SecretType = "SYSTEM" //nolint:gosec // G101: constant name, not a credential
+	// SecretNamespace identifies a namespace's own infrastructure secret — the
+	// value a `${secret:<id>}` reference resolves to (a declared database's
+	// password). Seeded from the workspace `secrets:` defaults and owned by the
+	// namespace from then on; see internal/daemon/namespace_secrets.go. Not a
+	// user credential: never listed as one, never offered for a registry or git.
+	SecretNamespace SecretType = "NAMESPACE" //nolint:gosec // G101: constant name, not a credential
 )
+
+// IsNamespaceSecret reports whether a stored secret is a namespace's own
+// infrastructure value rather than a user credential. Everything that lists
+// secrets TO THE USER, or picks one as a registry or git credential, skips
+// these; the dump redactor deliberately does not.
+func IsNamespaceSecret(meta SecretMeta) bool { return meta.Type == SecretNamespace }
 
 // WorkspaceDto represents a workspace record.
 //

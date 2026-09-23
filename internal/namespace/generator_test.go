@@ -904,8 +904,6 @@ func TestGeneratorLivenessProbes(t *testing.T) {
 		Applications: map[string]bundle.AppDef{
 			"emodel":  {Image: "nexus.citeck.ru/emodel:1.0"},
 			"gateway": {Image: "nexus.citeck.ru/gateway:1.0"},
-			// The observer follows the BUNDLE image now, not a namespace flag.
-			appdef.AppObserver: {Image: "citeck/observer:1.0"},
 		},
 	}
 	wsCfg := &bundle.WorkspaceConfig{
@@ -933,8 +931,8 @@ func TestGeneratorLivenessProbes(t *testing.T) {
 		appdef.AppZookeeper,
 		appdef.AppMongodb,
 		appdef.AppKeycloak,
-		appdef.AppObserver,
-		appdef.AppObsPostgres,
+		// The observer and its database are configuration now; their declared
+		// probes are pinned by TestObserver_DeclaredLivenessUsesTheLaunchersTolerance.
 		"emodel",
 		"gateway",
 	} {
@@ -1170,9 +1168,6 @@ func TestCiteckSAWiring(t *testing.T) {
 	bun := &bundle.Def{
 		Applications: map[string]bundle.AppDef{
 			"emodel": {Image: "nexus.citeck.ru/emodel:1.0"},
-			// The observer is what assertion 3 below is about, and it exists
-			// only where the bundle names its image.
-			appdef.AppObserver: {Image: "citeck/observer:1.0"},
 		},
 	}
 	wsCfg := &bundle.WorkspaceConfig{
@@ -1235,11 +1230,9 @@ func TestCiteckSAWiring(t *testing.T) {
 	assert.NotEqual(t, "user-admin-pass", envGet(emodel.Environments, "ECOS_WEBAPP_RABBITMQ_PASSWORD"),
 		"webapp RMQ password must NOT leak the user-facing admin password")
 
-	// 3. Observer's management API monitor uses the citeck SA too.
-	obs := findApp(appdef.AppObserver)
-	require.NotNil(t, obs)
-	assert.Equal(t, "citeck", envGet(obs.Environments, "RMQ_MONITOR_USER"))
-	assert.Equal(t, saPass, envGet(obs.Environments, "RMQ_MONITOR_PASSWORD"))
+	// 3. The observer's management-API monitor uses the citeck SA too — it is
+	// configuration now (${RMQ_USER}/${RMQ_PASSWORD}), pinned by
+	// TestObserver_WiresThePlatformSecretsAndTargets.
 }
 
 // TestApplyEmailConfig_SetsSpringRelaxedBindingEnvVars pins the env-var keys

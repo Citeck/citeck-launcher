@@ -48,11 +48,10 @@ var migrators = map[deps.ID]Migrator{
 	deps.Postgres:  PostgresMigrator{ID: deps.Postgres},
 	deps.RabbitMQ:  RabbitMigrator{},
 	deps.Zookeeper: ZookeeperMigrator{},
-	deps.Qdrant:    QdrantMigrator{},
-	// The observer's database takes the SAME plan as the stand's own, keyed to
-	// its own id: same dump/restore into a new volume, same rollback, its own
-	// pin and its own volume generation.
-	deps.ObserverPostgres: PostgresMigrator{ID: deps.ObserverPostgres},
+	deps.Qdrant:    QdrantMigrator{ID: deps.Qdrant},
+	// A cluster or store a WORKSPACE declares (the observer's database, for
+	// one) is not in this table: MigratorFor answers it by kind, keyed to its
+	// own id.
 }
 
 // rollbacks is the same wiring for a journal found at boot.
@@ -64,20 +63,35 @@ var migrators = map[deps.ID]Migrator{
 // Migrator would tie "can I start this" to "can I finish undoing that", which
 // are not the same question and must not fail together.
 var rollbacks = map[deps.ID]func(context.Context, Env, *deps.MigrationJournal) error{
-	deps.Postgres:         RollbackPostgres,
-	deps.RabbitMQ:         RollbackCopyUpgrade,
-	deps.Zookeeper:        RollbackCopyUpgrade,
-	deps.Qdrant:           RollbackCopyUpgrade,
-	deps.ObserverPostgres: RollbackPostgres,
+	deps.Postgres:  RollbackPostgres,
+	deps.RabbitMQ:  RollbackCopyUpgrade,
+	deps.Zookeeper: RollbackCopyUpgrade,
+	deps.Qdrant:    RollbackCopyUpgrade,
 }
 
 // MigratorFor answers the migrator for a dependency. ok == false means this
 // launcher ships no plan for it — which for a descriptor that claims
 // Migratable() is a wiring bug, not a user error, and the caller reports it as
 // an internal failure rather than as "update the launcher".
+//
+// A dependency the active WORKSPACE declares is not in the table: its id is
+// whatever the workspace named it. It is an instance of a kind the launcher
+// does know — deps.NewPostgresDescriptor / NewQdrantDescriptor are the only way
+// to make one — so it gets that kind's plan, keyed to its own id.
 func MigratorFor(id deps.ID) (Migrator, bool) {
-	m, ok := migrators[id]
-	return m, ok
+	if m, ok := migrators[id]; ok {
+		return m, true
+	}
+	d, ok := deps.Lookup(id)
+	switch {
+	case !ok:
+		return nil, false
+	case deps.IsPostgresFamily(d):
+		return PostgresMigrator{ID: id}, true
+	case deps.IsQdrantFamily(d):
+		return QdrantMigrator{ID: id}, true
+	}
+	return nil, false
 }
 
 // RollbackFor answers the undo for an interrupted migration of a dependency.
@@ -85,7 +99,23 @@ func MigratorFor(id deps.ID) (Migrator, bool) {
 // leave the journal alone: it is the only record of what was left behind, and
 // its id is what tells the operator which launcher version could finish the
 // job.
+//
+// A declared dependency gets its kind's undo while the workspace declares it.
+// A journal for one the active workspace no longer declares is left alone —
+// the same answer as for any id this launcher does not know, and the right
+// one: switching back to the workspace that declared it makes it undoable.
 func RollbackFor(id deps.ID) (func(context.Context, Env, *deps.MigrationJournal) error, bool) {
-	fn, ok := rollbacks[id]
-	return fn, ok
+	if fn, ok := rollbacks[id]; ok {
+		return fn, true
+	}
+	d, ok := deps.Lookup(id)
+	switch {
+	case !ok:
+		return nil, false
+	case deps.IsPostgresFamily(d):
+		return RollbackPostgres, true
+	case deps.IsQdrantFamily(d):
+		return RollbackCopyUpgrade, true
+	}
+	return nil, false
 }

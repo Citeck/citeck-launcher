@@ -108,3 +108,21 @@ func TestShouldDeferStartForPendingKotlinSecrets(t *testing.T) {
 	assert.True(t, shouldDeferStartForSecrets(true, nil, true, entImg, ws),
 		"a pending blob gates even before a SecretService exists")
 }
+
+// A namespace whose workspace gives it secret values cannot run its services
+// while the vault holding its copies is locked — even with public images only.
+// A pending 1.x import does NOT count: that vault is unencrypted and empty, and
+// namespace secrets are stored in it as is.
+func TestShouldDeferStartForNamespaceSecrets(t *testing.T) {
+	ws := &bundle.WorkspaceConfig{Secrets: []bundle.SecretDefault{{ID: "observer-db", Value: "observer"}}}
+	pubImg := []string{"postgres:17.5"}
+
+	assert.True(t, shouldDeferStartForSecrets(true, fakeVault{true, true}, false, pubImg, ws),
+		"locked vault + declared secrets → defer, regardless of images")
+	assert.False(t, shouldDeferStartForSecrets(true, fakeVault{true, false}, false, pubImg, ws),
+		"unlocked vault → no defer")
+	assert.False(t, shouldDeferStartForSecrets(true, fakeVault{false, false}, true, pubImg, ws),
+		"pending import, unencrypted vault: namespace secrets are writable, no defer on their account")
+	assert.False(t, shouldDeferStartForSecrets(false, fakeVault{true, true}, false, pubImg, ws),
+		"server mode → never defer")
+}

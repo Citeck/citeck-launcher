@@ -234,10 +234,11 @@ func knownAppsOf(state *namespace.NsPersistedState) []string {
 	return state.KnownApps
 }
 
-// installWorkspaceDependencies registers the PostgreSQL clusters the ACTIVE
-// workspace declares (`databases:` in workspace-v1.yml) with the dependency
-// registry, so that a database added by configuration gets the same pin, volume
-// generation, migration and rollback a built-in one has.
+// installWorkspaceDependencies registers the typed `additionalApps:` entries of
+// the ACTIVE workspace — PostgreSQL clusters and Qdrant stores — with the
+// dependency registry, so that a database or a store added by configuration
+// gets the same pin, volume generation, migration and rollback a built-in one
+// has.
 //
 // It must run BEFORE anything reads the registry for this namespace — the pin
 // seeding and the generator both do — and it REPLACES the previous set, because
@@ -246,9 +247,13 @@ func knownAppsOf(state *namespace.NsPersistedState) []string {
 // `postgres` (or the observer's database) here cannot point the pin, the probe
 // or the migration at somebody else's data.
 func installWorkspaceDependencies(wsCfg *bundle.WorkspaceConfig) {
-	specs := namespace.DatabaseSpecs(wsCfg)
-	ds := make([]deps.Descriptor, 0, len(specs))
-	for _, s := range specs {
+	dbs := namespace.DatabaseSpecs(wsCfg)
+	stores := namespace.QdrantSpecs(wsCfg)
+	ds := make([]deps.Descriptor, 0, len(dbs)+len(stores))
+	for _, s := range dbs {
+		ds = append(ds, s.Descriptor())
+	}
+	for _, s := range stores {
 		ds = append(ds, s.Descriptor())
 	}
 	deps.SetExtraDependencies(ds)

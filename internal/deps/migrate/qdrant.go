@@ -21,7 +21,15 @@ import (
 // Measured end to end on real containers (2026-09-15): a v1.14.1 volume with
 // two collections, three points and an alias, copied and started under
 // v1.15.5, came back with all of it intact.
-type QdrantMigrator struct{}
+//
+// ID says WHICH store: a namespace can run the built-in one and any number a
+// workspace declares, and the plan addresses the volume, the pin and the temp
+// containers of this one only. The zero value refuses to plan, for the same
+// reason PostgresMigrator's does — a migrator with no id would upgrade some
+// other store's data.
+type QdrantMigrator struct {
+	ID deps.ID
+}
 
 const (
 	// qdrantHTTPPort is where Qdrant serves its REST API and its health
@@ -45,9 +53,12 @@ const (
 // itself: its storage format is guaranteed compatible across ONE minor only,
 // and it documents nothing at all across a major. A downgrade is refused with
 // an EMPTY reason, which the shared preflight has already worded better.
-func (QdrantMigrator) SupportsPair(from, to deps.Version) (ok bool, problem msg.Message) {
-	d, found := deps.Lookup(deps.Qdrant)
-	if !found { // unreachable: Qdrant is in the fixed registry
+func (m QdrantMigrator) SupportsPair(from, to deps.Version) (ok bool, problem msg.Message) {
+	if m.ID == "" {
+		return false, msg.Message{}
+	}
+	d, found := deps.Lookup(m.ID)
+	if !found { // a declared store the active workspace no longer declares
 		return false, msg.Message{}
 	}
 	if support := d.UpgradeSupport(from, to); support.Allowed {
@@ -55,14 +66,14 @@ func (QdrantMigrator) SupportsPair(from, to deps.Version) (ok bool, problem msg.
 	} else if support.Via != "" {
 		// A skipped minor: the operator is told the one move they can make now,
 		// and asking again after it names the one after that.
-		return false, VendorPathProblem(string(deps.Qdrant), from.String(), to.String(), support.Via)
+		return false, VendorPathProblem(string(m.ID), from.String(), to.String(), support.Via)
 	}
 	if deps.MovesBackwards(from, to) {
 		return false, msg.Message{}
 	}
 	// What is left is a move across a MAJOR, where the vendor documents no
 	// procedure at all — so there is no intermediate to name.
-	return false, VendorNoPathProblem(string(deps.Qdrant), from.String(), to.String())
+	return false, VendorNoPathProblem(string(m.ID), from.String(), to.String())
 }
 
 // Preflight runs the shared copy-upgrade checks, and nothing else.
@@ -73,7 +84,7 @@ func (QdrantMigrator) SupportsPair(from, to deps.Version) (ok bool, problem msg.
 // rewrite — so a check phrased over it would either restate what the pin
 // already says or refuse a perfectly ordinary volume.
 func (m QdrantMigrator) Preflight(ctx context.Context, env Env, path Path) PreflightResult {
-	res, _, ok := CopyPreflight(ctx, env, deps.Qdrant, path, m.SupportsPair)
+	res, _, ok := CopyPreflight(ctx, env, m.ID, path, m.SupportsPair)
 	if !ok {
 		return res
 	}
@@ -84,7 +95,7 @@ func (m QdrantMigrator) Preflight(ctx context.Context, env Env, path Path) Prefl
 // Plan builds the copy-upgrade plan for this pair.
 func (m QdrantMigrator) Plan(ctx context.Context, env Env, path Path, opts PlanOptions) (*Plan, deps.MigrationJournal, error) {
 	pre := m.Preflight(ctx, env, path)
-	return BuildCopyUpgrade(env, qdrantCopySpec(), path, opts, pre)
+	return BuildCopyUpgrade(env, qdrantCopySpec(m.ID), path, opts, pre)
 }
 
 // qdrantCopySpec is everything the shared plan does not know about Qdrant.
@@ -102,9 +113,9 @@ func (m QdrantMigrator) Plan(ctx context.Context, env Env, path Path, opts PlanO
 // EnsureDirs is empty because Qdrant creates collections/, aliases/ and
 // raft_state.json itself on first boot, and the generated def has no init
 // container to reproduce.
-func qdrantCopySpec() CopySpec {
+func qdrantCopySpec(id deps.ID) CopySpec {
 	return CopySpec{
-		ID:        deps.Qdrant,
+		ID:        id,
 		WaitReady: waitForQdrant,
 		Inventory: readQdrantInventory,
 	}

@@ -289,3 +289,35 @@ func TestWorkspaceCreate_ValidationErrors(t *testing.T) {
 		})
 	}
 }
+
+// Deleting a workspace deletes its namespaces' OWN secret values with them
+// (they belong to those namespaces alone), while a user credential — which may
+// be shared — survives, as TestWorkspaceDelete_NeverDeletesSharedSecret pins.
+func TestWorkspaceDeleteDeletesItsNamespacesSecrets(t *testing.T) {
+	config.SetDesktopMode(true)
+	t.Cleanup(config.ResetDesktopMode)
+	t.Setenv("CITECK_HOME", t.TempDir())
+
+	d, mux := newWorkspaceTestDaemon(t)
+	svc, err := storage.NewSecretService(d.store)
+	require.NoError(t, err)
+	d.secretService = svc
+	require.NoError(t, svc.SetMasterPassword("test-master", false))
+	require.NoError(t, d.store.SaveWorkspace(storage.WorkspaceDto{
+		ID: "ws-del", Name: "Doomed", RepoURL: "https://example.test/x.git", RepoBranch: "main",
+	}))
+	require.NoError(t, d.store.SaveNamespaceConfig("ws-del", "ns1", "One", "id: ns1\nname: One\n"))
+	_, err = loadNamespaceSecrets(svc, "ws-del", "ns1", wsSecrets("db", "v"), true)
+	require.NoError(t, err)
+	_, err = loadNamespaceSecrets(svc, "ws-other", "ns1", wsSecrets("db", "v"), true)
+	require.NoError(t, err)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest("DELETE", "/api/v1/workspaces/ws-del", http.NoBody))
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+	metas, err := svc.ListSecrets()
+	require.NoError(t, err)
+	require.Len(t, metas, 1, "only the other workspace's namespace keeps its value")
+	assert.Equal(t, namespaceSecretScope("ws-other", "ns1"), metas[0].Scope)
+}

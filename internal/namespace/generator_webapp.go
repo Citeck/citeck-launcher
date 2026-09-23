@@ -764,172 +764,6 @@ func generateAlfresco(ctx *NsGenContext) {
 	alfSolr.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: "2560m"}}
 }
 
-// generateObserver adds citeck-observer and its own PostgreSQL. Behavior:
-//   - No observer image in the bundle → no observer. That is the ONLY
-//     condition: it replaced a namespace.yml flag (`observer.enabled`), for the
-//     reason qdrant follows its bundle image too — whether a stand HAS a
-//     service is a property of the release it runs, and a flag in a per-stand
-//     file is a second place to keep that in sync.
-//   - The observer and its database are ordinary apps: they start with the
-//     namespace, and a stand that should not run them says so the same way it
-//     does for anything else (`citeck stop observer`, or a `detachedApps` entry
-//     in the workspace template — both of them, owner and database, see
-//     docs/app-startup-and-detach.md).
-//   - Its DATABASE is not generated here at all: it is a declared cluster
-//     (generator_database.go), so its image, credentials, published port,
-//     memory limit and server settings come from configuration — the launcher's
-//     built-in defaults, overridable by the workspace's `databases:` section —
-//     and adding another service's database needs no launcher code. What this
-//     function takes from that declaration is only what it must AGREE with: the
-//     credentials and the port it tells the observer to connect to.
-func generateObserver(ctx *NsGenContext) {
-	obsImage := resolveAppImage(ctx, appdef.AppObserver, "", "")
-	if obsImage == "" {
-		return
-	}
-	// The one declaration both halves read, so the service and its database
-	// cannot disagree about the password or the port.
-	db := databaseSpecFor(ctx, appdef.AppObsPostgres)
-
-	const (
-		// Observer ports: 17014–17017 (KC mgmt 17013 sits below; ZK admin 17018, Alfresco 17019, webapps 17020+)
-		obsLogUDP   = 17014 // UDP log receiver
-		obsOTLPHTTP = 17015 // OTLP HTTP/protobuf receiver
-		obsHTTP     = 17016 // HTTP API + embedded UI
-		obsGRPC     = 17017 // OTLP gRPC receiver
-	)
-	obsPGPort := db.Port
-	obsDBName, obsDBUser, obsDBPass := db.DB, db.User, db.Password
-
-	// 2. citeck-observer — env var names match the observer's Config struct
-	// (reflection-based: database.host → DATABASE_HOST, zookeeper.hosts → ZOOKEEPER_HOSTS, etc.)
-	obs := ctx.GetOrCreateApp(appdef.AppObserver)
-	obs.Image = obsImage
-	obs.Kind = appdef.KindThirdParty
-
-	// Core server — all ports explicit (don't rely on observer defaults)
-	obs.AddEnv("SERVER_MODE", "dev")
-	obs.AddEnv("SERVER_PORT", fmt.Sprintf("%d", obsHTTP))
-	obs.AddEnv("OTLP_GRPC_PORT", fmt.Sprintf("%d", obsGRPC))
-	obs.AddEnv("OTLP_HTTP_PORT", fmt.Sprintf("%d", obsOTLPHTTP))
-	obs.AddEnv("LOG_RECEIVER_UDP_PORT", fmt.Sprintf("%d", obsLogUDP))
-
-	// Observer's own database
-	obs.AddEnv("DATABASE_HOST", ObsPGHost)
-	obs.AddEnv("DATABASE_PORT", fmt.Sprintf("%d", PGPort))
-	obs.AddEnv("DATABASE_NAME", obsDBName)
-	obs.AddEnv("DATABASE_USER", obsDBUser)
-	obs.AddEnv("DATABASE_PASSWORD", obsDBPass)
-	obs.AddEnv("DATABASE_TLS_SSL_MODE", "disable")
-
-	// ZooKeeper discovery
-	obs.AddEnv("ZOOKEEPER_HOSTS", fmt.Sprintf("%s:%d", ZKHost, ZKPort))
-	obs.AddEnv("DISCOVERY_HOST", appdef.AppObserver)
-	obs.AddEnv("DISCOVERY_APP_NAME", appdef.AppObserver)
-
-	// Auth — same JWT secret as all webapps
-	obs.AddEnv("AUTH_JWT_SECRET", ctx.Secrets.JWT)
-	obs.AddEnv("CORS_ALLOWED_ORIGINS", "*")
-
-	// Infrastructure monitoring — RabbitMQ via Management API. Uses the
-	// stable "citeck" SA (monitoring tag) so admin-password rotations don't
-	// invalidate observer's credentials.
-	obs.AddEnv("RMQ_MONITOR_ENABLED", "true")
-	obs.AddEnv("RMQ_MONITOR_URL", fmt.Sprintf("http://%s:15672", RMQHost))
-	obsRMQUser := "admin"
-	obsRMQPass := ctx.Secrets.AdminPasswordOrDefault()
-	if ctx.Secrets.CiteckSA != "" {
-		obsRMQUser = CiteckSAUser
-		obsRMQPass = ctx.Secrets.CiteckSA
-	}
-	obs.AddEnv("RMQ_MONITOR_USER", obsRMQUser)
-	obs.AddEnv("RMQ_MONITOR_PASSWORD", obsRMQPass)
-
-	// Infrastructure monitoring — PostgreSQL via pg_stat views
-	obs.AddEnv("PG_MONITOR_ENABLED", "true")
-	pgTarget := fmt.Sprintf(`[{"name":"citeck","host":"%s","port":%d,"user":"postgres","password":"postgres"}]`, PGHost, PGPort) //nolint:gocritic // sprintfQuotedString: JSON template requires literal quotes, not %q
-	obs.AddEnv("PG_MONITOR_TARGETS", pgTarget)
-
-	// Infrastructure monitoring — ZooKeeper via "mntr" command
-	obs.AddEnv("ZK_MONITOR_ENABLED", "true")
-	obs.AddEnv("ZK_MONITOR_HOSTS", fmt.Sprintf("%s:%d", ZKHost, ZKPort))
-
-	obs.AddPort(fmt.Sprintf("%d:%d", obsHTTP, obsHTTP))
-	obs.AddPort(fmt.Sprintf("%d:%d", obsGRPC, obsGRPC))
-	obs.AddPort(fmt.Sprintf("%d:%d", obsOTLPHTTP, obsOTLPHTTP))
-	obs.AddPort(fmt.Sprintf("%d:%d/udp", obsLogUDP, obsLogUDP))
-	obs.AddDependsOn(appdef.AppObsPostgres)
-	obs.AddDependsOn(appdef.AppZookeeper)
-	obs.StartupConditions = []appdef.StartupCondition{
-		{Probe: &appdef.AppProbeDef{
-			HTTP:             &appdef.HTTPProbeDef{Path: "/health", Port: obsHTTP},
-			PeriodSeconds:    10,
-			FailureThreshold: 30,
-			TimeoutSeconds:   5,
-		}},
-	}
-	obs.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: "512m"}}
-	obs.LivenessProbe = &appdef.AppProbeDef{
-		HTTP:             &appdef.HTTPProbeDef{Path: "/health", Port: obsHTTP},
-		FailureThreshold: livenessFailureThreshold,
-		TimeoutSeconds:   5,
-	}
-
-	// 3. Cloud config for CloudConfigServer (local debugging: "stop in launcher, run locally")
-	extCloudConfig := map[string]any{
-		// Server — explicit ports for local debugging
-		"server.port":           obsHTTP,
-		"otlp.grpc_port":        obsGRPC,
-		"otlp.http_port":        obsOTLPHTTP,
-		"log_receiver.udp_port": obsLogUDP,
-		// Observer's own database (localhost with published port)
-		"database.host":         "localhost",
-		"database.port":         obsPGPort,
-		"database.name":         obsDBName,
-		"database.user":         obsDBUser,
-		"database.password":     obsDBPass,
-		"database.tls.ssl_mode": "disable",
-		// ZooKeeper
-		"zookeeper.hosts": "localhost:2181",
-		// Auth
-		"auth.jwt_secret": ctx.Secrets.JWT,
-		// Infrastructure monitoring — RabbitMQ (citeck SA; see above)
-		"rmq_monitor.enabled":  true,
-		"rmq_monitor.url":      "http://localhost:15672",
-		"rmq_monitor.user":     obsRMQUser,
-		"rmq_monitor.password": obsRMQPass,
-		// Infrastructure monitoring — ZooKeeper
-		"zk_monitor.enabled": true,
-		"zk_monitor.hosts":   "localhost:2181",
-		// Infrastructure monitoring — main PostgreSQL (webapp databases)
-		"pg_monitor.enabled": true,
-	}
-	ctx.CloudConfig[appdef.AppObserver] = extCloudConfig
-}
-
-// WillGenerateObserver answers, WITHOUT generating, whether a namespace with
-// this configuration emits an observer — and with it the observer's database,
-// which is a registered dependency and therefore needs a pin.
-//
-// Same shape, and same reason, as WillGenerateQdrant: the daemon's pin seeding
-// runs BEFORE Generate (the pins are an input to it) and must not pay a Docker
-// probe for a dependency this namespace does not have. It RESTATES the
-// generator's entry condition, and the two are checked against each other by
-// running the real thing (TestNamespaceDependenciesMatchesWhatTheGeneratorEmits).
-//
-// The dangerous direction is answering FALSE wrongly: no pin means the bundle's
-// image is applied to an existing cluster, across a major PostgreSQL will not
-// read. The condition below is the single one the generator checks before it
-// emits anything.
-func WillGenerateObserver(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig) bool {
-	if cfg == nil || bun == nil {
-		return false
-	}
-	ctx := NewNsGenContext(cfg, bun)
-	ctx.WorkspaceConfig = wsCfg
-	return resolveAppImage(ctx, appdef.AppObserver, "", "") != ""
-}
-
 // STT sidecar defaults — match the Kotlin SttSidecarProps.DEFAULT:
 //   - port 14080 lives in the infrastructure cluster (below the 17020+
 //     dynamic webapp range), so it never collides with a counter-allocated
@@ -949,31 +783,23 @@ const (
 //     app (the sidecar is what an AI run from an IDE has to reach); a stand
 //     that should not pay for it stops it, or lists it in the template's
 //     detachedApps, exactly as it would for any other app.
-//   - STT detached → the STT spec is still generated (so the user can re-attach
-//     it from the UI without losing the AppRuntime), but the AI app does NOT
-//     get the env var or dependency so AI keeps starting without the sidecar.
+//   - STT detached → the STT spec is still generated, so the user can re-attach
+//     it from the UI without losing the AppRuntime.
 //   - Image: bundle first, then workspace defaults; skip if neither names one.
 //   - HTTP startup probe at /health on the container port — same probe Kotlin
 //     uses, gated by the standard outer 240s running-state wait.
+//
+// It writes nothing into ai: what ai is told about its sidecar is ai's own
+// wiring (wireAi), which reads whether this generated anything.
 func generateSttSidecar(ctx *NsGenContext) {
-	aiApp, ok := ctx.Applications[appdef.AppAi]
-	if !ok {
+	if _, ok := ctx.Applications[appdef.AppAi]; !ok {
 		return
 	}
-	// ai's detach state decides the proxy's AI upstream (generator_proxy.go) and
-	// the RAG flag in generateQdrant — toggling it must regenerate the namespace
-	// (see NsGenContext.MarkGatingApp).
-	ctx.MarkGatingApp(appdef.AppAi)
-
 	props := bundle.SttSidecarProps{}
 	if ctx.WorkspaceConfig != nil && ctx.WorkspaceConfig.SttSidecar != nil {
 		props = *ctx.WorkspaceConfig.SttSidecar
 	}
-
-	port := props.Port
-	if port <= 0 {
-		port = sttSidecarDefaultPort
-	}
+	port := sttSidecarPort(ctx)
 	memoryLimit := props.MemoryLimit
 	if memoryLimit == "" {
 		memoryLimit = sttSidecarDefaultMemory
@@ -1007,22 +833,15 @@ func generateSttSidecar(ctx *NsGenContext) {
 		}},
 	}
 	stt.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: memoryLimit}}
+}
 
-	// Detaching the sidecar removes AI's env + dependency below, so the daemon
-	// must regenerate on that toggle too — mark it whichever way it is right
-	// now. Without this the re-attached
-	// sidecar never gets wired back into AI (speech-to-text stays silently dead
-	// until an unrelated reload), which is the regression the old hardcoded
-	// {onlyoffice, ai, stt-sidecar} set in attach_toggle_regen.go prevented.
-	ctx.MarkGatingApp(appdef.AppSttSidecar)
-	if !ctx.DetachedApps[appdef.AppSttSidecar] {
-		// Wire AI → STT only when both are active. Detached STT keeps its spec
-		// so a future re-attach is one click away, but AI must not block on a
-		// disabled sidecar.
-		aiApp.AddEnv("CITECK_AI_CALLRECORDING_STT_SIDECARURL",
-			fmt.Sprintf("http://%s:%d", appdef.AppSttSidecar, port))
-		aiApp.AddDependsOn(appdef.AppSttSidecar)
+// sttSidecarPort is the one answer to "where does the sidecar listen", read
+// by the sidecar's generator and by ai's wiring alike.
+func sttSidecarPort(ctx *NsGenContext) int {
+	if ctx.WorkspaceConfig != nil && ctx.WorkspaceConfig.SttSidecar != nil && ctx.WorkspaceConfig.SttSidecar.Port > 0 {
+		return ctx.WorkspaceConfig.SttSidecar.Port
 	}
+	return sttSidecarDefaultPort
 }
 
 func generateOnlyOffice(ctx *NsGenContext) {

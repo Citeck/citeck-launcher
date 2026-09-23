@@ -3,6 +3,7 @@ package namespace
 import (
 	"fmt"
 	"log/slog"
+	"slices"
 
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/bundle"
@@ -26,6 +27,113 @@ const (
 // is rag-specific.
 var qdrantConsumers = []string{appdef.AppRag}
 
+// QdrantSpec is one vector store's configuration after the launcher's defaults,
+// the workspace's typed `qdrant:` block and an `additionalApps:` entry of type
+// QDRANT have been merged. Exported because the daemon registers every store as
+// a dependency before it generates anything.
+type QdrantSpec struct {
+	ID          string
+	VolumeBase  string
+	Image       string // fallback; a bundle entry for the same id outranks it
+	MemoryLimit string
+	HTTPPort    int
+	GrpcPort    int
+}
+
+// builtinQdrants is the store the launcher knows without being told. Its volume
+// stem is "qdrant", so generation 1 is "qdrant2" — see the volume note in
+// generateQdrantInstance.
+func builtinQdrants() []QdrantSpec {
+	return []QdrantSpec{{
+		ID:         appdef.AppQdrant,
+		VolumeBase: "qdrant",
+		HTTPPort:   qdrantHTTPPort,
+		GrpcPort:   qdrantDefaultGrpcPort,
+		// No default image, for the same reason the observer's database has
+		// none: the bundle naming the image is what says this store exists.
+		MemoryLimit: qdrantDefaultMemory,
+	}}
+}
+
+// QdrantSpecs answers every store this configuration knows about. The typed
+// `qdrant:` block configures the built-in one (it predates this mechanism and
+// keeps working); an additionalApps entry of type QDRANT configures any store,
+// built-in or new, FIELD BY FIELD.
+func QdrantSpecs(wsCfg *bundle.WorkspaceConfig) []QdrantSpec {
+	out := builtinQdrants()
+	if wsCfg == nil {
+		return out
+	}
+	if wsCfg.Qdrant != nil {
+		if wsCfg.Qdrant.MemoryLimit != "" {
+			out[0].MemoryLimit = wsCfg.Qdrant.MemoryLimit
+		}
+		if wsCfg.Qdrant.GrpcPort > 0 {
+			out[0].GrpcPort = wsCfg.Qdrant.GrpcPort
+		}
+	}
+	for _, entry := range wsCfg.AdditionalApps {
+		if entry.Type != bundle.AppTypeQdrant || entry.Qdrant == nil || !entry.IsEnabled() {
+			continue
+		}
+		decl := *entry.Qdrant
+		if decl.Name == "" {
+			continue
+		}
+		i := slices.IndexFunc(out, func(s QdrantSpec) bool { return s.ID == decl.Name })
+		if i < 0 {
+			out = append(out, QdrantSpec{ID: decl.Name}.mergedWith(decl).withDefaults())
+			continue
+		}
+		out[i] = out[i].mergedWith(decl)
+	}
+	for i := range out {
+		out[i] = out[i].withDefaults()
+	}
+	return out
+}
+
+func (s QdrantSpec) mergedWith(d bundle.QdrantAppProps) QdrantSpec {
+	if d.Image != "" {
+		s.Image = string(d.Image)
+	}
+	if d.MemoryLimit != "" {
+		s.MemoryLimit = d.MemoryLimit
+	}
+	if d.HTTPPort > 0 {
+		s.HTTPPort = d.HTTPPort
+	}
+	if d.GrpcPort > 0 {
+		s.GrpcPort = d.GrpcPort
+	}
+	if d.VolumeBase != "" {
+		s.VolumeBase = d.VolumeBase
+	}
+	return s
+}
+
+func (s QdrantSpec) withDefaults() QdrantSpec {
+	if s.VolumeBase == "" {
+		s.VolumeBase = s.ID
+	}
+	if s.MemoryLimit == "" {
+		s.MemoryLimit = qdrantDefaultMemory
+	}
+	if s.HTTPPort == 0 {
+		s.HTTPPort = qdrantHTTPPort
+	}
+	if s.GrpcPort == 0 {
+		s.GrpcPort = qdrantDefaultGrpcPort
+	}
+	return s
+}
+
+// Descriptor is how this store is registered in the dependency registry: the
+// Qdrant rules, keyed to its own id, container and volume stem.
+func (s QdrantSpec) Descriptor() deps.Descriptor {
+	return deps.NewQdrantDescriptor(deps.ID(s.ID), s.ID, s.VolumeBase)
+}
+
 // generateQdrant adds the Qdrant vector store. Behavior:
 //   - No qdrant image in the bundle → no qdrant. This — not the presence of
 //     rag — is what keeps the store off community stands: no community bundle
@@ -39,7 +147,7 @@ var qdrantConsumers = []string{appdef.AppRag}
 //   - Image comes from the bundle only; the version is pinned by the release.
 func generateQdrant(ctx *NsGenContext) {
 	// Only used to decide whether the "no qdrant image" error below is worth
-	// logging: nothing about the store's shape depends on its consumers.
+	// logging: nothing about a store's shape depends on its consumers.
 	consumerPresent := false
 	for _, name := range qdrantConsumers {
 		if _, ok := ctx.Applications[name]; ok {
@@ -47,21 +155,15 @@ func generateQdrant(ctx *NsGenContext) {
 		}
 	}
 
-	props := bundle.QdrantProps{}
-	if ctx.WorkspaceConfig != nil && ctx.WorkspaceConfig.Qdrant != nil {
-		props = *ctx.WorkspaceConfig.Qdrant
+	builtinGenerated := false
+	for _, spec := range QdrantSpecs(ctx.WorkspaceConfig) {
+		if generateQdrantInstance(ctx, spec) && spec.ID == appdef.AppQdrant {
+			builtinGenerated = true
+		}
 	}
-	grpcPort := props.GrpcPort
-	if grpcPort <= 0 {
-		grpcPort = qdrantDefaultGrpcPort
-	}
-	memoryLimit := props.MemoryLimit
-	if memoryLimit == "" {
-		memoryLimit = qdrantDefaultMemory
-	}
-
-	chain := resolveAppImageChain(ctx, appdef.AppQdrant, "", "")
-	if len(chain) == 0 {
+	// rag's side of the link — its env and its dependency on the store — is
+	// rag's own wiring (wireRag), which reads whether the store was generated.
+	if !builtinGenerated {
 		// Only worth saying when something in this namespace wanted a store. A
 		// bundle with no qdrant image and no consumer is every community stand,
 		// and an error line on every one of them is noise.
@@ -69,7 +171,16 @@ func generateQdrant(ctx *NsGenContext) {
 			slog.Error("Bundle has no qdrant image; the apps that need a vector store will start without one",
 				"app", appdef.AppQdrant, "consumers", qdrantConsumers)
 		}
-		return
+	}
+}
+
+// generateQdrantInstance emits one store and answers whether it emitted
+// anything: no image named for it, no container — the same condition, and the
+// same reason, as a declared PostgreSQL cluster.
+func generateQdrantInstance(ctx *NsGenContext, spec QdrantSpec) bool {
+	chain := resolveAppImageChain(ctx, spec.ID, "", spec.Image)
+	if len(chain) == 0 {
+		return false
 	}
 	// Qdrant is a registered DEPENDENCY, so the image it actually runs is the
 	// gate's answer and not the bundle's offer: its storage compatibility spans
@@ -77,21 +188,11 @@ func generateQdrant(ctx *NsGenContext) {
 	// held back and reported rather than applied to data the new version may
 	// not read. With no pin — a namespace that has never started rag — the
 	// candidate applies unchanged.
-	image := resolveDependencyImage(ctx, deps.Qdrant, chain)
+	id := deps.ID(spec.ID)
+	image := resolveDependencyImage(ctx, id, chain)
+	grpcPort := spec.GrpcPort
 
-	// The store outlives its consumers, both their detach and their absence:
-	// the spec stays in the namespace whatever rag is doing, which is what the
-	// "stop in launcher, debug locally" workflow needs — a rag run from an IDE
-	// still has to reach a qdrant on localhost. It also STARTS with the
-	// namespace like any other app. The launcher used to withhold that start
-	// while no consumer held the store (NsGenContext.MarkAutoDetached); the
-	// concept was removed because it bought a narrow memory saving — the store
-	// is only held down across a namespace restart, never at the moment rag is
-	// stopped — at the price of a second kind of "detached" nobody could tell
-	// from the operator's own. A namespace that should come up without a store
-	// says so the same way it says it about any other app: `citeck stop qdrant`,
-	// or a `detachedApps:` entry in the workspace template.
-	qdrant := ctx.GetOrCreateApp(appdef.AppQdrant)
+	qdrant := ctx.GetOrCreateApp(spec.ID)
 	qdrant.Image = image
 	qdrant.Kind = appdef.KindThirdParty
 	// The volume comes from the generation counter, NOT from a literal. It used
@@ -102,7 +203,7 @@ func generateQdrant(ctx *NsGenContext) {
 	// rabbitmq2. Nothing in the field paid for that rename: RAG has never been
 	// released, so the only stands carrying a qdrant_storage volume are dev
 	// ones, where the cost is re-indexing.
-	qdrant.AddVolume(resolveDependencyVolume(ctx, deps.Qdrant) + ":/qdrant/storage")
+	qdrant.AddVolume(resolveDependencyVolume(ctx, id) + ":/qdrant/storage")
 	// The HTTP probe below needs a route to /healthz. runtime_app.go asks Docker
 	// for the published host port first and only falls back to the container IP,
 	// which is not routable from the host under Docker Desktop (macOS/Windows) —
@@ -110,7 +211,7 @@ func generateQdrant(ctx *NsGenContext) {
 	// app publishes the port it is probed on; qdrant must too or it never leaves
 	// STARTING on a desktop stand and rag waits on it forever. Server mode drops
 	// every non-proxy publish (see Generate), so this costs nothing there.
-	qdrant.AddPort(fmt.Sprintf("%d:%d", qdrantHTTPPort, qdrantHTTPPort))
+	qdrant.AddPort(fmt.Sprintf("%d:%d", spec.HTTPPort, qdrantHTTPPort))
 	// The gRPC port is published for the same reason postgres publishes 14523:
 	// a rag run OUTSIDE the launcher (stopped here, started from an IDE) talks
 	// to the store over gRPC — spring.ai.vectorstore.qdrant.port defaults to
@@ -129,56 +230,15 @@ func generateQdrant(ctx *NsGenContext) {
 			TimeoutSeconds:   5,
 		}},
 	}
-	qdrant.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: memoryLimit}}
+	qdrant.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: spec.MemoryLimit}}
 
-	// Unlike generateSttSidecar (which drops the AI->stt-sidecar wiring when
-	// stt-sidecar itself is detached), rag's dependency on qdrant is left
-	// unconditional here — no `if !ctx.DetachedApps[appdef.AppQdrant]` guard.
-	// The two cases are not symmetric: AI works fully without the STT sidecar
-	// (it just serves no speech-to-text), so blocking AI on a detached sidecar
-	// would be a needless outage. rag without qdrant is not a smaller rag — it
-	// is a rag that starts, looks RUNNING, and silently can't search or index
-	// anything. A silently broken app is worse than an honest one: with the
-	// dependency kept, rag cannot be STARTED while qdrant is detached — it parks
-	// in DEPS_WAITING and the namespace DTO names what it is waiting on
-	// (AppDto.WaitingFor), which is diagnosable and reversible with a plain
-	// `citeck start qdrant`.
-	//
-	// What this does NOT do is stop a rag that is already RUNNING: StopApp acts
-	// on the app it names and never cascades to dependents, and qdrant is not a
-	// gating app, so `citeck stop qdrant` triggers no regeneration either. The
-	// hold therefore takes effect on the next start of rag, not at the moment
-	// qdrant is stopped. Making the runtime evict RUNNING dependents of a
-	// detached hard dependency is a separate decision with a wide blast radius
-	// (it would apply to postgres, zookeeper and every configured dependsOn),
-	// and is deliberately not taken here.
-	ragApp, hasRag := ctx.Applications[appdef.AppRag]
-	if !hasRag {
-		// A store with no rag in the namespace: generated, held by nobody, and
-		// wired to nobody. Everything below is rag's own wiring.
-		return
-	}
-	ragApp.AddEnv("QDRANT_HOST", appdef.AppQdrant)
-	ragApp.AddEnv("QDRANT_GRPC_PORT", fmt.Sprintf("%d", grpcPort))
-	ragApp.AddDependsOn(appdef.AppQdrant)
-
-	// The assistant ships with citeck.ai.rag.enabled=false, so without this flag
-	// a user who starts rag still gets no RAG tools in ai. The flag follows
-	// whether this namespace HAS rag at all — not whether rag happens to be
-	// detached right now. Stopping rag is how you run it from an IDE, and a
-	// namespace that is a RAG namespace stays one across that toggle: gating
-	// the flag on the detach state instead would rewrite (and recreate) the ai
-	// container on every start/stop of rag.
-	// Reached only with rag present (the early return above): a namespace that
-	// merely HAS a vector store is not a RAG namespace, and telling ai
-	// otherwise points it at an app that is not there.
-	if aiApp, ok := ctx.Applications[appdef.AppAi]; ok && !ctx.DetachedApps[appdef.AppAi] {
-		aiApp.AddEnv("CITECK_AI_RAG_ENABLED", "true")
-	}
+	return true
 }
 
-// WillGenerateQdrant answers, WITHOUT generating, whether a namespace with this
-// configuration emits a Qdrant container.
+// WillGenerateQdrants answers, WITHOUT generating, which Qdrant containers a
+// namespace with this configuration emits — the built-in store and any an
+// additionalApps entry declares, because each one is its own dependency and
+// each one needs its own pin seeded.
 //
 // It exists for the daemon's pin seeding, which runs BEFORE Generate — the pins
 // are an input to it — and must not pay a Docker probe for a dependency this
@@ -206,11 +266,23 @@ func generateQdrant(ctx *NsGenContext) {
 // a parameter every caller has to supply and every reader has to rule out — so
 // it is gone from here and from namespaceDependencies. Threading one back is
 // two signatures and three call sites.
-func WillGenerateQdrant(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig) bool {
+func WillGenerateQdrants(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig) map[string]bool {
+	specs := QdrantSpecs(wsCfg)
+	out := make(map[string]bool, len(specs))
+	// Every known store is ANSWERED, including with a false: the caller starts
+	// from "present" for every registered dependency, so a store left out of
+	// this map reads as present and costs a Docker probe on every load. No
+	// bundle means no image and therefore no index to protect.
+	for _, s := range specs {
+		out[s.ID] = false
+	}
 	if cfg == nil || bun == nil {
-		return false
+		return out
 	}
 	ctx := NewNsGenContext(cfg, bun)
 	ctx.WorkspaceConfig = wsCfg
-	return resolveAppImage(ctx, appdef.AppQdrant, "", "") != ""
+	for _, s := range specs {
+		out[s.ID] = resolveAppImage(ctx, s.ID, "", s.Image) != ""
+	}
+	return out
 }

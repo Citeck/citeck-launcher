@@ -25,6 +25,9 @@ func makeTokenLookup(reader secretReader) bundle.TokenLookupFunc {
 	secrets, err := reader.ListSecrets()
 	if err == nil {
 		for _, s := range secrets {
+			if storage.IsNamespaceSecret(s) {
+				continue // never a git or registry credential
+			}
 			sec, err := reader.GetSecret(s.ID)
 			if err != nil {
 				continue // ErrSecretsLocked → skip gracefully
@@ -86,7 +89,7 @@ func buildRegistryAuthCache(reposByHost map[string]bundle.ImageRepo, reader secr
 	}
 	scopeSecrets := make(map[string]*storage.Secret)
 	for _, s := range secrets {
-		if s.Scope != "" {
+		if s.Scope != "" && !storage.IsNamespaceSecret(s) {
 			sec, err := reader.GetSecret(s.ID)
 			if err != nil {
 				continue // ErrSecretsLocked → skip gracefully

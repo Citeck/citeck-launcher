@@ -1,0 +1,97 @@
+# The observer as a workspace declares it — the reference copy of the block
+# both workspace configs carry (launcher-workspaces and
+# launcher-public-workspace, workspace-v1.yml). The launcher has no code for
+# the observer: whether it exists is the bundle's answer (it names the images
+# of `observer` and `observer-postgres`), and everything below is how it is
+# configured.
+secrets:
+  # Default for the observer's database password; each namespace stores its
+  # own copy the first time and keeps it (the password lives in the volume).
+  - id: observer-db
+    value: observer
+additionalApps:
+  - name: observer-postgres
+    type: POSTGRES
+    user: observer
+    db: observer
+    password: ${secret:observer-db}
+    # Published in desktop mode, so an observer run from an IDE reaches it.
+    port: 14524
+    # The volume name IS how the data is found — never change it.
+    volumeBase: obs_postgres
+    memoryLimit: 512m
+    # Tuned for the observability workload: heavy writes (span/metric
+    # ingestion), aggregating queries, JSONB GIN lookups.
+    settings:
+      shared_buffers: 256MB
+      work_mem: 32MB
+      maintenance_work_mem: 128MB
+      effective_cache_size: 1GB
+      random_page_cost: "1.1"
+      checkpoint_completion_target: "0.9"
+      wal_buffers: 16MB
+      max_wal_size: 1GB
+      min_wal_size: 256MB
+  - name: observer
+    # No image: the bundle names it. Ports 17014-17017 sit between the Keycloak
+    # management port (17013) and the ZooKeeper admin port (17018).
+    dependsOn: [observer-postgres, zookeeper]
+    environments:
+      SERVER_MODE: dev
+      SERVER_PORT: "17016"
+      OTLP_GRPC_PORT: "17017"
+      OTLP_HTTP_PORT: "17015"
+      LOG_RECEIVER_UDP_PORT: "17014"
+      DATABASE_HOST: observer-postgres
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: observer
+      DATABASE_USER: observer
+      DATABASE_PASSWORD: ${secret:observer-db}
+      DATABASE_TLS_SSL_MODE: disable
+      ZOOKEEPER_HOSTS: ${ZK_HOST}:${ZK_PORT}
+      DISCOVERY_HOST: observer
+      DISCOVERY_APP_NAME: observer
+      AUTH_JWT_SECRET: ${JWT_SECRET}
+      CORS_ALLOWED_ORIGINS: "*"
+      RMQ_MONITOR_ENABLED: "true"
+      RMQ_MONITOR_URL: http://${RMQ_HOST}:15672
+      RMQ_MONITOR_USER: ${RMQ_USER}
+      RMQ_MONITOR_PASSWORD: ${RMQ_PASSWORD}
+      PG_MONITOR_ENABLED: "true"
+      PG_MONITOR_TARGETS: '[{"name":"citeck","host":"${PG_HOST}","port":${PG_PORT},"user":"postgres","password":"postgres"}]'
+      ZK_MONITOR_ENABLED: "true"
+      ZK_MONITOR_HOSTS: ${ZK_HOST}:${ZK_PORT}
+    ports: ["17016:17016", "17017:17017", "17015:17015", "17014:17014/udp"]
+    startupConditions:
+      - probe:
+          http: {path: /health, port: 17016}
+          periodSeconds: 10
+          failureThreshold: 30
+          timeoutSeconds: 5
+    livenessProbe:
+      http: {path: /health, port: 17016}
+      failureThreshold: 7
+      timeoutSeconds: 5
+    resources:
+      limits: {memory: 512m}
+    # What CloudConfigServer hands an observer stopped here and run from an IDE.
+    cloudConfig:
+      server.port: 17016
+      otlp.grpc_port: 17017
+      otlp.http_port: 17015
+      log_receiver.udp_port: 17014
+      database.host: localhost
+      database.port: 14524
+      database.name: observer
+      database.user: observer
+      database.password: ${secret:observer-db}
+      database.tls.ssl_mode: disable
+      zookeeper.hosts: localhost:2181
+      auth.jwt_secret: ${JWT_SECRET}
+      rmq_monitor.enabled: true
+      rmq_monitor.url: http://localhost:15672
+      rmq_monitor.user: ${RMQ_USER}
+      rmq_monitor.password: ${RMQ_PASSWORD}
+      zk_monitor.enabled: true
+      zk_monitor.hosts: localhost:2181
+      pg_monitor.enabled: true

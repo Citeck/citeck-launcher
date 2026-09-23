@@ -45,7 +45,7 @@ func qdrantEnv(t *testing.T, s *execScript) *guardEnv {
 
 func runQdrantPlan(t *testing.T, env *guardEnv, from, to string) error {
 	t.Helper()
-	plan, j, err := (QdrantMigrator{}).Plan(context.Background(), env, Path{from, to}, PlanOptions{})
+	plan, j, err := (QdrantMigrator{ID: deps.Qdrant}).Plan(context.Background(), env, Path{from, to}, PlanOptions{})
 	require.NoError(t, err)
 	return Run(context.Background(), j2store(), j, plan, nil)
 }
@@ -59,16 +59,16 @@ func TestQdrantSupportsPairFollowsTheOneMinorRule(t *testing.T) {
 		return deps.Version{Major: major, Minor: minor, Patch: patch}
 	}
 	t.Run("1.14 → 1.15", func(t *testing.T) {
-		ok, problem := (QdrantMigrator{}).SupportsPair(v(1, 14, 1), v(1, 15, 5))
+		ok, problem := (QdrantMigrator{ID: deps.Qdrant}).SupportsPair(v(1, 14, 1), v(1, 15, 5))
 		assert.True(t, ok)
 		assert.True(t, problem.Empty())
 	})
 	t.Run("a patch move inside one minor", func(t *testing.T) {
-		ok, _ := (QdrantMigrator{}).SupportsPair(v(1, 14, 1), v(1, 14, 3))
+		ok, _ := (QdrantMigrator{ID: deps.Qdrant}).SupportsPair(v(1, 14, 1), v(1, 14, 3))
 		assert.True(t, ok)
 	})
 	t.Run("1.14 → 1.16 is refused and names the hop", func(t *testing.T) {
-		ok, problem := (QdrantMigrator{}).SupportsPair(v(1, 14, 1), v(1, 16, 0))
+		ok, problem := (QdrantMigrator{ID: deps.Qdrant}).SupportsPair(v(1, 14, 1), v(1, 16, 0))
 		require.False(t, ok)
 		assert.Contains(t, oneEN(problem), "1.15", "the operator is told the one move they can make now")
 		assert.NotContains(t, oneEN(problem), "update the launcher",
@@ -77,7 +77,7 @@ func TestQdrantSupportsPairFollowsTheOneMinorRule(t *testing.T) {
 	// The shared version checks word a downgrade, so this refuses it with no
 	// reason of its own rather than overwriting the accurate message.
 	t.Run("a downgrade is left to the shared checks", func(t *testing.T) {
-		ok, problem := (QdrantMigrator{}).SupportsPair(v(1, 15, 5), v(1, 14, 1))
+		ok, problem := (QdrantMigrator{ID: deps.Qdrant}).SupportsPair(v(1, 15, 5), v(1, 14, 1))
 		require.False(t, ok)
 		assert.True(t, problem.Empty())
 	})
@@ -85,7 +85,7 @@ func TestQdrantSupportsPairFollowsTheOneMinorRule(t *testing.T) {
 
 func TestQdrantPreflightPassesOnAnOrdinaryStoppedNamespace(t *testing.T) {
 	env := qdrantEnv(t, &execScript{})
-	res := (QdrantMigrator{}).Preflight(context.Background(), env, Path{qdrantFrom, qdrantTo})
+	res := (QdrantMigrator{ID: deps.Qdrant}).Preflight(context.Background(), env, Path{qdrantFrom, qdrantTo})
 	require.True(t, res.OK, res.Problems)
 	assert.Empty(t, res.Problems)
 	assert.True(t, res.Measured())
@@ -98,7 +98,7 @@ func TestQdrantPreflightPassesOnAnOrdinaryStoppedNamespace(t *testing.T) {
 func TestQdrantPreflightRefusesAMissingSourceVolume(t *testing.T) {
 	env := qdrantEnv(t, &execScript{})
 	delete(env.Volumes, deps.VolumeName(qdrantDescriptorOf(t), 1))
-	res := (QdrantMigrator{}).Preflight(context.Background(), env, Path{qdrantFrom, qdrantTo})
+	res := (QdrantMigrator{ID: deps.Qdrant}).Preflight(context.Background(), env, Path{qdrantFrom, qdrantTo})
 	require.False(t, res.OK)
 	assert.Contains(t, joinEN(res.Problems), "qdrant2")
 }
@@ -107,7 +107,7 @@ func TestQdrantPreflightRefusesAMissingSourceVolume(t *testing.T) {
 // the upgrade, because Qdrant migrates its own storage on boot. Inventing a
 // hook here would be a progress line for work that does not exist.
 func TestQdrantHasNoUpgradeHooks(t *testing.T) {
-	spec := qdrantCopySpec()
+	spec := qdrantCopySpec(deps.Qdrant)
 	assert.Nil(t, spec.PreUpgrade)
 	assert.Nil(t, spec.PostUpgrade)
 	// And no node identity to pin. Unlike RabbitMQ — whose data path CONTAINS
@@ -146,7 +146,7 @@ func TestQdrantReadinessGivesUpAndFailsTheStep(t *testing.T) {
 	require.NoError(t, err)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // the wait honors the context instead of polling for minutes
-	err = qdrantCopySpec().WaitReady(ctx, env, SrcContainer, func(float64, msg.Message) {})
+	err = qdrantCopySpec(deps.Qdrant).WaitReady(ctx, env, SrcContainer, func(float64, msg.Message) {})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), SrcContainer)
 }

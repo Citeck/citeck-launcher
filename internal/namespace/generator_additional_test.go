@@ -172,12 +172,18 @@ func TestGenerateAdditionalApps_ImageRepoPrefix(t *testing.T) {
 
 // TestGenerateAdditionalApps_DoesNotOverwriteBundleWebapp guards the regression
 // where an additionalApps entry whose name matches a bundle-loaded webapp ID (not
-// in the static reservedAppNames list) silently overwrote that real webapp's image
-// via GetOrCreateApp returning the same builder. The built-in app must win and the
-// colliding additional entry must be skipped.
+// in the static reservedAppNames list) silently overwrote that real webapp via
+// GetOrCreateApp returning the same builder. A platform webapp the workspace
+// lists in `webapps:` is boxed: it is generated as the webapp, and the colliding
+// entry is skipped — neither its image nor its config reaches the container.
 func TestGenerateAdditionalApps_DoesNotOverwriteBundleWebapp(t *testing.T) {
 	config.ResetDesktopMode()
-	ws := wsWithApps([]bundle.AdditionalAppProps{{Name: "edi", Image: "evil/image:1.0"}})
+	ws := wsWithApps([]bundle.AdditionalAppProps{{
+		Name:         "edi",
+		Image:        "evil/image:1.0",
+		Environments: map[string]string{"MARK": "additional"},
+	}})
+	ws.Webapps = []bundle.WebappConfig{{ID: "edi"}}
 	bun := &bundle.Def{Applications: map[string]bundle.AppDef{
 		"edi": {Image: "registry.citeck.ru/real-edi:1.0.0"},
 	}}
@@ -189,6 +195,13 @@ func TestGenerateAdditionalApps_DoesNotOverwriteBundleWebapp(t *testing.T) {
 	require.NotNil(t, app, "the real edi webapp must still be generated")
 	assert.Equal(t, "registry.citeck.ru/real-edi:1.0.0", app.Image,
 		"a colliding additionalApps entry must not overwrite the real webapp image")
+	_, marked := app.Environments.Get("MARK")
+	assert.False(t, marked, "nor its config")
+}
+
+// A reserved core name is refused even where the workspace lists no webapps.
+func TestGenerateAdditionalApps_DoesNotOverwriteCoreApp(t *testing.T) {
+	require.Error(t, bundle.ValidateAdditionalApps([]bundle.AdditionalAppProps{{Name: "emodel", Image: "evil/image:1.0"}}))
 }
 
 // TestPruneAdditionalApps_MissingDep: an additionalApp depending on an app that

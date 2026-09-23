@@ -163,6 +163,12 @@ func TestSeedKeycloakFollowsThePostgresData(t *testing.T) {
 // would hand the namespace to the candidate image and start PostgreSQL 18
 // beside untouched 17 data.
 func TestSeedAssumesTheLegacyImageWhenTheContainerProbeFailsOverExistingData(t *testing.T) {
+	// The observer's cluster is declared by the workspace, and registered the
+	// way the daemon registers it before seeding.
+	deps.SetExtraDependencies([]deps.Descriptor{
+		deps.NewPostgresDescriptor(observerPostgresID, string(observerPostgresID), "obs_postgres"),
+	})
+	t.Cleanup(deps.ResetExtraDependencies)
 	p := fakeProbe{
 		containerErr: errors.New("dial unix /var/run/docker.sock: connection refused"),
 		volumes: map[string]map[string]string{
@@ -177,10 +183,10 @@ func TestSeedAssumesTheLegacyImageWhenTheContainerProbeFailsOverExistingData(t *
 	}
 	got := seedDependencyPins(context.Background(), nil, p, nil, nil)
 	assert.Equal(t, "postgres:17", got[deps.Postgres].Image, "the data still answers when the container probe cannot")
-	assert.Equal(t, "postgres:18", got[deps.ObserverPostgres].Image,
+	assert.Equal(t, "postgres:18", got[observerPostgresID].Image,
 		"the observer's cluster is pinned from ITS data, not from the stand database's")
 	for _, d := range deps.All() {
-		if d.ID() == deps.Postgres || d.ID() == deps.ObserverPostgres {
+		if d.ID() == deps.Postgres || d.ID() == observerPostgresID {
 			continue
 		}
 		assert.Equal(t, d.LegacyImage(), got[d.ID()].Image, string(d.ID()))
@@ -922,10 +928,11 @@ func TestSeedProbesABoundedNumberOfGenerations(t *testing.T) {
 		require.LessOrEqual(t, gen, deps.MaxProbedVolumeGen)
 		perDependency[id]++
 	}
-	// postgres, rabbitmq, zookeeper, mongodb, qdrant and the observer's postgres
-	// have volumes; keycloak does not and must never be probed with an empty
-	// name (in server mode that stats the volumes ROOT, which always exists).
-	assert.Len(t, perDependency, 6)
+	// postgres, rabbitmq, zookeeper, mongodb and qdrant have volumes; keycloak
+	// does not and must never be probed with an empty name (in server mode that
+	// stats the volumes ROOT, which always exists). A cluster a workspace
+	// declares is probed the same way once registered.
+	assert.Len(t, perDependency, 5)
 	assert.NotContains(t, perDependency, deps.Keycloak)
 	for id, n := range perDependency {
 		assert.Equal(t, deps.MaxProbedVolumeGen, n, "%s", id)
@@ -988,13 +995,28 @@ func keycloakLegacyImage(t *testing.T) string {
 	return d.LegacyImage()
 }
 
-// The OBSERVER's database is the second dependency whose switch is not in
-// namespace.yml: it exists where the bundle names an observer image, and its
-// pin is what protects an existing observability cluster from a bundle's newer
-// PostgreSQL major.
+// observerPostgresID is the observer's database — a cluster the WORKSPACE
+// declares; the launcher registers it only then.
+const observerPostgresID deps.ID = "observer-postgres"
+
+// The OBSERVER's database is a dependency whose switch is not in namespace.yml:
+// it exists where the bundle names its image, and its pin is what protects an
+// existing observability cluster from a bundle's newer PostgreSQL major. The
+// workspace declares it (and the observer); the prediction and the generator
+// must agree about it like about any other cluster.
 func TestNamespaceDependenciesAnswersTheObserverDatabaseFromTheBundle(t *testing.T) {
 	cfg := &namespace.Config{ID: "ns"}
-	ws := &bundle.WorkspaceConfig{Webapps: []bundle.WebappConfig{{ID: "emodel"}}}
+	ws := &bundle.WorkspaceConfig{
+		Webapps: []bundle.WebappConfig{{ID: "emodel"}},
+		AdditionalApps: []bundle.AdditionalAppProps{
+			{Name: "observer-postgres", Type: bundle.AppTypePostgres, Postgres: &bundle.PostgresAppProps{
+				Name: "observer-postgres", Type: bundle.AppTypePostgres, User: "observer", VolumeBase: "obs_postgres",
+			}},
+			{Name: "observer", DependsOn: []string{"observer-postgres"}},
+		},
+	}
+	installWorkspaceDependencies(ws)
+	t.Cleanup(deps.ResetExtraDependencies)
 	plain := func() *bundle.Def {
 		return &bundle.Def{Applications: map[string]bundle.AppDef{
 			"emodel": {Image: "harbor.citeck.ru/community/emodel:1.0"}}}
@@ -1008,17 +1030,17 @@ func TestNamespaceDependenciesAnswersTheObserverDatabaseFromTheBundle(t *testing
 
 	t.Run("a bundle that ships the observer has its database to pin", func(t *testing.T) {
 		assertPredictionMatchesGenerator(t, cfg, withObserver(), ws, nil)
-		assert.True(t, namespaceDependencies(cfg, withObserver(), ws)[deps.ObserverPostgres])
+		assert.True(t, namespaceDependencies(cfg, withObserver(), ws)[observerPostgresID])
 	})
 	t.Run("a bundle without it has none", func(t *testing.T) {
 		assertPredictionMatchesGenerator(t, cfg, plain(), ws, nil)
-		assert.False(t, namespaceDependencies(cfg, plain(), ws)[deps.ObserverPostgres],
+		assert.False(t, namespaceDependencies(cfg, plain(), ws)[observerPostgresID],
 			"a stand with no observer must not pay a probe for its database on every load")
 	})
 	t.Run("a detached observer keeps its database, and its pin", func(t *testing.T) {
 		detached := map[string]bool{"observer": true, "observer-postgres": true}
 		assertPredictionMatchesGenerator(t, cfg, withObserver(), ws, detached)
-		assert.True(t, namespaceDependencies(cfg, withObserver(), ws)[deps.ObserverPostgres],
+		assert.True(t, namespaceDependencies(cfg, withObserver(), ws)[observerPostgresID],
 			"the cluster does not stop existing because the operator stopped it")
 	})
 }

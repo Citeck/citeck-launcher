@@ -25,11 +25,6 @@ const (
 	Keycloak  ID = "keycloak"
 	MongoDB   ID = "mongodb"
 	Qdrant    ID = "qdrant"
-	// ObserverPostgres is the observer's OWN database — a second PostgreSQL
-	// cluster in the same namespace, with its own pin, its own volume
-	// generation and its own migrations. It exists only where the bundle names
-	// an observer image.
-	ObserverPostgres ID = "observer-postgres"
 )
 
 // Descriptor is what the launcher knows about one dependency.
@@ -75,18 +70,7 @@ var registry = []Descriptor{
 	zookeeperDescriptor{},
 	keycloakDescriptor{},
 	mongoDescriptor{},
-	qdrantDescriptor{},
-	// The observer's database is last because it is conditional (no observer
-	// image in the bundle, no dependency) and because the order here is the
-	// display order of `citeck deps`: the stand's own infrastructure first.
-	//
-	// Its volume stem is "obs_postgres", which is what the generator emitted
-	// before the counter existed — so generation 1 is "obs_postgres2", beside
-	// the old un-suffixed volume rather than on top of it. That is the same
-	// one-time break registering qdrant made, and for the same reason: a volume
-	// outside the counter can never be migrated, because a copy upgrade builds
-	// the next generation next to the current one.
-	postgresDescriptor{id: ObserverPostgres, appName: appdef.AppObsPostgres, volumeBase: "obs_postgres"},
+	qdrantDescriptor{id: Qdrant, appName: appdef.AppQdrant, volumeBase: "qdrant"},
 }
 
 // All returns every registered descriptor in display order: the built-ins

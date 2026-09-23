@@ -50,7 +50,7 @@ func countID(ids []string, want string) int {
 // the release-safety property of the whole feature.
 func TestASingleHopPlanIsUnchanged(t *testing.T) {
 	env := qdrantEnv(t, &execScript{})
-	plan, _, err := BuildCopyUpgrade(env, qdrantCopySpec(),
+	plan, _, err := BuildCopyUpgrade(env, qdrantCopySpec(deps.Qdrant),
 		Path{qdrantFrom, qdrantTo}, PlanOptions{},
 		okPreflight(qdrantFrom, qdrantTo))
 	require.NoError(t, err)
@@ -63,7 +63,7 @@ func TestASingleHopPlanIsUnchanged(t *testing.T) {
 func TestAThreeRungPlanClimbsOneCopy(t *testing.T) {
 	env := qdrantEnv(t, &execScript{})
 	path := qdrantLadderPath
-	plan, j, err := BuildCopyUpgrade(env, qdrantCopySpec(), path, PlanOptions{},
+	plan, j, err := BuildCopyUpgrade(env, qdrantCopySpec(deps.Qdrant), path, PlanOptions{},
 		okPreflight(path.From(), path.To()))
 	require.NoError(t, err)
 
@@ -171,9 +171,9 @@ func TestBeforeInventoryIsCapturedOnceAtTheBottom(t *testing.T) {
 // ask for more room" would be applied to both plans.
 func TestALadderDoesNotRaiseTheCopyPlansSpaceRequirement(t *testing.T) {
 	env := qdrantEnv(t, &execScript{})
-	one := QdrantMigrator{}.Preflight(context.Background(), env, Path{qdrantFrom, qdrantTo})
+	one := QdrantMigrator{ID: deps.Qdrant}.Preflight(context.Background(), env, Path{qdrantFrom, qdrantTo})
 	require.True(t, one.OK, one.Problems)
-	many := QdrantMigrator{}.Preflight(context.Background(), env, qdrantLadderPath)
+	many := QdrantMigrator{ID: deps.Qdrant}.Preflight(context.Background(), env, qdrantLadderPath)
 	require.True(t, many.OK, many.Problems)
 	assert.Equal(t, one.RequiredVolumeBytes, many.RequiredVolumeBytes)
 	assert.Equal(t, one.RequiredHostBytes, many.RequiredHostBytes)

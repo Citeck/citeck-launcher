@@ -61,6 +61,13 @@ type GenerateOpts struct {
 	// (Runtime.DependencyStates). Nil for a namespace with no data yet, which
 	// generates generation 1 — the volume every namespace has always used.
 	DependencyStates map[deps.ID]deps.DependencyState
+	// NamespaceSecrets are this namespace's secret values, id -> value: what
+	// `${secret:<id>}` resolves to. The daemon seeds them from the workspace
+	// `secrets:` defaults and reads them back from the namespace's own storage
+	// (see internal/daemon/namespace_secrets.go), so a value, once stored, does
+	// not follow a later edit of the default. Nil resolves nothing — every app
+	// that references a secret is then left out (excludeAppsMissingSecrets).
+	NamespaceSecrets map[string]string
 }
 
 // generateBundleWebapps runs generateWebapp for every bundle application the
@@ -79,9 +86,29 @@ func generateBundleWebapps(ctx *NsGenContext, bun *bundle.Def, wsCfg *bundle.Wor
 			wsWebapps[w.ID] = true
 		}
 	}
+	// A bundle application that an additionalApps entry declares is that
+	// entry's image, not a webapp: the entry is the declaration of the service,
+	// the bundle only names what it runs (over the entry's own image, if any).
+	// It is generated from its declaration after the webapps, and must find the
+	// name free. A platform webapp the workspace lists in `webapps:` is never
+	// claimed: it stays a webapp and the entry is the one skipped
+	// (generateAdditionalApps), so additionalApps cannot re-declare a boxed
+	// service — the static reservedAppNames check covers the core ones even
+	// where the workspace list is empty.
+	claimed := make(map[string]bool)
+	if wsCfg != nil {
+		for _, a := range wsCfg.AdditionalApps {
+			if a.IsEnabled() && !a.IsTyped() && !wsWebapps[strings.TrimSpace(a.Name)] {
+				claimed[strings.TrimSpace(a.Name)] = true
+			}
+		}
+	}
 	webappNames := make([]string, 0, len(bun.Applications))
 	for name := range bun.Applications {
 		if len(wsWebapps) > 0 && !wsWebapps[name] {
+			continue
+		}
+		if claimed[name] {
 			continue
 		}
 		webappNames = append(webappNames, name)
@@ -120,6 +147,7 @@ func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secre
 		ctx.DiskContent = opts[0].DiskContent
 		ctx.EditedAppPatches = opts[0].EditedAppPatches
 		ctx.DependencyStates = opts[0].DependencyStates
+		ctx.NamespaceSecrets = opts[0].NamespaceSecrets
 	}
 
 	// Load embedded appfiles
@@ -136,23 +164,23 @@ func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secre
 		return nil, fmt.Errorf("generate keycloak: %w", err)
 	}
 	generateAlfresco(ctx)
-	generateObserver(ctx)
-	// Declared PostgreSQL clusters (generator_database.go) come AFTER the
-	// services that own them: a declaration may name its owner with
-	// `requiredBy`, and the built-in observer database does.
+	// Declared PostgreSQL clusters (generator_database.go). Whether each one
+	// exists is the bundle's answer (its image), not the owner's.
 	generateDatabases(ctx)
 
 	generateBundleWebapps(ctx, bun, wsCfg)
 
-	// STT sidecar (speech-to-text proxy for AI websocket traffic) — must run
-	// AFTER the AI webapp is generated because it injects an env var + dep
-	// onto the AI app, and before generateProxy so a future AI_TARGET wiring
-	// in the proxy can read the resolved STT port from the apps map.
+	// Companions of the webapps: the STT sidecar needs the AI app to exist, and
+	// the vector store only logs when a consumer is present, so both follow the
+	// webapps. Neither writes into its owner.
 	generateSttSidecar(ctx)
-
-	// Qdrant vector store for the rag webapp — same "runs after the webapp it
-	// augments" ordering as generateSttSidecar above (injects env + dep onto rag).
 	generateQdrant(ctx)
+
+	// The owners wire themselves to what the companions produced — after the
+	// companions, before additionalApps (so a raw entry can never be mistaken
+	// for the built-in store) and before the proxy.
+	wireRag(ctx)
+	wireAi(ctx)
 
 	// Custom containers added by configuration alone (no dedicated generator).
 	generateAdditionalApps(ctx)
@@ -170,6 +198,7 @@ func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secre
 
 	// Drop any app whose dependsOn points at an app that wasn't generated
 	// (transitively); see pruneAppsWithMissingDeps.
+	excludeAppsMissingSecrets(ctx)
 	pruneAppsWithMissingDeps(ctx)
 
 	if err := checkAppDependencyErrors(ctx); err != nil {

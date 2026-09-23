@@ -778,6 +778,9 @@ func (d *Daemon) doReloadEx(forceGitPull, startNotRegenerate, refreshImages bool
 	genOpts.DependencyStates = pins
 	genOpts.SecretReader = d.nsSecretReader()
 	genOpts.DetachedApps = act.runtime.ManualStoppedApps()
+	if d.secretService != nil {
+		genOpts.NamespaceSecrets = namespaceSecretsFor(d.secretService, act.workspaceID, nsID, resolveResult.Workspace, true)
+	}
 	// File edits are merged onto their templates inside Generate (both disk and
 	// VolumesContentHash reflect the merged result) — no separate skip set.
 	fileEdits := act.runtime.FileEditsSnapshot()

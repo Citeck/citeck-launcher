@@ -281,13 +281,18 @@ func (ss *SecretService) SaveSecret(secret Secret) error {
 			return fmt.Errorf("encrypt secret: %w", err)
 		}
 		secret.Value = enc
-	} else {
+	} else if secret.Type != SecretNamespace {
 		// Desktop first-run state: SecretService is unencrypted because the
 		// user hasn't set a master password yet. Reject user secrets so they
 		// never land on disk in plaintext — the UI catches this sentinel and
 		// runs CreateMasterPwd before retrying the save. SYSTEM secrets are
 		// no longer routed through SaveSecret (they live in launcher_state
 		// plain), so this check is safe.
+		//
+		// A NAMESPACE secret is the exception, by decision: it is a stand's own
+		// infrastructure password, and a desktop stand must come up on first
+		// start without asking for a master password. It is stored as is until
+		// one exists; SetMasterPassword then encrypts it with every other row.
 		return ErrEncryptionNotSetUp
 	}
 	if err := ss.store.SaveSecret(secret); err != nil {

@@ -346,6 +346,9 @@ func resolveTemplateVarsWithContext(s string, ctx *NsGenContext) string {
 	s = strings.ReplaceAll(s, "${RMQ_USER}", rmqUser)
 	s = strings.ReplaceAll(s, "${RMQ_PASSWORD}", rmqPassword)
 	s = strings.ReplaceAll(s, "${ADMIN_PASSWORD}", adminPassword)
+	if ctx != nil {
+		s = resolveSecretRefs(s, ctx.NamespaceSecrets)
+	}
 	return resolveTemplateVars(s)
 }
 

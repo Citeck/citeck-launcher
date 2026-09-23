@@ -70,7 +70,22 @@ func shouldDeferStartForSecrets(desktop bool, vault secretVaultState, pendingKot
 	if !lockedOut && !pendingKotlinImport {
 		return false
 	}
+	// A locked vault also hides the namespace's OWN secret values, so the apps
+	// that reference them were generated out. Starting now would run the stand
+	// without them; waiting lets the unlock regenerate with them in.
+	// A pending Kotlin import does not count here: that vault is unencrypted
+	// and empty, and namespace secrets are stored in it as is.
+	if lockedOut && namespaceDeclaresSecrets(wsCfg) {
+		return true
+	}
 	return namespaceNeedsUserSecrets(images, wsCfg)
+}
+
+// namespaceDeclaresSecrets reports whether the workspace gives its namespaces
+// secret values (the `secrets:` section) — the apps referencing them cannot be
+// generated while the vault that holds the namespace's copies is locked.
+func namespaceDeclaresSecrets(wsCfg *bundle.WorkspaceConfig) bool {
+	return wsCfg != nil && len(wsCfg.Secrets) > 0
 }
 
 // hasPendingKotlinSecrets reports whether a migrated 1.x secrets blob is still

@@ -147,6 +147,10 @@ func (d *Daemon) resolveReloadPlanInputs(act activeNamespace) (*reloadPlanInputs
 	genOpts.DiskContent = readDiskContent(act.volumesBase, fileEdits)
 	genOpts.EditedAppPatches = act.runtime.AppPatchesSnapshot()
 	genOpts.ExtraLicenses = collectExtraLicensesFrom(d.licenses)
+	// A preview stores nothing: a missing value is answered with its default.
+	if d.secretService != nil {
+		genOpts.NamespaceSecrets = namespaceSecretsFor(d.secretService, act.workspaceID, nsID, resolveResult.Workspace, false)
+	}
 	genResp, genErr := namespace.Generate(nsCfg, resolveResult.Bundle, resolveResult.Workspace, act.systemSecrets, genOpts)
 	if genErr != nil {
 		return nil, fmt.Errorf("generate namespace %q: %w", nsCfg.ID, genErr)

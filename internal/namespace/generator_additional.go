@@ -26,13 +26,27 @@ func generateAdditionalApps(ctx *NsGenContext) {
 		return
 	}
 	for _, def := range ctx.WorkspaceConfig.AdditionalApps {
-		if !def.IsEnabled() {
+		// A TYPED entry (POSTGRES, QDRANT) has its own generator and is never a
+		// raw container. Skipped explicitly: with the image no longer required,
+		// it would otherwise reach the collision guard below and be refused as a
+		// clash with the very cluster its own generator emitted.
+		if !def.IsEnabled() || def.IsTyped() {
 			continue
 		}
 		name := strings.TrimSpace(def.Name)
-		if name == "" || strings.TrimSpace(def.Image) == "" {
+		if name == "" {
 			// Defensive: validation rejects these at workspace-config load; skip
 			// rather than emit a broken app.
+			continue
+		}
+		// The image the BUNDLE names for the entry wins, and the entry's own
+		// image is only the default — the same precedence a typed entry and a
+		// built-in service take. An entry without an image runs only where the
+		// bundle names one: the release decides that the service exists, the
+		// workspace how it is configured.
+		image := resolveAppImage(ctx, name, "", ctx.WorkspaceConfig.ResolveImageRef(def.Image))
+		if image == "" {
+			slog.Debug("additionalApps entry names no image and the bundle names none; not generated", "name", name)
 			continue
 		}
 
@@ -55,7 +69,7 @@ func generateAdditionalApps(ctx *NsGenContext) {
 		}
 
 		app := ctx.GetOrCreateApp(name)
-		app.Image = ctx.WorkspaceConfig.ResolveImageRef(def.Image)
+		app.Image = image
 		app.Kind = additionalAppKind(def.Kind)
 		app.NetworkAliases = append(app.NetworkAliases, def.NetworkAliases...)
 		app.Cmd = resolveTemplateVarsSlice(def.Cmd, ctx)
@@ -82,7 +96,36 @@ func generateAdditionalApps(ctx *NsGenContext) {
 		for _, d := range def.DependsOn {
 			app.AddDependsOn(d)
 		}
+		if len(def.CloudConfig) > 0 {
+			ctx.CloudConfig[name] = resolveCloudConfig(def.CloudConfig, ctx)
+		}
 	}
+}
+
+// resolveCloudConfig applies the env substitution to every string in a cloud
+// config, at any depth, and returns a copy; other values pass through.
+func resolveCloudConfig(in map[string]any, ctx *NsGenContext) map[string]any {
+	out := make(map[string]any, len(in))
+	for k, v := range in {
+		out[k] = resolveCloudConfigValue(v, ctx)
+	}
+	return out
+}
+
+func resolveCloudConfigValue(v any, ctx *NsGenContext) any {
+	switch t := v.(type) {
+	case string:
+		return resolveTemplateVarsWithContext(t, ctx)
+	case map[string]any:
+		return resolveCloudConfig(t, ctx)
+	case []any:
+		out := make([]any, len(t))
+		for i, x := range t {
+			out[i] = resolveCloudConfigValue(x, ctx)
+		}
+		return out
+	}
+	return v
 }
 
 // resolveTemplateVarsSlice resolves ${VAR} (context-aware) in every element of a

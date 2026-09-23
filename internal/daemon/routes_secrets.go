@@ -30,9 +30,12 @@ func (d *Daemon) handleListSecrets(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 
-	result := make([]api.SecretMetaDto, len(secrets))
-	for i, s := range secrets {
-		result[i] = api.SecretMetaDto{
+	result := make([]api.SecretMetaDto, 0, len(secrets))
+	for _, s := range secrets {
+		if storage.IsNamespaceSecret(s) {
+			continue // a stand's own infrastructure value, not the user's credential
+		}
+		result = append(result, api.SecretMetaDto{
 			ID:        s.ID,
 			Name:      s.Name,
 			Type:      string(s.Type),
@@ -40,7 +43,7 @@ func (d *Daemon) handleListSecrets(w http.ResponseWriter, _ *http.Request) {
 			Host:      s.Host,
 			Username:  s.Username,
 			CreatedAt: s.CreatedAt.Format(time.RFC3339),
-		}
+		})
 	}
 	writeJSON(w, result)
 }
@@ -265,7 +268,15 @@ func (d *Daemon) handleGetMigrationStatus(w http.ResponseWriter, _ *http.Request
 
 	hasSecrets := false
 	if secrets, listErr := d.secretReaderFunc().ListSecrets(); listErr == nil {
-		hasSecrets = len(secrets) > 0
+		// "Has the user stored anything to protect" — a namespace's own
+		// infrastructure values do not count; they must never be the reason the
+		// UI asks for a master password.
+		for _, s := range secrets {
+			if !storage.IsNamespaceSecret(s) {
+				hasSecrets = true
+				break
+			}
+		}
 	}
 
 	resp := map[string]any{
@@ -389,14 +400,32 @@ func (d *Daemon) startNamespaceDeferredForSecrets(why string) {
 	var deferredNsID string
 	var deferredAppDefs []appdef.ApplicationDef
 	var deferredRuntime *namespace.Runtime
+	regenerate := false
 	if startDeferred {
 		act.deferredForSecrets = false
 		deferredNsID = act.nsConfig.ID
 		deferredAppDefs = act.appDefs
 		deferredRuntime = act.runtime
+		regenerate = namespaceDeclaresSecrets(act.workspaceConfig)
 	}
 	d.configMu.Unlock()
 	if !startDeferred {
+		return
+	}
+	if regenerate {
+		// The deferred definitions were generated while the namespace's own
+		// secret values were unreadable, so every app that references one is
+		// missing from them. Regenerate now that they can be read, and start
+		// that — the reload's start branch, as Update & Start on a stopped
+		// namespace does.
+		slog.Info("Regenerating and starting namespace deferred for secrets", "ns", deferredNsID, "reason", why)
+		d.reloadMu.Lock()
+		err := d.invokeReloadEx(false, true, false)
+		d.reloadMu.Unlock()
+		if err != nil {
+			slog.Error("Failed to regenerate the namespace deferred for secrets; start it once the cause is fixed",
+				"ns", deferredNsID, "err", err)
+		}
 		return
 	}
 	slog.Info("Starting namespace deferred for secrets", "ns", deferredNsID, "reason", why)

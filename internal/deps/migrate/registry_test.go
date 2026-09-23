@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/citeck/citeck-launcher/internal/deps"
 )
@@ -34,9 +35,10 @@ func TestEveryMigratableDependencyHasAMigratorAndARollback(t *testing.T) {
 		_, hasR := RollbackFor(d.ID())
 		assert.True(t, hasR, "%s claims Migratable() but no rollback is wired for it", d.ID())
 	}
-	assert.Equal(t, 5, migratable,
-		"postgres, rabbitmq, zookeeper, qdrant and the observer's postgres are the five "+
-			"this release migrates — adding or removing one is a deliberate act, not a side effect")
+	assert.Equal(t, 4, migratable,
+		"postgres, rabbitmq, zookeeper and qdrant are the four built-ins this release migrates — "+
+			"adding or removing one is a deliberate act, not a side effect (a workspace-declared "+
+			"cluster is answered by kind: TestADeclaredDependencyGetsTheMigratorAndTheRollbackOfItsKind)")
 }
 
 // A dependency that is not registered at all has no plan and no undo. The two
@@ -48,4 +50,37 @@ func TestAnUnknownDependencyHasNeitherAMigratorNorARollback(t *testing.T) {
 	assert.False(t, ok)
 	_, ok = RollbackFor(deps.ID("redis"))
 	assert.False(t, ok)
+}
+
+// A cluster or store a WORKSPACE declares is the same kind of thing as the
+// built-in one — the registry advertises it as Migratable() because its
+// descriptor is the PostgreSQL / Qdrant descriptor — so it must get the same
+// plan and the same undo, keyed to ITS id. Without this `citeck deps upgrade`
+// on a declared cluster was offered and then failed as an internal error.
+func TestADeclaredDependencyGetsTheMigratorAndTheRollbackOfItsKind(t *testing.T) {
+	deps.SetExtraDependencies([]deps.Descriptor{
+		deps.NewPostgresDescriptor("billing-postgres", "billing-postgres", "billing_pg"),
+		deps.NewQdrantDescriptor("search-qdrant", "search-qdrant", "search_qdrant"),
+	})
+	defer deps.ResetExtraDependencies()
+
+	m, ok := MigratorFor("billing-postgres")
+	require.True(t, ok)
+	assert.Equal(t, PostgresMigrator{ID: "billing-postgres"}, m, "the plan must address THIS cluster")
+	_, ok = RollbackFor("billing-postgres")
+	assert.True(t, ok)
+
+	m, ok = MigratorFor("search-qdrant")
+	require.True(t, ok)
+	assert.Equal(t, QdrantMigrator{ID: "search-qdrant"}, m, "the plan must address THIS store")
+	_, ok = RollbackFor("search-qdrant")
+	assert.True(t, ok)
+
+	for _, d := range deps.All() {
+		if d.Migratable() {
+			_, hasM := MigratorFor(d.ID())
+			_, hasR := RollbackFor(d.ID())
+			assert.True(t, hasM && hasR, "%s claims Migratable() but has no plan or no undo", d.ID())
+		}
+	}
 }

@@ -97,6 +97,19 @@ type ProxyConfig struct {
 	Aliases []string `yaml:"aliases"`
 }
 
+// SecretDefault is one entry of the workspace `secrets:` section.
+//
+// The value is a DEFAULT, not the value a namespace runs with: a namespace
+// stores its own copy the first time it needs one, and a later edit here does
+// not reach it. That is the only safe reading for a password — it is written
+// into a database's data volume when the database is first initialized, and a
+// service handed a changed one would simply fail to connect. Only constants
+// for now; the list shape leaves room for a generated kind.
+type SecretDefault struct {
+	ID    string `yaml:"id" json:"id"`
+	Value string `yaml:"value" json:"value"`
+}
+
 // QuickStartVariant describes a quick start option from workspace config.
 type QuickStartVariant struct {
 	Name     string `yaml:"name"`
@@ -269,58 +282,6 @@ type QdrantProps struct {
 	GrpcPort    int    `yaml:"grpcPort,omitempty"`
 }
 
-// DatabaseProps declares ONE PostgreSQL cluster a namespace runs BESIDE the
-// stand's own database — the observer's today, another service's tomorrow.
-//
-// It exists so that adding a database is a CONFIGURATION change and not a
-// launcher release: an entry here is registered as a dependency (its own pin,
-// its own volume generation, the dump/restore migration and its rollback) and
-// generated as a container, with no Go code naming it.
-//
-// Every field but ID is optional; the defaults are the ones the official
-// postgres image itself applies, so the smallest usable entry is just an id.
-type DatabaseProps struct {
-	// ID is the dependency id AND the app (container) name — `citeck deps` and
-	// `citeck stop <id>` both name it.
-	ID string `yaml:"id"`
-	// Image is the fallback this launcher runs when nothing higher in the
-	// precedence chain names one. A BUNDLE's `dependencies:` entry for the same
-	// id outranks it, which is what lets a release move the version.
-	Image ImageRef `yaml:"image,omitempty"`
-	// User and DB are POSTGRES_USER and POSTGRES_DB; DB defaults to User and
-	// User defaults to "postgres", as the image itself does. They are not
-	// cosmetic: the migration plan addresses the cluster AS this user and
-	// tolerates exactly the role and database the image creates from them.
-	//
-	// There is deliberately NO password key. These clusters are internal to the
-	// namespace's Docker network and publish nothing in server mode, so the
-	// launcher gives each one a default derived from its user; a workspace
-	// config in a git repository is not a place to keep a credential, and
-	// making it look like one invites real ones.
-	User string `yaml:"user,omitempty"`
-	DB   string `yaml:"db,omitempty"`
-	// Port is published on the host in DESKTOP mode, so the service that owns
-	// this database can be run outside the launcher against it. 0 publishes
-	// nothing. Server mode publishes nothing but the proxy either way.
-	Port int `yaml:"port,omitempty"`
-	// MemoryLimit is the container limit ("512m"); empty takes the launcher's
-	// default for a side database.
-	MemoryLimit string `yaml:"memoryLimit,omitempty"`
-	// VolumeBase is the stem of the data volume name, without the generation
-	// suffix: "obs_postgres" gives obs_postgres2, obs_postgres3, … Empty
-	// derives it from the id, and it must never change afterwards — the volume
-	// name IS how the data is found.
-	VolumeBase string `yaml:"volumeBase,omitempty"`
-	// RequiredBy names the app this database exists for. The cluster is then
-	// generated only when that app is in the namespace, which is what keeps a
-	// database off every stand that does not run its service. Empty means
-	// unconditional.
-	RequiredBy string `yaml:"requiredBy,omitempty"`
-	// Settings are server settings passed as `-c key=value`, in KEY ORDER, so
-	// the generated command — and therefore the deployment hash — is stable.
-	Settings map[string]string `yaml:"settings,omitempty"`
-}
-
 // WorkspaceConfig is the top-level workspace-v1.yml structure.
 type WorkspaceConfig struct {
 	QuickStartVariants []QuickStartVariant `yaml:"quickStartVariants,omitempty"`
@@ -346,15 +307,14 @@ type WorkspaceConfig struct {
 	// once. See DependencyEntry for why it exists beside the typed blocks
 	// above rather than instead of them.
 	Dependencies map[string]DependencyEntry `yaml:"dependencies,omitempty"`
-	// Databases declares PostgreSQL clusters beside the stand's own — see
-	// DatabaseProps. The launcher ships built-in defaults for the ones it knows
-	// (the observer's); an entry here with the same id overrides them field by
-	// field, and an entry with a new id adds a cluster no Go code names.
-	Databases []DatabaseProps `yaml:"databases,omitempty"`
 	// AdditionalApps are custom containers added by configuration alone (no
 	// dedicated launcher generator), defined once here and applied to every
 	// namespace that uses this workspace. See AdditionalAppProps.
 	AdditionalApps []AdditionalAppProps `yaml:"additionalApps,omitempty"`
+	// Secrets are the DEFAULT values of the secrets this workspace's services
+	// reference as `${secret:<id>}`. A namespace copies each one the first time
+	// it needs it and keeps its own value from then on — see SecretDefault.
+	Secrets []SecretDefault `yaml:"secrets,omitempty"`
 	// Links are custom quick links shown in the launcher sidebar alongside the
 	// built-in ones. See WorkspaceLink.
 	Links []WorkspaceLink `yaml:"links,omitempty"`
