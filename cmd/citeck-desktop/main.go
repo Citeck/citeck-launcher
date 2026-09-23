@@ -448,6 +448,8 @@ func run() error {
 			}
 			if time.Now().After(deadline) {
 				slog.Warn("Daemon not ready after 30s, proxying anyway")
+				// The title still follows the daemon once it does finish booting.
+				go refreshWindowTitle(socketClient, window)
 				break
 			}
 			select {
