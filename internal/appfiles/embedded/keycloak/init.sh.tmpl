@@ -147,6 +147,44 @@ if [ -n "${RECOVERY_USER:-}" ]; then
   unset RECOVERY_USER
 fi
 
+# Keycloak 26.5+ refuses to SAVE a realm whose client-session timeouts exceed
+# its SSO-session ones (validateClientAndRealmTimeouts, run on every realm
+# update and never on an import — which is how the ecos-app realm this
+# launcher shipped got in with a 30-day client idle over a 1-hour SSO idle).
+# Every save of the realm settings then fails, in the admin console and
+# through the API alike. A client session never outlives its SSO session
+# anyway, so resetting an offending value to 0 ("use the SSO value") changes
+# nothing a user can observe, while a value within the limit is the
+# operator's and is left alone. The limit is Keycloak's own, remember-me
+# included. Not fatal: the stand works either way; only saving the realm
+# settings does not.
+REALM_SESSIONS=$($KCADM get realms/ecos-app --fields rememberMe,ssoSessionIdleTimeout,ssoSessionIdleTimeoutRememberMe,ssoSessionMaxLifespan,ssoSessionMaxLifespanRememberMe,clientSessionIdleTimeout,clientSessionMaxLifespan 2>/dev/null || true)
+realm_session_value() {
+  printf '%s' "$REALM_SESSIONS" | grep -o "\"$1\"[[:space:]]*:[[:space:]]*[0-9]*" | grep -o '[0-9]*$' | head -1
+}
+IDLE_LIMIT=$(realm_session_value ssoSessionIdleTimeout)
+MAX_LIMIT=$(realm_session_value ssoSessionMaxLifespan)
+CLIENT_IDLE=$(realm_session_value clientSessionIdleTimeout)
+CLIENT_MAX=$(realm_session_value clientSessionMaxLifespan)
+if printf '%s' "$REALM_SESSIONS" | grep -q '"rememberMe"[[:space:]]*:[[:space:]]*true'; then
+  RM_IDLE=$(realm_session_value ssoSessionIdleTimeoutRememberMe)
+  RM_MAX=$(realm_session_value ssoSessionMaxLifespanRememberMe)
+  if [ "${RM_IDLE:-0}" -gt "${IDLE_LIMIT:-0}" ]; then IDLE_LIMIT=$RM_IDLE; fi
+  if [ "${RM_MAX:-0}" -gt "${MAX_LIMIT:-0}" ]; then MAX_LIMIT=$RM_MAX; fi
+fi
+if [ -z "$IDLE_LIMIT" ] || [ -z "$MAX_LIMIT" ] || [ -z "$CLIENT_IDLE" ] || [ -z "$CLIENT_MAX" ]; then
+  echo "WARN: could not read the ecos-app session timeouts, leaving them as they are" >&2
+else
+  REALM_FIX=()
+  if [ "$CLIENT_IDLE" -gt "$IDLE_LIMIT" ]; then REALM_FIX+=(-s clientSessionIdleTimeout=0); fi
+  if [ "$CLIENT_MAX" -gt "$MAX_LIMIT" ]; then REALM_FIX+=(-s clientSessionMaxLifespan=0); fi
+  if [ ${#REALM_FIX[@]} -gt 0 ]; then
+    echo "Resetting ecos-app client-session timeouts that exceed the SSO ones to 0 (use the SSO value)..."
+    $KCADM update realms/ecos-app "${REALM_FIX[@]}" \
+      || echo "WARN: could not reset the ecos-app client-session timeouts" >&2
+  fi
+fi
+
 # Update ecos-proxy-app OIDC client (redirect URIs + secret).
 # Exact-match on clientId column: `-q clientId=` is a substring query, so
 # filter by column 2 (clientId) equalling "ecos-proxy-app" before picking the
@@ -159,6 +197,49 @@ CID=$($KCADM get clients -r ecos-app \
 $KCADM update "clients/$CID" -r ecos-app -s "redirectUris=[\"${BASE_URL}*\"]"
 {{- end }}
 $KCADM update "clients/$CID" -r ecos-app -s "secret=${OIDC_SECRET}"
+
+# Keycloak 26.6.2+ introspects a token only for a client in its audience (aud)
+# and answers active=false for anything else. The proxy introspects every
+# Bearer token and PA cookie as ecos-proxy-app (lua_oidc_full_access.lua), and
+# nothing put ecos-proxy-app into aud — its own tokens carry aud=account — so
+# every token-authenticated request through the proxy was refused. Two halves,
+# both idempotent:
+#   - an audience mapper on ecos-proxy-app, the supported fix, for the tokens
+#     it issues itself;
+#   - Keycloak's compatibility switch on the INTROSPECTING client, for tokens
+#     the stand's other clients issue (integrations). Keycloak logs a WARN
+#     naming the issuing client on each such request, which is how those
+#     clients are found and given their own mapper; upstream has deprecated
+#     the switch. It is set only while ABSENT, so an operator who turned it
+#     off keeps it off.
+# Both are inert on a Keycloak older than 26.6.2 (one more aud entry, an
+# attribute nothing reads). Not fatal: the browser login never introspects.
+AUD_MAPPER=ecos-proxy-app-audience
+if MAPPERS=$($KCADM get "clients/$CID/protocol-mappers/models" -r ecos-app --fields name --format csv --noquotes 2>/dev/null); then
+  if ! printf '%s\n' "$MAPPERS" | grep -Fxq "$AUD_MAPPER"; then
+    echo "Adding the ecos-proxy-app audience mapper..."
+    $KCADM create "clients/$CID/protocol-mappers/models" -r ecos-app \
+        -s name="$AUD_MAPPER" -s protocol=openid-connect -s protocolMapper=oidc-audience-mapper \
+        -s 'config."included.client.audience"=ecos-proxy-app' \
+        -s 'config."access.token.claim"=true' -s 'config."introspection.token.claim"=true' \
+        -s 'config."id.token.claim"=false' \
+      || echo "WARN: could not add the ecos-proxy-app audience mapper; Keycloak 26.6.2+ will refuse its tokens at the proxy" >&2
+  fi
+else
+  echo "WARN: could not list the ecos-proxy-app protocol mappers" >&2
+fi
+# The FULL representation, not `--fields attributes`: kcadm's field filter
+# answers that one with an empty map (measured on 26.4.5), which would read
+# as "absent" on every start and overwrite an operator's `false`.
+if CLIENT_REP=$($KCADM get "clients/$CID" -r ecos-app 2>/dev/null); then
+  if ! printf '%s' "$CLIENT_REP" | grep -q '"allow.token.introspection.without.audience.check"'; then
+    echo "Allowing ecos-proxy-app to introspect tokens of other clients..."
+    $KCADM update "clients/$CID" -r ecos-app -s 'attributes."allow.token.introspection.without.audience.check"=true' \
+      || echo "WARN: could not set allow.token.introspection.without.audience.check on ecos-proxy-app" >&2
+  fi
+else
+  echo "WARN: could not read the ecos-proxy-app client" >&2
+fi
 {{- if ne .AdminPassword "admin" }}
 
 # Apply admin password to BOTH realms. Both failures are fatal:
