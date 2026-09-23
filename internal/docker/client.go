@@ -434,9 +434,22 @@ func (c *Client) buildCreateOptions(
 			continue
 		}
 		hostPort := parts[0]
-		containerPort, err := network.ParsePort(parts[1] + "/tcp")
+		// The spec's own protocol is kept ("17014/udp"); none means tcp, which
+		// ParsePort applies itself. Appending "/tcp" unconditionally, as this
+		// used to, turned the observer's UDP log receiver into the port
+		// "17014/udp/tcp" — which the engine accepts at create and refuses at
+		// START ("programming external connectivity ...: unknown protocol").
+		containerPort, err := network.ParsePort(parts[1])
 		if err != nil {
 			return client.ContainerCreateOptions{}, fmt.Errorf("invalid container port %q for %s: %w", parts[1], app.Name, err)
+		}
+		// ParsePort does not validate the protocol, so a bad one would again
+		// only fail at start, as an engine error naming no app. Refuse it here.
+		switch containerPort.Proto() {
+		case network.TCP, network.UDP, network.SCTP:
+		default:
+			return client.ContainerCreateOptions{}, fmt.Errorf("invalid container port %q for %s: unknown protocol %q",
+				parts[1], app.Name, containerPort.Proto())
 		}
 		exposedPorts[containerPort] = struct{}{}
 		portBindings[containerPort] = []network.PortBinding{{HostPort: hostPort}}

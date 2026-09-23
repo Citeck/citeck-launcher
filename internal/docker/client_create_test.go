@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/network"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -385,6 +386,40 @@ func TestCreateOptionsRejectAnUnparsableContainerPort(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not-a-port")
+}
+
+// A port spec that names its protocol keeps it. Every container port used to
+// get "/tcp" appended, so the observer's UDP log receiver "17014:17014/udp"
+// reached Docker as the port "17014/udp/tcp": the engine accepts that at
+// create and refuses it at START with "failed to set up container networking:
+// driver failed programming external connectivity ...: unknown protocol"
+// (reproduced on a real engine) — the observer never started on a desktop
+// stand. No protocol still means tcp, and anything that is not a protocol
+// Docker publishes is refused here rather than by the engine.
+func TestCreateOptionsKeepThePortProtocol(t *testing.T) {
+	c := &Client{namespace: "prod"}
+	app := appdef.ApplicationDef{Name: "observer", Image: "citeck/observer:1", Ports: []string{
+		"17014:17014/udp", "17016:17016", "8080:80/TCP", "9000:9000/sctp",
+	}}
+
+	got, err := c.buildCreateOptions(context.Background(), app, "", ContainerCreateOpts{})
+	require.NoError(t, err)
+
+	want := map[string]string{"17014/udp": "17014", "17016/tcp": "17016", "80/tcp": "8080", "9000/sctp": "9000"}
+	require.Len(t, got.Config.ExposedPorts, len(want))
+	for port, host := range want {
+		p := network.MustParsePort(port)
+		assert.Contains(t, got.Config.ExposedPorts, p, port)
+		require.Contains(t, got.HostConfig.PortBindings, p, port)
+		assert.Equal(t, host, got.HostConfig.PortBindings[p][0].HostPort, port)
+	}
+	assert.Equal(t, network.UDP, network.MustParsePort("17014/udp").Proto())
+
+	for _, bad := range []string{"1:1/udp/tcp", "1:1/foo"} {
+		_, err := c.buildCreateOptions(context.Background(),
+			appdef.ApplicationDef{Name: "x", Image: "x:1", Ports: []string{bad}}, "", ContainerCreateOpts{})
+		assert.Error(t, err, bad)
+	}
 }
 
 // TestExtraHostsReachTheContainerAndNotTheNetwork pins the mechanism that
