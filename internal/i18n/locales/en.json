@@ -488,6 +488,7 @@
   "deps.msg.rabbit.deprecatedCheckFailed": "the deprecated-features check could not be run, so it is unknown whether any are still in use: {error}",
   "deps.msg.zk.dataTooOld": "ZooKeeper data written by {from} may predate zookeeper.snapshot.trust.empty, where a newer server can read an empty snapshot as valid state; the launcher will not move it. ZooKeeper holds the per-webapp patch-result markers and eproc's permanent mongo-disabled marker, so an empty tree that looks healthy is the worst outcome available. The namespace goes on running {from}.",
   "deps.msg.progress.waiting": "waiting for {what} in {container}",
+  "deps.msg.progress.optimizing": "waiting for Qdrant in {container} to finish optimizing: {collections}",
   "deps.msg.progress.pulling": "pulling {image}",
   "deps.msg.progress.starting": "starting {image}",
   "deps.msg.progress.copying": "copying {size}",

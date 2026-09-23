@@ -1140,6 +1140,12 @@ func (e *itEnv) seedQdrant(ctx context.Context, t *testing.T) {
 	for _, c := range itQdrantCollections {
 		e.qdrantSend(ctx, t, itSeedContainer, "PUT", "/collections/"+c.name,
 			fmt.Sprintf(`{"vectors":{"size":%d,"distance":"Cosine"}}`, c.size))
+		// A payload index, because that is what 1.16 moves out of RocksDB
+		// ("Migrating away from RocksDB indices for field `n`") and what 1.17
+		// can no longer read if it was left behind — a store without one would
+		// walk the ladder past the one boundary worth testing without touching it.
+		e.qdrantSend(ctx, t, itSeedContainer, "PUT", "/collections/"+c.name+"/index?wait=true",
+			`{"field_name":"n","field_schema":"integer"}`)
 		if c.points == 0 {
 			continue
 		}
@@ -1235,8 +1241,9 @@ cat <&3`
 // It also pins WHERE it fails, which is not where one would guess: an API key
 // does NOT close /readyz or /healthz (measured — they answer 200 with a key
 // set), so readiness is reached and the run dies at `pre-upgrade`, the step
-// that reads the "before" inventory off the old image. That is step 5 of 11,
-// before the new image has been started at all.
+// that first reads the store off the old image — the optimizer wait, then the
+// "before" inventory. That is step 5 of 11, before the new image has been
+// started at all.
 func TestIntegration_QdrantApiKeyFailsSafely(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), itTestBudget)
 	defer cancel()
@@ -1263,8 +1270,8 @@ func TestIntegration_QdrantApiKeyFailsSafely(t *testing.T) {
 	require.Error(t, runErr, "an API key the launcher does not send must not read as a healthy migration")
 
 	// Step 5 of 11, and the readiness wait before it PASSED: /readyz is open
-	// even with a key set, so the failure is the inventory read and nothing
-	// earlier. If this ever moves to start-old, the health endpoints have
+	// even with a key set, so the failure is the first read of the store (the
+	// optimizer wait's GET /collections) and nothing earlier. If this ever moves to start-old, the health endpoints have
 	// started requiring the key and the wait is what fails.
 	assert.Contains(t, runErr.Error(), "step pre-upgrade")
 	assert.Contains(t, steps, "start-old", "readiness was reached; an API key does not close /readyz")
@@ -1549,4 +1556,105 @@ func TestIntegration_QdrantLadder114To116(t *testing.T) {
 	}
 	assert.Contains(t, e.qdrantGET(ctx, t, itCheckContainer, "/aliases"),
 		`"alias_name":"`+itQdrantAlias+`"`, "the alias the RAG service addresses by did not survive")
+}
+
+// itQdrantBundleLadder is the ladder the 2026.3 enterprise bundle names under
+// `dependencies.qdrant.image`, with the pin every RAG stand in the field runs
+// (v1.14.1) at its foot: one rung per minor, each the LATEST patch of its
+// minor, which is what the vendor asks for on every intermediate step.
+var itQdrantBundleLadder = migrate.Path{
+	itQdrantFrom,
+	itQdrantTo,
+	"qdrant/qdrant:v1.16.3",
+	"qdrant/qdrant:v1.17.1",
+	"qdrant/qdrant:v1.18.3",
+	"qdrant/qdrant:v1.19.1",
+}
+
+// TestIntegration_QdrantBundleLadderCrossesTheRocksDBRemoval walks a real store
+// through the whole ladder a release bundle ships, and in particular across
+// 1.16 → 1.17: 1.16 moves the payload indices out of RocksDB into Gridstore
+// and 1.17 reads no RocksDB at all, so a node replaced before that move was
+// finished would leave a store the next rung refuses ("unsupported storage").
+// TestIntegration_QdrantLadder114To116 stops one minor short of that boundary.
+//
+// What it proves on real containers, beyond "every rung started": the
+// pre-upgrade wait ran before EVERY rung and let each one through (a wait that
+// hung on a grey collection, or failed on a real answer it could not read,
+// would fail this run), and the payload index still ANSWERS a filtered query
+// on the top of the ladder — the points surviving is not enough, since a
+// store whose index was lost in the move keeps every point.
+func TestIntegration_QdrantBundleLadderCrossesTheRocksDBRemoval(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), itTestBudget)
+	defer cancel()
+	e := newITEnvFor(t, deps.Qdrant, itQdrantFrom)
+	e.seedQdrant(ctx, t)
+
+	src := itVolumeOf(deps.Qdrant, 1)
+	before := e.volumeManifest(ctx, t, src)
+	require.NotEmpty(t, before)
+
+	pre := migrate.QdrantMigrator{ID: deps.Qdrant}.Preflight(ctx, e.env, itQdrantBundleLadder)
+	require.True(t, pre.OK, "preflight problems: %v", pre.Problems)
+
+	plan, journal, err := migrate.QdrantMigrator{ID: deps.Qdrant}.Plan(ctx, e.env, itQdrantBundleLadder, migrate.PlanOptions{})
+	require.NoError(t, err)
+	timer := newStepTimer()
+	started := time.Now()
+	runErr := migrate.Run(ctx, e.rt, journal, plan, timer.progress)
+	total := time.Since(started)
+	steps := timer.report(t)
+	require.NoError(t, runErr)
+	t.Logf("ladder migration %s -> %s took %s", itQdrantBundleLadder.From(), itQdrantBundleLadder.To(),
+		total.Round(time.Millisecond))
+
+	rungs := len(itQdrantBundleLadder) - 1
+	assert.Equal(t, rungs, itCountStep(steps, "pre-upgrade"), "the optimizer wait runs before every rung")
+	assert.Equal(t, rungs, itCountStep(steps, "start-new"), "every rung was started")
+	assert.Equal(t, 1, itCountStep(steps, "copy-volume"), "one copy, whatever the ladder's length")
+
+	st := e.rt.DependencyStates()[deps.Qdrant]
+	assert.Equal(t, itQdrantBundleLadder.To(), st.Image)
+	assert.Equal(t, 2, st.Gen(), "one generation, whatever the ladder's length")
+	last := e.rt.LastDependencyMigration()
+	require.NotNil(t, last)
+	assert.True(t, last.OK(), "verdict: %s", last.Error)
+	assert.Equal(t, before, e.volumeManifest(ctx, t, src), "the source volume was written to")
+
+	// --- the top of the ladder serves the data AND its index ----------------
+	def, err := e.env.GenerateDefFor(deps.Qdrant, deps.DependencyState{Image: itQdrantBundleLadder.To(), VolumeGen: 2})
+	require.NoError(t, err)
+	_, err = e.env.RunAppDef(ctx, def, deps.TempContainerOpts{Name: itCheckContainer})
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, e.env.StopRemove(context.Background(), itCheckContainer)) }()
+	e.waitQdrant(ctx, t, itCheckContainer)
+
+	assert.Contains(t, e.qdrantGET(ctx, t, itCheckContainer, "/"), `"version":"1.19.1"`)
+	docs := itQdrantCollections[0]
+	body := e.qdrantGET(ctx, t, itCheckContainer, "/collections/"+docs.name)
+	assert.Containsf(t, body, fmt.Sprintf(`"points_count":%d`, docs.points), "points lost: %s", body)
+	assert.Containsf(t, body, `"n":{"data_type":"integer"`, "the payload index did not survive: %s", body)
+	// The seed gives point i the payload n=i, so n >= 2 is every point but the first.
+	count := e.qdrantPOST(ctx, t, itCheckContainer, "/collections/"+docs.name+"/points/count",
+		`{"filter":{"must":[{"key":"n","range":{"gte":2}}]},"exact":true}`)
+	assert.Containsf(t, count, fmt.Sprintf(`"count":%d`, docs.points-1), "the filtered count is wrong: %s", count)
+	assert.Contains(t, e.qdrantGET(ctx, t, itCheckContainer, "/aliases"), `"alias_name":"`+itQdrantAlias+`"`)
+}
+
+// qdrantPOST performs one request with a JSON body and returns the response
+// body — qdrantSend's shape, for a query rather than a write.
+func (e *itEnv) qdrantPOST(ctx context.Context, t *testing.T, container, path, body string) string {
+	t.Helper()
+	script := `exec 3<>/dev/tcp/127.0.0.1/6333 || exit 1
+printf 'POST %s HTTP/1.0\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n%s' \
+  "$1" "${#2}" "$2" >&3
+IFS= read -r status <&3 || exit 1
+case "$status" in *' 200 '*) ;; *) printf '%s\n' "$status" >&2; exit 1 ;; esac
+while IFS= read -r line <&3; do [ "${line%$'\r'}" = "" ] && break; done
+cat <&3`
+	stdout, stderr, code, err := e.env.Exec(ctx, container,
+		[]string{"bash", "-c", script, "qdrant-post", path, body})
+	require.NoError(t, err)
+	require.Zerof(t, code, "POST %s: %s", path, stderr)
+	return stdout
 }

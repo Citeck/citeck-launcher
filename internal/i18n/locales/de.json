@@ -488,6 +488,7 @@
   "deps.msg.rabbit.deprecatedCheckFailed": "die Prüfung auf veraltete Funktionen konnte nicht ausgeführt werden, daher ist unbekannt, ob noch welche genutzt werden: {error}",
   "deps.msg.zk.dataTooOld": "von {from} geschriebene ZooKeeper-Daten können älter sein als zookeeper.snapshot.trust.empty, wodurch ein neuerer Server einen leeren Snapshot als gültigen Zustand lesen kann; der Launcher verschiebt sie nicht. ZooKeeper hält die Patch-Ergebnismarken jeder Webanwendung und die dauerhafte Marke von eproc für das abgeschaltete mongo, daher ist ein leerer Baum, der gesund aussieht, das schlechtestmögliche Ergebnis. Der Namespace läuft weiter mit {from}.",
   "deps.msg.progress.waiting": "warten auf {what} in {container}",
+  "deps.msg.progress.optimizing": "warten, bis Qdrant in {container} die Optimierung abgeschlossen hat: {collections}",
   "deps.msg.progress.pulling": "{image} wird geladen",
   "deps.msg.progress.starting": "{image} wird gestartet",
   "deps.msg.progress.copying": "{size} werden kopiert",

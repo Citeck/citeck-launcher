@@ -2,8 +2,11 @@ package migrate
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
+
+	"github.com/citeck/citeck-launcher/internal/msg"
 )
 
 // The readiness discipline the copy-upgrade migrators share.
@@ -35,7 +38,37 @@ func waitForReady(
 	ctx context.Context, env Env, container, what string,
 	p StepProgress, answers func(context.Context) bool,
 ) error {
-	deadline := time.Now().Add(copyReadyTimeout)
+	err := pollUntil(ctx, env, container, copyReadyTimeout, copyReadyPoll,
+		func() msg.Message { return progressWaiting(what, container) },
+		func(ctx context.Context) (bool, error) { return answers(ctx), nil },
+		p)
+	if errors.Is(err, errPollDeadline) {
+		return fmt.Errorf("%s in %s did not become ready within %s", what, container, copyReadyTimeout)
+	}
+	return err
+}
+
+// errPollDeadline is what pollUntil answers when its deadline passes. Each
+// caller words its own timeout, because only the caller knows what it was
+// waiting FOR.
+var errPollDeadline = errors.New("deadline passed")
+
+// pollUntil is the one poll loop the copy-upgrade waits share: it asks check
+// until it answers done, answers an error, the container dies, the deadline
+// passes or the context is canceled.
+//
+// check's error ends the wait at once — that is how a wait tells "not there
+// yet" from "it will never get there" (a Qdrant collection whose optimizer
+// reports an error is not going to settle by being asked again). waiting is
+// the progress line reported between two polls; it is a function so it can
+// name what the last check found.
+func pollUntil(
+	ctx context.Context, env Env, container string, timeout, every time.Duration,
+	waiting func() msg.Message,
+	check func(context.Context) (done bool, err error),
+	p StepProgress,
+) error {
+	deadline := time.Now().Add(timeout)
 	for {
 		running, err := env.ContainerRunning(ctx, container)
 		if err != nil {
@@ -44,17 +77,21 @@ func waitForReady(
 		if !running {
 			return fmt.Errorf("container %s is not running", container)
 		}
-		if answers(ctx) {
+		done, err := check(ctx)
+		if err != nil {
+			return err
+		}
+		if done {
 			return nil
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("%s in %s did not become ready within %s", what, container, copyReadyTimeout)
+			return errPollDeadline
 		}
-		p(0, progressWaiting(what, container))
+		p(0, waiting())
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("waiting for %s: %w", container, ctx.Err())
-		case <-time.After(copyReadyPoll):
+		case <-time.After(every):
 		}
 	}
 }

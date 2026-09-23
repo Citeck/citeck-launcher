@@ -103,12 +103,13 @@ func TestQdrantPreflightRefusesAMissingSourceVolume(t *testing.T) {
 	assert.Contains(t, joinEN(res.Problems), "qdrant2")
 }
 
-// Qdrant has no pre/post-upgrade work: starting the new image on the copy IS
-// the upgrade, because Qdrant migrates its own storage on boot. Inventing a
-// hook here would be a progress line for work that does not exist.
-func TestQdrantHasNoUpgradeHooks(t *testing.T) {
+// Qdrant has no post-upgrade work: starting the new image on the copy IS the
+// upgrade, because Qdrant migrates its own storage on boot. Its one
+// pre-upgrade hook is a WAIT — a node is replaced only once its optimizers
+// have settled (qdrant_optimizers_test.go).
+func TestQdrantWaitsBeforeEachRungAndHasNoPostUpgradeWork(t *testing.T) {
 	spec := qdrantCopySpec(deps.Qdrant)
-	assert.Nil(t, spec.PreUpgrade)
+	require.NotNil(t, spec.PreUpgrade, "a node is replaced only once its optimizers have settled")
 	assert.Nil(t, spec.PostUpgrade)
 	// And no node identity to pin. Unlike RabbitMQ — whose data path CONTAINS
 	// its node name, so a temp container under an override name boots a fresh

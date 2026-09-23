@@ -488,6 +488,7 @@
   "deps.msg.rabbit.deprecatedCheckFailed": "已弃用特性检查无法执行，因此不清楚是否仍有此类特性在使用：{error}",
   "deps.msg.zk.dataTooOld": "由 {from} 写入的 ZooKeeper 数据可能早于 zookeeper.snapshot.trust.empty，在这种情况下较新的服务器会把空快照当作有效状态读取；启动器不会迁移这些数据。ZooKeeper 保存着每个 Web 应用的补丁结果标记以及 eproc 永久性的 mongo 关闭标记，因此一棵看起来正常的空树是最糟糕的结果。命名空间继续运行 {from}。",
   "deps.msg.progress.waiting": "正在等待 {container} 中的 {what}",
+  "deps.msg.progress.optimizing": "正在等待 {container} 中的 Qdrant 完成优化：{collections}",
   "deps.msg.progress.pulling": "正在拉取 {image}",
   "deps.msg.progress.starting": "正在启动 {image}",
   "deps.msg.progress.copying": "正在复制 {size}",

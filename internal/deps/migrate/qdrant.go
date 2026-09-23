@@ -100,9 +100,11 @@ func (m QdrantMigrator) Plan(ctx context.Context, env Env, path Path, opts PlanO
 
 // qdrantCopySpec is everything the shared plan does not know about Qdrant.
 //
-// There are no pre- or post-upgrade hooks: starting the new image on the copy
-// IS the upgrade — Qdrant migrates its own storage on boot — so a hook here
-// would be a progress line for work that does not exist.
+// Starting the new image on the copy IS the upgrade — Qdrant migrates its own
+// storage on boot — so there is no post-upgrade work. The one pre-upgrade hook
+// is a wait, not work: a node is replaced by the next rung only once none of
+// its collections is optimizing or reports an optimizer error (see
+// waitForQdrantOptimizers).
 //
 // There is no node identity to pin either, and that is worth stating because
 // RabbitMQ's spec sits beside this one: a single-node Qdrant records no
@@ -115,9 +117,10 @@ func (m QdrantMigrator) Plan(ctx context.Context, env Env, path Path, opts PlanO
 // container to reproduce.
 func qdrantCopySpec(id deps.ID) CopySpec {
 	return CopySpec{
-		ID:        id,
-		WaitReady: waitForQdrant,
-		Inventory: readQdrantInventory,
+		ID:         id,
+		WaitReady:  waitForQdrant,
+		PreUpgrade: waitForQdrantOptimizers,
+		Inventory:  readQdrantInventory,
 	}
 }
 
