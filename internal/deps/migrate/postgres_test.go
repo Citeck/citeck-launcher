@@ -243,6 +243,17 @@ func TestPreflightProblems(t *testing.T) {
 		assert.False(t, res.OK)
 		assert.Contains(t, joinEN(res.Problems), "PG_VERSION")
 	})
+	// The source volume gone (deleted from the Volumes page) is ONE problem in
+	// the same words the copy plans use — not a failed PG_VERSION read plus a
+	// failed free-space measurement, both naming a volume that is simply absent.
+	t.Run("source volume missing", func(t *testing.T) {
+		env := envWith17Data()
+		delete(env.Volumes, oldVol)
+		res := PostgresMigrator{ID: deps.Postgres}.Preflight(ctx, env, Path{from17, to18})
+		assert.False(t, res.OK)
+		require.Len(t, res.Problems, 1, joinEN(res.Problems))
+		assert.Equal(t, "deps.msg.volume.sourceMissing", res.Problems[0].Key)
+	})
 	t.Run("no space on host", func(t *testing.T) {
 		env := envWith17Data()
 		env.FreeHost = 1 << 30

@@ -61,6 +61,15 @@ type GenerateOpts struct {
 	// (Runtime.DependencyStates). Nil for a namespace with no data yet, which
 	// generates generation 1 — the volume every namespace has always used.
 	DependencyStates map[deps.ID]deps.DependencyState
+	// DatalessDependencies names the pinned dependencies whose data the daemon
+	// PROVED is not there: no container, and the data volume of the pinned
+	// generation answered "absent" without an error. A pin protects data; with
+	// none to protect it holds nothing back, so the bundle image applies and no
+	// upgrade is offered, while the generation is kept (the fresh volume goes
+	// where the pin says the data lives, never onto an older one a migration
+	// retained). The pin itself is not rewritten here — the RUNNING re-pin moves
+	// its image once the container is up. Nil releases nothing.
+	DatalessDependencies map[deps.ID]bool
 	// NamespaceSecrets are this namespace's secret values, id -> value: what
 	// `${secret:<id>}` resolves to. The daemon seeds them from the workspace
 	// `secrets:` defaults and reads them back from the namespace's own storage
@@ -147,6 +156,7 @@ func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secre
 		ctx.DiskContent = opts[0].DiskContent
 		ctx.EditedAppPatches = opts[0].EditedAppPatches
 		ctx.DependencyStates = opts[0].DependencyStates
+		ctx.DatalessDependencies = opts[0].DatalessDependencies
 		ctx.NamespaceSecrets = opts[0].NamespaceSecrets
 	}
 

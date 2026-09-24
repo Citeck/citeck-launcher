@@ -125,6 +125,20 @@ func (m PostgresMigrator) Preflight(ctx context.Context, env Env, route Path) Pr
 	oldLayout := deps.PostgresLayoutFor(fromV.Major)
 	newLayout := deps.PostgresLayoutFor(toV.Major)
 
+	// The source volume's existence first, in the copy plans' words: with it
+	// gone (deleted from the Volumes page) there is no data to migrate, and
+	// the version read and the free-space measurement below would each fail
+	// on it with an error that names the volume without saying why.
+	exists, err := env.VolumeExists(ctx, srcVolume)
+	switch {
+	case err != nil:
+		res.Problems = append(res.Problems, VolumeCheckProblem(srcVolume, err))
+		return res
+	case !exists:
+		res.Problems = append(res.Problems,
+			msg.New("deps.msg.volume.sourceMissing", "volume", srcVolume, "id", string(m.ID)))
+		return res
+	}
 	res.checkDataVersion(ctx, env, oldLayout, srcVolume, fromV.Major, from)
 	res.checkSpace(ctx, env, srcVolume)
 	res.checkExistingTarget(ctx, env, dstVolume, newLayout.PGVersionRel)

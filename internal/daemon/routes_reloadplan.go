@@ -140,6 +140,12 @@ func (d *Daemon) resolveReloadPlanInputs(act activeNamespace) (*reloadPlanInputs
 	// Without them the plan would generate the bundle's candidate images and
 	// report a recreate of every dependency a real reload would hold back.
 	genOpts.DependencyStates = act.runtime.DependencyStates()
+	// The same release the real reload applies, or the plan would report a
+	// hold (and no recreate) for a dependency whose data is gone.
+	genOpts.DatalessDependencies = datalessPins(d.bgCtx, genOpts.DependencyStates,
+		dockerDependencyProbe{dc: depsDockerOf(act.dockerClient), volumesBase: act.volumesBase},
+		namespaceDependencies(nsCfg, resolveResult.Bundle, resolveResult.Workspace),
+		act.runtime.MigrationJournal() != nil)
 	genOpts.SecretReader = d.nsSecretReader()
 	genOpts.DetachedApps = act.runtime.ManualStoppedApps()
 	fileEdits := act.runtime.FileEditsSnapshot()

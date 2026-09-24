@@ -126,9 +126,12 @@ type NsGenContext struct {
 	// DependencyUpgrades / DependencyImages are filled by
 	// resolveDependencyImage, the volume by resolveDependencyVolume. See
 	// internal/deps and generator_deps.go.
-	DependencyStates   map[deps.ID]deps.DependencyState
-	DependencyUpgrades []DependencyUpgrade
-	DependencyImages   map[deps.ID]DependencyGen
+	DependencyStates map[deps.ID]deps.DependencyState
+	// DatalessDependencies: pinned dependencies with provably no data (see
+	// GenerateOpts.DatalessDependencies) — their pin holds nothing back.
+	DatalessDependencies map[deps.ID]bool
+	DependencyUpgrades   []DependencyUpgrade
+	DependencyImages     map[deps.ID]DependencyGen
 	// DependencyErrors accumulates errors discovered while generating individual
 	// apps (currently: a webapp configured to depend on itself). Generate returns
 	// the first one after all generators have run.

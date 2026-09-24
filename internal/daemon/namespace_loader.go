@@ -310,7 +310,7 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 		WithWorkspaceRepo(lookupWorkspaceRepoOpts(in.Store, in.SecretService, wsID)).
 		WithWorkspaceOverlay(workspaceConfigOverlay(in.Store, wsID)).
 		WithLauncherVersion(in.LauncherVersion)
-	// Server mode: never auto-pull git repos (use 'citeck workspace update' for manual sync).
+	// Server mode: never auto-pull git repos (use 'citeck update' for manual sync).
 	// Desktop mode: auto-pull with throttling. --offline flag: skip git entirely.
 	if in.Offline || !config.IsDesktopMode() {
 		resolver.SetOffline(true)
@@ -490,6 +490,10 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 
 	var genOpts namespace.GenerateOpts
 	genOpts.DependencyStates = pins
+	genOpts.DatalessDependencies = datalessPins(in.context(), persistedPins,
+		dockerDependencyProbe{dc: depsDockerOf(dc), volumesBase: volumesBase},
+		namespaceDependencies(nsCfg, bundleDef, wsCfg),
+		persistedState != nil && persistedState.DependencyMigration != nil)
 	genOpts.SecretReader = &secretReaderAdapter{svc: in.SecretService}
 	// User-added licenses: locked SecretService yields nil and the generator
 	// falls back to workspace-only licenses — never aborts startup.

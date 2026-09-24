@@ -444,6 +444,13 @@ func TestPinsAreWiredIntoEveryGenerateCallSite(t *testing.T) {
 			ok, why := assignsFieldFrom(fn, "genOpts", "DependencyStates", c.wantSource)
 			assert.True(t, ok,
 				"%s must assign genOpts.DependencyStates from %s(...): %s", c.fn, c.wantSource, why)
+			// And every path must tell the generator which pins have no data
+			// left, or a namespace whose volumes were deleted keeps offering an
+			// upgrade whose migration refuses (the plan too: it would report a
+			// hold the real reload does not make).
+			ok, why = assignsFieldFrom(fn, "genOpts", "DatalessDependencies", "datalessPins")
+			assert.True(t, ok,
+				"%s must assign genOpts.DatalessDependencies from datalessPins(...): %s", c.fn, why)
 			if c.fn == "loadNamespace" {
 				// SetDependencyState persists, and persistState writes
 				// Status: r.status — STOPPED at load time, before the caller

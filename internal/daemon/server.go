@@ -778,6 +778,10 @@ func (d *Daemon) doReloadEx(forceGitPull, startNotRegenerate, refreshImages bool
 
 	var genOpts namespace.GenerateOpts
 	genOpts.DependencyStates = pins
+	genOpts.DatalessDependencies = datalessPins(d.bgCtx, pins,
+		dockerDependencyProbe{dc: depsDockerOf(act.dockerClient), volumesBase: act.volumesBase},
+		namespaceDependencies(nsCfg, resolveResult.Bundle, resolveResult.Workspace),
+		act.runtime.MigrationJournal() != nil)
 	genOpts.SecretReader = d.nsSecretReader()
 	genOpts.DetachedApps = act.runtime.ManualStoppedApps()
 	if d.secretService != nil {

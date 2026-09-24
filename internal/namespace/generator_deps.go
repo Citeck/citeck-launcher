@@ -106,6 +106,14 @@ func resolveDependencyImage(ctx *NsGenContext, id deps.ID, chain []string) strin
 	// its own arm here — and a dependency absent from the map reads as the zero
 	// DependencyState, whose image is exactly that empty string.
 	pinned := ctx.DependencyStates[id].Image
+	if pinned != "" && ctx.DatalessDependencies[id] && deps.Breaking(d, pinned, candidate) {
+		// The pin names a version its data ran on, and that data is gone:
+		// nothing is left for the hold to protect. The generation is kept by
+		// resolveDependencyVolume, which reads the pin, not this image.
+		slog.Info("Dependency pin has no data left; the bundle image applies",
+			"dependency", id, "pinned", pinned, "candidate", candidate)
+		pinned = ""
+	}
 	if pinned == "" || !deps.Breaking(d, pinned, candidate) {
 		ctx.DependencyImages[id] = DependencyGen{Effective: candidate, Candidate: candidate}
 		return candidate
