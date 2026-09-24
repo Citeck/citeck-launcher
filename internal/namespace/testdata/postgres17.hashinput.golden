@@ -2,7 +2,7 @@ name=postgres
 image=postgres:17.5
 cmd=-c config_file=/etc/postgresql/postgresql.conf
 shmSize=128m
-vch=UB4hb9eeCjs
+vch=9OZ56xFG3DU
 env:CITECK_EXPORT_DIR=/citeck/export
 env:PGDATA=/var/lib/postgresql/data
 env:POSTGRES_PASSWORD=postgres
