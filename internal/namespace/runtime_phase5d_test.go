@@ -55,10 +55,16 @@ func TestStoppingFailedSelfHeal(t *testing.T) {
 	}
 }
 
-// TestStoppingFailedDetachedNotHealed pins that a DETACHED app
-// (manualStoppedApps) in STOPPING_FAILED is never recreated by T31 — operator
-// intent to stop wins, even with the backoff window long elapsed.
-func TestStoppingFailedDetachedNotHealed(t *testing.T) {
+// TestStoppingFailedDetachedFinishesTheStop pins what happens to an app the
+// OPERATOR stopped whose stop timed out: it is never recreated (the stop intent
+// wins), but the stop itself is retried after the same backoff, so the app
+// reaches STOPPED instead of sitting in STOPPING_FAILED for good. Field case
+// (2026-09-24): rag outlived the stop budget, Docker still removed the
+// container, the late result was dropped, and the app stayed "stop failed"
+// with the id of a container that no longer existed (its logs answered 500).
+// Removing a container that is already gone is a success, so the retry
+// settles it.
+func TestStoppingFailedDetachedFinishesTheStop(t *testing.T) {
 	md := newMockDocker()
 	r := NewRuntime(testConfig(), md, t.TempDir())
 	defer r.Shutdown()
@@ -69,21 +75,31 @@ func TestStoppingFailedDetachedNotHealed(t *testing.T) {
 		t.Fatalf("app did not reach RUNNING for setup")
 	}
 
-	// Detached + STOPPING_FAILED, backoff long elapsed. T31 must still skip it.
+	// Detached + STOPPING_FAILED, inside the backoff window: nothing yet.
 	r.mu.Lock()
 	app := r.apps[def.Name]
 	r.manualStoppedApps[def.Name] = true
 	r.setAppStatus(app, AppStatusStoppingFailed)
-	r.retryState = map[string]retryInfo{
-		def.Name: {count: 1, lastAttempt: time.Now().Add(-20 * time.Minute)},
-	}
+	r.retryState = map[string]retryInfo{def.Name: {count: 1, lastAttempt: time.Now()}}
 	r.mu.Unlock()
 	r.signalCh.Flush()
-
 	assert.Never(t, func() bool {
 		return r.FindApp(def.Name).Status != AppStatusStoppingFailed
-	}, 1500*time.Millisecond, 50*time.Millisecond,
-		"T31 recreated a detached app — operator stop intent must win")
+	}, 1000*time.Millisecond, 50*time.Millisecond, "the retry must wait for the backoff")
+
+	// Past the window: the stop is retried and the app ends STOPPED — never
+	// RUNNING, never recreated.
+	r.mu.Lock()
+	r.retryState[def.Name] = retryInfo{count: 1, lastAttempt: time.Now().Add(-20 * time.Minute)}
+	r.mu.Unlock()
+	r.signalCh.Flush()
+	if !waitForAppStatus(r, def.Name, AppStatusStopped, 10*time.Second) {
+		t.Fatalf("a detached app in STOPPING_FAILED must finish its stop: stuck at %s", r.FindApp(def.Name).Status)
+	}
+	assert.Never(t, func() bool {
+		return r.FindApp(def.Name).Status != AppStatusStopped
+	}, 1000*time.Millisecond, 50*time.Millisecond, "a detached app must never be brought back up")
+	assert.Empty(t, r.FindApp(def.Name).ContainerID, "the stale container id must be cleared")
 }
 
 // TestSelfHealReusesLocalImageNoPull pins that a T31 self-heal recreates from

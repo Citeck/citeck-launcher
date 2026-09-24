@@ -123,31 +123,29 @@ func TestInitialSweepUsesLongerTimeout(t *testing.T) {
 	// T23 per-app budget for non-initialSweep = resolveStopTimeout + groupTimeout.
 	// With groupTimeout=1s and no app-level StopTimeout (resolves to
 	// defaultStopTimeout=1), budget = 1s + 1s = 2s. stopDelay=3s > budget
-	// → T23 fires → STOPPING_FAILED.
+	// → T23 fires. A stop that outlives its window is FINISHED by force — the
+	// container is removed (SIGKILL + remove) and the app lands STOPPED, which
+	// is what the operator asked for; STOPPING_FAILED is left for a force
+	// remove that fails too (TestAStopWhoseForceRemoveAlsoHangsFails).
+	md.mu.Lock()
+	removesBefore := len(md.removedContainerIDs)
+	md.mu.Unlock()
 
 	require.NoError(t, r.StopApp(def.Name))
 
-	// Wait for T23 to fire. Budget is 1s, tick period 1s, so expect
-	// STOPPING_FAILED around ~2–3s. Give 5s headroom.
-	deadline = time.Now().Add(5 * time.Second)
-	var stoppingFailed bool
-	for time.Now().Before(deadline) {
-		app := r.FindApp(def.Name)
-		if app != nil && app.Status == AppStatusStoppingFailed {
-			stoppingFailed = true
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	if !stoppingFailed {
+	if !waitForAppStatus(r, def.Name, AppStatusStopped, 6*time.Second) {
 		app := r.FindApp(def.Name)
 		status := "nil"
 		if app != nil {
 			status = string(app.Status)
 		}
-		t.Fatalf("operator-initiated StopApp did NOT route to STOPPING_FAILED under per-app budget (got %s); "+
-			"budget=resolveStopTimeout+groupTimeout = 1s+1s = 2s; stopDelay=3s should exceed it", status)
+		t.Fatalf("a stop that outlived its budget must end STOPPED by a forced remove (got %s); "+
+			"budget=resolveStopTimeout+groupTimeout = 1s+1s = 2s; stopDelay=3s exceeds it", status)
 	}
+	md.mu.Lock()
+	removesAfter := len(md.removedContainerIDs)
+	md.mu.Unlock()
+	assert.Greater(t, removesAfter, removesBefore, "the timeout must remove the container by force")
 
 	// ----- Sanity: make sure we haven't deadlocked the runtime by shutting down.
 	// Clear the delay so the deferred Shutdown() path doesn't hang on
@@ -272,4 +270,34 @@ func TestStopAppDuringInitialSweepDetaches(t *testing.T) {
 		"manualStoppedApps must persist across T21 (detach intent survives)")
 	assert.Equal(t, AppRuntimeStatus(""), finalDesired,
 		"desiredNext must be cleared after T21 honored manualStoppedApps")
+}
+
+// TestAStopWhoseForceRemoveAlsoHangsFails pins the one case STOPPING_FAILED is
+// still for: the stop outlived its window AND the forced remove that follows
+// did not finish either (a Docker that stopped answering). Then the launcher
+// cannot say the container is gone, and says so.
+func TestAStopWhoseForceRemoveAlsoHangsFails(t *testing.T) {
+	md := newMockDocker()
+	r := NewRuntime(testConfig(), md, t.TempDir())
+	r.groupTimeout = 1 * time.Second
+	r.defaultStopTimeout = 1
+	defer r.Shutdown()
+
+	def := simpleApp("postgres", "postgres:17")
+	r.Start([]appdef.ApplicationDef{def}, false)
+	require.True(t, waitForAppStatus(r, def.Name, AppStatusRunning, 10*time.Second))
+
+	stopBlock, removeBlock := make(chan struct{}), make(chan struct{})
+	defer close(stopBlock)
+	defer close(removeBlock)
+	md.mu.Lock()
+	md.stopBlock = stopBlock
+	md.removeBlock = removeBlock
+	md.mu.Unlock()
+
+	require.NoError(t, r.StopApp(def.Name))
+	if !waitForAppStatus(r, def.Name, AppStatusStoppingFailed, 10*time.Second) {
+		t.Fatalf("a stop whose forced remove also hangs must end STOPPING_FAILED, got %s", r.FindApp(def.Name).Status)
+	}
+	assert.Equal(t, "stop timeout", r.FindApp(def.Name).StatusText)
 }

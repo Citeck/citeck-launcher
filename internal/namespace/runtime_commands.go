@@ -495,7 +495,7 @@ func (r *Runtime) StopApp(appName string) error { //nolint:gocyclo // single-pas
 		r.dispatcher.CancelApp(appName, workers.CancelStopApp, workers.OpStop)
 		app.desiredNext = ""
 		app.initialSweep = false
-		app.stoppingStartedAt = r.nowFunc()
+		app.beginStopWindow(r.nowFunc())
 		r.setAppStatus(app, AppStatusStopping)
 		plan = r.makeStartingStopPlan(appName, stopTimeout)
 		dispatchStop = true
@@ -505,7 +505,7 @@ func (r *Runtime) StopApp(appName string) error { //nolint:gocyclo // single-pas
 		r.dispatcher.CancelApp(appName, workers.CancelStopApp, workers.OpStop)
 		app.desiredNext = ""
 		app.initialSweep = false
-		app.stoppingStartedAt = r.nowFunc()
+		app.beginStopWindow(r.nowFunc())
 		r.setAppStatus(app, AppStatusStopping)
 		plan = r.makeStopPlan(appName, containerName, stopTimeout)
 		dispatchStop = true
@@ -591,7 +591,7 @@ func (r *Runtime) StartApp(appName string) error {
 		delete(r.manualStoppedApps, appName)
 		app.desiredNext = AppStatusReadyToPull
 		app.initialSweep = false
-		app.stoppingStartedAt = r.nowFunc()
+		app.beginStopWindow(r.nowFunc())
 		r.setAppStatus(app, AppStatusUpdating)
 		stopTimeout := r.resolveStopTimeout(app.Def.StopTimeout)
 		containerName := r.docker.ContainerName(appName)
@@ -748,7 +748,7 @@ func (r *Runtime) RestartApp(appName string) error { //nolint:gocyclo // single-
 		r.dispatcher.CancelApp(appName, workers.CancelStopApp, workers.OpStop)
 		app.desiredNext = AppStatusReadyToPull
 		app.initialSweep = false
-		app.stoppingStartedAt = r.nowFunc()
+		app.beginStopWindow(r.nowFunc())
 		containerID := app.ContainerID
 		r.setAppStatus(app, AppStatusUpdating)
 		// RestartApp clears manualStoppedApps (re-attach) — durable intent.

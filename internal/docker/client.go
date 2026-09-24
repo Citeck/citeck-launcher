@@ -749,11 +749,18 @@ func (c *Client) RemoveContainer(ctx context.Context, id string) error {
 	return nil
 }
 
+// DefaultStopTimeoutSec is the SIGTERM→SIGKILL window StopAndRemoveContainer
+// gives a container when the caller names none. It is exported because the
+// runtime's stop watchdog (T23) budgets FROM it: the two once disagreed (15s
+// here, 10s assumed there), so a JVM that ignored SIGTERM was killed and
+// removed only after the watchdog had already declared the stop failed.
+const DefaultStopTimeoutSec = 15
+
 // StopAndRemoveContainer stops and removes a container by name.
 // timeoutSec is the stop timeout in seconds; 0 uses default (15s).
 func (c *Client) StopAndRemoveContainer(ctx context.Context, name string, timeoutSec int) error {
 	if timeoutSec <= 0 {
-		timeoutSec = 15
+		timeoutSec = DefaultStopTimeoutSec
 	}
 	if err := c.StopContainer(ctx, name, timeoutSec); err != nil {
 		slog.Debug("stop container", "name", name, "err", err)

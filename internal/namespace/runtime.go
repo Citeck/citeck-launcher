@@ -135,10 +135,14 @@ type AppRuntime struct {
 	desiredNext       AppRuntimeStatus // T17a/T30/cmdRestartApp restart routing via T21.
 	initialSweep      bool             // set for stale-container sweep and reload-changed-hash recreate; tickUnderLock picks longStopTimeout when true.
 	markedForRemoval  bool             // set by cmdRegenerate for apps removed from the desired set; stepAllApps T32 deletes the entry once STOPPED.
-	stoppingStartedAt time.Time        // set on STOPPING transition; tick() T23 budget enforcement.
-	initStepIdx       int              // ephemeral: current init-container index during STARTING (init phase).
-	initActive        bool             // ephemeral: true while the init-container phase of STARTING is in flight. Set in beginStartingUnderLock, cleared at T12 (last init done) and by setAppStatus when the app leaves STARTING. Gates the AppDto init-progress fields.
-	reuseLocalImage   bool             // set by liveness-restart (T17a) / self-heal (T31): suppress the snapshot force-pull on the next READY_TO_PULL so a restart reuses the local image (no silent version drift, no pull failure). Consumed + cleared in T2. Mirrors Kotlin 1.x pullIfPresent=false.
+	stoppingStartedAt time.Time        // set by beginStopWindow when a stop is dispatched; tick() T23 budget enforcement.
+	// stopForced: T23 already answered this stop's timeout with a forced
+	// remove, so the next timeout is a real failure. Reset by beginStopWindow
+	// whenever a new stop is dispatched.
+	stopForced      bool
+	initStepIdx     int  // ephemeral: current init-container index during STARTING (init phase).
+	initActive      bool // ephemeral: true while the init-container phase of STARTING is in flight. Set in beginStartingUnderLock, cleared at T12 (last init done) and by setAppStatus when the app leaves STARTING. Gates the AppDto init-progress fields.
+	reuseLocalImage bool // set by liveness-restart (T17a) / self-heal (T31): suppress the snapshot force-pull on the next READY_TO_PULL so a restart reuses the local image (no silent version drift, no pull failure). Consumed + cleared in T2. Mirrors Kotlin 1.x pullIfPresent=false.
 }
 
 // EventCallback is called when namespace or app state changes.
@@ -191,7 +195,7 @@ type Runtime struct {
 	reconcilerCfg         *ReconcilerConfig                // optional override from daemon.yml
 	reconcilerEnabled     bool                             // gate for reconcile-diff dispatch from tickUnderLock; default true, flipped by SetReconcilerConfig when daemon.yml sets reconciler.enabled: false.
 	livenessEnabled       bool                             // gate for per-app liveness probe dispatch from tickUnderLock; default true, flipped by SetReconcilerConfig when daemon.yml sets reconciler.livenessEnabled: false.
-	defaultStopTimeout    int                              // from daemon.yml docker.stopTimeout; 0 = Docker's own 10s SIGTERM→SIGKILL default applies (see tickUnderLock T23)
+	defaultStopTimeout    int                              // from daemon.yml docker.stopTimeout; 0 = docker.DefaultStopTimeoutSec (15s) SIGTERM→SIGKILL window applies (see tickUnderLock T23)
 	teardownOnce          sync.Once                        // guards shutdownAfter (full teardown path)
 	signalOnce            sync.Once                        // guards signalShutdown (close shutdownComplete)
 	// detaching is set by doDetach BEFORE CancelAll(CancelDetach). It fences
@@ -357,9 +361,9 @@ func (r *Runtime) SetDefaultStopTimeout(seconds int) {
 // per-app StopTimeout if set, otherwise the runtime's defaultStopTimeout.
 // Centralizes the fallback logic used by StopApp / RestartApp / doStart
 // stale-sweep / reconciler / beginGroupStopUnderLock.
-// Returns 0 when neither appdef nor daemon.yml configure one — Docker
-// applies its own 10s default in that case. T23 accounts for this via the
-// dockerDefaultStop constant in tickUnderLock.
+// Returns 0 when neither appdef nor daemon.yml configure one —
+// StopAndRemoveContainer then applies docker.DefaultStopTimeoutSec, and T23
+// budgets from the same constant in tickUnderLock.
 func (r *Runtime) resolveStopTimeout(appStopTimeout int) int {
 	if appStopTimeout > 0 {
 		return appStopTimeout

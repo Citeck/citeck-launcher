@@ -486,7 +486,7 @@ func (r *Runtime) doRegenerate(apps []appdef.ApplicationDef, refreshImages bool)
 			r.dispatcher.CancelApp(existing.Name, workers.CancelExternalStop, workers.OpStop)
 			existing.desiredNext = AppStatusReadyToPull
 			existing.initialSweep = true
-			existing.stoppingStartedAt = now
+			existing.beginStopWindow(now)
 			r.setAppStatus(existing, AppStatusUpdating)
 			stopTimeout := r.resolveStopTimeout(existing.Def.StopTimeout)
 			containerName := r.docker.ContainerName(existing.Name)
@@ -512,7 +512,7 @@ func (r *Runtime) doRegenerate(apps []appdef.ApplicationDef, refreshImages bool)
 		app.desiredNext = ""
 		app.initialSweep = false
 		if app.ContainerID != "" {
-			app.stoppingStartedAt = now
+			app.beginStopWindow(now)
 			r.dispatcher.CancelApp(name, workers.CancelExternalStop, workers.OpStop)
 			r.setAppStatus(app, AppStatusStopping)
 			stopTimeout := r.resolveStopTimeout(app.Def.StopTimeout)
@@ -634,7 +634,7 @@ func (r *Runtime) beginGroupStopUnderLock(group []*AppRuntime) []dispatchPlan {
 		case AppStatusRunning, AppStatusFailed, AppStatusStartFailed:
 			// T20: main container exists; dispatch stopContainer by name.
 			app.desiredNext = ""
-			app.stoppingStartedAt = now
+			app.beginStopWindow(now)
 			app.initialSweep = false
 			r.setAppStatus(app, AppStatusStopping)
 			r.dispatcher.CancelApp(app.Name, workers.CancelExternalStop, workers.OpStop)
@@ -642,7 +642,7 @@ func (r *Runtime) beginGroupStopUnderLock(group []*AppRuntime) []dispatchPlan {
 			plans = append(plans, r.makeStopPlan(app.Name, containerName, r.resolveStopTimeout(app.Def.StopTimeout)))
 		case AppStatusStarting:
 			app.desiredNext = ""
-			app.stoppingStartedAt = now
+			app.beginStopWindow(now)
 			app.initialSweep = false
 			r.setAppStatus(app, AppStatusStopping)
 			r.dispatcher.CancelApp(app.Name, workers.CancelExternalStop, workers.OpStop)
@@ -656,7 +656,7 @@ func (r *Runtime) beginGroupStopUnderLock(group []*AppRuntime) []dispatchPlan {
 			// Fresh T20: re-attempt stopContainer. The new Dispatch supersedes
 			// any stale slot via attemptID bump.
 			app.desiredNext = ""
-			app.stoppingStartedAt = now
+			app.beginStopWindow(now)
 			app.initialSweep = false
 			r.setAppStatus(app, AppStatusStopping)
 			containerName := r.docker.ContainerName(app.Name)

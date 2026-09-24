@@ -304,6 +304,15 @@ func (r *Runtime) setStatus(s NsRuntimeStatus) {
 	r.dirty.Store(true)
 }
 
+// beginStopWindow starts a fresh T23 window for a stop that is being
+// dispatched now. Every site that dispatches a stop calls it; a status relabel
+// of a stop already in flight (UPDATING <-> STOPPING in StopApp, RestartApp,
+// Shutdown) does not, so a forced remove in flight keeps its short budget.
+func (app *AppRuntime) beginStopWindow(now time.Time) {
+	app.stoppingStartedAt = now
+	app.stopForced = false
+}
+
 // setAppStatus must be called with r.mu held. Mutates app.Status, buffers an
 // app_status SSE event, and flushes signalCh so runtimeLoop wakes within
 // ≤100ms to run updateNsStatus + flushEvents.

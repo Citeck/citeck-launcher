@@ -50,14 +50,23 @@ func TestStopGroupTimeoutProceedsToNextGroup(t *testing.T) {
 	// After startup, wedge stopContainer so the graceful groups can't
 	// complete. Install the block AFTER RUNNING so runStartTask's best-effort
 	// pre-create cleanup isn't affected.
+	// The forced remove T23 answers a timeout with is wedged too: a stop only
+	// FAILS when that hangs as well, and a failed stop is what this test is
+	// about (a stop that merely outlives its window now ends STOPPED —
+	// TestInitialSweepUsesLongerTimeout).
 	md.mu.Lock()
 	md.stopBlock = make(chan struct{})
+	md.removeBlock = make(chan struct{})
 	md.mu.Unlock()
 	defer func() {
 		md.mu.Lock()
 		if md.stopBlock != nil {
 			close(md.stopBlock)
 			md.stopBlock = nil
+		}
+		if md.removeBlock != nil {
+			close(md.removeBlock)
+			md.removeBlock = nil
 		}
 		md.mu.Unlock()
 	}()

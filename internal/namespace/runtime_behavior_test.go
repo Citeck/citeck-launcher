@@ -48,6 +48,7 @@ type mockDocker struct {
 	pullBlock      chan struct{}     // if non-nil, PullImageWithProgress blocks until close or ctx.Done
 	stopBlock      chan struct{}     // if non-nil, StopAndRemoveContainer blocks until close or ctx.Done
 	stopDelay      time.Duration     // if >0, StopAndRemoveContainer sleeps (honoring ctx) before returning
+	removeBlock    chan struct{}     // if non-nil, RemoveContainer blocks until close or ctx.Done
 	removeNetBlock chan struct{}     // if non-nil, RemoveNetwork blocks until close or ctx.Done
 	imageExists    map[string]bool   // optional override; nil keeps "always true" default
 	imageDigests   map[string]string // optional override; nil keeps "sha256:mock-digest-{img}" default
@@ -127,6 +128,16 @@ func (m *mockDocker) StopContainer(ctx context.Context, id string, timeoutSec in
 }
 
 func (m *mockDocker) RemoveContainer(ctx context.Context, id string) error {
+	m.mu.Lock()
+	block := m.removeBlock
+	m.mu.Unlock()
+	if block != nil {
+		select {
+		case <-block:
+		case <-ctx.Done():
+			return fmt.Errorf("mock remove: %w", ctx.Err())
+		}
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.removedContainerIDs = append(m.removedContainerIDs, id)

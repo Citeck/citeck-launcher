@@ -361,6 +361,35 @@ func (r *Runtime) makeStartingStopPlan(appName string, stopTimeout int) dispatch
 	}
 }
 
+// makeForceRemovePlan answers a stop that outlived its window (T23): the
+// container is removed by force — SIGKILL and remove in one Docker call —
+// under the same OpStop task id, which supersedes the stop still in flight so
+// its late Result is dropped as stale. A container that is already gone
+// counts as removed (RemoveContainer is idempotent), so this also settles a
+// stop that Docker finished just after the deadline. The superseded stop may
+// have been makeStartingStopPlan, which also cleared "<app>-init" — and the
+// init container may be the one that ignored SIGTERM — so it is removed too,
+// best-effort, exactly as there; the main container stays authoritative.
+func (r *Runtime) makeForceRemovePlan(appName string) dispatchPlan {
+	mainName := r.docker.ContainerName(appName)
+	initName := r.docker.ContainerName(appName + "-init")
+	return dispatchPlan{
+		taskID: workers.TaskID{App: appName, Op: workers.OpStop},
+		fn: func(ctx context.Context) workers.Result {
+			var result workers.Result
+			pprof.Do(ctx, pprof.Labels("work", stopWorkLabel), func(ctx context.Context) {
+				_ = r.docker.RemoveContainer(ctx, initName)
+				if err := r.docker.RemoveContainer(ctx, mainName); err != nil {
+					result = workers.Result{Err: fmt.Errorf("force remove %s: %w", appName, err)}
+					return
+				}
+				result = workers.Result{Payload: workers.StopPayload{}}
+			})
+			return result
+		},
+	}
+}
+
 func (r *Runtime) runStopTask(ctx context.Context, appName, containerName string, stopTimeout int) workers.Result {
 	const maxAttempts = 3 // attempt 0 + 2 retries
 	var lastErr error
