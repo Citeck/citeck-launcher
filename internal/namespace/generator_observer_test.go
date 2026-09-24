@@ -173,7 +173,9 @@ func TestObserver_WiresThePlatformSecretsAndTargets(t *testing.T) {
 		assert.True(t, ok, k)
 		assert.Equal(t, want, got, k)
 	}
-	assert.Equal(t, appdef.KindThirdParty, obs.Kind)
+	// A Citeck service, listed with the other additional apps rather than among
+	// the third-party infrastructure (user, 2026-09-24).
+	assert.Equal(t, appdef.KindCiteckAdditional, obs.Kind)
 	assert.Contains(t, obs.DependsOn, observerDB)
 	assert.Contains(t, obs.DependsOn, appdef.AppZookeeper)
 }

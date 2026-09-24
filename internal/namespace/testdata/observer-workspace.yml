@@ -35,6 +35,7 @@ additionalApps:
   - name: observer
     # No image: the bundle names it. Ports 17014-17017 sit between the Keycloak
     # management port (17013) and the ZooKeeper admin port (17018).
+    kind: CITECK_ADDITIONAL
     dependsOn: [observer-postgres, zookeeper]
     environments:
       SERVER_MODE: dev
