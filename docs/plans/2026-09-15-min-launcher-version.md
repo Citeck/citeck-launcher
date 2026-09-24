@@ -991,7 +991,7 @@ put HTTP concerns in the store layer.
 `ru.json`:
 
 ```json
-  "bundle.msg.launcherTooOld": "Бандл {bundle} требует лончер {needs} или новее, а этот — {current}. Обновите лончер или выберите бандл постарше."
+  "bundle.msg.launcherTooOld": "Бандл {bundle} требует лаунчер {needs} или новее, а этот — {current}. Обновите лаунчер или выберите бандл постарше."
 ```
 
 Translate the VALUE for `zh`, `es`, `de`, `fr`, `pt`, `ja` — do not leave English there; the
@@ -1674,7 +1674,7 @@ Replace the gear button in `web/src/components/TabBar.tsx`:
 
 ```ts
   'namespace.newerBundle.tooltip': 'Есть бандл новее: {version}. Откройте настройки неймспейса, чтобы перейти на него.',
-  'namespace.newerBundle.needsLauncher.tooltip': 'Есть бандл новее ({version}), но он требует лончер {min} или новее. Обновите лончер.',
+  'namespace.newerBundle.needsLauncher.tooltip': 'Есть бандл новее ({version}), но он требует лаунчер {min} или новее. Обновите лаунчер.',
 ```
 
 Translate the values for `de`, `es`, `fr`, `ja`, `pt`, `zh`. `locales.test.ts` checks both key

@@ -668,7 +668,7 @@ const ru = {
   'namespace.form.save': 'Сохранить',
   'namespace.form.createSuccess': 'Namespace создан',
   'namespace.newerBundle.tooltip': 'Есть бандл новее: {version}. Откройте настройки неймспейса, чтобы перейти на него.',
-  'namespace.newerBundle.needsLauncher.tooltip': 'Есть бандл новее ({version}), но он требует лончер {min} или новее. Обновите лончер.',
+  'namespace.newerBundle.needsLauncher.tooltip': 'Есть бандл новее ({version}), но он требует лаунчер {min} или новее. Обновите лаунчер.',
 
   // -- Snapshot import warning --
   'snapshots.import.confirm.title': 'Импортировать снимок?',

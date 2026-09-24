@@ -1,4 +1,4 @@
-# citeck-rag + Qdrant в лончере — план реализации
+# citeck-rag + Qdrant в лаунчере — план реализации
 
 > **СТАТУС: ВЫПОЛНЕН.** План отработан целиком в 2.x (влит в master) и в 1.x
 > (ветка `release/1.4.2`); чекбоксы `- [ ]` ниже не отражают состояние — они
@@ -20,7 +20,7 @@
 > **Для агентов-исполнителей:** ОБЯЗАТЕЛЬНЫЙ САБ-СКИЛЛ — `superpowers:subagent-driven-development`
 > (рекомендуется) или `superpowers:executing-plans`. Шаги помечены чекбоксами `- [ ]`.
 
-**Цель:** дать обеим версиям лончера (2.x и 1.x) возможность запускать `citeck-rag` вместе с
+**Цель:** дать обеим версиям лаунчера (2.x и 1.x) возможность запускать `citeck-rag` вместе с
 Qdrant по явному действию пользователя, и заодно навести порядок в приоритете образов и в
 поддержке `dependsOn` в 2.x.
 
@@ -1024,7 +1024,7 @@ git commit -m "docs(changelog): release notes for 2.11.0 in all 8 locales"
 
 ## Фаза 3 — 1.x
 
-### Task 7: rag и qdrant в Kotlin-лончере
+### Task 7: rag и qdrant в Kotlin-лаунчере
 
 **Файлы (ветка `release/1.4.2` от тега `v1.4.1` в том же репозитории):**
 - Изменить: `src/main/kotlin/ru/citeck/launcher/core/namespace/AppName.kt`

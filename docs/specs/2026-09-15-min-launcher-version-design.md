@@ -20,9 +20,9 @@ handed such a bundle does not fail; it does something ELSE, quietly.
 
 `minLauncherVersion` is the bundle author's way of saying "below this version, do not try".
 
-> The owner's words: «если в бандле стоит минимальная версия лончера и текущий лончер старее
+> The owner's words: «если в бандле стоит минимальная версия лаунчера и текущий лаунчер старее
 > указанной минимальной версии, то создать/отредактировать NS с выбором этого бандла нельзя.
-> Показывается ошибка и просьба обновить лончер. Пока этим не будем пользоваться, но на будущее
+> Показывается ошибка и просьба обновить лаунчер. Пока этим не будем пользоваться, но на будущее
 > пригодится.» The key name was proposed and agreed.
 
 ## Non-goals
