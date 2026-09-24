@@ -47,9 +47,10 @@ func newDepsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "deps",
 		Short: "Show infra dependency versions and run version migrations",
-		Long: "Lists PostgreSQL, RabbitMQ, ZooKeeper, Keycloak and MongoDB with the version the\n" +
-			"namespace's data runs on and the version the bundle offers. A breaking change is never\n" +
-			"applied silently: it is reported here and migrated with `citeck deps upgrade <id>`.\n\n" +
+		Long: "Lists PostgreSQL, RabbitMQ, ZooKeeper, Keycloak, MongoDB, Qdrant and the clusters the\n" +
+			"workspace declares in additionalApps with the version the namespace's data runs on and\n" +
+			"the version the bundle offers. A breaking change is never applied silently: it is\n" +
+			"reported here and migrated with `citeck deps upgrade <id>`.\n\n" +
 			"`citeck deps rollback <id>` puts a dependency back on the version it ran on before its\n" +
 			"last migration, on the volume that migration left.",
 		RunE: func(_ *cobra.Command, _ []string) error { return runDepsList() },

@@ -23,8 +23,7 @@ user upgrading *from the last release* will actually see.
 - **User-meaningful only.** Skip anything a user can't perceive in this release:
   internal refactors, CI/build/test changes, dependency bumps, and capabilities
   that are **off by default or not reachable** in the shipped configuration
-  (e.g. don't announce a web-UI feature while the server web UI is disabled by
-  default). If a line wouldn't change what a user does or sees, drop it.
+  (e.g. a web-UI feature is desktop-only: server mode has no web UI at all). If a line wouldn't change what a user does or sees, drop it.
 - When in doubt about whether a change is net-new vs. a refinement of something
   already released, diff against the previous tag rather than guessing.
 

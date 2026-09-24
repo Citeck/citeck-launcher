@@ -40,8 +40,9 @@ const (
 // the type.
 type PostgresAppProps struct {
 	// Name is the dependency id AND the container name — `citeck deps` and
-	// `citeck stop <name>` both use it. Naming a cluster the launcher already
-	// knows (observer-postgres) overrides ITS settings field by field.
+	// `citeck stop <name>` both use it. The launcher knows no PostgreSQL
+	// cluster of its own that an entry could configure: the stand's `postgres`
+	// is reserved (see overridableTypedNames), so every entry declares a new one.
 	Name string `yaml:"name"`
 	Type string `yaml:"type"`
 	// Enabled defaults to true; false keeps the declaration without running it.

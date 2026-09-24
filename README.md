@@ -16,7 +16,7 @@
 
 [Citeck](https://github.com/Citeck) is a self-hosted, open-source low-code platform that replaces proprietary ECM/BPM suites. You use it for almost any task involving corporate documents, from contract and purchase approvals to HR processes, an electronic archive, or a corporate portal. You draw each process's route in the built-in BPMN designer and configure document types without code; users, roles, and permissions come out of the box.
 
-Citeck Launcher is the easiest way to get the platform running and keep it that way. You download a single ~24 MB binary — it installs the platform and starts its services through Docker. From there, the launcher watches their health and restarts anything that goes down, and it makes upgrading the platform simple and predictable. On your own machine it runs as a desktop app; on a server, from the command line.
+Citeck Launcher is the easiest way to get the platform running and keep it that way. You download a single ~28 MB binary — it installs the platform and starts its services through Docker. From there, the launcher watches their health and restarts anything that goes down, and it makes upgrading the platform simple and predictable. On your own machine it runs as a desktop app; on a server, from the command line.
 
 ![Citeck Launcher dashboard](readme/screenshots/running.png)
 
@@ -65,18 +65,18 @@ curl -fsSL https://github.com/Citeck/citeck-launcher/releases/latest/download/in
 The script downloads the latest release for your platform, installs it to `/usr/local/bin/citeck`, and then launches the setup wizard (`citeck install`). The wizard is **interactive and needs a real terminal**. It asks you for:
 
 - the **domain name or IP** you'll use to reach the platform in a browser.
-- how to **secure the connection** — automatic, Let's Encrypt, a self-signed certificate, your own certificate, or plain HTTP. (Let's Encrypt needs a public DNS name pointing at this host and inbound port 80; if it isn't reachable, the wizard falls back to a self-signed certificate.)
+- how to **secure the connection** — automatic, Let's Encrypt, a self-signed certificate, your own certificate, or plain HTTP. (Let's Encrypt needs a public DNS name pointing at this host and inbound port 80. If it isn't reachable, the automatic option falls back to a self-signed certificate; an explicit Let's Encrypt choice offers to retry, change the host, or pick another option.)
 - whether to deploy **demo data**, and whether to install a **systemd service**.
 
 ### First run: what to expect
 
-**It takes a while — that's normal.** The launcher pulls several GB of Docker images, then the platform itself needs roughly **10–15 minutes** to come up: the services start in dependency order, and Keycloak imports its realm on first start. Watch the apps flip to `RUNNING` one by one:
+**It takes a while — that's normal.** The launcher pulls several GB of Docker images, then the platform itself needs roughly **10–15 minutes** to come up: the services start in dependency order, and Keycloak imports its realm on first start. The wizard shows the apps flipping to `RUNNING` one by one. `Ctrl+C` only stops the display — the platform keeps starting, and you can keep watching with:
 
 ```bash
 citeck status -w
 ```
 
-When everything is up, the wizard prints your access details:
+When everything is up, the wizard prints your access details (not if you left it with `Ctrl+C`):
 
 ```
 Citeck is ready!
@@ -114,7 +114,7 @@ citeck logs <app> -f             # stream logs (no app = the daemon's own log)
 citeck stop <app>                # stop an app — and keep it stopped across restarts
 citeck start <app>               # start it again (re-attach)
 citeck reload                    # apply config changes, recreate only what changed
-citeck snapshot export <name>    # back up all volumes (stops the platform, then restarts it)
+citeck snapshot export           # back up all volumes (stops the platform, then restarts it)
 citeck upgrade <bundle:version>  # switch to another platform version
 citeck diagnose --fix            # health checks with optional auto-repair
 citeck setup                     # change settings (admin password, TLS, email, resources…)
@@ -123,7 +123,7 @@ citeck edit <app>                # edit an app's definition, kubectl-edit style
 
 Note that `citeck stop <app>` **detaches** the app: it stays stopped across restarts and reloads until you run `citeck start <app>`. That's also the way to free memory on a small host — detaching a few optional apps saves several GB.
 
-Global flags: `--format (text|json)` for scripting, `--yes/-y` to skip confirmations, `-d/--detach` to return immediately instead of waiting. Full reference: `citeck --help` or the [commands reference](https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher_server/commands.html).
+Global flags: `--format (text|json)` for scripting and `--yes` to skip confirmations. Long-running commands (`start`, `stop`, `restart`, `reload`, `snapshot import`, `deps upgrade`, `deps rollback`) take `-d/--detach` to return immediately instead of waiting. Full reference: `citeck --help` or the [commands reference](https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher_server/commands.html).
 
 ## What you get
 

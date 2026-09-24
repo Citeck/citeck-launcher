@@ -54,7 +54,16 @@ anonymous → ordinary authenticated user.
 
 The fix is `getRequestPath()`: `$request_uri` with the query string dropped,
 `%XX` decoded the way nginx decodes a path, and `.`, `..` and duplicate slashes
-resolved — with every remaining rule anchored at `^` against it.
+resolved. The healthcheck and infrastructure-metrics rules (`/healthcheck/`,
+`/rabbitmq`, `/node-exporter`, `/postgres-exporter`, `/cadvisor/`) were deleted
+rather than anchored — those locations carry their own authentication and never
+run this handler. Only two rules remain, both matched against
+`getRequestPath()`: `/alfresco/monitoring` (anchored at `^`) and the
+static-resource rule.
+
+Since 2.15.2 `isStaticResUri` also excludes paths containing `/share/res/` and
+`/alfresco/`, so anonymous requests for Alfresco and Share resources are no
+longer handed `guest` for having a static-looking extension.
 
 ## Why not `ngx.var.uri`
 
