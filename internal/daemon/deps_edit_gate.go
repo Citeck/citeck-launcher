@@ -33,14 +33,12 @@ import (
 // down.
 //
 // Three shapes pass before any rule is asked. An edit with no image names no
-// VERSION, which is the only question this gate asks. (It is NOT the same as
-// "the image is unchanged": handlePutAppConfig unmarshals the whole submitted
-// YAML into a def, and ApplicationDef.Image has no `omitempty`, so DiffAppDef
-// records `image: ""` and the merged def ends up with a BLANK image that fails
-// at pull time. That is a malformed def, not a version move onto data it does
-// not fit, and refusing it here would answer the wrong question with the wrong
-// message.) With no pin there is no recorded version to refuse against. And an
-// edit that names the SAME VERSION as the pin chooses no version at all — see
+// VERSION, which is the only question this gate asks. (handlePutAppConfig
+// refuses such an edit before this gate — "image is required" — because a def
+// stored with a blank image cannot be created; the arm stays for callers that
+// ask about a def directly, and answering it here would give the wrong
+// question the wrong message.) With no pin there is no recorded version to
+// refuse against. And an edit that names the SAME VERSION as the pin chooses no version at all — see
 // editKeepsVersion — which matters for the floor alone, the one rule that does
 // not otherwise compare the two sides: the editor round-trips the whole def,
 // so every save of a memory limit on a stand seeded below the floor carries

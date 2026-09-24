@@ -50,7 +50,7 @@ func TestPutAppConfig_RunningRoutesThroughReload(t *testing.T) {
 		return nil
 	}
 
-	body := "name: rabbitmq\nresources:\n  limits:\n    memory: 2g\n"
+	body := "name: rabbitmq\nimage: rabbitmq:3\nresources:\n  limits:\n    memory: 2g\n"
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/apps/rabbitmq/config", strings.NewReader(body))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -73,7 +73,7 @@ func TestPutAppConfig_StoppedPersistsWithoutReload(t *testing.T) {
 		return nil
 	}
 
-	body := "name: rabbitmq\nresources:\n  limits:\n    memory: 2g\n"
+	body := "name: rabbitmq\nimage: rabbitmq:3\nresources:\n  limits:\n    memory: 2g\n"
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/apps/rabbitmq/config", strings.NewReader(body))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -136,4 +136,87 @@ func TestResetAppConfig_StoppedPersistsWithoutReload(t *testing.T) {
 	require.True(t, d.reloadMu.TryLock(), "reloadMu must be free after a stopped-branch reset")
 	d.reloadMu.Unlock()
 	require.Nil(t, d.activeNs.runtime.AppPatch("rabbitmq"), "patch must be cleared")
+}
+
+// A port the container could not be created with is refused at the editor —
+// nothing persisted, nothing reloaded — instead of failing at the container's
+// start with the app down. The address-bound form is accepted: that is the
+// safe way to reach a server's database, on this machine only.
+func TestPutAppConfig_PortsAreValidatedBeforeAnythingIsSaved(t *testing.T) {
+	mux, d := newAppsTestDaemonRabbit(t, namespace.NsStatusRunning)
+	reloadCalls := 0
+	d.reloadFn = func() error {
+		reloadCalls++
+		return nil
+	}
+	put := func(ports string) *httptest.ResponseRecorder {
+		body := "name: rabbitmq\nimage: rabbitmq:3\nports:\n  - \"" + ports + "\"\n"
+		req := httptest.NewRequest(http.MethodPut, "/api/v1/apps/rabbitmq/config", strings.NewReader(body))
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+
+	for _, bad := range []string{"localhost:15672:15672", "15672:x", "15672", "1:1/foo"} {
+		rec := put(bad)
+		require.Equal(t, http.StatusBadRequest, rec.Code, "%s: body=%s", bad, rec.Body.String())
+		require.Contains(t, rec.Body.String(), "invalid ports", bad)
+	}
+	require.Nil(t, d.activeNs.runtime.AppPatch("rabbitmq"), "a refused edit persists nothing")
+	require.Equal(t, 0, reloadCalls, "a refused edit reloads nothing")
+
+	rec := put("127.0.0.1:15672:15672")
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	require.Equal(t, 1, reloadCalls)
+}
+
+// An edit body over the limit is refused, not truncated: a truncated YAML can
+// still parse, and on a live stand a 543 KB edit cut at 512 KiB left only its
+// comment lines, decoded as an empty def and saved — postgres lost its image,
+// cmd, env and volumes. An edit without an image is refused for the same
+// outcome by the shorter road.
+func TestPutAppConfig_AnOversizedOrImagelessEditIsRefused(t *testing.T) {
+	mux, d := newAppsTestDaemonRabbit(t, namespace.NsStatusRunning)
+	reloadCalls := 0
+	d.reloadFn = func() error {
+		reloadCalls++
+		return nil
+	}
+	put := func(body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPut, "/api/v1/apps/rabbitmq/config", strings.NewReader(body))
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+
+	padding := strings.Repeat("# the error banner of an earlier attempt\n", 512*1024/40+1)
+	rec := put(padding + "---\nname: rabbitmq\nimage: rabbitmq:3\n")
+	require.Equal(t, http.StatusRequestEntityTooLarge, rec.Code, rec.Body.String())
+
+	rec = put("# only comments survived\n")
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "image is required")
+
+	require.Nil(t, d.activeNs.runtime.AppPatch("rabbitmq"), "nothing persisted")
+	require.Equal(t, 0, reloadCalls, "nothing reloaded")
+}
+
+// A bare container port the app ALREADY carries (a workspace additionalApps
+// entry, ignored by the assembly as it always was) must not make every edit
+// of that app fail; one the operator writes is still refused.
+func TestPutAppConfig_ABareContainerPortTheAppAlreadyCarriesIsTolerated(t *testing.T) {
+	mux, d := newAppsTestDaemonRabbit(t, namespace.NsStatusStopped)
+	d.activeNs.runtime.SetGeneratedDefs([]appdef.ApplicationDef{{Name: "rabbitmq", Image: "rabbitmq:3", Ports: []string{"15672:15672", "8025"}}})
+	put := func(body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPut, "/api/v1/apps/rabbitmq/config", strings.NewReader(body))
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+	rec := put("name: rabbitmq\nimage: rabbitmq:3\nports: [\"15672:15672\", \"8025\"]\nshmSize: 256m\n")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	rec = put("name: rabbitmq\nimage: rabbitmq:3\nports: [\"15672:15672\", \"8025\", \"9000\"]\n")
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "9000")
 }

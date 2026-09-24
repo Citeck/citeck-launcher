@@ -792,9 +792,8 @@ func (d *Daemon) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 func (d *Daemon) handlePutConfig(w http.ResponseWriter, r *http.Request) {
 	wsID, nsID := d.activeNsKey()
 
-	body, err := io.ReadAll(io.LimitReader(r.Body, 1024*1024)) // 1MB max
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "failed to read request body")
+	body, ok := readBodyUpTo(w, r, 1024*1024)
+	if !ok {
 		return
 	}
 

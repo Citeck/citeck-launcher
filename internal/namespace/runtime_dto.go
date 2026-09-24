@@ -235,10 +235,19 @@ func (r *Runtime) generateLinks() []api.LinkDto {
 		return nil
 	}
 	proxyBase := r.proxyBaseURL()
-	proxyHost := r.config.Proxy.Host
-	if proxyHost == "" {
-		proxyHost = "localhost"
-	}
+	// The infrastructure web UIs (RabbitMQ, Mailpit, PgAdmin) are published on
+	// loopback only — a port with no address is (docker.Client) — and are for
+	// this machine alone (user, 2026-09-24: from outside, only the proxy is
+	// ever needed). So their links name localhost, never the namespace host:
+	// a LAN name or address of this very machine does not arrive via loopback
+	// and would be refused.
+	//
+	// RabbitMQ's is 127.0.0.1, not localhost, on purpose (1.x parity,
+	// NamespaceGenerator.kt): cookies are keyed by host NAME, so a different
+	// name gives the management UI a cookie jar of its own. Sharing
+	// localhost's with every other local UI overflowed the request headers.
+	const localHost = "localhost"
+	const rabbitHost = "127.0.0.1"
 
 	// Categories mirror Kotlin `NamespaceLink.category` grouping.
 	// Empty category = top of the list, no header.
@@ -257,8 +266,8 @@ func (r *Runtime) generateLinks() []api.LinkDto {
 	links := []api.LinkDto{
 		{Name: "Citeck UI", URL: proxyBase, Order: -100},
 		{Name: "Spring Boot Admin", URL: proxyBase + "/gateway/eapps/admin/wallboard", Icon: "spring-boot-admin", Order: -1, Category: catApps, DescriptionKey: "links.springBootAdmin.tooltip"},
-		{Name: "RabbitMQ", URL: fmt.Sprintf("http://%s:15672", proxyHost), Icon: "rabbitmq", Order: 2, Category: catApps, DescriptionKey: "links.rabbitmq.tooltip"},
-		{Name: "Mailpit", URL: fmt.Sprintf("http://%s:8025", proxyHost), Icon: "mailpit", Order: 1, Category: catApps, DescriptionKey: "links.mailpit.tooltip"},
+		{Name: "RabbitMQ", URL: fmt.Sprintf("http://%s:15672", rabbitHost), Icon: "rabbitmq", Order: 2, Category: catApps, DescriptionKey: "links.rabbitmq.tooltip"},
+		{Name: "Mailpit", URL: fmt.Sprintf("http://%s:8025", localHost), Icon: "mailpit", Order: 1, Category: catApps, DescriptionKey: "links.mailpit.tooltip"},
 	}
 
 	// Keycloak link (only if auth is KEYCLOAK)
@@ -276,7 +285,7 @@ func (r *Runtime) generateLinks() []api.LinkDto {
 	_, pgConfigured := r.generatedDefs["pgadmin"]
 	if pgLive || pgConfigured {
 		links = append(links, api.LinkDto{
-			Name: "PG Admin", URL: fmt.Sprintf("http://%s:5050", proxyHost), Icon: "postgres", Order: 0, Category: catApps, DescriptionKey: "links.pgAdmin.tooltip",
+			Name: "PG Admin", URL: fmt.Sprintf("http://%s:5050", localHost), Icon: "postgres", Order: 0, Category: catApps, DescriptionKey: "links.pgAdmin.tooltip",
 		})
 	}
 

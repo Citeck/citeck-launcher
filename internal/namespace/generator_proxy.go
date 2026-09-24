@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/citeck/citeck-launcher/internal/appdef"
+	"github.com/citeck/citeck-launcher/internal/config"
 )
 
 func generateProxy(ctx *NsGenContext) {
@@ -157,7 +158,7 @@ func generateProxy(ctx *NsGenContext) {
 		app.AddEnv("ALFRESCO_ENABLED", "false")
 	}
 	app.AddEnv("PROXY_TARGET", proxyTarget)
-	app.AddPort(fmt.Sprintf("%d:%d", EffectiveProxyPort(ctx.Config.Proxy), containerPort))
+	app.AddPort(fmt.Sprintf("%s%d:%d", publicBindPrefix(ctx.Config.Proxy), EffectiveProxyPort(ctx.Config.Proxy), containerPort))
 	// The proxy hard-depends on the gateway: it exists to front it. The gateway is
 	// always present in real bundles, so this dep is satisfied in production. Where
 	// no gateway is generated (a minimal/bundleless namespace), the proxy serves no
@@ -189,4 +190,19 @@ func generateProxy(ctx *NsGenContext) {
 			Exec: []string{"sh", "-c", "nginx -s reload"},
 		})
 	}
+}
+
+// publicBindPrefix is the address the proxy's port is published on, as the
+// "ip:" prefix of its spec. A port spec with no address is published on
+// 127.0.0.1 (docker.Client.buildCreateOptions), so the proxy — the one app
+// ever reached from other machines (user, 2026-09-24: not RabbitMQ, Mailpit or
+// PgAdmin, whose links name localhost) — says "*": every interface in server
+// mode, where it IS the stand's front door, and on a desktop whose namespace
+// is addressed by a non-local host (the operator opens it from other
+// devices). A desktop namespace on localhost keeps the loopback default.
+func publicBindPrefix(p ProxyProps) string {
+	if !config.IsDesktopMode() || !isLocalHost(p.Host) {
+		return "*:"
+	}
+	return ""
 }

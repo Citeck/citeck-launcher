@@ -14,8 +14,10 @@ import (
 	"log/slog"
 	"maps"
 	"math"
+	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -385,6 +387,11 @@ func (c *Client) CreateContainerWith(ctx context.Context, app appdef.Application
 	return resp.ID, nil
 }
 
+// defaultPortHostIP is where a published port without an address in its spec
+// is bound. Docker's own default is every interface — and Docker bypasses the
+// host firewall (ufw), so on a server that is the service on the internet.
+var defaultPortHostIP = netip.MustParseAddr("127.0.0.1")
+
 // buildCreateOptions assembles the whole ContainerCreate request for app under
 // opts: the container name, config, host config and networking config, plus
 // the bind-mount sources it has to materialize on the host.
@@ -429,30 +436,47 @@ func (c *Client) buildCreateOptions(
 	exposedPorts := network.PortSet{}
 	portBindings := network.PortMap{}
 	for _, p := range app.Ports {
-		parts := strings.SplitN(p, ":", 2)
-		if len(parts) != 2 {
-			continue
+		// One parser for the syntax (appdef.ParsePortSpec), shared with the
+		// edit validation, so what an edit accepts is what gets created. It
+		// keeps the spec's protocol ("17014/udp" — appending "/tcp" to every
+		// port, as this used to, reached the engine as "17014/udp/tcp", which
+		// it refuses at START with "unknown protocol") and the host address
+		// ("127.0.0.1:15432:5432" — splitting on the first ':' only, as this
+		// also used to, made "15432:5432" the container port).
+		spec, err := appdef.ParsePortSpec(p)
+		if errors.Is(err, appdef.ErrPortNotPublished) {
+			continue // nothing to publish; ignored, as it always was
 		}
-		hostPort := parts[0]
-		// The spec's own protocol is kept ("17014/udp"); none means tcp, which
-		// ParsePort applies itself. Appending "/tcp" unconditionally, as this
-		// used to, turned the observer's UDP log receiver into the port
-		// "17014/udp/tcp" — which the engine accepts at create and refuses at
-		// START ("programming external connectivity ...: unknown protocol").
-		containerPort, err := network.ParsePort(parts[1])
 		if err != nil {
-			return client.ContainerCreateOptions{}, fmt.Errorf("invalid container port %q for %s: %w", parts[1], app.Name, err)
+			return client.ContainerCreateOptions{}, fmt.Errorf("invalid port for %s: %w", app.Name, err)
 		}
-		// ParsePort does not validate the protocol, so a bad one would again
-		// only fail at start, as an engine error naming no app. Refuse it here.
-		switch containerPort.Proto() {
-		case network.TCP, network.UDP, network.SCTP:
-		default:
-			return client.ContainerCreateOptions{}, fmt.Errorf("invalid container port %q for %s: unknown protocol %q",
-				parts[1], app.Name, containerPort.Proto())
+		containerPort, err := network.ParsePort(spec.ContainerPortProto())
+		if err != nil {
+			return client.ContainerCreateOptions{}, fmt.Errorf("invalid container port %q for %s: %w", p, app.Name, err)
 		}
+		// A port whose spec names no address is published on loopback only:
+		// reachable from this machine (a browser, an IDE, psql through an SSH
+		// tunnel) and from nowhere else. An address is taken literally, as
+		// Docker takes it ("0.0.0.0" = every IPv4 interface only, measured on
+		// a rootful engine), and "*" — every interface of every family — is
+		// handed to Docker as NO address, which is exactly Docker's own
+		// default: 0.0.0.0 and [::] where the host has IPv6, no failure where
+		// it does not. The proxy's generator writes "*".
+		hostIP := spec.HostIP
+		switch {
+		case spec.AllInterfaces:
+			hostIP = netip.Addr{}
+		case !hostIP.IsValid():
+			hostIP = defaultPortHostIP
+		}
+		binding := network.PortBinding{HostIP: hostIP, HostPort: spec.HostPort}
 		exposedPorts[containerPort] = struct{}{}
-		portBindings[containerPort] = []network.PortBinding{{HostPort: hostPort}}
+		// One binding per address: several entries may publish one container
+		// port ("0.0.0.0:443:443" and "[::]:443:443"); an exact repeat is
+		// dropped rather than handed to Docker to bind twice.
+		if !slices.Contains(portBindings[containerPort], binding) {
+			portBindings[containerPort] = append(portBindings[containerPort], binding)
+		}
 	}
 
 	// Volumes (binds)

@@ -116,18 +116,24 @@ func TestBreakingImageEditWithoutAPinIsNotGated(t *testing.T) {
 		"an edit the gate never examined must not invent a pin: seeding decides what the data runs on")
 }
 
-// An edit that leaves the image out entirely says nothing about the VERSION,
-// which is the only thing this gate refuses, so it must pass even on a pinned
-// dependency. What such a def then means is a separate question the gate
-// deliberately does not answer: the editor round-trips the whole def, and
-// ApplicationDef.Image carries no `omitempty`, so the stored patch records
-// `image: ""` and the app ends up with a blank image — malformed, and caught
-// at pull time, not silently started on data it does not fit.
+// An edit that keeps the pinned image — the editor round-trips the whole def,
+// so a memory change carries the image with it — says nothing new about the
+// VERSION, which is the only thing this gate refuses, so it must pass even on
+// a pinned dependency. An edit that leaves the image OUT is refused before the
+// gate is asked: ApplicationDef.Image carries no `omitempty`, so it would be
+// stored as `image: ""`, and a def with a blank image cannot be created —
+// measured on a live stand, where such an edit took postgres down.
 func TestNonImageEditOnAPinnedDependencyIsNotGated(t *testing.T) {
 	_, mux, rt, _ := newPinnedEditGateDaemon(t)
-	rec := putAppConfig(mux, "postgres", "name: postgres\nresources:\n  limits:\n    memory: 2g\n")
+	rec := putAppConfig(mux, "postgres", "name: postgres\nimage: postgres:17.5\nresources:\n  limits:\n    memory: 2g\n")
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.NotNil(t, rt.AppPatch("postgres"))
+
+	_, mux2, rt2, _ := newPinnedEditGateDaemon(t)
+	rec2 := putAppConfig(mux2, "postgres", "name: postgres\nresources:\n  limits:\n    memory: 2g\n")
+	require.Equal(t, http.StatusBadRequest, rec2.Code, rec2.Body.String())
+	assert.Contains(t, rec2.Body.String(), "image is required")
+	assert.Nil(t, rt2.AppPatch("postgres"), "a refused edit must not be persisted")
 }
 
 // The gate is driven by each descriptor's OWN rule, not by postgres' — and

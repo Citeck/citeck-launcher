@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -1247,6 +1249,27 @@ func (d *Daemon) activeNsKey() (wsID, nsID string) {
 		nsID = act.nsConfig.ID
 	}
 	return act.workspaceID, nsID
+}
+
+// readBodyUpTo reads a whole request body of at most limit bytes and answers
+// 413 for a larger one. It exists because io.ReadAll(io.LimitReader(...)) does
+// not refuse an oversized body, it TRUNCATES it — and a truncated YAML edit
+// can still parse: measured on a live stand, a 543 KB app edit cut at 512 KiB
+// left only its comment lines, which decoded as an empty def and was saved,
+// taking the namespace's postgres down with no image. On false the response
+// has been written.
+func readBodyUpTo(w http.ResponseWriter, r *http.Request, limit int64) ([]byte, bool) {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, limit))
+	var tooLarge *http.MaxBytesError
+	switch {
+	case errors.As(err, &tooLarge):
+		writeError(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("request body exceeds %d KiB", limit>>10))
+		return nil, false
+	case err != nil:
+		writeError(w, http.StatusBadRequest, "failed to read body")
+		return nil, false
+	}
+	return body, true
 }
 
 // readJSON decodes a JSON request body with a 1 MiB hard ceiling. MaxBytesReader

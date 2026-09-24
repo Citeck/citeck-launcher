@@ -3,7 +3,6 @@ package namespace
 import (
 	"context"
 	"log/slog"
-	"strconv"
 	"strings"
 
 	"github.com/citeck/citeck-launcher/internal/appdef"
@@ -23,24 +22,15 @@ type portConflict struct {
 
 // hostPortOf extracts the host-side port from a Docker port mapping spec.
 // Accepts "host:container" ("1025:1025", "8070:80") and "ip:host:container"
-// ("127.0.0.1:1025:1025"). Returns 0 for bare/exposed-only or unparseable specs.
+// ("127.0.0.1:1025:1025"). Returns 0 for bare/exposed-only, ranged or
+// unparseable specs. Reads through appdef.ParsePortSpec, the one parser of
+// the syntax.
 func hostPortOf(spec string) int {
-	parts := strings.Split(spec, ":")
-	var hostPart string
-	switch len(parts) {
-	case 2:
-		hostPart = parts[0]
-	case 3:
-		hostPart = parts[1]
-	default:
-		return 0
-	}
-	// A host range ("8000-8005") has no single port — ignore.
-	n, err := strconv.Atoi(hostPart)
+	p, err := appdef.ParsePortSpec(spec)
 	if err != nil {
 		return 0
 	}
-	return n
+	return p.SingleHostPort()
 }
 
 // detectHostPortConflicts reports PUBLISHED host ports required by `apps` that

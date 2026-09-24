@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 
 	"github.com/citeck/citeck-launcher/internal/api"
@@ -144,9 +143,8 @@ func (d *Daemon) handlePutWorkspaceConfig(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	content, err := io.ReadAll(io.LimitReader(r.Body, 1024*1024))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "failed to read body")
+	content, ok := readBodyUpTo(w, r, 1024*1024)
+	if !ok {
 		return
 	}
 	// Validate the body parses as YAML before storing (app-editor parity).

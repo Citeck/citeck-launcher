@@ -95,3 +95,30 @@ func TestStartableAppImagesFallsBackToGeneratedDefs(t *testing.T) {
 		r.StartableAppImages(),
 		"detached apps stay excluded when falling back to the generated defs")
 }
+
+// The infrastructure web UIs are published on loopback only, so their links
+// name loopback — localhost, and 127.0.0.1 for RabbitMQ so its cookies are
+// kept apart from the other UIs' (1.x parity) — even when the namespace is addressed by a LAN host — a
+// connection to this machine's LAN address does not arrive via loopback. The
+// proxy link keeps the namespace host: it is the one app reached from outside.
+func TestInfrastructureLinksNameLocalhost(t *testing.T) {
+	r := &Runtime{
+		apps:             map[string]*AppRuntime{},
+		editedAppPatches: map[string]json.RawMessage{},
+		config:           &Config{ID: "ns", Proxy: ProxyProps{Host: "192.168.1.20", Port: 80}},
+	}
+	r.SetGeneratedDefs([]appdef.ApplicationDef{{Name: "pgadmin", Image: "dpage/pgadmin4:9.17"}})
+
+	r.mu.RLock()
+	links := r.generateLinks()
+	r.mu.RUnlock()
+
+	urls := map[string]string{}
+	for _, l := range links {
+		urls[l.Name] = l.URL
+	}
+	assert.Equal(t, "http://127.0.0.1:15672", urls["RabbitMQ"], "a host name of its own: a separate cookie jar (1.x parity)")
+	assert.Equal(t, "http://localhost:8025", urls["Mailpit"])
+	assert.Equal(t, "http://localhost:5050", urls["PG Admin"])
+	assert.Contains(t, urls["Citeck UI"], "192.168.1.20", "the proxy link keeps the namespace host")
+}

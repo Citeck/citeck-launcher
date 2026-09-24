@@ -3,12 +3,14 @@ package daemon
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
-	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -489,7 +491,14 @@ func (d *Daemon) handleAppInspect(w http.ResponseWriter, r *http.Request) {
 	var ports []string
 	for containerPort, bindings := range inspect.NetworkSettings.Ports {
 		for _, b := range bindings {
-			ports = append(ports, fmt.Sprintf("%s:%s/%s", b.HostPort, containerPort.Port(), containerPort.Proto()))
+			// The address is shown when the binding has one: loopback versus
+			// every interface is the point of a binding now, and a container
+			// created before the loopback default keeps its old binding.
+			host := b.HostPort
+			if b.HostIP.IsValid() {
+				host = net.JoinHostPort(b.HostIP.String(), b.HostPort)
+			}
+			ports = append(ports, fmt.Sprintf("%s:%s/%s", host, containerPort.Port(), containerPort.Proto()))
 		}
 	}
 
@@ -662,9 +671,8 @@ func (d *Daemon) handlePutAppConfig(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	body, err := io.ReadAll(io.LimitReader(r.Body, 512*1024))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "failed to read body")
+	body, read := readBodyUpTo(w, r, 512*1024)
+	if !read {
 		return
 	}
 
@@ -691,6 +699,22 @@ func (d *Daemon) handlePutAppConfig(w http.ResponseWriter, r *http.Request) {
 	newDef.Name = name
 	newDef.ImageDigest = ""
 	newDef.VolumesContentHash = ""
+
+	// A port the container cannot be created with is refused HERE, while the
+	// operator is still at the editor: accepted, it would fail only at the
+	// container's start, taking a running app (a namespace's postgres, on a
+	// live stand) down with the reason in the daemon log alone.
+	// Nor is a def with no image, the other shape that fails only at start:
+	// a submitted YAML without `image:` is diffed as `image: ""` (the field has
+	// no omitempty), and the merged def cannot be created at all.
+	if strings.TrimSpace(newDef.Image) == "" {
+		writeError(w, http.StatusBadRequest, "image is required")
+		return
+	}
+	if err := validateEditedPorts(rt, name, newDef.Ports); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	// The generator's pin gate cannot see this edit: patches are applied at the
 	// tail of Generate, after the infra generators have already resolved the
@@ -978,9 +1002,8 @@ func (d *Daemon) handlePutAppFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, err := io.ReadAll(io.LimitReader(r.Body, 1024*1024))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "failed to read body")
+	body, ok := readBodyUpTo(w, r, 1024*1024)
+	if !ok {
 		return
 	}
 
@@ -1164,4 +1187,28 @@ func isAppBindMount(def appdef.ApplicationDef, relPath string) bool {
 		return true
 	}
 	return false
+}
+
+// validateEditedPorts refuses a port the container could not be created with.
+// A bare container port ("8025") is refused only when the operator WROTE it:
+// the editor round-trips the whole def, and one the app already carries (a
+// workspace additionalApps entry, which the assembly has always ignored) would
+// otherwise make every edit of that app fail — a memory change included —
+// over a line the operator never wrote.
+func validateEditedPorts(rt *namespace.Runtime, name string, ports []string) error {
+	var carried []string
+	if def, ok := rt.GeneratedDef(name); ok {
+		carried = def.Ports
+	}
+	for _, p := range ports {
+		_, err := appdef.ParsePortSpec(p)
+		if err == nil {
+			continue
+		}
+		if errors.Is(err, appdef.ErrPortNotPublished) && slices.Contains(carried, p) {
+			continue
+		}
+		return fmt.Errorf("invalid ports: %w", err)
+	}
+	return nil
 }

@@ -2,6 +2,7 @@ package docker
 
 import (
 	"context"
+	"net/netip"
 	"testing"
 
 	"github.com/moby/moby/api/types/container"
@@ -420,6 +421,56 @@ func TestCreateOptionsKeepThePortProtocol(t *testing.T) {
 			appdef.ApplicationDef{Name: "x", Image: "x:1", Ports: []string{bad}}, "", ContainerCreateOpts{})
 		assert.Error(t, err, bad)
 	}
+}
+
+// A host address in the spec is the binding's address, not part of the
+// container port. Split on the first ':' only, "127.0.0.1:15432:5432" used to
+// become the container port "15432:5432", and the app — a live stand's
+// postgres — failed at start. No address now means loopback only.
+func TestCreateOptionsBindTheHostAddress(t *testing.T) {
+	c := &Client{namespace: "prod"}
+	app := appdef.ApplicationDef{Name: "postgres", Image: "postgres:17.5", Ports: []string{
+		"127.0.0.1:15432:5432", "[::1]:15432:5432", "8080:80", "8025",
+	}}
+
+	got, err := c.buildCreateOptions(context.Background(), app, "", ContainerCreateOpts{})
+	require.NoError(t, err)
+
+	pg := network.MustParsePort("5432/tcp")
+	require.Len(t, got.HostConfig.PortBindings[pg], 2, "one binding per address")
+	assert.Equal(t, netip.MustParseAddr("127.0.0.1"), got.HostConfig.PortBindings[pg][0].HostIP)
+	assert.Equal(t, "15432", got.HostConfig.PortBindings[pg][0].HostPort)
+	assert.Equal(t, netip.MustParseAddr("::1"), got.HostConfig.PortBindings[pg][1].HostIP)
+	web := network.MustParsePort("80/tcp")
+	assert.Equal(t, netip.MustParseAddr("127.0.0.1"), got.HostConfig.PortBindings[web][0].HostIP,
+		"no address: loopback only — every interface has to be asked for")
+	assert.Len(t, got.Config.ExposedPorts, 2, "a bare container port is still ignored")
+
+	_, err = c.buildCreateOptions(context.Background(),
+		appdef.ApplicationDef{Name: "x", Image: "x:1", Ports: []string{"localhost:1:1"}}, "", ContainerCreateOpts{})
+	assert.Error(t, err, "a host name is not an address Docker binds")
+}
+
+// "*" is every interface of every family: it reaches Docker as NO address,
+// Docker's own default (0.0.0.0 AND [::] where the host has IPv6). A literal
+// address is taken as Docker takes it — "0.0.0.0" is IPv4 only (measured), so
+// both families explicitly are two entries, which become two bindings; an
+// exact repeat is not handed to Docker twice.
+func TestCreateOptionsStarIsEveryInterfaceAndAnAddressIsLiteral(t *testing.T) {
+	c := &Client{namespace: "prod"}
+	app := appdef.ApplicationDef{Name: "proxy", Image: "nginx:1", Ports: []string{
+		"*:80:80", "0.0.0.0:443:443", "[::]:443:443", "[::]:443:443",
+	}}
+
+	got, err := c.buildCreateOptions(context.Background(), app, "", ContainerCreateOpts{})
+	require.NoError(t, err)
+	star := got.HostConfig.PortBindings[network.MustParsePort("80/tcp")]
+	require.Len(t, star, 1)
+	assert.False(t, star[0].HostIP.IsValid(), "*: Docker's own every-interface default")
+	tls := got.HostConfig.PortBindings[network.MustParsePort("443/tcp")]
+	require.Len(t, tls, 2, "one binding per address, the repeat dropped")
+	assert.Equal(t, netip.MustParseAddr("0.0.0.0"), tls[0].HostIP, "0.0.0.0 stays literal: IPv4")
+	assert.Equal(t, netip.MustParseAddr("::"), tls[1].HostIP, "[::] stays literal: IPv6")
 }
 
 // TestExtraHostsReachTheContainerAndNotTheNetwork pins the mechanism that
