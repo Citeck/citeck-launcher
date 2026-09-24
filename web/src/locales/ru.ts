@@ -94,7 +94,7 @@ const ru = {
   'welcome.more': 'Ещё',
   'welcome.createNew': 'Создать новый namespace',
   'welcome.delete.title': 'Удалить namespace',
-  'welcome.delete.message': 'Удалить namespace "{name}"? Файл конфигурации будет удалён.',
+  'welcome.delete.message': 'Удалить namespace "{name}"? Его конфигурация, тома с данными и каталог (вместе со снэпшотами и выгруженными файлами) будут удалены безвозвратно.',
   'welcome.context.open': 'Открыть',
   'welcome.context.delete': 'Удалить',
   'welcome.namespace.edit': 'Редактировать',

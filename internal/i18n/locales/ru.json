@@ -407,7 +407,7 @@
   "deps.status.upToDate": "актуальна",
   "deps.status.pendingMinor": "{version} применится при следующем запуске",
   "deps.status.upgradeAvailable": "доступно обновление: citeck deps upgrade {id}",
-  "deps.status.requiresLauncherUpdate": "доступно обновление, нужна более новая версия лаунчера: citeck update",
+  "deps.status.requiresLauncherUpdate": "доступно обновление, нужна более новая версия лаунчера: перезапустите install.sh",
   "deps.statusHint": "Доступны обновления: {list}",
   "deps.rollbackHint": "{message} — см. `citeck deps`",
   "deps.migrationRunning": "Идёт миграция {id}: [{index}/{total}] {step}",

@@ -94,7 +94,7 @@ const fr = {
   'welcome.more': 'Plus',
   'welcome.createNew': 'Cr\u00e9er un nouveau namespace',
   'welcome.delete.title': 'Supprimer le namespace',
-  'welcome.delete.message': 'Supprimer le namespace \u00ab {name} \u00bb ? Le fichier de configuration sera supprim\u00e9.',
+  'welcome.delete.message': 'Supprimer le namespace « {name} » ? Sa configuration, ses volumes de données et son dossier (avec ses snapshots et fichiers exportés) seront supprimés définitivement.',
   'welcome.context.open': 'Ouvrir',
   'welcome.context.delete': 'Supprimer',
   'welcome.namespace.edit': 'Modifier',

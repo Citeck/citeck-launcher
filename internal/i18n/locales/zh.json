@@ -407,7 +407,7 @@
   "deps.status.upToDate": "已是最新",
   "deps.status.pendingMinor": "{version} 将在下次启动时生效",
   "deps.status.upgradeAvailable": "有可用升级：citeck deps upgrade {id}",
-  "deps.status.requiresLauncherUpdate": "有可用升级，需要更新的启动器：citeck update",
+  "deps.status.requiresLauncherUpdate": "有可用升级，需要更新的启动器：重新运行 install.sh",
   "deps.statusHint": "有可用升级：{list}",
   "deps.rollbackHint": "{message} — 参见 `citeck deps`",
   "deps.migrationRunning": "{id} 迁移进行中：[{index}/{total}] {step}",

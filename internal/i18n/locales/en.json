@@ -407,7 +407,7 @@
   "deps.status.upToDate": "up to date",
   "deps.status.pendingMinor": "{version} applies on the next start",
   "deps.status.upgradeAvailable": "upgrade available: citeck deps upgrade {id}",
-  "deps.status.requiresLauncherUpdate": "upgrade available, requires a newer launcher: citeck update",
+  "deps.status.requiresLauncherUpdate": "upgrade available, requires a newer launcher: re-run install.sh",
   "deps.statusHint": "Upgrades available: {list}",
   "deps.rollbackHint": "{message} — see `citeck deps`",
   "deps.migrationRunning": "Migration of {id} in progress: [{index}/{total}] {step}",

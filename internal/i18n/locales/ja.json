@@ -407,7 +407,7 @@
   "deps.status.upToDate": "最新",
   "deps.status.pendingMinor": "{version} は次回の起動時に適用されます",
   "deps.status.upgradeAvailable": "アップグレードあり: citeck deps upgrade {id}",
-  "deps.status.requiresLauncherUpdate": "アップグレードあり。より新しいランチャーが必要です: citeck update",
+  "deps.status.requiresLauncherUpdate": "アップグレードあり。より新しいランチャーが必要です: install.sh を再実行してください",
   "deps.statusHint": "利用可能なアップグレード: {list}",
   "deps.rollbackHint": "{message} — `citeck deps` を参照",
   "deps.migrationRunning": "{id} の移行中: [{index}/{total}] {step}",

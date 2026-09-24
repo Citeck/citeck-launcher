@@ -94,7 +94,7 @@ const pt = {
   'welcome.more': 'Mais',
   'welcome.createNew': 'Criar novo namespace',
   'welcome.delete.title': 'Excluir namespace',
-  'welcome.delete.message': 'Excluir o namespace "{name}"? O arquivo de configura\u00e7\u00e3o ser\u00e1 removido.',
+  'welcome.delete.message': 'Excluir o namespace "{name}"? A configuração, os volumes de dados e a pasta dele (com snapshots e arquivos exportados) serão excluídos permanentemente.',
   'welcome.context.open': 'Abrir',
   'welcome.context.delete': 'Excluir',
   'welcome.namespace.edit': 'Editar',

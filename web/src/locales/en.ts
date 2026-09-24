@@ -96,7 +96,7 @@ const en = {
   'welcome.more': 'More',
   'welcome.createNew': 'Create New Namespace',
   'welcome.delete.title': 'Delete Namespace',
-  'welcome.delete.message': 'Delete namespace "{name}"? This will remove the configuration file.',
+  'welcome.delete.message': 'Delete namespace "{name}"? Its configuration, data volumes and folder (with its snapshots and exported files) will be deleted permanently.',
   'welcome.context.open': 'Open',
   'welcome.context.delete': 'Delete',
   'welcome.namespace.edit': 'Edit',

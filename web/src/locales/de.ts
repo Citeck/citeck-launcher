@@ -94,7 +94,7 @@ const de = {
   'welcome.more': 'Mehr',
   'welcome.createNew': 'Neuen Namespace erstellen',
   'welcome.delete.title': 'Namespace löschen',
-  'welcome.delete.message': 'Namespace "{name}" löschen? Die Konfigurationsdatei wird entfernt.',
+  'welcome.delete.message': 'Namespace "{name}" löschen? Seine Konfiguration, Datenvolumes und sein Ordner (mit Snapshots und exportierten Dateien) werden dauerhaft gelöscht.',
   'welcome.context.open': 'Öffnen',
   'welcome.context.delete': 'Löschen',
   'welcome.namespace.edit': 'Bearbeiten',

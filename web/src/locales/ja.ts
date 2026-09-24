@@ -94,7 +94,7 @@ const ja = {
   'welcome.more': '\u305d\u306e\u4ed6',
   'welcome.createNew': '\u65b0\u898f namespace \u3092\u4f5c\u6210',
   'welcome.delete.title': 'namespace \u3092\u524a\u9664',
-  'welcome.delete.message': 'namespace \u300c{name}\u300d\u3092\u524a\u9664\u3057\u307e\u3059\u304b\uff1f\u8a2d\u5b9a\u30d5\u30a1\u30a4\u30eb\u304c\u524a\u9664\u3055\u308c\u307e\u3059\u3002',
+  'welcome.delete.message': 'namespace「{name}」を削除しますか？設定、データボリューム、フォルダー（スナップショットとエクスポートしたファイルを含む）は完全に削除されます。',
   'welcome.context.open': '\u958b\u304f',
   'welcome.context.delete': '\u524a\u9664',
   'welcome.namespace.edit': '編集',

@@ -94,7 +94,7 @@ const zh = {
   'welcome.more': '更多',
   'welcome.createNew': '创建新 namespace',
   'welcome.delete.title': '删除 namespace',
-  'welcome.delete.message': '确认删除 namespace "{name}"？配置文件将被移除。',
+  'welcome.delete.message': '确认删除 namespace "{name}"？其配置、数据卷和目录（包括快照和导出的文件）将被永久删除。',
   'welcome.context.open': '打开',
   'welcome.context.delete': '删除',
   'welcome.namespace.edit': '编辑',
