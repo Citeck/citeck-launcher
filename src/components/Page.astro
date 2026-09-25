@@ -1,0 +1,39 @@
+---
+import Base from '../layouts/Base.astro';
+import Header from './Header.astro';
+import Hero from './Hero.astro';
+import Numbers from './Numbers.astro';
+import WhatIsCiteck from './WhatIsCiteck.astro';
+import Tracks from './Tracks.astro';
+import Features from './Features.astro';
+import Gallery from './Gallery.astro';
+import Editions from './Editions.astro';
+import Requirements from './Requirements.astro';
+import Downloads from './Downloads.astro';
+import Faq from './Faq.astro';
+import FinalCta from './FinalCta.astro';
+import Footer from './Footer.astro';
+import { t, type Lang } from '../i18n';
+
+interface Props { lang: Lang }
+const { lang } = Astro.props;
+const d = t(lang);
+---
+
+<Base lang={lang} title={d.meta.title} description={d.meta.description} ogImage={`og-${lang}.png`}>
+  <Header lang={lang} />
+  <main>
+    <Hero lang={lang} />
+    <Numbers lang={lang} />
+    <WhatIsCiteck lang={lang} />
+    <Tracks lang={lang} />
+    <Features lang={lang} />
+    <Gallery lang={lang} />
+    <Editions lang={lang} />
+    <Requirements lang={lang} />
+    <Downloads lang={lang} />
+    <Faq lang={lang} />
+    <FinalCta lang={lang} />
+  </main>
+  <Footer lang={lang} />
+</Base>

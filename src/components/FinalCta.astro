@@ -1,0 +1,21 @@
+---
+import DownloadButton from '../islands/DownloadButton';
+import CopyCommand from '../islands/CopyCommand';
+import { t, type Lang } from '../i18n';
+import { SERVER_COMMAND } from '../lib/releases';
+interface Props { lang: Lang }
+const d = t(Astro.props.lang);
+---
+
+<section class="blob-hero relative overflow-hidden py-24 sm:py-32">
+  <div class="reveal mx-auto flex max-w-3xl flex-col items-center px-5 text-center sm:px-6">
+    <h2 class="text-4xl font-extrabold tracking-[-0.035em] sm:text-6xl">{d.cta.title}</h2>
+    <p class="mt-4 text-lg text-muted dark:text-night-muted">{d.cta.lead}</p>
+    <div class="mt-9 flex flex-col items-center [&_.flex-wrap]:justify-center">
+      <DownloadButton client:visible labels={{ ...d.hero, ...d.downloads }} serverHref="#server" showMeta={false} />
+    </div>
+    <div class="mt-6 flex w-full justify-center">
+      <CopyCommand client:visible command={SERVER_COMMAND} labels={d.copy} />
+    </div>
+  </div>
+</section>

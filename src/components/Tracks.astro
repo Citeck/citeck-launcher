@@ -1,0 +1,51 @@
+---
+import CopyCommand from '../islands/CopyCommand';
+import Icon from './Icon.astro';
+import { t, type Lang } from '../i18n';
+import { SERVER_COMMAND } from '../lib/releases';
+interface Props { lang: Lang }
+const d = t(Astro.props.lang);
+const tracks = [
+  { id: 'desktop', icon: 'desktop' as const, x: d.tracks.desktop },
+  { id: 'server', icon: 'server' as const, x: d.tracks.server },
+];
+---
+
+<section class="border-y border-slate-200/70 bg-slate-50/60 py-20 sm:py-28 dark:border-white/5 dark:bg-white/[.02]">
+  <div class="mx-auto max-w-7xl px-5 sm:px-6">
+    <div class="reveal text-center">
+      <h2 class="text-3xl font-extrabold tracking-[-0.03em] sm:text-5xl">{d.tracks.title}</h2>
+      <p class="mt-4 text-lg text-muted dark:text-night-muted">{d.tracks.lead}</p>
+    </div>
+    <div class="mt-12 grid grid-cols-1 gap-6 lg:grid-cols-2">
+      {tracks.map((tr, i) => (
+        <article id={tr.id} class="reveal scroll-mt-24 flex min-w-0 flex-col rounded-3xl border border-slate-200/80 bg-white p-7 shadow-sm sm:p-9 dark:border-white/10 dark:bg-night-card" style={`transition-delay:${i * 90}ms`}>
+          <div class="flex items-center gap-3">
+            <div class="grid size-12 place-items-center rounded-2xl bg-gradient-to-br from-brand to-[#8f6fd8] text-white shadow-md"><Icon name={tr.icon} class="size-6" /></div>
+            <div>
+              <h3 class="text-2xl font-extrabold tracking-tight">{tr.x.title}</h3>
+              <p class="text-sm font-medium text-muted dark:text-night-muted">{tr.x.tag}</p>
+            </div>
+          </div>
+          <ol class="mt-7 space-y-4">
+            {tr.x.steps.map((s, n) => (
+              <li class="flex gap-4">
+                <span class="grid size-8 shrink-0 place-items-center rounded-full border-2 border-brand/30 text-sm font-bold text-brand dark:border-brand-light/40 dark:text-brand-light">{n + 1}</span>
+                <span class="pt-1 font-medium">{s}</span>
+              </li>
+            ))}
+          </ol>
+          <p class="mt-6 text-sm text-muted dark:text-night-muted">{tr.x.note}</p>
+          <div class="mt-auto pt-7">
+            {tr.id === 'server'
+              ? <div class="space-y-4"><CopyCommand client:visible command={SERVER_COMMAND} labels={d.copy} /><a href={d.links.serverDocs} target="_blank" rel="noopener" class="inline-flex items-center gap-1.5 text-sm font-semibold text-brand hover:underline dark:text-brand-light">{tr.x.cta}<Icon name="external" class="size-4" /></a></div>
+              : <a href="#downloads" class="inline-flex items-center gap-2 rounded-xl bg-brand px-5 py-3 font-semibold text-white transition hover:bg-brand-dark dark:bg-brand-light dark:text-night dark:hover:bg-white"><Icon name="download" />{tr.x.cta}</a>}
+          </div>
+        </article>
+      ))}
+    </div>
+    <p class="reveal mx-auto mt-8 flex max-w-3xl items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-900 dark:border-amber-300/20 dark:bg-amber-300/5 dark:text-amber-100">
+      <Icon name="clock" class="mt-0.5 size-5 shrink-0" /><span>{d.tracks.firstRun}</span>
+    </p>
+  </div>
+</section>

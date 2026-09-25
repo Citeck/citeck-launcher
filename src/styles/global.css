@@ -1,0 +1,52 @@
+@import 'tailwindcss';
+@import '@fontsource-variable/inter';
+@import '@fontsource/jetbrains-mono/400.css';
+@import '@fontsource/jetbrains-mono/600.css';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: 'Inter Variable', -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  --color-brand: #4b75b7;
+  --color-brand-dark: #3e5b8f;
+  --color-brand-light: #7fa6e6;
+  --color-ink: #0d1b3e;
+  --color-muted: #4a5877;
+  --color-night: #0b1020;
+  --color-night-card: #121a2e;
+  --color-night-ink: #e6ecf8;
+  --color-night-muted: #9aa8c4;
+}
+
+html { scroll-behavior: smooth; }
+body { @apply bg-white text-ink antialiased dark:bg-night dark:text-night-ink; font-family: var(--font-sans); }
+
+.blob-hero {
+  background:
+    radial-gradient(700px 360px at 88% -5%, rgb(255 217 240 / .9), transparent 60%),
+    radial-gradient(760px 420px at 55% 25%, rgb(215 230 255 / .9), transparent 60%),
+    radial-gradient(600px 320px at 0% 100%, rgb(217 255 242 / .9), transparent 60%);
+}
+.dark .blob-hero {
+  background:
+    radial-gradient(700px 360px at 88% -5%, rgb(190 80 150 / .22), transparent 60%),
+    radial-gradient(760px 420px at 55% 25%, rgb(75 117 183 / .28), transparent 60%),
+    radial-gradient(600px 320px at 0% 100%, rgb(40 160 130 / .18), transparent 60%);
+}
+
+/* Hidden only when JS runs (html.js is set by the head script) — no-JS visitors see everything. */
+html.js .reveal { opacity: 0; transform: translateY(24px); transition: opacity .7s ease, transform .7s ease; }
+html.js .reveal.is-visible { opacity: 1; transform: none; }
+
+@keyframes float {
+  0%, 100% { transform: perspective(1400px) rotateX(6deg) translateY(0); }
+  50% { transform: perspective(1400px) rotateX(6deg) translateY(-8px); }
+}
+.float { animation: float 7s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  html.js .reveal { opacity: 1; transform: none; transition: none; }
+  .float { animation: none; }
+}

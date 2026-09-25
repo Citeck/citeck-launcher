@@ -24,3 +24,9 @@ dist-ssr
 *.sln
 *.sw?
 .gradle
+
+# Astro / tooling
+.astro
+.superpowers
+.playwright-mcp
+verify-out

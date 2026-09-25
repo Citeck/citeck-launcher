@@ -1,0 +1,28 @@
+---
+import Icon from './Icon.astro';
+import logo from '../assets/citeck-logo.svg?raw';
+import { t, type Lang } from '../i18n';
+interface Props { lang: Lang }
+const d = t(Astro.props.lang);
+const year = new Date().getFullYear();
+const links = [
+  { href: d.links.telegram, label: d.footer.community, icon: 'telegram' as const },
+  { href: d.links.docs, label: d.footer.docs, icon: 'doc' as const },
+  { href: d.links.github, label: d.footer.github, icon: 'github' as const },
+  { href: d.links.contacts, label: d.footer.contacts, icon: 'external' as const },
+];
+---
+
+<footer class="border-t border-slate-200/70 py-12 dark:border-white/5">
+  <div class="mx-auto flex max-w-7xl flex-col gap-8 px-5 sm:px-6 md:flex-row md:items-center md:justify-between">
+    <div>
+      <a href={d.links.citeck} target="_blank" rel="noopener" class="block h-[20px] w-[86px] text-brand dark:text-brand-light [&>svg]:h-full [&>svg]:w-full" set:html={logo.replaceAll('cl-clip', 'ft-clip')} />
+      <p class="mt-3 max-w-sm text-sm text-muted dark:text-night-muted">{d.footer.license} © {year} {d.footer.copy}</p>
+    </div>
+    <ul class="flex flex-wrap gap-x-6 gap-y-3 text-sm font-medium">
+      {links.map((l) => (
+        <li><a href={l.href} target="_blank" rel="noopener" class="inline-flex items-center gap-2 text-muted transition hover:text-brand dark:text-night-muted dark:hover:text-brand-light"><Icon name={l.icon} class="size-4" />{l.label}</a></li>
+      ))}
+    </ul>
+  </div>
+</footer>

@@ -1,0 +1,84 @@
+---
+import '../styles/global.css';
+import interLatin from '@fontsource-variable/inter/files/inter-latin-wght-normal.woff2?url';
+import interCyrillic from '@fontsource-variable/inter/files/inter-cyrillic-wght-normal.woff2?url';
+import { enRedirectTarget } from '../lib/lang';
+
+interface Props {
+  lang: 'ru' | 'en';
+  title: string;
+  description: string;
+  ogImage: string;
+}
+const { lang, title, description, ogImage } = Astro.props;
+const base = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
+const site = Astro.site!.toString().replace(/\/$/, '');
+const ruUrl = `${site}${base}`;
+const enUrl = `${site}${base}en/`;
+const canonical = lang === 'ru' ? ruUrl : enUrl;
+const ogUrl = `${site}${base}${ogImage}`;
+// The Russian root decides on /en/ before anything paints (see enRedirectTarget).
+const langRedirect = `(function () {
+  var s = null;
+  try { s = localStorage.getItem('lang'); } catch (e) {}
+  var n = navigator, l = location;
+  var u = (${enRedirectTarget.toString()})({ path: l.pathname, search: l.search, hash: l.hash, base: ${JSON.stringify(base)},
+    enPath: ${JSON.stringify(`${base}en/`)}, stored: s, languages: n.languages && n.languages.length ? n.languages : [n.language || ''],
+    userAgent: n.userAgent, webdriver: !!n.webdriver });
+  if (u) l.replace(u);
+})();`;
+---
+
+<!doctype html>
+<html lang={lang}>
+  <head>
+    <meta charset="utf-8" />
+    {lang === 'ru' && <script is:inline set:html={langRedirect} />}
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <link rel="canonical" href={canonical} />
+    <link rel="alternate" hreflang="ru" href={ruUrl} />
+    <link rel="alternate" hreflang="en" href={enUrl} />
+    <link rel="alternate" hreflang="x-default" href={ruUrl} />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:image" content={ogUrl} />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:locale" content={lang === 'ru' ? 'ru_RU' : 'en_US'} />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="preload" href={interLatin} as="font" type="font/woff2" crossorigin />
+    {lang === 'ru' && <link rel="preload" href={interCyrillic} as="font" type="font/woff2" crossorigin />}
+    <link rel="icon" href={`${base}favicon.ico`} />
+    <meta name="theme-color" content="#4b75b7" />
+    <script is:inline>
+      (function () {
+        var d = document.documentElement;
+        d.classList.add('js');
+        var t = null;
+        try { t = localStorage.getItem('theme'); } catch (e) {}
+        if (t === 'dark' || (t !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches)) d.classList.add('dark');
+      })();
+    </script>
+  </head>
+  <body class="min-h-screen">
+    <slot />
+    <script>
+      const io = new IntersectionObserver(
+        (entries) => {
+          for (const e of entries) {
+            if (e.isIntersecting) {
+              e.target.classList.add('is-visible');
+              io.unobserve(e.target);
+            }
+          }
+        },
+        { rootMargin: '0px 0px -10% 0px' },
+      );
+      document.querySelectorAll('.reveal').forEach((el) => io.observe(el));
+    </script>
+  </body>
+</html>

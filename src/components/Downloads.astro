@@ -1,0 +1,15 @@
+---
+import DownloadTable from '../islands/DownloadTable';
+import { t, type Lang } from '../i18n';
+interface Props { lang: Lang }
+const d = t(Astro.props.lang);
+---
+
+<section id="downloads" class="scroll-mt-20 pb-20 sm:pb-28">
+  <div class="mx-auto max-w-5xl px-5 sm:px-6">
+    <h2 class="reveal text-3xl font-extrabold tracking-[-0.03em] sm:text-4xl">{d.downloads.title}</h2>
+    <div class="reveal mt-8">
+      <DownloadTable client:visible labels={d.downloads} />
+    </div>
+  </div>
+</section>

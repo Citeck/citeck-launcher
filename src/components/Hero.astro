@@ -1,0 +1,56 @@
+---
+import DownloadButton from '../islands/DownloadButton';
+import CopyCommand from '../islands/CopyCommand';
+import { t, type Lang } from '../i18n';
+import { SERVER_COMMAND } from '../lib/releases';
+import { Picture } from 'astro:assets';
+import dashboard from '../assets/screenshots/dashboard.png';
+
+interface Props { lang: Lang }
+const { lang } = Astro.props;
+const d = t(lang);
+---
+
+<section class="blob-hero relative overflow-hidden">
+  <div class="mx-auto grid max-w-7xl grid-cols-1 items-center gap-14 px-5 pb-20 pt-14 sm:px-6 lg:grid-cols-[minmax(0,1.02fr)_minmax(0,1fr)] lg:pb-28 lg:pt-20">
+    <div class="hero-in min-w-0">
+      <span class="inline-flex items-center gap-2 rounded-full border border-brand/20 bg-white/70 px-3 py-1 text-xs font-semibold text-brand backdrop-blur dark:border-brand-light/25 dark:bg-white/5 dark:text-brand-light">
+        <span class="size-1.5 rounded-full bg-emerald-500"></span>{d.hero.badge}
+      </span>
+      <h1 class="mt-5 text-[2.6rem] font-extrabold leading-[1.04] tracking-[-0.035em] text-balance sm:text-6xl lg:text-[4.1rem]">
+        {d.hero.title1}<br />
+        <span class="bg-gradient-to-r from-brand to-[#8f6fd8] bg-clip-text text-transparent dark:from-brand-light dark:to-[#c3a6ff]">{d.hero.title2}</span>
+      </h1>
+      <p class="mt-6 max-w-xl text-lg leading-relaxed text-muted dark:text-night-muted">{d.hero.lead}</p>
+      <div class="mt-8">
+        <DownloadButton client:load labels={{ ...d.hero, ...d.downloads }} serverHref="#server" />
+      </div>
+      <div class="mt-6">
+        <CopyCommand client:visible command={SERVER_COMMAND} labels={d.copy} />
+      </div>
+    </div>
+
+    <div class="hero-in relative min-w-0 [animation-delay:.15s]">
+      <div class="absolute -inset-6 -z-10 rounded-[2.5rem] bg-gradient-to-tr from-brand/25 via-transparent to-[#8f6fd8]/20 blur-2xl dark:from-brand-light/15 dark:to-[#8f6fd8]/15"></div>
+      <figure class="float overflow-hidden rounded-2xl bg-[#1f2126] shadow-[0_50px_100px_-30px_rgb(13_27_62/.55)] ring-1 ring-slate-900/10 dark:ring-white/20">
+        <Picture
+          src={dashboard}
+          alt={d.hero.shotAlt}
+          formats={['avif', 'webp']}
+          widths={[560, 840, 1102]}
+          sizes="(min-width: 1024px) 600px, 92vw"
+          loading="eager"
+          decoding="async"
+          class="block h-auto w-full"
+        />
+      </figure>
+    </div>
+  </div>
+</section>
+
+<style>
+  /* Motion only, no opacity: a transparent hero is not an LCP candidate, so fading it in would delay LCP. */
+  @keyframes hero-in { from { transform: translateY(18px); } to { transform: none; } }
+  :global(html.js) .hero-in { animation: hero-in .8s cubic-bezier(.2,.7,.2,1) both; }
+  @media (prefers-reduced-motion: reduce) { :global(html.js) .hero-in { animation: none; } }
+</style>

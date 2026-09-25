@@ -1,0 +1,30 @@
+---
+import Icon from './Icon.astro';
+import { t, type Lang } from '../i18n';
+interface Props { lang: Lang }
+const d = t(Astro.props.lang);
+const e = d.editions;
+---
+
+<section class="py-20 sm:py-28">
+  <div class="mx-auto max-w-5xl px-5 sm:px-6">
+    <h2 class="reveal text-center text-3xl font-extrabold tracking-[-0.03em] sm:text-5xl">{e.title}</h2>
+    <div class="mt-12 grid grid-cols-1 gap-6 md:grid-cols-2">
+      <article class="reveal flex flex-col rounded-3xl border border-slate-200/80 bg-white p-8 dark:border-white/10 dark:bg-night-card">
+        <h3 class="text-2xl font-extrabold">{e.community.title}</h3>
+        <p class="mt-1 font-semibold text-emerald-700 dark:text-emerald-400">{e.community.price}</p>
+        <p class="mt-4 text-muted dark:text-night-muted">{e.community.text}</p>
+        <a href="#downloads" class="mt-8 inline-flex items-center justify-center gap-2 self-start rounded-xl border border-slate-300 px-5 py-3 font-semibold transition hover:border-brand hover:text-brand dark:border-white/15 dark:hover:border-brand-light dark:hover:text-brand-light"><Icon name="download" />{e.community.cta}</a>
+      </article>
+      <div class="reveal rounded-3xl bg-gradient-to-br from-brand via-[#6f79d2] to-[#9b6bd6] p-px [transition-delay:90ms]">
+        <article class="flex h-full flex-col rounded-[calc(1.5rem-1px)] bg-white p-8 dark:bg-night-card">
+          <h3 class="text-2xl font-extrabold">{e.enterprise.title}</h3>
+          <p class="mt-1 font-semibold text-brand dark:text-brand-light">{e.enterprise.price}</p>
+          <p class="mt-4 text-muted dark:text-night-muted">{e.enterprise.text}</p>
+          <a href={d.links.contacts} target="_blank" rel="noopener" class="mt-8 inline-flex items-center justify-center gap-2 self-start rounded-xl bg-brand px-5 py-3 font-semibold text-white transition hover:bg-brand-dark dark:bg-brand-light dark:text-night dark:hover:bg-white">{e.enterprise.cta}<Icon name="arrow" class="size-4" /></a>
+        </article>
+      </div>
+    </div>
+    <p class="reveal mt-6 text-center text-sm text-muted dark:text-night-muted">{e.note}</p>
+  </div>
+</section>

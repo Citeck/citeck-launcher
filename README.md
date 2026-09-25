@@ -1,90 +1,49 @@
-# Citeck Launcher Website
+# Citeck Launcher website
 
-Static website for Citeck Launcher downloads built with Vite, React, TypeScript, and Tailwind CSS.
+The landing page for Citeck Launcher 2.x, published on GitHub Pages at
+<https://citeck.github.io/citeck-launcher/> (Russian) and `/en/` (English).
 
-## Features
+Built with [Astro 7](https://astro.build) (static generation), Tailwind CSS 4 and a few React islands.
+The design and its decisions are in `docs/superpowers/specs/2026-09-25-launcher-site-v2-design.md`.
 
-- **Modern Stack**: Vite + React + TypeScript
-- **Tailwind CSS**: Mobile-first responsive design
-- **Dark Mode**: Light and dark theme support
-- **Accessible**: Semantic HTML and ARIA attributes
-- **Animated**: Smooth CSS transitions
-- **Static Export**: Builds to static files for GitHub Pages
+## Commands
 
-## Development
-
-### Prerequisites
-
-- Node.js 18+
-- Yarn
-
-### Install Dependencies
+Node ≥ 22.22.2 (jsdom 30 needs it for the tests) and Yarn classic.
 
 ```bash
 yarn install
+yarn dev        # http://localhost:4321/citeck-launcher/
+yarn build      # astro check + static build into dist/
+yarn test       # Vitest: release parsing, OS detection, language rule, dictionaries, download button
+yarn verify     # after build: Playwright checks of both pages (themes, widths, axe WCAG AA, no-JS, API down, language redirect)
+yarn og         # re-render public/og-ru.png and public/og-en.png
 ```
 
-### Start Development Server
+`yarn verify` writes full-page screenshots into `verify-out/` (git-ignored) — look at them after layout changes.
 
-```bash
-yarn dev
-```
+## Where things are
 
-The site will be available at `http://localhost:5173`
+| What | Where |
+|---|---|
+| All texts, both languages | `src/i18n/ru.ts` (source of truth), `src/i18n/en.ts` — same keys; a test fails if the shapes differ or Russian text is left in EN |
+| Page sections | `src/components/*.astro`, assembled by `src/components/Page.astro` |
+| Pages | `src/pages/index.astro` (RU), `src/pages/en/index.astro` (EN) |
+| Interactive parts (React) | `src/islands/`: OS-aware download button, downloads table, copy button, theme toggle |
+| Release parsing, OS detection, language rule | `src/lib/` (pure, unit-tested) |
+| Language redirect | `enRedirectTarget` in `src/lib/lang.ts`, inlined by `src/layouts/Base.astro` as the first script in the Russian page's `<head>` (runs before paint; keeps query and hash; skips crawlers and automated browsers) — it must stay self-contained |
+| Screenshots | `src/assets/screenshots/*.png` — optimised to AVIF/WebP at build time; a gallery item whose file is missing is simply not shown |
+| Theme tokens | `src/styles/global.css` |
 
-### Build for Production
+## How the download buttons work
 
-```bash
-yarn build
-```
+On load the page asks `api.github.com/repos/Citeck/citeck-launcher/releases/latest` for the current 2.x release
+(cached in `sessionStorage`) and offers the installer for the visitor's OS and architecture. Without JavaScript,
+or when the API is unreachable or rate-limited, every button links to the latest release page on GitHub.
+The server command is static: `curl -fsSL https://github.com/Citeck/citeck-launcher/releases/latest/download/install.sh | bash`.
 
-The built files will be in the `dist/` directory.
+## Screenshots
 
-### Preview Production Build
-
-```bash
-yarn preview
-```
-
-## Adding Screenshots
-
-To add screenshots to the website:
-
-1. Place your screenshot images in `public/screenshots/`
-2. Update the `screenshots` array in `src/App.tsx`:
-
-```typescript
-const screenshots: string[] = [
-  '/screenshots/screenshot1.png',
-  '/screenshots/screenshot2.png',
-];
-```
-
-## Deployment
-
-The website is automatically deployed to GitHub Pages via GitHub Actions when changes are pushed to the repository.
-
-## Architecture
-
-- **Mobile-First**: Styles start with mobile and scale up with breakpoints
-- **Component-Based**: Reusable React components with TypeScript
-- **Accessibility**: ARIA labels, semantic HTML, keyboard navigation
-- **Performance**: Lazy loading images, optimized builds
-
-## Project Structure
-
-```
-website/
-├── public/          # Static assets
-├── src/
-│   ├── components/  # React components
-│   ├── styles/      # Global styles
-│   ├── types.ts     # TypeScript types
-│   ├── App.tsx      # Main app component
-│   └── main.tsx     # Entry point
-├── index.html
-├── package.json
-├── tailwind.config.js
-├── tsconfig.json
-└── vite.config.ts
-```
+`dashboard.png` comes from the launcher repository (`readme/screenshots/running.png` on `master`).
+`server-wizard.png` is a render of the real `citeck install` wizard (tmux capture → HTML → Playwright).
+To add a screenshot, drop a PNG into `src/assets/screenshots/` and reference its name (without `.png`)
+in `gallery.items` of both dictionaries.

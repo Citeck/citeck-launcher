@@ -1,0 +1,16 @@
+---
+import { t, type Lang } from '../i18n';
+interface Props { lang: Lang }
+const d = t(Astro.props.lang);
+---
+
+<section class="relative -mt-8 pb-8" aria-label={d.numbersLabel}>
+  <div class="mx-auto grid max-w-7xl grid-cols-2 gap-3 px-5 sm:px-6 lg:grid-cols-4 lg:gap-4">
+    {d.numbers.map((n, i) => (
+      <div class="reveal rounded-2xl border border-slate-200/80 bg-white/80 p-5 shadow-sm backdrop-blur sm:p-6 dark:border-white/10 dark:bg-night-card/80" style={`transition-delay:${i * 70}ms`}>
+        <div class="text-3xl font-extrabold tracking-tight text-brand sm:text-4xl dark:text-brand-light">{n.value}</div>
+        <div class="mt-1.5 text-sm text-muted dark:text-night-muted">{n.label}</div>
+      </div>
+    ))}
+  </div>
+</section>

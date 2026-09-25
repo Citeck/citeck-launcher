@@ -1,0 +1,23 @@
+---
+import Icon from './Icon.astro';
+import { t, type Lang } from '../i18n';
+interface Props { lang: Lang }
+const d = t(Astro.props.lang);
+const icons = ['docker', 'cpu', 'disk'] as const;
+---
+
+<section class="pb-20 sm:pb-28">
+  <div class="mx-auto max-w-5xl px-5 sm:px-6">
+    <div class="reveal rounded-3xl border border-slate-200/80 bg-slate-50/70 p-7 sm:p-9 dark:border-white/10 dark:bg-white/[.03]">
+      <h2 class="text-xl font-extrabold tracking-tight sm:text-2xl">{d.req.title}</h2>
+      <ul class="mt-6 grid grid-cols-1 gap-5 sm:grid-cols-3">
+        {d.req.items.map((r, i) => (
+          <li class="flex gap-3">
+            <span class="grid size-10 shrink-0 place-items-center rounded-xl bg-white text-brand shadow-sm dark:bg-night-card dark:text-brand-light"><Icon name={icons[i]} /></span>
+            <span><span class="block font-bold">{r.title}</span><span class="text-sm text-muted dark:text-night-muted">{r.text}</span></span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  </div>
+</section>
