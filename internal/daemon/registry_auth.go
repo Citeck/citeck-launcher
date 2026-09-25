@@ -46,7 +46,9 @@ func makeTokenLookup(reader secretReader) bundle.TokenLookupFunc {
 }
 
 // makeRegistryAuthFunc creates a function that returns Docker registry credentials
-// by matching image host against workspace config's imageReposByHost.
+// for an image. The stored credential is per registry HOST (imageReposByHost,
+// bindings); whether an image gets it follows the imageRepo the image belongs to
+// (the longest matching URL): a repo with no authType is pulled anonymously.
 // Registry secrets are pre-fetched into a map at creation time for efficiency.
 // The function is rebuilt on namespace reload to reflect secret mutations.
 func makeRegistryAuthFunc(wsCfg *bundle.WorkspaceConfig, reader secretReader, bindings map[string]string) namespace.RegistryAuthFunc {
@@ -62,6 +64,14 @@ func makeRegistryAuthFunc(wsCfg *bundle.WorkspaceConfig, reader secretReader, bi
 	}
 
 	return func(img string) *docker.RegistryAuth {
+		// An image under a declared repo takes that repo's setting: a repo with
+		// no authType is pulled anonymously even when its host has credentials
+		// for another repo (harbor.citeck.ru/public beside
+		// harbor.citeck.ru/enterprise). Only an image under no declared repo
+		// URL falls back to whatever its host has.
+		if repo, ok := wsCfg.RepoForImage(img); ok && repo.AuthType == "" {
+			return nil
+		}
 		host := img
 		if idx := strings.Index(host, "/"); idx > 0 {
 			host = host[:idx]

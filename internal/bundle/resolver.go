@@ -534,17 +534,72 @@ type WorkspaceLink struct {
 	DependsOn   []string `yaml:"dependsOn,omitempty"`   // app IDs this link depends on
 }
 
-// ImageReposByHost builds a map from registry host to ImageRepo for auth lookup.
+// ImageReposByHost maps a registry host to the imageRepo whose credential the
+// host STORES (secrets and bindings are keyed by host). Several repos may share
+// one host (harbor.citeck.ru/enterprise with auth, harbor.citeck.ru/public
+// without): the first repo on the host that declares an AuthType wins, and a
+// host with no such repo maps to its first repo. It used to be last-writer-wins,
+// so an auth-free repo declared after an auth one stripped the host of its
+// credential. Whether a given image NEEDS and GETS it is decided by the image's
+// own repo (ImageNeedsAuth), not by this map.
 func (w *WorkspaceConfig) ImageReposByHost() map[string]ImageRepo {
 	m := make(map[string]ImageRepo)
 	for _, repo := range w.ImageRepos {
-		host := repo.URL
-		if idx := strings.Index(host, "/"); idx > 0 {
-			host = host[:idx]
+		host := imageRepoHost(repo.URL)
+		if cur, ok := m[host]; ok && (cur.AuthType != "" || repo.AuthType == "") {
+			continue
 		}
 		m[host] = repo
 	}
 	return m
+}
+
+// RepoForImage returns the imageRepo a resolved image reference is pulled
+// through: the repo whose URL is the longest path prefix of the reference
+// (matched on a '/' boundary, so harbor.citeck.ru/pub is not a prefix of
+// harbor.citeck.ru/public/x).
+func (w *WorkspaceConfig) RepoForImage(image string) (ImageRepo, bool) {
+	var best ImageRepo
+	bestLen := 0
+	for _, repo := range w.ImageRepos {
+		u := strings.TrimRight(repo.URL, "/")
+		if u == "" || len(u) <= bestLen {
+			continue
+		}
+		if image == u || strings.HasPrefix(image, u+"/") {
+			best, bestLen = repo, len(u)
+		}
+	}
+	return best, bestLen > 0
+}
+
+// ImageNeedsAuth reports whether pulling image requires credentials: the
+// AuthType of the repo RepoForImage matches. An image under no declared repo
+// URL falls back to its host — required when any repo on that host declares
+// an AuthType — which is the rule every launcher before this one applied to
+// every image, so a workspace that declares only harbor.citeck.ru/enterprise
+// still treats harbor.citeck.ru/public/... as auth-required. Declaring the
+// public path as its own repo without an AuthType is how a workspace says
+// "anonymous pull here": such an image is neither asked about nor sent the
+// host's credential.
+func (w *WorkspaceConfig) ImageNeedsAuth(image string) bool {
+	if w == nil {
+		return false
+	}
+	if repo, ok := w.RepoForImage(image); ok {
+		return repo.AuthType != ""
+	}
+	repo, ok := w.ImageReposByHost()[imageRepoHost(image)]
+	return ok && repo.AuthType != ""
+}
+
+// imageRepoHost is the part of an imageRepo URL or image reference before the
+// first '/'.
+func imageRepoHost(ref string) string {
+	if idx := strings.Index(ref, "/"); idx > 0 {
+		return ref[:idx]
+	}
+	return ref
 }
 
 // TokenLookupFunc returns an auth token for a given repo auth type.

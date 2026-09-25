@@ -40,13 +40,17 @@ func (d *Daemon) handleMissingRegistryAuth(w http.ResponseWriter, _ *http.Reques
 	}
 
 	if act.runtime != nil {
-		// Namespace is loaded — check only the hosts the apps that will
-		// actually start pull from (active bundle minus detached apps), so a
+		// Namespace is loaded — check only the images the apps that will
+		// actually start pull (active bundle minus detached apps), so a
 		// declared-but-unused (or detached-only) auth registry never prompts.
+		// Whether an image needs credentials is decided per IMAGE (the longest
+		// matching imageRepo URL), so a public path on a host that also serves
+		// an auth-required one does not block the start; the credential itself
+		// stays per host.
 		seen := map[string]bool{}
 		for _, img := range act.runtime.StartableAppImages() {
 			host := imageRegistryHost(img)
-			if host == "" || seen[host] {
+			if host == "" || seen[host] || !wsCfg.ImageNeedsAuth(img) {
 				continue
 			}
 			seen[host] = true

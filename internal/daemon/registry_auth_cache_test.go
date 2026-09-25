@@ -165,3 +165,59 @@ func TestBuildRegistryAuthCache_KotlinMigrationScope(t *testing.T) {
 		t.Errorf("got (%q,%q), want ('harbor-user','harbor:p:w')", auth.Username, auth.Password)
 	}
 }
+
+// A host shared by an auth-required repo and an auth-free one keeps its
+// credentials whichever is declared last: they are per host, and a registry
+// accepts them for its public projects too.
+func TestBuildRegistryAuthCache_SharedHostKeepsItsCredentials(t *testing.T) {
+	host := "harbor.citeck.ru"
+	ws := &bundle.WorkspaceConfig{ImageRepos: []bundle.ImageRepo{
+		{ID: "enterprise", URL: host + "/enterprise", AuthType: "BASIC"},
+		{ID: "public", URL: host + "/public"},
+	}}
+	reader := &fakeSecretReader{secrets: map[string]storage.Secret{
+		"registry-enterprise": {
+			SecretMeta: storage.SecretMeta{
+				ID: "registry-enterprise", Type: storage.SecretRegistryAuth, Scope: host, Username: "alice",
+			},
+			Value: "secret",
+		},
+	}}
+	got := buildRegistryAuthCache(ws.ImageReposByHost(), reader, nil)
+	if got[host] == nil || got[host].Username != "alice" {
+		t.Fatalf("expected alice's credentials for %s, got %+v", host, got[host])
+	}
+}
+
+// The credential is stored per host, but whether a pull SENDS it follows the
+// image's own repo: a public repo on the host is pulled anonymously, its
+// auth-required sibling with the credential, and an image under no declared
+// repo URL falls back to the host.
+func TestRegistryAuthFunc_FollowsTheImagesRepo(t *testing.T) {
+	host := "harbor.citeck.ru"
+	ws := &bundle.WorkspaceConfig{ImageRepos: []bundle.ImageRepo{
+		{ID: "enterprise", URL: host + "/enterprise", AuthType: "BASIC"},
+		{ID: "public", URL: host + "/public"},
+	}}
+	reader := &fakeSecretReader{secrets: map[string]storage.Secret{
+		"registry-enterprise": {
+			SecretMeta: storage.SecretMeta{
+				ID: "registry-enterprise", Type: storage.SecretRegistryAuth, Scope: host, Username: "alice",
+			},
+			Value: "secret",
+		},
+	}}
+	authFor := makeRegistryAuthFunc(ws, reader, nil)
+	if authFor == nil {
+		t.Fatal("expected an auth func")
+	}
+	if a := authFor(host + "/enterprise/citeck-rag:1.2.2"); a == nil || a.Username != "alice" {
+		t.Errorf("enterprise image: got %+v, want alice's credential", a)
+	}
+	if a := authFor(host + "/public/citeck-observer:v1.5.2"); a != nil {
+		t.Errorf("public image: got %+v, want an anonymous pull", a)
+	}
+	if a := authFor(host + "/community/stt-sidecar:1.0.0"); a == nil || a.Username != "alice" {
+		t.Errorf("image under no declared repo: got %+v, want the host's credential", a)
+	}
+}

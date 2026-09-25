@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -88,4 +89,40 @@ func TestRegistryPreflightSeesAppsOfANamespaceThatNeverStarted(t *testing.T) {
 		require.Equal(t, []string{"enterprise-registry.citeck.ru"},
 			missingHosts(t, preflightMux(t, true)))
 	})
+}
+
+// The pre-start check asks per IMAGE whether credentials are needed: a public
+// project on a host that also serves an auth-required one must not block the
+// start of a namespace that pulls only the public image (the community
+// observer on harbor), while an image under the auth-required path still does.
+func TestRegistryPreflightLetsAPublicPathOnASharedHostThrough(t *testing.T) {
+	mux := func(images ...string) *http.ServeMux {
+		store, err := storage.NewSQLiteStore(t.TempDir())
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = store.Close() })
+		d := testDaemon(t, store)
+		defs := make([]appdef.ApplicationDef, 0, len(images))
+		for i, img := range images {
+			defs = append(defs, appdef.ApplicationDef{Name: fmt.Sprintf("app%d", i), Image: img})
+		}
+		rt := namespace.NewRuntime(&namespace.Config{ID: "test"}, planStubDocker{}, t.TempDir())
+		t.Cleanup(rt.Shutdown)
+		rt.SetGeneratedDefs(defs)
+		d.activeNs = &activeNamespace{
+			runtime:  rt,
+			nsConfig: &namespace.Config{ID: "test"},
+			appDefs:  defs,
+			workspaceConfig: &bundle.WorkspaceConfig{ImageRepos: []bundle.ImageRepo{
+				{ID: "enterprise", URL: "harbor.citeck.ru/enterprise", AuthType: "BASIC"},
+				{ID: "public", URL: "harbor.citeck.ru/public"},
+			}},
+		}
+		m := http.NewServeMux()
+		d.registerRoutes(m)
+		return m
+	}
+
+	require.Empty(t, missingHosts(t, mux("harbor.citeck.ru/public/citeck-observer:v1.5.2", "postgres:17.5")))
+	require.Equal(t, []string{"harbor.citeck.ru"}, missingHosts(t, mux(
+		"harbor.citeck.ru/public/citeck-observer:v1.5.2", "harbor.citeck.ru/enterprise/citeck-rag:1.2.2")))
 }

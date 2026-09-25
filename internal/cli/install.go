@@ -874,19 +874,21 @@ func bundleImageRepoIDs(ref bundle.Ref, wsCfg *bundle.WorkspaceConfig) map[strin
 		return nil // fallback: nil means "check all" in findAuthRepos
 	}
 
-	// Build reverse map: registry host → imageRepo ID.
-	// Last-writer-wins if two repos share the same host (same pattern as ImageReposByHost).
-	hostToID := make(map[string]string, len(wsCfg.ImageRepos))
-	for _, repo := range wsCfg.ImageRepos {
-		hostToID[registryHost(repo.URL)] = repo.ID
-	}
-
-	// Extract hosts from resolved images and map back to repo IDs
+	// Map each resolved image back to the repo it is pulled through: the
+	// longest matching repo URL, else the repo carrying its host's credentials
+	// (the same rule WorkspaceConfig.ImageNeedsAuth applies). Keying on the host
+	// alone let a later auth-free repo on the same host (harbor.citeck.ru/public
+	// beside harbor.citeck.ru/enterprise) hide the auth one, and the install
+	// then never asked for its credentials.
+	reposByHost := wsCfg.ImageReposByHost()
 	ids := make(map[string]bool)
 	addImage := func(image string) {
-		host := registryHost(image)
-		if id, ok := hostToID[host]; ok {
-			ids[id] = true
+		if repo, ok := wsCfg.RepoForImage(image); ok {
+			ids[repo.ID] = true
+			return
+		}
+		if repo, ok := reposByHost[registryHost(image)]; ok {
+			ids[repo.ID] = true
 		}
 	}
 	for _, app := range result.Bundle.Applications {

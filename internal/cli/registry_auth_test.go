@@ -226,3 +226,55 @@ func TestCheckRegistryAuthForBundle_ScopedToUsedRepos(t *testing.T) {
 		t.Errorf("unused auth repo must not trigger failure, got: %v", err)
 	}
 }
+
+// TestBundleImageRepoIDs_SharedHost: two repos on one registry host — an
+// auth-required path and a public one declared AFTER it. The install must
+// still see that the bundle uses the auth-required repo (and so check its
+// credentials) and must not count the public repo as a reason to ask. Keying
+// images by host alone let the later public repo hide the auth one.
+func TestBundleImageRepoIDs_SharedHost(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CITECK_HOME", home)
+	wsRepoDir := filepath.Join(home, "data", "bundles", "workspace")
+	if err := os.MkdirAll(wsRepoDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	workspaceYAML := `imageRepos:
+  - id: enterprise
+    url: harbor.example.com/enterprise
+    authType: BASIC
+  - id: public
+    url: harbor.example.com/public
+bundleRepos:
+  - id: r1
+    name: Repo 1
+`
+	bundleYAML := `App1:
+  image:
+    repository: enterprise/app1
+    tag: "1.0"
+Observer:
+  image:
+    repository: public/observer
+    tag: "1.0"
+`
+	if err := os.WriteFile(filepath.Join(wsRepoDir, "workspace-v1.yml"), []byte(workspaceYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wsRepoDir, "2026.1.yml"), []byte(bundleYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	resolver := bundle.NewResolver(config.DataDir())
+	resolver.SetOffline(true)
+	wsCfg := resolver.ResolveWorkspaceOnly()
+
+	ids := bundleImageRepoIDs(bundle.Ref{Repo: "r1", Key: "2026.1"}, wsCfg)
+	if !ids["enterprise"] || !ids["public"] {
+		t.Fatalf("used repo ids = %v, want both enterprise and public", ids)
+	}
+	authRepos := findAuthRepos(wsCfg, ids)
+	if len(authRepos) != 1 || authRepos[0].ID != "enterprise" {
+		t.Fatalf("auth repos = %+v, want only enterprise", authRepos)
+	}
+}

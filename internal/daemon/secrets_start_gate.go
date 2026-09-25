@@ -6,25 +6,20 @@ import (
 )
 
 // namespaceNeedsUserSecrets reports whether any of the namespace's app images
-// pull from a registry host the workspace marks as auth-required (an ImageRepo
-// with a non-empty AuthType). Such a namespace cannot pull correctly while the
-// user-secret vault is locked, so its start must wait for unlock. Public images
-// (Docker Hub library refs with no host, or configured repos with no AuthType)
-// never gate.
+// pulls from an auth-required imageRepo (bundle.WorkspaceConfig.ImageNeedsAuth:
+// the longest matching repo URL decides, the host only for an image under no
+// declared URL). Such a namespace cannot pull correctly while the user-secret
+// vault is locked, so its start must wait for unlock. Public images (Docker Hub
+// library refs with no host, or configured repos with no AuthType) never gate.
 func namespaceNeedsUserSecrets(images []string, wsCfg *bundle.WorkspaceConfig) bool {
-	if wsCfg == nil {
-		return false
-	}
-	reposByHost := wsCfg.ImageReposByHost()
-	if len(reposByHost) == 0 {
+	if wsCfg == nil || len(wsCfg.ImageRepos) == 0 {
 		return false
 	}
 	for _, img := range images {
-		host := imageRegistryHost(img)
-		if host == "" {
+		if imageRegistryHost(img) == "" {
 			continue
 		}
-		if repo, ok := reposByHost[host]; ok && repo.AuthType != "" {
+		if wsCfg.ImageNeedsAuth(img) {
 			return true
 		}
 	}

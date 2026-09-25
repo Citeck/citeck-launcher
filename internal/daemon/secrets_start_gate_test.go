@@ -126,3 +126,20 @@ func TestShouldDeferStartForNamespaceSecrets(t *testing.T) {
 	assert.False(t, shouldDeferStartForSecrets(false, fakeVault{true, true}, false, pubImg, ws),
 		"server mode → never defer")
 }
+
+// Whether an image gates the start is decided per image, by the longest
+// matching repo URL: a public project on a host that also serves an
+// auth-required one does not make a namespace wait for the vault.
+func TestNamespaceNeedsUserSecrets_PublicPathOnASharedHost(t *testing.T) {
+	ws := &bundle.WorkspaceConfig{ImageRepos: []bundle.ImageRepo{
+		{ID: "enterprise", URL: "harbor.citeck.ru/enterprise", AuthType: "BASIC"},
+		{ID: "public", URL: "harbor.citeck.ru/public"},
+	}}
+	assert.False(t, namespaceNeedsUserSecrets(
+		[]string{"harbor.citeck.ru/public/citeck-observer:v1.5.2", "postgres:17.5"}, ws))
+	assert.True(t, namespaceNeedsUserSecrets(
+		[]string{"harbor.citeck.ru/public/citeck-observer:v1.5.2", "harbor.citeck.ru/enterprise/citeck-rag:1.2.2"}, ws))
+	// A path under no declared URL still follows its host.
+	assert.True(t, namespaceNeedsUserSecrets(
+		[]string{"harbor.citeck.ru/community/stt-sidecar:1.0.0"}, ws))
+}
