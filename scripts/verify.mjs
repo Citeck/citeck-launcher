@@ -1,7 +1,7 @@
 // End-to-end checks of the built site: `yarn build && yarn verify`.
 // Starts `astro preview`, then with Playwright (chromium):
 //  1. both pages × light/dark × 375/768/1280: full-page screenshot into verify-out/, no console errors,
-//     no failed same-origin requests, no horizontal overflow, no axe WCAG 2.1 A/AA violations at 375 and 1280;
+//     no failed same-origin requests, no horizontal overflow, no visible scrollbar on command blocks, no wrapped status pill, no axe WCAG 2.1 A/AA violations at 375 and 1280;
 //  2. JavaScript disabled: every section visible, hero download link points at the releases page;
 //  3. GitHub API unreachable: no version text, fallback link, no console errors;
 //  4. language: de → /en/, ru stays, stored choice wins both ways, /en/ never redirects, query and hash survive,
@@ -63,7 +63,8 @@ const revealAll = (page) => page.evaluate(() => document.querySelectorAll('.reve
 
 try {
   await waitUp();
-  const browser = await chromium.launch();
+  // Real scrollbars, as a desktop visitor sees them (headless hides them by default).
+  const browser = await chromium.launch({ ignoreDefaultArgs: ['--hide-scrollbars'] });
 
   console.log('1. layouts');
   for (const [name, url, locale] of [['ru', ru, 'ru-RU'], ['en', en, 'en-US']]) {
@@ -77,6 +78,12 @@ try {
         await page.waitForTimeout(400);
         const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
         if (overflow > 0) fail(`${name}/${theme}/${width}: horizontal overflow ${overflow}px`);
+        const bars = await page.evaluate(() => [...document.querySelectorAll('main code')].filter((c) => c.offsetHeight - c.clientHeight > 0).length);
+        if (bars) fail(`${name}/${theme}/${width}: ${bars} command block(s) show a scrollbar`);
+        const wrapped = await page.evaluate(() =>
+          [...document.querySelectorAll('.pulse-status > span')].filter((e) => e.scrollHeight > parseFloat(getComputedStyle(e).lineHeight) * 1.5 + 8).length,
+        );
+        if (wrapped) fail(`${name}/${theme}/${width}: a status pill wraps onto two lines`);
         const dark = await page.evaluate(() => document.documentElement.classList.contains('dark'));
         if (dark !== (theme === 'dark')) fail(`${name}/${theme}/${width}: theme class is ${dark ? 'dark' : 'light'}`);
         await page.screenshot({ path: `${OUT}/${name}-${theme}-${width}.png`, fullPage: true });

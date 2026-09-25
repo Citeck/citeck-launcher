@@ -1,8 +1,28 @@
-import { useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 
 export default function CopyCommand({ command, labels }: { command: string; labels: { copy: string; copied: string; failed: string; label: string } }) {
   const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle');
   const id = useId();
+  const codeRef = useRef<HTMLElement>(null);
+  // Which edges hide part of the command; they fade out instead of showing a scrollbar. The server render assumes the
+  // usual case: a long command cut on the right.
+  const [cut, setCut] = useState({ left: false, right: true });
+
+  useEffect(() => {
+    const el = codeRef.current;
+    if (!el) return;
+    const update = () =>
+      setCut({ left: el.scrollLeft > 1, right: el.scrollLeft + el.clientWidth < el.scrollWidth - 1 });
+    update();
+    const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(update) : null;
+    ro?.observe(el);
+    el.addEventListener('scroll', update, { passive: true });
+    return () => {
+      ro?.disconnect();
+      el.removeEventListener('scroll', update);
+    };
+  }, []);
+  const fade = `linear-gradient(to right, ${cut.left ? 'transparent, #000 2rem' : '#000'}, ${cut.right ? '#000 calc(100% - 2rem), transparent' : '#000'})`;
 
   async function copy() {
     let ok = false;
@@ -33,7 +53,15 @@ export default function CopyCommand({ command, labels }: { command: string; labe
   return (
     <div className="flex w-full max-w-2xl items-center gap-3 rounded-xl bg-ink px-4 py-3 font-mono text-[13px] text-[#c9d8ff] shadow-lg ring-1 ring-ink/10 dark:bg-black/40 dark:ring-white/10">
       <span aria-hidden="true" className="select-none text-brand-light">$</span>
-      <code id={id} tabIndex={0} aria-label={labels.label} className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap [scrollbar-width:thin]">
+      <code
+        id={id}
+        ref={codeRef}
+        tabIndex={0}
+        aria-label={labels.label}
+        style={{ maskImage: fade, WebkitMaskImage: fade }}
+        data-cut={[cut.left && 'left', cut.right && 'right'].filter(Boolean).join(' ')}
+        className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap rounded-sm [scrollbar-width:none] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-light [&::-webkit-scrollbar]:hidden"
+      >
         {command}
       </code>
       <button

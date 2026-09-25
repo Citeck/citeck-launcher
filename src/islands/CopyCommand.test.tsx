@@ -14,7 +14,29 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+function sizeCode(code: HTMLElement, scrollWidth: number, clientWidth: number) {
+  Object.defineProperty(code, 'scrollWidth', { value: scrollWidth, configurable: true });
+  Object.defineProperty(code, 'clientWidth', { value: clientWidth, configurable: true });
+}
+
 describe('CopyCommand', () => {
+  it('fades the cut edge instead of showing a scrollbar, and follows the scroll position', () => {
+    render(<CopyCommand command={CMD} labels={ru.copy} />);
+    const code = screen.getByLabelText(ru.copy.label);
+    expect(code.className).toContain('[scrollbar-width:none]');
+    sizeCode(code, 500, 200);
+    code.scrollLeft = 0;
+    fireEvent.scroll(code);
+    expect(code.dataset.cut).toBe('right');
+    code.scrollLeft = 300;
+    fireEvent.scroll(code);
+    expect(code.dataset.cut).toBe('left');
+    sizeCode(code, 200, 200);
+    code.scrollLeft = 0;
+    fireEvent.scroll(code);
+    expect(code.dataset.cut).toBe('');
+  });
+
   it('the command is focusable and labelled, so keyboard users can scroll and select it', () => {
     render(<CopyCommand command={CMD} labels={ru.copy} />);
     const code = screen.getByLabelText(ru.copy.label);

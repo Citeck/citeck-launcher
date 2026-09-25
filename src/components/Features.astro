@@ -30,7 +30,7 @@ const services = ['postgres', 'rabbitmq', 'keycloak', 'emodel', 'gateway'];
               <li class="flex items-center justify-between rounded-md bg-white/[.03] px-2.5 py-1.5">
                 <span class="text-sky-300">{s}</span>
                 {i === 3
-                  ? <span class="pulse-status relative inline-grid"><span class="st-a rounded bg-emerald-500/15 px-2 py-0.5 text-emerald-400">● {d.features.statusRunning}</span><span class="st-b absolute inset-0 rounded bg-amber-500/15 px-2 py-0.5 text-amber-400">● {d.features.statusRestarting}</span></span>
+                  ? <span class="pulse-status inline-grid justify-items-end whitespace-nowrap"><span class="st-a rounded bg-emerald-500/15 px-2 py-0.5 text-emerald-400 [grid-area:1/1]">● {d.features.statusRunning}</span><span class="st-b rounded bg-amber-500/15 px-2 py-0.5 text-amber-400 [grid-area:1/1]">● {d.features.statusRestarting}</span></span>
                   : <span class="rounded bg-emerald-500/15 px-2 py-0.5 text-emerald-400">● {d.features.statusRunning}</span>}
               </li>
             ))}
