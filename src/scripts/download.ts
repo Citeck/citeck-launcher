@@ -95,7 +95,9 @@ export function renderTable(root: HTMLElement, release: ReleaseInfo | null, clie
   const link = 'font-medium text-brand underline-offset-2 hover:underline dark:text-brand-light';
   const muted = 'text-muted dark:text-night-muted';
   // The tint lowers the contrast of brand-blue links below AA, so links in the marked row take the darker blue.
-  const marked = 'bg-brand/[.06] dark:bg-brand-light/[.07] [&_a]:text-brand-dark dark:[&_a]:text-brand-light';
+  // A brand bar on the left plus a tint, so the row stands apart from the header row above it in both themes.
+  const marked =
+    'bg-brand/[.06] shadow-[inset_3px_0_0_var(--color-brand)] dark:bg-brand-light/[.12] dark:shadow-[inset_3px_0_0_var(--color-brand-light)] [&_a]:text-brand-dark dark:[&_a]:text-brand-light';
   const badge = () =>
     h('span', { class: 'ml-2 inline-block rounded-full bg-brand/10 px-2 py-0.5 align-middle text-[11px] font-semibold text-brand-dark dark:bg-brand-light/15 dark:text-brand-light' }, l.yours);
   const cell = (...c: (Node | string | false | undefined)[]) => h('td', { class: 'px-5 py-3' }, ...c);
@@ -105,7 +107,7 @@ export function renderTable(root: HTMLElement, release: ReleaseInfo | null, clie
     { class: 'hidden w-full text-left text-sm sm:table' },
     h(
       'thead',
-      { class: `bg-slate-50 text-xs uppercase tracking-wider ${muted} dark:bg-white/5` },
+      { class: `border-b border-slate-300/80 bg-slate-50 text-xs uppercase tracking-wider ${muted} dark:border-white/15 dark:bg-white/5` },
       h('tr', {}, ...[l.os, l.arch, l.file, l.checksum].map((t) => h('th', { class: 'px-5 py-3 font-semibold' }, t))),
     ),
     h(

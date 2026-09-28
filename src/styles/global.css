@@ -22,13 +22,23 @@
 html { scroll-behavior: smooth; }
 body { @apply bg-white text-ink antialiased dark:bg-night dark:text-night-ink; font-family: var(--font-sans); }
 
-.blob-hero {
+/* The blobs live on a pseudo-element that fades out towards the top and bottom edges: painted on the section itself,
+   a blob centred on an edge was cut off there in a hard horizontal line. */
+.blob-hero { position: relative; isolation: isolate; }
+.blob-hero::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 8%, #000 62%, transparent);
+  mask-image: linear-gradient(to bottom, transparent, #000 8%, #000 62%, transparent);
   background:
     radial-gradient(700px 360px at 88% -5%, rgb(255 217 240 / .9), transparent 60%),
     radial-gradient(760px 420px at 55% 25%, rgb(215 230 255 / .9), transparent 60%),
     radial-gradient(600px 320px at 0% 100%, rgb(217 255 242 / .9), transparent 60%);
 }
-.dark .blob-hero {
+.dark .blob-hero::before {
   background:
     radial-gradient(700px 360px at 88% -5%, rgb(190 80 150 / .22), transparent 60%),
     radial-gradient(760px 420px at 55% 25%, rgb(75 117 183 / .28), transparent 60%),
