@@ -20,7 +20,7 @@ Citeck Launcher は、このプラットフォームを立ち上げ、その状�
 
 ![Citeck Launcher dashboard](screenshots/running.png)
 
-**必要なもの:** Docker · Community エディションで **16 GB** RAM、Enterprise エディション（約 24 サービス）で **24〜32 GB** · イメージとデータ用に **50 GB 以上**の空きディスク。Docker エンジンであれば何でも使えます。Windows と macOS では通常 [Docker Desktop](https://www.docker.com/products/docker-desktop/)、[Rancher Desktop](https://rancherdesktop.io/)、または（macOS では）[Colima](https://github.com/abiosoft/colima) です。ランチャーは `docker` CLI と同じ方法で見つけます: `DOCKER_HOST`、次にアクティブな Docker コンテキスト、次に既定のソケット。
+**必要なもの:** Docker · Community エディションで **16 GB** RAM、Enterprise エディション（約 24 サービス）で **24〜32 GB** · イメージとデータ用に **50 GB 以上**の空きディスク。Windows と macOS では [Docker Desktop](https://www.docker.com/products/docker-desktop/) を、Linux では [Docker Engine](https://docs.docker.com/engine/install/) または Docker Desktop をインストールしてください。
 
 ## デスクトップとサーバーのどちらを選ぶか
 
@@ -39,7 +39,7 @@ Citeck Launcher は、このプラットフォームを立ち上げ、その状�
 
 デスクトップアプリケーションは、お使いの Windows、macOS、Linux マシン上で Citeck を実行します。コマンドライン不要の、通常のアプリウィンドウです。ウィンドウを閉じても、Citeck はバックグラウンドで動き続けます。
 
-先に Docker エンジンを起動し、[最新リリース](https://github.com/Citeck/citeck-launcher/releases/latest)からお使いのプラットフォーム向けのインストーラーをダウンロードしてください:
+先に Docker をインストールし、[最新リリース](https://github.com/Citeck/citeck-launcher/releases/latest)からお使いのプラットフォーム向けのインストーラーをダウンロードしてください:
 
 | OS | ファイル | アーキテクチャ |
 |----|------|------|
