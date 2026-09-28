@@ -69,7 +69,7 @@ export const en: typeof ru = {
       note: 'From then on it is all the citeck command: status, logs, upgrades, backups.',
       cta: 'Server guide',
     },
-    firstRun: 'The first run takes a while: the launcher pulls several GB of images, then the platform needs roughly 10–15 minutes to come up. The services start by themselves — just give it time.',
+    firstRun: 'First run: the launcher pulls the images (several GB) and brings the platform up — usually in 10\u2060–\u206015\u00a0minutes. Every service starts automatically, in the right order.',
   },
   features: {
     kicker: 'Features',

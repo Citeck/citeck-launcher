@@ -35,7 +35,7 @@ describe('claims match the launcher README', () => {
       expect(JSON.stringify(d.features)).not.toMatch(/за минуту|in a minute/i);
     });
     it(`${name}: tracks warn that the first run takes a while`, () => {
-      expect(d.tracks.firstRun).toMatch(/10–15/);
+      expect(d.tracks.firstRun).toMatch(/10\u2060?–\u2060?15/);
       expect(d.tracks.firstRun).toMatch(/ГБ|GB/);
     });
   }
