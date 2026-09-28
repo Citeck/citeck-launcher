@@ -173,6 +173,13 @@ try {
     await ctx.close();
   }
 
+  console.log('8. editions comparison link');
+  for (const [name, url] of [['ru', ru], ['en', en]]) {
+    const html = await (await fetch(url)).text();
+    const n = (html.match(/href="https:\/\/citeck-ecos\.readthedocs\.io\/[a-z]{2}\/latest\/introduction\/modules\.html#community-enterprise"/g) ?? []).length;
+    n >= 2 ? ok(`${name}: editions and FAQ link to the comparison (${n})`) : fail(`${name}: ${n} link(s) to the editions comparison, expected 2`);
+  }
+
   console.log('7. theme');
   {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, colorScheme: 'light', locale: 'ru-RU' });

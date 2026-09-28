@@ -101,6 +101,7 @@ export const en: typeof ru = {
     community: { title: 'Community', price: 'Free', text: 'Fully open source. The platform core: documents, processes, BPMN, permissions.', cta: 'Download' },
     enterprise: { title: 'Enterprise', price: 'Licensed', text: 'Professional support and additional modules. Requires a license key issued by Citeck.', cta: 'Contact us' },
     note: 'The launcher installs either edition.',
+    compare: 'Compare editions',
   },
   req: {
     title: 'What you need',
@@ -138,7 +139,7 @@ export const en: typeof ru = {
       { q: 'Do I need docker compose?', a: 'No. The launcher drives the containers through the Docker API itself, so you need neither docker compose nor compose files. Docker Desktop still shows every container of a stand as one group.' },
       { q: 'How do I move from launcher 1.x?', a: 'Install 2.x. On first start it brings over your namespaces and settings from 1.x. Secrets come over once you enter the master password. The data in Docker volumes stays where it is.' },
       { q: 'Where does my data live?', a: 'In Docker volumes on your computer or server. Nothing is sent anywhere. A backup of all volumes is saved as a single archive.' },
-      { q: 'How is Community different from Enterprise?', a: 'Community is the free open-source edition with the platform core. Enterprise adds support and modules and requires a license key.' },
+      { q: 'How is Community different from Enterprise?', a: 'Community is the free open-source edition with the platform core. Enterprise adds support and modules and requires a license key.', compare: true },
     ],
   },
   cta: { title: 'Run Citeck today', lead: 'Free, open source, on your own hardware.', server: 'Or install on a server with one command:' },
@@ -157,6 +158,7 @@ export const en: typeof ru = {
     telegram: 'https://telegram.me/citeck',
     docs: 'https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher.html',
     serverDocs: 'https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher_server.html',
+    editions: 'https://citeck-ecos.readthedocs.io/en/latest/introduction/modules.html#community-enterprise',
     github: 'https://github.com/Citeck/citeck-launcher',
   },
 };

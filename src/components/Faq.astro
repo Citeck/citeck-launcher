@@ -15,7 +15,10 @@ const d = t(Astro.props.lang);
             {f.q}
             <Icon name="chevron" class="size-5 shrink-0 text-muted transition-transform group-open:rotate-180 dark:text-night-muted" />
           </summary>
-          <p class="px-6 pb-6 leading-relaxed text-muted dark:text-night-muted">{f.a}</p>
+          <p class="px-6 pb-6 leading-relaxed text-muted dark:text-night-muted">
+            {f.a}
+            {'compare' in f && f.compare && <> <a href={d.links.editions} target="_blank" rel="noopener" class="inline-flex items-center gap-1 font-semibold text-brand hover:underline dark:text-brand-light">{d.editions.compare}<Icon name="external" class="size-3.5" /></a></>}
+          </p>
         </details>
       ))}
     </div>

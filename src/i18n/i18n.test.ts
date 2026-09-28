@@ -55,3 +55,10 @@ describe('Docker', () => {
     });
   }
 });
+
+describe('editions comparison', () => {
+  it('links to the comparison page of the docs in the page language', () => {
+    expect(ru.links.editions).toBe('https://citeck-ecos.readthedocs.io/ru/latest/introduction/modules.html#community-enterprise');
+    expect(en.links.editions).toBe('https://citeck-ecos.readthedocs.io/en/latest/introduction/modules.html#community-enterprise');
+  });
+});

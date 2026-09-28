@@ -25,6 +25,9 @@ const e = d.editions;
         </article>
       </div>
     </div>
-    <p class="reveal mt-6 text-center text-sm text-muted dark:text-night-muted">{e.note}</p>
+    <p class="reveal mt-6 text-center text-sm text-muted dark:text-night-muted">
+      {e.note}
+      <a href={d.links.editions} target="_blank" rel="noopener" class="ml-1 inline-flex items-center gap-1 font-semibold text-brand hover:underline dark:text-brand-light">{e.compare}<Icon name="external" class="size-3.5" /></a>
+    </p>
   </div>
 </section>
