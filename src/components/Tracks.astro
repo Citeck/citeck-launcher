@@ -38,11 +38,15 @@ const tracks = [
           <p class="mt-6 text-sm text-muted dark:text-night-muted">{tr.x.note}</p>
           <div class="mt-auto pt-7">
             {tr.id === 'server'
-              ? <div class="space-y-4"><CopyCommand client:visible command={SERVER_COMMAND} labels={d.copy} /><a href={d.links.serverDocs} target="_blank" rel="noopener" class="inline-flex items-center gap-1.5 text-sm font-semibold text-brand hover:underline dark:text-brand-light">{tr.x.cta}<Icon name="external" class="size-4" /></a></div>
+              ? <div><a href={d.links.serverDocs} target="_blank" rel="noopener" class="inline-flex items-center gap-1.5 text-sm font-semibold text-brand hover:underline dark:text-brand-light">{tr.x.cta}<Icon name="external" class="size-4" /></a></div>
               : <a href="#downloads" class="inline-flex items-center gap-2 rounded-xl bg-brand px-5 py-3 font-semibold text-white transition hover:bg-brand-dark dark:bg-brand-light dark:text-night dark:hover:bg-white"><Icon name="download" />{tr.x.cta}</a>}
           </div>
         </article>
       ))}
+    </div>
+    <div class="reveal mt-6 flex flex-col items-center gap-3">
+      <p class="text-sm font-semibold text-muted dark:text-night-muted">{d.tracks.command}</p>
+      <CopyCommand client:visible command={SERVER_COMMAND} labels={d.copy} />
     </div>
     <p class="reveal mx-auto mt-8 flex max-w-3xl items-start gap-3 rounded-2xl border border-brand/15 bg-brand/5 px-5 py-4 text-sm text-slate-700 dark:border-brand-light/20 dark:bg-brand-light/5 dark:text-slate-200">
       <Icon name="clock" class="mt-0.5 size-5 shrink-0 text-brand dark:text-brand-light" /><span>{d.tracks.firstRun}</span>

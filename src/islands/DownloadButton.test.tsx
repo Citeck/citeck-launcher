@@ -62,3 +62,32 @@ describe('DownloadButton', () => {
     expect(screen.getByRole('link', { name: /Установить на сервер/ }).getAttribute('href')).toBe('#server');
   });
 });
+
+describe('DownloadButton, what it offers besides the main installer', () => {
+  const LINUX = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/140.0 Safari/537.36';
+
+  it('Linux: one button and a link to every download, not a list of rpm/arm files', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(fixture))));
+    setUA(LINUX);
+    render(<DownloadButton labels={labels} serverHref="#server" />);
+    await waitFor(() => expect(screen.getByRole('link', { name: /Скачать для Linux/ }).getAttribute('href')).toMatch(/linux_amd64\.deb$/));
+    expect(screen.queryByText(/\.rpm/)).toBeNull();
+    expect(screen.queryByText(labels.alsoFor)).toBeNull();
+    expect(screen.getByRole('link', { name: labels.allDownloads }).getAttribute('href')).toBe('#downloads');
+  });
+
+  it('without a server target there is no server button', () => {
+    vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
+    setUA(LINUX);
+    render(<DownloadButton labels={labels} />);
+    expect(screen.queryByRole('link', { name: /Установить на сервер/ })).toBeNull();
+  });
+
+  it('can name the file it downloads', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(fixture))));
+    setUA(LINUX);
+    render(<DownloadButton labels={labels} detail moreLink={false} />);
+    await waitFor(() => expect(screen.getByText(/Intel\/AMD \(amd64\) · \.deb · \d+ MB/)).toBeTruthy());
+    expect(screen.queryByRole('link', { name: labels.allDownloads })).toBeNull();
+  });
+});

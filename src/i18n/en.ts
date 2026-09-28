@@ -27,7 +27,8 @@ export const en: typeof ru = {
     downloadFor: 'Download for',
     download: 'Download',
     server: 'Install on a server',
-    alsoFor: 'Other options:',
+    alsoFor: 'Intel Mac?',
+    allDownloads: 'All systems and formats',
     mobile: 'The launcher runs on computers and servers. Open this page on a computer, or install Citeck on a server:',
     free: 'Free',
     oss: 'Open source (LGPL-3.0)',
@@ -55,6 +56,7 @@ export const en: typeof ru = {
   tracks: {
     title: 'Two ways to a working stand',
     lead: 'Choose where Citeck will run.',
+    command: 'Server install command:',
     desktop: {
       title: 'On your computer',
       tag: 'Desktop app',
@@ -123,6 +125,7 @@ export const en: typeof ru = {
     intel: 'Intel/AMD (amd64)',
     apple: 'Apple Silicon',
     macIntel: 'Intel',
+    yours: 'For your system',
   },
   faq: {
     title: 'FAQ',
@@ -132,12 +135,13 @@ export const en: typeof ru = {
         a: 'The app is not notarized by Apple yet. Open it once with right-click → Open (or System Settings → Privacy & Security → Open Anyway); after that it starts normally.',
       },
       { q: 'Do I need Kubernetes?', a: 'No. The launcher only needs Docker: it starts and wires up every Citeck service by itself.' },
+      { q: 'Do I need docker compose?', a: 'No. The launcher drives the containers through the Docker API itself — no docker compose and no compose files. Docker Desktop still shows every container of a stand as one group.' },
       { q: 'How do I move from launcher 1.x?', a: 'Install 2.x — on first start it brings over your namespaces and settings from 1.x, and your secrets once you enter the master password. The data in Docker volumes stays where it is.' },
       { q: 'Where does my data live?', a: 'In Docker volumes on your computer or server — nothing is sent anywhere. A backup of every volume is a single archive.' },
       { q: 'How is Community different from Enterprise?', a: 'Community is the free open-source edition with the platform core. Enterprise adds support and modules and requires a license key.' },
     ],
   },
-  cta: { title: 'Run Citeck today', lead: 'Free, open source, on your own hardware.' },
+  cta: { title: 'Run Citeck today', lead: 'Free, open source, on your own hardware.', server: 'Or on a server, with one command:' },
   footer: {
     community: 'Telegram community',
     contacts: 'Contacts',

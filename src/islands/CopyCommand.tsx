@@ -51,7 +51,7 @@ export default function CopyCommand({ command, labels }: { command: string; labe
   }
 
   return (
-    <div className="flex w-full max-w-2xl items-center gap-3 rounded-xl bg-ink px-4 py-3 font-mono text-[13px] text-[#c9d8ff] shadow-lg ring-1 ring-ink/10 dark:bg-black/40 dark:ring-white/10">
+    <div className="flex w-fit max-w-full items-center gap-3 rounded-xl bg-ink px-4 py-3 font-mono text-[13px] text-[#c9d8ff] shadow-lg ring-1 ring-ink/10 dark:bg-black/40 dark:ring-white/10">
       <span aria-hidden="true" className="select-none text-brand-light">$</span>
       <code
         id={id}

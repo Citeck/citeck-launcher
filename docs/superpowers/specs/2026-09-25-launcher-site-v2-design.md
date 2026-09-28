@@ -30,7 +30,8 @@ generic "application launcher", and whose download logic picks `v1.*` releases. 
 
 0. **Header** (sticky): Citeck logo · Features · Desktop · Server · Docs · GitHub · RU/EN · theme toggle · "Download".
 1. **Hero**: "Вся платформа Citeck — одной кнопкой" / EN equivalent; sub-headline; primary button = installer for the
-   detected OS, secondary = "Install on a server →"; the `curl … | bash` command with copy; meta line
+   detected OS, secondary = "Install on a server →" (scrolls down to the server track); a link "All systems and
+   formats" to the downloads table (no inline list of every file, no bare command — user feedback); meta line
    `v<version> · Free · Open source (LGPL-3.0) · macOS · Windows · Linux`; dashboard screenshot in a tilted,
    floating window.
 2. **Numbers**: ~28 MB single binary · 20+ services started for you · 3 OSes × amd64/arm64 · 8 UI languages.
@@ -38,17 +39,24 @@ generic "application launcher", and whose download logic picks `v1.*` releases. 
    scenario cards (contracts, purchasing, HR, archive & portal); BPMN designer, document types without code, roles
    and permissions out of the box; link to citeck.ru.
 4. **Two tracks**: Desktop ("On your computer": Docker Desktop → installer → Quick Start → open in browser) and
-   Server ("On a server": Docker → one `curl | bash` → wizard asks domain, HTTPS, password → open in browser).
+   Server ("On a server": Docker → one `curl | bash` → wizard asks domain and HTTPS mode, shows the admin password
+   → open in browser). Under both cards, full width, the captioned server command on ONE line (the user wants it
+   whole and unwrapped; the cards are too narrow for its 95 characters), then a neutral first-run note
+   (several GB of images, usually 10–15 minutes — stated as a fact, not a warning).
 5. **Features** (bento grid): self-healing; upgrades with rollback (PostgreSQL, RabbitMQ, …); backup & restore;
    HTTPS out of the box (Let's Encrypt, incl. IP addresses); live status, resources and logs.
 6. **Gallery**: fresh 2.x screenshots (see Assets).
 7. **Editions**: Community (open source, free, platform core) · Enterprise (support + extra modules, licence key →
    contact Citeck).
 8. **Requirements**: Docker · 16 GB RAM Community / 24–32 GB Enterprise · 50+ GB disk.
-9. **All downloads**: table of every installer per OS/arch with its `.sha256`, link to all releases.
-10. **FAQ**: macOS "developer cannot be verified"; do I need Kubernetes (no, Docker only); upgrading from 1.x
+9. **All downloads**: first the smart button for the visitor's OS with the file it downloads, then the table of
+   every installer per OS/arch with its `.sha256`; the visitor's OS comes first and the picked installer is
+   highlighted "For your system"; link to all releases.
+10. **FAQ**: macOS "developer cannot be verified"; do I need Kubernetes (no, Docker only); do I need docker compose
+    (no — the launcher drives the Docker API itself); upgrading from 1.x
     (data is migrated automatically); where my data lives; Community vs Enterprise.
-11. **Final CTA + footer**: "Run Citeck today" + buttons · Telegram community · contacts · docs · LGPL-3.0 · © Citeck.
+11. **Final CTA + footer**: "Run Citeck today" + the download button, then "Or on a server, with one command:" with
+    the one-line command and the server guide link (no button that jumps back up the page) · Telegram community · contacts · docs · LGPL-3.0 · © Citeck.
 
 ## Content rules
 
@@ -93,7 +101,8 @@ public/                 screenshots/, og-ru.png, og-en.png, favicon
   Windows `.msi` (amd64 primary, arm64), macOS `.dmg` (arm64 primary, amd64/Intel), Linux `.deb` (amd64 primary),
   `.rpm`, arm64; each with its `.sha256` sidecar.
 - OS/arch: User-Agent, plus `navigator.userAgentData.getHighEntropyValues(['architecture'])` where available.
-  Safari on Apple Silicon reports Intel, so macOS defaults to arm64 with an Intel link beneath. Mobile shows
+  Safari on Apple Silicon reports Intel, so macOS defaults to arm64 with an Intel link beneath (the only
+  alternate shown inline, and only when the browser does not reveal the architecture). Mobile shows
   "open this page on a computer" plus the server command instead of an installer button.
 - Fallbacks: no JS / API error / rate limit (60 req/h/IP) → buttons link to
   `https://github.com/Citeck/citeck-launcher/releases/latest`, no version shown. The response is cached in

@@ -1,7 +1,7 @@
 // End-to-end checks of the built site: `yarn build && yarn verify`.
 // Starts `astro preview`, then with Playwright (chromium):
 //  1. both pages × light/dark × 375/768/1280: full-page screenshot into verify-out/, no console errors,
-//     no failed same-origin requests, no horizontal overflow, no visible scrollbar on command blocks, no wrapped status pill, no axe WCAG 2.1 A/AA violations at 375 and 1280;
+//     no failed same-origin requests, no horizontal overflow, no visible scrollbar on command blocks, every command on one line at 1280, no wrapped status pill, no axe WCAG 2.1 A/AA violations at 375 and 1280;
 //  2. JavaScript disabled: every section visible, hero download link points at the releases page;
 //  3. GitHub API unreachable: no version text, fallback link, no console errors;
 //  4. language: de → /en/, ru stays, stored choice wins both ways, /en/ never redirects, query and hash survive,
@@ -80,6 +80,10 @@ try {
         if (overflow > 0) fail(`${name}/${theme}/${width}: horizontal overflow ${overflow}px`);
         const bars = await page.evaluate(() => [...document.querySelectorAll('main code')].filter((c) => c.offsetHeight - c.clientHeight > 0).length);
         if (bars) fail(`${name}/${theme}/${width}: ${bars} command block(s) show a scrollbar`);
+        if (width === 1280) {
+          const cut = await page.evaluate(() => [...document.querySelectorAll('main code')].filter((c) => c.scrollWidth > c.clientWidth + 1).length);
+          if (cut) fail(`${name}/${theme}/${width}: ${cut} command block(s) do not fit on one line`);
+        }
         const wrapped = await page.evaluate(() =>
           [...document.querySelectorAll('.pulse-status > span')].filter((e) => e.scrollHeight > parseFloat(getComputedStyle(e).lineHeight) * 1.5 + 8).length,
         );

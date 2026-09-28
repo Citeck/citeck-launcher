@@ -1,8 +1,6 @@
 ---
 import DownloadButton from '../islands/DownloadButton';
-import CopyCommand from '../islands/CopyCommand';
 import { t, type Lang } from '../i18n';
-import { SERVER_COMMAND } from '../lib/releases';
 import { Picture } from 'astro:assets';
 import dashboard from '../assets/screenshots/dashboard.png';
 
@@ -24,9 +22,6 @@ const d = t(lang);
       <p class="mt-6 max-w-xl text-lg leading-relaxed text-muted dark:text-night-muted">{d.hero.lead}</p>
       <div class="mt-8">
         <DownloadButton client:load labels={{ ...d.hero, ...d.downloads }} serverHref="#server" />
-      </div>
-      <div class="mt-6">
-        <CopyCommand client:visible command={SERVER_COMMAND} labels={d.copy} />
       </div>
     </div>
 

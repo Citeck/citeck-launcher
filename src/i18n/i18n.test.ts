@@ -40,3 +40,10 @@ describe('claims match the launcher README', () => {
     });
   }
 });
+
+describe('FAQ', () => {
+  it('answers whether docker compose is needed, in both languages', () => {
+    expect(ru.faq.items.some((i) => /docker compose/.test(i.q))).toBe(true);
+    expect(en.faq.items.some((i) => /docker compose/.test(i.q))).toBe(true);
+  });
+});

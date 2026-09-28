@@ -19,7 +19,27 @@ const primaryCls =
 const secondaryCls =
   'inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white/70 px-6 py-3.5 text-base font-semibold text-ink backdrop-blur transition hover:border-brand hover:text-brand focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand dark:border-white/15 dark:bg-white/5 dark:text-night-ink dark:hover:border-brand-light dark:hover:text-brand-light';
 
-export default function DownloadButton({ labels, serverHref, showMeta = true }: { labels: Labels; serverHref: string; showMeta?: boolean }) {
+const linkCls = 'font-medium text-brand underline-offset-2 hover:underline dark:text-brand-light';
+const mb = (n: number) => (n > 0 ? ` · ${Math.round(n / 1048576)} MB` : '');
+
+/**
+ * The installer for the visitor's OS. `serverHref` adds the server button; `detail` names the file under the button;
+ * `moreLink` points at the full downloads table. The only alternate offered inline is the Intel build on a Mac whose
+ * architecture the browser does not reveal (Safari), because there the guess can be wrong.
+ */
+export default function DownloadButton({
+  labels,
+  serverHref,
+  showMeta = true,
+  detail = false,
+  moreLink = true,
+}: {
+  labels: Labels;
+  serverHref?: string;
+  showMeta?: boolean;
+  detail?: boolean;
+  moreLink?: boolean;
+}) {
   const release = useRelease();
   const [client, setClient] = useState<Client | null>(null);
 
@@ -35,6 +55,12 @@ export default function DownloadButton({ labels, serverHref, showMeta = true }: 
 
   const pick = release && client?.kind === 'desktop' ? pickInstaller(release, client.os, client.arch) : null;
   const mobile = client?.kind === 'mobile';
+  const macGuess =
+    pick && client?.kind === 'desktop' && client.os === 'macos' && !client.archKnown
+      ? pick.alternates.find((a) => a.arch !== pick.primary.arch)
+      : undefined;
+
+  if (mobile && !serverHref) return null;
 
   return (
     <div className="flex flex-col gap-3">
@@ -46,22 +72,36 @@ export default function DownloadButton({ labels, serverHref, showMeta = true }: 
             {pick ? `${labels.downloadFor} ${OS_LABEL[pick.primary.os]}` : labels.download}
           </a>
         )}
-        <a className={secondaryCls} href={serverHref}>
-          {labels.server}
-          <ArrowIcon />
-        </a>
+        {serverHref && (
+          <a className={secondaryCls} href={serverHref}>
+            {labels.server}
+            <ArrowIcon />
+          </a>
+        )}
       </div>
-      {pick && pick.alternates.length > 0 && (
+      {detail && pick && (
         <p className="text-sm text-muted dark:text-night-muted">
-          {labels.alsoFor}{' '}
-          {pick.alternates.map((a, idx) => (
-            <span key={a.name}>
-              {idx > 0 && ', '}
-              <a className="font-medium text-brand underline-offset-2 hover:underline dark:text-brand-light" href={a.url}>
-                {altLabel(a, labels)}
+          {altLabel(pick.primary, labels)}
+          {pick.primary.os === 'macos' ? ` · .${pick.primary.ext}` : ''}
+          {mb(pick.primary.size)}
+        </p>
+      )}
+      {!mobile && (macGuess || moreLink) && (
+        <p className="text-sm text-muted dark:text-night-muted">
+          {macGuess && (
+            <>
+              {labels.alsoFor}{' '}
+              <a className={linkCls} href={macGuess.url}>
+                {altLabel(macGuess, labels)}
               </a>
-            </span>
-          ))}
+              {moreLink && ' · '}
+            </>
+          )}
+          {moreLink && (
+            <a className={linkCls} href="#downloads">
+              {labels.allDownloads}
+            </a>
+          )}
         </p>
       )}
       {showMeta && release && (
