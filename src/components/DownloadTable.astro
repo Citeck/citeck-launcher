@@ -1,0 +1,28 @@
+---
+// Every installer of the latest release. Static HTML is the fallback (a link to the release page); once the release
+// is known, src/scripts/download.ts replaces it with the table, the visitor's OS first and its installer marked.
+import { RELEASES_PAGE } from '../lib/releases';
+import type { Dict } from '../i18n';
+
+interface Props {
+  labels: Dict['downloads'];
+}
+const { labels: l } = Astro.props;
+const labels = {
+  version: l.version, os: l.os, arch: l.arch, file: l.file, checksum: l.checksum, allReleases: l.allReleases,
+  macNote: l.macNote, yours: l.yours, arm: l.arm, intel: l.intel, apple: l.apple, macIntel: l.macIntel, mb: l.mb,
+};
+const link = 'font-medium text-brand underline-offset-2 hover:underline dark:text-brand-light';
+---
+
+<div data-download-table data-labels={JSON.stringify(labels)}>
+  <p class="text-muted dark:text-night-muted">
+    {l.fallback} <a class={link} href={RELEASES_PAGE}>{l.allReleases} →</a>
+  </p>
+  <p class="mt-3 text-sm text-muted dark:text-night-muted">{l.macNote}</p>
+</div>
+
+<script>
+  import { initDownloads } from '../scripts/download';
+  void initDownloads();
+</script>

@@ -1,4 +1,3 @@
-import { useEffect, useState } from 'react';
 import { LATEST_API, parseRelease, type ReleaseInfo } from '../lib/releases';
 
 const KEY = 'citeck-release';
@@ -29,20 +28,8 @@ async function load(): Promise<ReleaseInfo | null> {
   }
 }
 
-/** The latest 2.x release, fetched once per page and cached for the session; null until known or when unavailable. */
-export function useRelease(): ReleaseInfo | null {
-  const [info, setInfo] = useState<ReleaseInfo | null>(null);
-  useEffect(() => {
-    let alive = true;
-    (inflight ??= load()).then((r) => {
-      if (alive) setInfo(r);
-    });
-    return () => {
-      alive = false;
-    };
-  }, []);
-  return info;
-}
+/** The latest 2.x release, fetched once per page and cached for the session; null when unavailable. */
+export const loadRelease = (): Promise<ReleaseInfo | null> => (inflight ??= load());
 
 export const __resetReleaseForTests = (): void => {
   inflight = null;

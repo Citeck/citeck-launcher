@@ -3,7 +3,8 @@
 The landing page for Citeck Launcher 2.x, published on GitHub Pages at
 <https://citeck.github.io/citeck-launcher/> (Russian) and `/en/` (English).
 
-Built with [Astro 7](https://astro.build) (static generation), Tailwind CSS 4 and a few React islands.
+Built with [Astro 7](https://astro.build) (static generation) and Tailwind CSS 4, no UI framework: the few interactive
+parts are plain TypeScript scripts that enhance static HTML (about 3 KB of JavaScript, gzipped).
 The design and its decisions are in `docs/superpowers/specs/2026-09-25-launcher-site-v2-design.md`.
 
 ## Commands
@@ -14,7 +15,8 @@ Node ≥ 22.22.2 (jsdom 30 needs it for the tests) and Yarn classic.
 yarn install
 yarn dev        # http://localhost:4321/citeck-launcher/
 yarn build      # astro check + static build into dist/
-yarn test       # Vitest: release parsing, OS detection, language rule, dictionaries, download button
+yarn test       # Vitest: release parsing, OS detection, language rule, dictionaries, and the interactive
+                #   components rendered for real (Astro Container API) with their scripts run in jsdom
 yarn verify     # after build: Playwright checks of both pages (themes, widths, axe WCAG AA, no-JS, API down, language redirect)
 yarn og         # re-render public/og-ru.png and public/og-en.png
 ```
@@ -28,7 +30,8 @@ yarn og         # re-render public/og-ru.png and public/og-en.png
 | All texts, both languages | `src/i18n/ru.ts` (source of truth), `src/i18n/en.ts` — same keys; a test fails if the shapes differ or Russian text is left in EN |
 | Page sections | `src/components/*.astro`, assembled by `src/components/Page.astro` |
 | Pages | `src/pages/index.astro` (RU), `src/pages/en/index.astro` (EN) |
-| Interactive parts (React) | `src/islands/`: OS-aware download button, downloads table, copy button, theme toggle |
+| Interactive parts | `src/components/{DownloadButton,DownloadTable,CopyCommand,ThemeToggle}.astro` render the no-JS HTML; `src/scripts/` enhances it (release loading, OS-aware button and table, copying, theme) |
+| Component tests | `src/components/*.test.ts`; `test/jsdom-ssr-env.ts` is jsdom with SSR transforms so `.astro` files render in Vitest, `test/mount.ts` renders one into the page |
 | Release parsing, OS detection, language rule | `src/lib/` (pure, unit-tested) |
 | Language redirect | `enRedirectTarget` in `src/lib/lang.ts`, inlined by `src/layouts/Base.astro` as the first script in the Russian page's `<head>` (runs before paint; keeps query and hash; skips crawlers and automated browsers) — it must stay self-contained |
 | Screenshots | `src/assets/screenshots/*.png` — optimised to AVIF/WebP at build time; a gallery item whose file is missing is simply not shown |

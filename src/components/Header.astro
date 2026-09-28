@@ -1,5 +1,5 @@
 ---
-import ThemeToggle from '../islands/ThemeToggle';
+import ThemeToggle from './ThemeToggle.astro';
 import Icon from './Icon.astro';
 import logo from '../assets/citeck-logo.svg?raw';
 import { t, type Lang } from '../i18n';
@@ -40,7 +40,7 @@ const nav = [
         class="grid h-9 min-w-9 place-items-center rounded-lg px-2 text-xs font-bold tracking-wider text-muted transition hover:bg-slate-100 hover:text-ink dark:text-night-muted dark:hover:bg-white/10 dark:hover:text-night-ink"
         data-lang-switch={other}
       >{d.nav.lang}</a>
-      <ThemeToggle client:load label={d.nav.theme} />
+      <ThemeToggle label={d.nav.theme} />
       <a href="#downloads" class="ml-1.5 hidden rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-dark sm:inline-flex dark:bg-brand-light dark:text-night dark:hover:bg-white">{d.nav.download}</a>
       <details class="relative lg:hidden">
         <summary class="grid size-9 cursor-pointer list-none place-items-center rounded-lg text-muted hover:bg-slate-100 dark:text-night-muted dark:hover:bg-white/10 [&::-webkit-details-marker]:hidden" aria-label={d.nav.menu}>

@@ -1,5 +1,5 @@
 ---
-import DownloadButton from '../islands/DownloadButton';
+import DownloadButton from './DownloadButton.astro';
 import { t, type Lang } from '../i18n';
 import { Picture } from 'astro:assets';
 import dashboard from '../assets/screenshots/dashboard.png';
@@ -18,7 +18,7 @@ const d = t(lang);
       </h1>
       <p class="mt-6 max-w-xl text-lg leading-relaxed text-muted dark:text-night-muted">{d.hero.lead}</p>
       <div class="mt-8">
-        <DownloadButton client:load labels={{ ...d.hero, ...d.downloads }} serverHref="#server" />
+        <DownloadButton labels={{ ...d.hero, ...d.downloads }} serverHref="#server" />
       </div>
     </div>
 

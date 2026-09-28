@@ -1,5 +1,5 @@
 ---
-import CopyCommand from '../islands/CopyCommand';
+import CopyCommand from './CopyCommand.astro';
 import Icon from './Icon.astro';
 import { t, type Lang } from '../i18n';
 import { SERVER_COMMAND } from '../lib/releases';
@@ -51,7 +51,7 @@ const tracks = [
           {tr.id === 'server' && (
             <div class="mt-6">
               <p class="mb-2 text-sm font-semibold text-muted dark:text-night-muted">{d.tracks.command}</p>
-              <CopyCommand client:visible command={SERVER_COMMAND} labels={d.copy} full />
+              <CopyCommand command={SERVER_COMMAND} labels={d.copy} full />
             </div>
           )}
           <p class="mt-6 text-sm text-muted dark:text-night-muted">{tr.x.note}</p>

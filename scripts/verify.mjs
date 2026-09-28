@@ -1,6 +1,6 @@
 // End-to-end checks of the built site: `yarn build && yarn verify`.
 // Starts `astro preview`, then with Playwright (chromium):
-//  1. both pages × light/dark × 375/768/1280: full-page screenshot into verify-out/, no console errors,
+//  1. both pages × light/dark × 375/768/1280 (GitHub API answered from the fixture): full-page screenshot into verify-out/, no console errors,
 //     no failed same-origin requests, no horizontal overflow, no visible scrollbar on command blocks, every command on one line at 1280, no wrapped status pill, no axe WCAG 2.1 A/AA violations at 375 and 1280;
 //  2. JavaScript disabled: every section visible, hero download link points at the releases page;
 //  3. GitHub API unreachable: no version text, fallback link, no console errors;
@@ -14,6 +14,7 @@ import { createRequire } from 'node:module';
 import net from 'node:net';
 import { chromium } from 'playwright';
 
+const FIXTURE = readFileSync('src/lib/fixtures/release-2.15.6.json', 'utf8');
 const AXE = readFileSync(createRequire(import.meta.url).resolve('axe-core/axe.min.js'), 'utf8');
 const RELEASES = 'https://github.com/Citeck/citeck-launcher/releases/latest';
 const OUT = 'verify-out';
@@ -74,6 +75,9 @@ try {
         // Dark is the default for everyone, even with a light system theme; light is only a stored choice.
         const ctx = await browser.newContext({ viewport: { width, height: 900 }, colorScheme: 'light', locale });
         if (theme === 'light') await ctx.addInitScript(() => localStorage.setItem('theme', 'light'));
+        // A fixed release, so the full downloads table (with the visitor's row marked) is always laid out and audited,
+        // whatever the GitHub API quota of this machine is. Section 3 covers the API being down.
+        await ctx.route('https://api.github.com/**', (r) => r.fulfill({ status: 200, contentType: 'application/json', body: FIXTURE }));
         const page = await ctx.newPage();
         const done = watch(page, `${name}/${theme}/${width}`);
         await page.goto(url, { waitUntil: 'networkidle' });

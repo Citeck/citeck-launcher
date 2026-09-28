@@ -1,6 +1,6 @@
 ---
-import DownloadButton from '../islands/DownloadButton';
-import CopyCommand from '../islands/CopyCommand';
+import DownloadButton from './DownloadButton.astro';
+import CopyCommand from './CopyCommand.astro';
 import Icon from './Icon.astro';
 import { t, type Lang } from '../i18n';
 import { SERVER_COMMAND } from '../lib/releases';
@@ -13,11 +13,11 @@ const d = t(Astro.props.lang);
     <h2 class="text-4xl font-extrabold tracking-[-0.035em] sm:text-6xl">{d.cta.title}</h2>
     <p class="mt-4 text-lg text-muted dark:text-night-muted">{d.cta.lead}</p>
     <div class="mt-9 flex flex-col items-center [&_.flex-wrap]:justify-center">
-      <DownloadButton client:visible labels={{ ...d.hero, ...d.downloads }} showMeta={false} />
+      <DownloadButton labels={{ ...d.hero, ...d.downloads }} showMeta={false} />
     </div>
     <p class="mt-10 text-sm font-semibold text-muted dark:text-night-muted">{d.cta.server}</p>
     <div class="mt-3 flex w-full justify-center">
-      <CopyCommand client:visible command={SERVER_COMMAND} labels={d.copy} />
+      <CopyCommand command={SERVER_COMMAND} labels={d.copy} />
     </div>
     <a href={d.links.serverDocs} target="_blank" rel="noopener" class="mt-3 inline-flex items-center gap-1.5 text-sm font-semibold text-brand hover:underline dark:text-brand-light">{d.tracks.server.cta}<Icon name="external" class="size-4" /></a>
   </div>

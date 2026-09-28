@@ -1,0 +1,46 @@
+---
+// The installer for the visitor's OS. `serverHref` adds the server button; `detail` names the file under the button;
+// `moreLink` points at the full downloads table. The HTML below is what a visitor without JavaScript (or with the
+// GitHub API down) gets: a button to the latest release page. src/scripts/download.ts fills in the rest.
+import Icon from './Icon.astro';
+import { RELEASES_PAGE } from '../lib/releases';
+import type { Dict } from '../i18n';
+
+interface Props {
+  labels: Dict['hero'] & Dict['downloads'];
+  serverHref?: string;
+  showMeta?: boolean;
+  detail?: boolean;
+  moreLink?: boolean;
+}
+const { labels: l, serverHref, showMeta = true, detail = false, moreLink = true } = Astro.props;
+const labels = {
+  downloadFor: l.downloadFor, alsoFor: l.alsoFor, free: l.free, oss: l.oss, mb: l.mb,
+  arm: l.arm, intel: l.intel, apple: l.apple, macIntel: l.macIntel,
+};
+const primaryCls =
+  'inline-flex items-center justify-center gap-2 rounded-xl bg-brand px-6 py-3.5 text-base font-semibold text-white shadow-[0_12px_32px_-10px_rgb(75_117_183/.8)] transition hover:bg-brand-dark focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand dark:bg-brand-light dark:text-night dark:hover:bg-white';
+const secondaryCls =
+  'inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white/70 px-6 py-3.5 text-base font-semibold text-ink backdrop-blur transition hover:border-brand hover:text-brand focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand dark:border-white/15 dark:bg-white/5 dark:text-night-ink dark:hover:border-brand-light dark:hover:text-brand-light';
+const linkCls = 'font-medium text-brand underline-offset-2 hover:underline dark:text-brand-light';
+const note = 'text-sm text-muted dark:text-night-muted';
+---
+
+<div class="flex flex-col gap-3" data-download-button data-labels={JSON.stringify(labels)} data-server={serverHref ? '' : undefined}>
+  <p class={`max-w-md ${note}`} data-mobile hidden>{l.mobile}</p>
+  <div class="flex flex-wrap gap-3">
+    <a class={primaryCls} href={RELEASES_PAGE} data-primary><Icon name="download" /><span data-primary-text>{l.download}</span></a>
+    {serverHref && <a class={secondaryCls} href={serverHref}>{l.server}<Icon name="arrow" class="size-4" /></a>}
+  </div>
+  {detail && <p class={note} data-detail hidden></p>}
+  <p class={note} data-more hidden={!moreLink}>
+    <span data-mac-guess hidden>{l.alsoFor} <a class={linkCls} data-mac-guess-link></a>{moreLink && ' · '}</span>
+    {moreLink && <a class={linkCls} href="#downloads">{l.allDownloads}</a>}
+  </p>
+  {showMeta && <p class={note} data-meta hidden></p>}
+</div>
+
+<script>
+  import { initDownloads } from '../scripts/download';
+  void initDownloads();
+</script>

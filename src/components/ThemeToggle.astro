@@ -1,0 +1,28 @@
+---
+// Light/dark switch. The icon follows the `dark` class through CSS (a sun while dark, a moon while light), so nothing
+// has to be re-rendered; src/scripts/theme.ts flips the class, stores the choice and keeps aria-pressed in sync.
+// Dark is the default, so the static button is pressed.
+import Icon from './Icon.astro';
+
+interface Props {
+  label: string;
+}
+const { label } = Astro.props;
+---
+
+<button
+  type="button"
+  aria-label={label}
+  aria-pressed="true"
+  title={label}
+  data-theme-toggle
+  class="grid size-9 place-items-center rounded-lg text-muted transition hover:bg-slate-100 hover:text-ink focus-visible:outline-2 focus-visible:outline-brand dark:text-night-muted dark:hover:bg-white/10 dark:hover:text-night-ink"
+>
+  <Icon name="moon" class="size-5 dark:hidden" />
+  <Icon name="sun" class="hidden size-5 dark:block" />
+</button>
+
+<script>
+  import { initThemeToggles } from '../scripts/theme';
+  initThemeToggles();
+</script>

@@ -22,7 +22,7 @@ generic "application launcher", and whose download logic picks `v1.*` releases. 
 | Visual direction | **B — light product style**: white, soft colour blobs, Citeck blue `#4B75B7` |
 | Dark theme | The DEFAULT for every visitor (the audience is technical; user decision 2026-09-28); the toggle next to the language switch switches to light and remembers it in `localStorage.theme` |
 | Languages | RU + EN; `/` is Russian, `/en/` English; first visit follows the browser language, a stored choice wins; crawlers stay on RU |
-| Stack | **Astro** (static generation) + React islands only where interactive; Tailwind 4 |
+| Stack | **Astro** (static generation) + Tailwind 4; interactivity is plain TypeScript enhancing static HTML. React islands were used first and dropped (2026-09-28, user): React was ~69 KB of the ~75 KB gzipped JS for four small widgets |
 | Latest release | `GET /repos/Citeck/citeck-launcher/releases/latest` — 1.x releases are published without moving `latest` |
 | Publishing | Push to `pages` deploys; push only after the user approves a local preview |
 
@@ -86,10 +86,12 @@ src/
   pages/index.astro     RU (/)
   pages/en/index.astro  EN (/en/)
   components/           one .astro component per section above; each takes `lang`
-  islands/              React, hydrated on the client:
-                        DownloadButton  OS/arch detection + latest 2.x assets
-                        CopyCommand     copy-to-clipboard; "✓ Copied" only on success, else "Press Ctrl+C"
-                        ThemeToggle     light/dark, persisted
+                        DownloadButton, DownloadTable, CopyCommand, ThemeToggle render the no-JS HTML
+  scripts/              plain TS that enhances it:
+                        release.ts      latest 2.x release, fetched once, cached for the session
+                        download.ts     OS/arch-aware button, the table with the visitor's installer marked
+                        copy.ts         copy-to-clipboard; "✓ Copied" only on success, else "Press Ctrl+C"
+                        theme.ts        light/dark, persisted
   lib/releases.ts       pure: GitHub release JSON → typed asset map (unit-tested)
   lib/detectOS.ts       ported from the current site, extended with UA-CH architecture
 public/                 screenshots/, og-ru.png, og-en.png, favicon
@@ -145,7 +147,8 @@ public/                 screenshots/, og-ru.png, og-en.png, favicon
 ## Verification (before asking for approval)
 
 - `astro check` and `astro build` clean; dictionary key parity enforced by the build.
-- Vitest for `lib/releases.ts` (real API payload fixtures: 2.x latest, non-2.x tag, missing assets) and `detectOS`.
+- Vitest for `lib/releases.ts` (real API payload fixtures: 2.x latest, non-2.x tag, missing assets) and `detectOS`,
+  and for the interactive components: the real `.astro` rendered through the Container API, their scripts run in jsdom.
 - Playwright screenshots of `/` and `/en/`, light and dark, at 375 / 768 / 1280 — reviewed by the agent.
 - Lighthouse: Performance, SEO, Accessibility ≥ 95 on both pages.
 - The page with JavaScript disabled: all content visible, download links go to `releases/latest`.
