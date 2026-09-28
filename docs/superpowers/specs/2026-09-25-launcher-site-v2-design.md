@@ -20,7 +20,7 @@ generic "application launcher", and whose download logic picks `v1.*` releases. 
 | Topic | Decision |
 |---|---|
 | Visual direction | **B — light product style**: white, soft colour blobs, Citeck blue `#4B75B7` |
-| Dark theme | Kept, as a toggle next to the language switch; default follows the system |
+| Dark theme | The DEFAULT for every visitor (the audience is technical; user decision 2026-09-28); the toggle next to the language switch switches to light and remembers it in `localStorage.theme` |
 | Languages | RU + EN; `/` is Russian, `/en/` English; first visit follows the browser language, a stored choice wins; crawlers stay on RU |
 | Stack | **Astro** (static generation) + React islands only where interactive; Tailwind 4 |
 | Latest release | `GET /repos/Citeck/citeck-launcher/releases/latest` — 1.x releases are published without moving `latest` |
@@ -38,7 +38,8 @@ generic "application launcher", and whose download logic picks `v1.*` releases. 
 3. **What you run — Citeck ECOS** (for evaluators): self-hosted low-code platform replacing proprietary ECM/BPM;
    scenario cards (contracts, purchasing, HR, archive & portal); BPMN designer, document types without code, roles
    and permissions out of the box; link to citeck.ru.
-4. **Two tracks**: Desktop ("On your computer": Docker Desktop → installer → Quick Start → open in browser) and
+4. **Two tracks**: Desktop ("On your computer": any Docker engine — Docker Desktop, Rancher Desktop or Colima; the launcher finds it
+   through DOCKER_HOST, the docker context or the usual sockets → installer → Quick Start → open in browser) and
    Server ("On a server": Docker → one `curl | bash` → wizard asks domain and HTTPS mode, shows the admin password
    → open in browser). The two tracks are TABS (Desktop | Server), not side-by-side cards: "Install on a
    server" (hero) and the header's "Server" open only the server tab, "Desktop" only the desktop one — someone
@@ -118,7 +119,7 @@ public/                 screenshots/, og-ru.png, og-en.png, favicon
   final CTA carry soft radial blobs (blue, pink, mint).
 - Dark: background `#0B1020`, cards `#121A2E`, text `#E6ECF8`, accent `#7FA6E6`; blobs at 20–30% intensity;
   screenshots get a light window outline so the dark product UI does not dissolve into the page.
-- Theme: default = `prefers-color-scheme`; toggle persists; an inline `<head>` script applies the class before
+- Theme: default = dark regardless of `prefers-color-scheme`; light only when stored by the toggle; an inline `<head>` script applies the class before
   first paint (no flash).
 - Type: Inter (text) and JetBrains Mono (commands), self-hosted via `@fontsource` with Cyrillic subsets,
   `font-display: swap`; headings 48–64 px desktop, weight 800, negative tracking.

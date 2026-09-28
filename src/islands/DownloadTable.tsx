@@ -15,11 +15,11 @@ function archLabel(i: Installer, l: Dict['downloads']): string {
 // Apple Silicon first on macOS (every current Mac); amd64 first elsewhere (most PCs and servers).
 const archRank = (i: Installer) => (i.os === 'macos' ? (i.arch === 'arm64' ? 0 : 1) : i.arch === 'amd64' ? 0 : 1);
 
-const mb = (n: number) => (n > 0 ? `${Math.round(n / 1048576)} MB` : '');
 const link = 'font-medium text-brand underline-offset-2 hover:underline dark:text-brand-light';
 
 export default function DownloadTable({ labels }: { labels: Dict['downloads'] }) {
   const release = useRelease();
+  const mb = (n: number) => (n > 0 ? `${Math.round(n / 1048576)} ${labels.mb}` : '');
   const [client, setClient] = useState<Client | null>(null);
 
   useEffect(() => {

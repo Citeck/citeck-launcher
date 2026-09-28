@@ -42,7 +42,7 @@ export const en: typeof ru = {
   ],
   what: {
     kicker: 'What you run',
-    title: 'Citeck — a low-code platform for documents and processes',
+    title: 'Citeck — a low\u2011code platform for documents and processes',
     lead: 'An open-source alternative to proprietary ECM/BPM suites that runs on your own servers. Draw process routes in the BPMN designer and configure document types without code. Users, roles and permissions come out of the box.',
     cases: [
       { title: 'Contracts', text: 'Approval, signing, registry' },
@@ -59,7 +59,7 @@ export const en: typeof ru = {
     desktop: {
       title: 'On your computer',
       tag: 'Desktop app',
-      steps: ['Install Docker Desktop', 'Download and install the launcher', 'Press “Quick Start” and open Citeck in your browser'],
+      steps: ['Install Docker: Docker Desktop, Rancher Desktop or Colima will do', 'Download and install the launcher', 'Press “Quick Start” and open Citeck in your browser'],
       note: 'A regular desktop app, no command line needed. Citeck keeps running even after you close the window.',
       cta: 'Go to downloads',
     },
@@ -105,7 +105,7 @@ export const en: typeof ru = {
   req: {
     title: 'What you need',
     items: [
-      { title: 'Docker', text: 'Docker Desktop on Windows and macOS' },
+      { title: 'Docker', text: 'Any engine: Docker Desktop, Rancher Desktop, Colima or Docker Engine' },
       { title: '16 GB RAM', text: 'for Community · 24–32 GB for Enterprise' },
       { title: '50+ GB disk', text: 'for images and data' },
     ],
@@ -125,6 +125,7 @@ export const en: typeof ru = {
     apple: 'Apple Silicon',
     macIntel: 'Intel',
     yours: 'For your system',
+    mb: 'MB',
   },
   faq: {
     title: 'FAQ',

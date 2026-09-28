@@ -40,7 +40,7 @@ export const ru = {
   ],
   what: {
     kicker: 'Что вы запускаете',
-    title: 'Citeck — low-code платформа для документов и процессов',
+    title: 'Citeck — low\u2011code платформа для документов и процессов',
     lead: 'Открытая замена проприетарным ECM/BPM-системам, которая работает на ваших серверах. Маршруты процессов рисуются в BPMN-дизайнере, типы документов настраиваются без программирования, а пользователи, роли и права доступны из коробки.',
     cases: [
       { title: 'Договоры', text: 'Согласование, подписание, реестр' },
@@ -57,7 +57,7 @@ export const ru = {
     desktop: {
       title: 'На своём компьютере',
       tag: 'Desktop-приложение',
-      steps: ['Установите Docker Desktop', 'Скачайте и установите лаунчер', 'Нажмите «Быстрый старт» и откройте Citeck в браузере'],
+      steps: ['Установите Docker: подойдёт Docker Desktop, Rancher Desktop или Colima', 'Скачайте и установите лаунчер', 'Нажмите «Быстрый старт» и откройте Citeck в браузере'],
       note: 'Обычное приложение с окном, командная строка не нужна. Citeck продолжает работать, даже если закрыть окно.',
       cta: 'К загрузкам',
     },
@@ -103,7 +103,7 @@ export const ru = {
   req: {
     title: 'Что понадобится',
     items: [
-      { title: 'Docker', text: 'На Windows и macOS нужен Docker Desktop' },
+      { title: 'Docker', text: 'Любой движок: Docker Desktop, Rancher Desktop, Colima или Docker Engine' },
       { title: '16 ГБ RAM', text: 'для Community · 24–32 ГБ для Enterprise' },
       { title: '50+ ГБ диска', text: 'под образы и данные' },
     ],
@@ -123,6 +123,7 @@ export const ru = {
     apple: 'Apple Silicon',
     macIntel: 'Intel',
     yours: 'Для вашей системы',
+    mb: 'МБ',
   },
   faq: {
     title: 'Частые вопросы',

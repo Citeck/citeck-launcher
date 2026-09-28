@@ -47,3 +47,11 @@ describe('FAQ', () => {
     expect(en.faq.items.some((i) => /docker compose/.test(i.q))).toBe(true);
   });
 });
+
+describe('Docker', () => {
+  for (const [name, d] of [['ru', ru], ['en', en]] as const) {
+    it(`${name}: any Docker engine will do, Docker Desktop is only one option`, () => {
+      for (const s of [d.tracks.desktop.steps[0], d.req.items[0].text]) expect(s).toMatch(/Rancher Desktop.*Colima|Colima.*Rancher Desktop/);
+    });
+  }
+});

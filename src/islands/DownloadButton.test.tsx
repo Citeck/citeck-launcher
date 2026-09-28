@@ -87,7 +87,7 @@ describe('DownloadButton, what it offers besides the main installer', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(fixture))));
     setUA(LINUX);
     render(<DownloadButton labels={labels} detail moreLink={false} />);
-    await waitFor(() => expect(screen.getByText(/Intel\/AMD \(amd64\) · \.deb · \d+ MB/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/Intel\/AMD \(amd64\) · \.deb · \d+ МБ/)).toBeTruthy());
     expect(screen.queryByRole('link', { name: labels.allDownloads })).toBeNull();
   });
 });

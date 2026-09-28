@@ -20,7 +20,6 @@ const secondaryCls =
   'inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white/70 px-6 py-3.5 text-base font-semibold text-ink backdrop-blur transition hover:border-brand hover:text-brand focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand dark:border-white/15 dark:bg-white/5 dark:text-night-ink dark:hover:border-brand-light dark:hover:text-brand-light';
 
 const linkCls = 'font-medium text-brand underline-offset-2 hover:underline dark:text-brand-light';
-const mb = (n: number) => (n > 0 ? ` · ${Math.round(n / 1048576)} MB` : '');
 
 /**
  * The installer for the visitor's OS. `serverHref` adds the server button; `detail` names the file under the button;
@@ -41,6 +40,7 @@ export default function DownloadButton({
   moreLink?: boolean;
 }) {
   const release = useRelease();
+  const mb = (n: number) => (n > 0 ? ` · ${Math.round(n / 1048576)} ${labels.mb}` : '');
   const [client, setClient] = useState<Client | null>(null);
 
   useEffect(() => {

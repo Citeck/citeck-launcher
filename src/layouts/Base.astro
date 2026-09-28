@@ -60,7 +60,8 @@ const langRedirect = `(function () {
         d.classList.add('js');
         var t = null;
         try { t = localStorage.getItem('theme'); } catch (e) {}
-        if (t === 'dark' || (t !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches)) d.classList.add('dark');
+        // Dark for everyone by default; light only when the visitor chose it with the toggle.
+        if (t !== 'light') d.classList.add('dark');
       })();
     </script>
   </head>

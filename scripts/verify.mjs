@@ -71,7 +71,9 @@ try {
   for (const [name, url, locale] of [['ru', ru, 'ru-RU'], ['en', en, 'en-US']]) {
     for (const theme of ['light', 'dark']) {
       for (const width of [375, 768, 1280]) {
-        const ctx = await browser.newContext({ viewport: { width, height: 900 }, colorScheme: theme, locale });
+        // Dark is the default for everyone, even with a light system theme; light is only a stored choice.
+        const ctx = await browser.newContext({ viewport: { width, height: 900 }, colorScheme: 'light', locale });
+        if (theme === 'light') await ctx.addInitScript(() => localStorage.setItem('theme', 'light'));
         const page = await ctx.newPage();
         const done = watch(page, `${name}/${theme}/${width}`);
         await page.goto(url, { waitUntil: 'networkidle' });
@@ -168,6 +170,24 @@ try {
     await page.goto(url, { waitUntil: 'networkidle' });
     await page.waitForTimeout(300);
     page.url() === expected ? ok(label) : fail(`${label}: ended on ${page.url()}`);
+    await ctx.close();
+  }
+
+  console.log('7. theme');
+  {
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, colorScheme: 'light', locale: 'ru-RU' });
+    const page = await ctx.newPage();
+    await page.goto(ru, { waitUntil: 'networkidle' });
+    const isDark = () => page.evaluate(() => document.documentElement.classList.contains('dark'));
+    (await isDark()) ? ok('first visit is dark, even with a light system theme') : fail('first visit is not dark');
+    await page.locator('header button[aria-pressed]').first().click();
+    const stored = await page.evaluate(() => localStorage.getItem('theme'));
+    !(await isDark()) && stored === 'light' ? ok('the toggle switches to light and remembers it') : fail(`after toggle: dark=${await isDark()} stored=${stored}`);
+    await page.reload({ waitUntil: 'networkidle' });
+    !(await isDark()) ? ok('light survives a reload') : fail('light was lost on reload');
+    await page.locator('header button[aria-pressed]').first().click();
+    await page.reload({ waitUntil: 'networkidle' });
+    (await isDark()) ? ok('and dark again after toggling back') : fail('toggling back to dark did not stick');
     await ctx.close();
   }
 

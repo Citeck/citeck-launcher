@@ -35,6 +35,7 @@ describe('DownloadTable', () => {
     expect(within(first).getByRole('link', { name: /\.msi/ }).getAttribute('href')).toMatch(/windows_amd64\.msi$/);
     expect(first.textContent).toContain(ru.downloads.yours);
     expect(rows().filter((r) => r.textContent?.includes(ru.downloads.yours))).toHaveLength(1);
+    expect(first.textContent).toMatch(/\d+ МБ/);
   });
 
   it('marks the .deb, not the .rpm, on Linux', async () => {
