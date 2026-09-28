@@ -20,7 +20,7 @@ Citeck Launcher — самый простой способ развернуть 
 
 ![Citeck Launcher dashboard](screenshots/running.png)
 
-**Что понадобится:** Docker · **16 ГБ** RAM для редакции Community, **24–32 ГБ** для Enterprise (~24 сервиса) · **50+ ГБ** свободного места на диске под образы и данные. На Windows и macOS сначала установите [Docker Desktop](https://www.docker.com/products/docker-desktop/).
+**Что понадобится:** Docker · **16 ГБ** RAM для редакции Community, **24–32 ГБ** для Enterprise (~24 сервиса) · **50+ ГБ** свободного места на диске под образы и данные. Подойдёт любой Docker-движок: на Windows и macOS это обычно [Docker Desktop](https://www.docker.com/products/docker-desktop/), [Rancher Desktop](https://rancherdesktop.io/) или (на macOS) [Colima](https://github.com/abiosoft/colima). Лаунчер находит его так же, как CLI `docker`: `DOCKER_HOST`, затем активный Docker-контекст, затем стандартный сокет.
 
 ## Десктоп или сервер?
 
@@ -39,7 +39,7 @@ Citeck Launcher — самый простой способ развернуть 
 
 Десктопное приложение запускает Citeck на вашем компьютере с Windows, macOS или Linux — обычное окно приложения, без командной строки. Citeck продолжает работать в фоне даже после закрытия окна.
 
-Сначала установите Docker Desktop, затем скачайте установщик для своей платформы из [последнего релиза](https://github.com/Citeck/citeck-launcher/releases/latest):
+Сначала запустите Docker-движок, затем скачайте установщик для своей платформы из [последнего релиза](https://github.com/Citeck/citeck-launcher/releases/latest):
 
 | ОС | Файл | Архитектуры |
 |----|------|-------------|

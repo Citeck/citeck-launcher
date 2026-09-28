@@ -20,7 +20,7 @@ O Citeck Launcher é a maneira mais fácil de colocar a plataforma em funcioname
 
 ![Citeck Launcher dashboard](screenshots/running.png)
 
-**Você vai precisar de:** Docker · **16 GB** de RAM para a edição Community, **24–32 GB** para a Enterprise (~24 serviços) · **mais de 50 GB** de disco livre para imagens e dados. No Windows e no macOS, instale primeiro o [Docker Desktop](https://www.docker.com/products/docker-desktop/).
+**Você vai precisar de:** Docker · **16 GB** de RAM para a edição Community, **24–32 GB** para a Enterprise (~24 serviços) · **mais de 50 GB** de disco livre para imagens e dados. Qualquer engine Docker serve: no Windows e no macOS costuma ser o [Docker Desktop](https://www.docker.com/products/docker-desktop/), o [Rancher Desktop](https://rancherdesktop.io/) ou (no macOS) o [Colima](https://github.com/abiosoft/colima). O launcher o encontra como a CLI do `docker`: `DOCKER_HOST`, depois o contexto Docker ativo e depois o socket padrão.
 
 ## Desktop ou servidor?
 
@@ -39,7 +39,7 @@ Há duas maneiras de executá-lo — escolha a que corresponde a **onde** você 
 
 O aplicativo desktop executa o Citeck na sua própria máquina Windows, macOS ou Linux — uma janela de aplicativo comum, sem linha de comando. O Citeck continua em execução em segundo plano mesmo depois de você fechar a janela.
 
-Instale primeiro o Docker Desktop e depois baixe o instalador da sua plataforma na [release mais recente](https://github.com/Citeck/citeck-launcher/releases/latest):
+Inicie primeiro uma engine Docker e depois baixe o instalador da sua plataforma na [release mais recente](https://github.com/Citeck/citeck-launcher/releases/latest):
 
 | SO | Arquivo | Arquitetura |
 |----|------|------|

@@ -20,7 +20,7 @@ Citeck Launcher 是让平台跑起来并持续稳定运行的最简单方式。�
 
 ![Citeck Launcher dashboard](screenshots/running.png)
 
-**你需要准备：** Docker · Community 版需 **16 GB** 内存，Enterprise 版（约 24 个服务）需 **24–32 GB** · **50 GB 以上**空闲磁盘用于存放镜像和数据。在 Windows 和 macOS 上，请先安装 [Docker Desktop](https://www.docker.com/products/docker-desktop/)。
+**你需要准备：** Docker · Community 版需 **16 GB** 内存，Enterprise 版（约 24 个服务）需 **24–32 GB** · **50 GB 以上**空闲磁盘用于存放镜像和数据。任何 Docker 引擎都可以：在 Windows 和 macOS 上通常是 [Docker Desktop](https://www.docker.com/products/docker-desktop/)、[Rancher Desktop](https://rancherdesktop.io/) 或（仅 macOS）[Colima](https://github.com/abiosoft/colima)。启动器会像 `docker` 命令行一样查找它：先看 `DOCKER_HOST`，再看当前的 Docker 上下文，最后是默认套接字。
 
 ## 桌面应用还是服务器？
 
@@ -39,7 +39,7 @@ Citeck Launcher 是让平台跑起来并持续稳定运行的最简单方式。�
 
 桌面应用在你自己的 Windows、macOS 或 Linux 电脑上运行 Citeck——就是一个普通的应用窗口，无需命令行。即使关闭窗口，Citeck 也会在后台继续运行。
 
-请先安装 Docker Desktop，然后从[最新发布版本](https://github.com/Citeck/citeck-launcher/releases/latest)下载适用于你平台的安装包：
+请先启动 Docker 引擎，然后从[最新发布版本](https://github.com/Citeck/citeck-launcher/releases/latest)下载适用于你平台的安装包：
 
 | 操作系统 | 文件 | 架构 |
 |----|------|------|
