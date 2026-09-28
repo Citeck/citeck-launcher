@@ -57,7 +57,7 @@ export const ru = {
     desktop: {
       title: 'На своём компьютере',
       tag: 'Desktop-приложение',
-      steps: ['Установите Docker: подойдёт Docker Desktop, Rancher Desktop или Colima', 'Скачайте и установите лаунчер', 'Нажмите «Быстрый старт» и откройте Citeck в браузере'],
+      steps: ['Установите Docker Desktop (на Linux подойдёт и Docker Engine)', 'Скачайте и установите лаунчер', 'Нажмите «Быстрый старт» и откройте Citeck в браузере'],
       note: 'Обычное приложение с окном, командная строка не нужна. Citeck продолжает работать, даже если закрыть окно.',
       cta: 'К загрузкам',
     },
@@ -104,7 +104,7 @@ export const ru = {
   req: {
     title: 'Что понадобится',
     items: [
-      { title: 'Docker', text: 'Любой движок: Docker Desktop, Rancher Desktop, Colima или Docker Engine' },
+      { title: 'Docker', text: 'Docker Desktop на Windows и macOS, Docker Engine или Docker Desktop на Linux' },
       { title: '16 ГБ RAM', text: 'для Community · 24–32 ГБ для Enterprise' },
       { title: '50+ ГБ диска', text: 'под образы и данные' },
     ],

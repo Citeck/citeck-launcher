@@ -59,7 +59,7 @@ export const en: typeof ru = {
     desktop: {
       title: 'On your computer',
       tag: 'Desktop app',
-      steps: ['Install Docker: Docker Desktop, Rancher Desktop or Colima will do', 'Download and install the launcher', 'Press “Quick Start” and open Citeck in your browser'],
+      steps: ['Install Docker Desktop (Docker Engine also works on Linux)', 'Download and install the launcher', 'Press “Quick Start” and open Citeck in your browser'],
       note: 'A regular desktop app, no command line needed. Citeck keeps running even after you close the window.',
       cta: 'Go to downloads',
     },
@@ -106,7 +106,7 @@ export const en: typeof ru = {
   req: {
     title: 'What you need',
     items: [
-      { title: 'Docker', text: 'Any engine: Docker Desktop, Rancher Desktop, Colima or Docker Engine' },
+      { title: 'Docker', text: 'Docker Desktop on Windows and macOS, Docker Engine or Docker Desktop on Linux' },
       { title: '16 GB RAM', text: 'for Community · 24–32 GB for Enterprise' },
       { title: '50+ GB disk', text: 'for images and data' },
     ],

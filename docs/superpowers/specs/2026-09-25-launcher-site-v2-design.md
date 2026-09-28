@@ -38,8 +38,8 @@ generic "application launcher", and whose download logic picks `v1.*` releases. 
 3. **What you run — Citeck ECOS** (for evaluators): self-hosted low-code platform replacing proprietary ECM/BPM;
    scenario cards (contracts, purchasing, HR, archive & portal); BPMN designer, document types without code, roles
    and permissions out of the box; link to citeck.ru.
-4. **Two tracks**: Desktop ("On your computer": any Docker engine — Docker Desktop, Rancher Desktop or Colima; the launcher finds it
-   through DOCKER_HOST, the docker context or the usual sockets → installer → Quick Start → open in browser) and
+4. **Two tracks**: Desktop ("On your computer": Docker Desktop, or Docker Engine on Linux — only the tested engines are named;
+   Rancher Desktop / Colima are found via the docker context but a full stand was never run on them → installer → Quick Start → open in browser) and
    Server ("On a server": Docker → one `curl | bash` → wizard asks domain and HTTPS mode, shows the admin password
    → open in browser). The two tracks are TABS (Desktop | Server), not side-by-side cards: "Install on a
    server" (hero) and the header's "Server" open only the server tab, "Desktop" only the desktop one — someone

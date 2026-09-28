@@ -50,8 +50,12 @@ describe('FAQ', () => {
 
 describe('Docker', () => {
   for (const [name, d] of [['ru', ru], ['en', en]] as const) {
-    it(`${name}: any Docker engine will do, Docker Desktop is only one option`, () => {
-      for (const s of [d.tracks.desktop.steps[0], d.req.items[0].text]) expect(s).toMatch(/Rancher Desktop.*Colima|Colima.*Rancher Desktop/);
+    it(`${name}: names only the tested engines, Docker Desktop and Docker Engine`, () => {
+      for (const s of [d.tracks.desktop.steps[0], d.req.items[0].text]) {
+        expect(s).toMatch(/Docker Desktop/);
+        expect(s).toMatch(/Docker Engine/);
+        expect(s).not.toMatch(/Rancher|Colima/);
+      }
     });
   }
 });
