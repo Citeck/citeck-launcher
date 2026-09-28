@@ -32,7 +32,7 @@ const tracks = [
     </div>
     <div class="mt-8 space-y-6">
       {tracks.map((tr) => (
-        <article id={tr.id} role="tabpanel" aria-labelledby={`tab-${tr.id}`} data-panel={tr.id} class="reveal scroll-mt-44 flex min-w-0 flex-col rounded-3xl border border-slate-200/80 bg-white p-7 shadow-sm sm:p-9 dark:border-white/10 dark:bg-night-card">
+        <article id={tr.id} role="tabpanel" aria-labelledby={`tab-${tr.id}`} data-panel={tr.id} class="reveal scroll-mt-24 flex min-w-0 flex-col rounded-3xl border border-slate-200/80 bg-white p-7 shadow-sm sm:p-9 dark:border-white/10 dark:bg-night-card">
           <div class="flex items-center gap-3">
             <div class="grid size-12 place-items-center rounded-2xl bg-gradient-to-br from-brand to-[#8f6fd8] text-white shadow-md"><Icon name={tr.icon} class="size-6" /></div>
             <div>
@@ -51,7 +51,7 @@ const tracks = [
           {tr.id === 'server' && (
             <div class="mt-6">
               <p class="mb-2 text-sm font-semibold text-muted dark:text-night-muted">{d.tracks.command}</p>
-              <CopyCommand client:visible command={SERVER_COMMAND} labels={d.copy} />
+              <CopyCommand client:visible command={SERVER_COMMAND} labels={d.copy} full />
             </div>
           )}
           <p class="mt-6 text-sm text-muted dark:text-night-muted">{tr.x.note}</p>
@@ -77,26 +77,44 @@ const tracks = [
 
 <script>
   const section = document.querySelector<HTMLElement>('[data-tracks]');
-  if (section) {
+  const tablist = section?.querySelector<HTMLElement>('[role="tablist"]');
+  if (section && tablist) {
     const ids = ['desktop', 'server'];
     const show = (id: string) => {
       section.dataset.active = id;
       section.querySelectorAll<HTMLElement>('[data-tab]').forEach((t) => t.setAttribute('aria-selected', String(t.dataset.tab === id)));
     };
-    const fromHash = (scroll: boolean) => {
-      const id = location.hash.slice(1);
-      if (!ids.includes(id)) return;
-      show(id);
-      // The panel was hidden when the browser tried to scroll to it; scroll now that it is shown.
-      if (scroll) document.getElementById(id)?.scrollIntoView();
+    // Put the tab bar a fixed gap under the sticky header. offsetTop is layout-only, so the reveal animation's
+    // translate (still running on arrival) cannot shift where we land.
+    const scrollToTabs = (smooth: boolean) => {
+      let top = 0;
+      for (let el: HTMLElement | null = tablist; el; el = el.offsetParent as HTMLElement | null) top += el.offsetTop;
+      const header = document.querySelector<HTMLElement>('[data-header]')?.offsetHeight ?? 0;
+      const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+      scrollTo({ top: top - header - 24, behavior: smooth && !reduce ? 'smooth' : 'instant' });
     };
-    // Any link to #desktop / #server (hero, header, tabs) switches the tab before the browser scrolls to it.
+    // Links to #desktop / #server: a tab only switches (the page stays put); any other link (hero, header)
+    // switches and brings the tabs into view. The address follows either way.
     document.addEventListener('click', (e) => {
       const a = (e.target as Element).closest?.('a[href^="#"]');
       const id = a?.getAttribute('href')?.slice(1);
-      if (id && ids.includes(id)) show(id);
+      if (!id || !ids.includes(id)) return;
+      e.preventDefault();
+      show(id);
+      if (location.hash !== `#${id}`) history.pushState(null, '', `#${id}`);
+      if (!a!.closest('[role="tablist"]')) scrollToTabs(true);
     });
-    addEventListener('hashchange', () => fromHash(false));
-    fromHash(true);
+    const fromHash = () => {
+      const id = location.hash.slice(1);
+      if (!ids.includes(id)) return;
+      show(id);
+      scrollToTabs(false);
+    };
+    addEventListener('popstate', fromHash);
+    // A typed or scripted #fragment also scrolls natively, after popstate; line up once more on the next frame.
+    addEventListener('hashchange', () => requestAnimationFrame(fromHash));
+    fromHash();
+    // On a direct visit the browser runs its own jump to the fragment later than this script; line up again after it.
+    if (document.readyState !== 'complete') addEventListener('load', () => requestAnimationFrame(fromHash), { once: true });
   }
 </script>

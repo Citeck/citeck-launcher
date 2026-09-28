@@ -15,7 +15,7 @@ export function altLabel(i: Installer, l: Labels): string {
 }
 
 const primaryCls =
-  'inline-flex items-center justify-center gap-2 rounded-xl bg-brand px-6 py-3.5 text-base font-semibold text-white shadow-[0_12px_32px_-10px_rgb(75_117_183/.8)] transition hover:-translate-y-0.5 hover:bg-brand-dark focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand dark:bg-brand-light dark:text-night dark:hover:bg-white';
+  'inline-flex items-center justify-center gap-2 rounded-xl bg-brand px-6 py-3.5 text-base font-semibold text-white shadow-[0_12px_32px_-10px_rgb(75_117_183/.8)] transition hover:bg-brand-dark focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand dark:bg-brand-light dark:text-night dark:hover:bg-white';
 const secondaryCls =
   'inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white/70 px-6 py-3.5 text-base font-semibold text-ink backdrop-blur transition hover:border-brand hover:text-brand focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand dark:border-white/15 dark:bg-white/5 dark:text-night-ink dark:hover:border-brand-light dark:hover:text-brand-light';
 

@@ -1,6 +1,15 @@
 import { useEffect, useId, useRef, useState } from 'react';
 
-export default function CopyCommand({ command, labels }: { command: string; labels: { copy: string; copied: string; failed: string; label: string } }) {
+/** `full` stretches the box to its container (the copy button then sits at the right edge); otherwise it hugs the command. */
+export default function CopyCommand({
+  command,
+  labels,
+  full = false,
+}: {
+  command: string;
+  labels: { copy: string; copied: string; failed: string; label: string };
+  full?: boolean;
+}) {
   const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle');
   const id = useId();
   const codeRef = useRef<HTMLElement>(null);
@@ -51,7 +60,7 @@ export default function CopyCommand({ command, labels }: { command: string; labe
   }
 
   return (
-    <div className="flex w-fit max-w-full items-center gap-3 rounded-xl bg-ink px-4 py-3 font-mono text-[13px] text-[#c9d8ff] shadow-lg ring-1 ring-ink/10 dark:bg-black/40 dark:ring-white/10">
+    <div className={`flex ${full ? 'w-full' : 'w-fit max-w-full'} items-center gap-3 rounded-xl bg-ink px-4 py-3 font-mono text-[13px] text-[#c9d8ff] shadow-lg ring-1 ring-ink/10 dark:bg-black/40 dark:ring-white/10`}>
       <span aria-hidden="true" className="select-none text-brand-light">$</span>
       <code
         id={id}

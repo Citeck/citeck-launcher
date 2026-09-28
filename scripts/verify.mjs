@@ -171,6 +171,30 @@ try {
     await ctx.close();
   }
 
+  console.log('6. hover never moves an element from under the cursor');
+  {
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: 'ru-RU' });
+    const page = await ctx.newPage();
+    await page.goto(ru, { waitUntil: 'networkidle' });
+    await revealAll(page);
+    for (const [label, sel] of [
+      ['feature card', 'main section:has(.pulse-status) article:nth-of-type(2)'],
+      ['use-case card', 'main .group'],
+      ['hero download button', 'main section a[href*="releases"], main section a[href$=".msi"], main section a[href$=".deb"], main section a[href$=".dmg"]'],
+    ]) {
+      const el = page.locator(sel).first();
+      await el.scrollIntoViewIfNeeded();
+      await page.waitForTimeout(700);
+      const box = await el.boundingBox();
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height - 1);
+      await page.waitForTimeout(400);
+      // Tailwind 4 moves things with the \`translate\` property, not \`transform\`; check both.
+      const t = await el.evaluate((e) => [getComputedStyle(e).transform, getComputedStyle(e).translate].filter((v) => v !== 'none' && v !== '0px').join(' '));
+      t === '' ? ok(`${label}: stays put on hover`) : fail(`${label}: moves on hover (${t}), so it jitters at its edge`);
+    }
+    await ctx.close();
+  }
+
   console.log('5. install tracks are tabs');
   {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: 'ru-RU' });
@@ -197,6 +221,24 @@ try {
     await page.goto(`${ru}#server`, { waitUntil: 'networkidle' });
     await page.waitForTimeout(600);
     await expectOnly('a shared #server link opens the server tab', 'server');
+    const gap = () =>
+      page.evaluate(() => document.querySelector('[role="tablist"]').getBoundingClientRect().top - document.querySelector('[data-header]').getBoundingClientRect().bottom);
+    const g0 = await gap();
+    g0 >= 16 && g0 <= 48 ? ok(`#server: the tabs sit ${Math.round(g0)}px under the header`) : fail(`#server: tabs ${Math.round(g0)}px under the header`);
+    const y0 = await page.evaluate(() => scrollY);
+    await page.locator('[role="tab"][aria-controls="desktop"]').click();
+    await page.waitForTimeout(500);
+    await page.locator('[role="tab"][aria-controls="server"]').click();
+    await page.waitForTimeout(500);
+    const y1 = await page.evaluate(() => scrollY);
+    y1 === y0 ? ok('switching tabs does not scroll the page') : fail(`switching tabs scrolled ${y0} → ${y1}`);
+    const hash = await page.evaluate(() => location.hash);
+    hash === '#server' ? ok('the address follows the tab') : fail(`hash after switching = ${hash}`);
+    await page.goto(ru, { waitUntil: 'networkidle' });
+    await page.locator('main a', { hasText: 'Установить на сервер' }).first().click();
+    await page.waitForTimeout(1200);
+    const g1 = await gap();
+    Math.abs(g1 - g0) <= 2 ? ok('the hero button lands at the same spot') : fail(`hero button lands ${Math.round(g1)}px under the header, #server at ${Math.round(g0)}px`);
     const cmd = await page.evaluate(() => {
       const c = document.querySelector('#server code');
       return c ? c.scrollWidth <= c.clientWidth + 1 : null;

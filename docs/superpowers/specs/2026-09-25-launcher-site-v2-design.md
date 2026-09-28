@@ -42,7 +42,8 @@ generic "application launcher", and whose download logic picks `v1.*` releases. 
    Server ("On a server": Docker → one `curl | bash` → wizard asks domain and HTTPS mode, shows the admin password
    → open in browser). The two tracks are TABS (Desktop | Server), not side-by-side cards: "Install on a
    server" (hero) and the header's "Server" open only the server tab, "Desktop" only the desktop one — someone
-   who chose the server should not read desktop steps (user feedback). A `#server` link opens that tab; without
+   who chose the server should not read desktop steps (user feedback). Clicking a tab only switches it (the page
+   never jumps); any other link to a tab, and a `#server` visit, puts the tab bar 24 px under the header. Without
    JavaScript both panels show one under the other. The server panel is wide enough for the captioned command
    on ONE line (the user wants it whole and unwrapped). Each panel ends with a neutral first-run note (several
    GB of images, usually 10–15 minutes — stated as a fact, not a warning).
@@ -123,6 +124,9 @@ public/                 screenshots/, og-ru.png, og-en.png, favicon
   `font-display: swap`; headings 48–64 px desktop, weight 800, negative tracking.
 - Components: primary button with coloured shadow, outline secondary; cards radius 16–20 px, thin border, hover
   lift; dark terminal pill with copy button.
+- Hover never moves an element (no translate): a card that lifts away from the cursor at its bottom edge loses
+  hover, drops back and jitters. Hover changes shadow, border and colour only; `yarn verify` checks it.
+- Copy: plain sentences; the long dash only where Russian grammar needs it (user feedback).
 - Motion: sections reveal on scroll (IntersectionObserver + CSS), hero entrance on load; all disabled under
   `prefers-reduced-motion`. No animation libraries.
 - Responsive, mobile-first; checked at 375 / 768 / 1280 / 1536 px; header collapses to a menu on mobile, hero

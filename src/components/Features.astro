@@ -38,7 +38,7 @@ const services = ['postgres', 'rabbitmq', 'keycloak', 'emodel', 'gateway'];
         </div>
       </article>
       {rest.map((f, i) => (
-        <article class="reveal min-w-0 rounded-3xl border border-slate-200/80 bg-white p-7 transition hover:-translate-y-0.5 hover:shadow-lg dark:border-white/10 dark:bg-night-card" style={`transition-delay:${(i + 1) * 70}ms`}>
+        <article class="reveal min-w-0 rounded-3xl border border-slate-200/80 bg-white p-7 transition hover:shadow-lg dark:border-white/10 dark:bg-night-card" style={`transition-delay:${(i + 1) * 70}ms`}>
           <div class="grid size-11 place-items-center rounded-xl bg-brand/10 text-brand dark:bg-brand-light/15 dark:text-brand-light"><Icon name={icons[i]} /></div>
           <h3 class="mt-4 text-xl font-bold tracking-tight">{f.title}</h3>
           <p class="mt-2 text-sm leading-relaxed text-muted dark:text-night-muted">{f.text}</p>
