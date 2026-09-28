@@ -162,4 +162,6 @@ export async function initDownloads(): Promise<void> {
   const release = await loadRelease();
   if (client.kind !== 'mobile') buttons.forEach((b) => renderButton(b, release, client));
   tables.forEach((t) => renderTable(t, release, client));
+  // The page just changed height; let an anchor that was opened directly line itself up again (anchor.ts).
+  dispatchEvent(new Event('citeck:layout'));
 }

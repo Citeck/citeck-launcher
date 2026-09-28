@@ -127,6 +127,10 @@ public/                 screenshots/, og-ru.png, og-en.png, favicon
   `font-display: swap`; headings 48–64 px desktop, weight 800, negative tracking.
 - Components: primary button with coloured shadow, outline secondary; cards radius 16–20 px, thin border, hover
   lift; dark terminal pill with copy button.
+- In-page anchors (#features, #downloads, #faq) put their first line 24 px under the header, like the install tabs:
+  the id sits on the heading's untransformed container with `scroll-margin-top: 88px`, and `scripts/anchor.ts`
+  nudges the target back once the scroll rests if the page grew meanwhile (lazy images, the downloads table),
+  unless the visitor scrolled on their own. `yarn verify` checks both widths, menu clicks and a fresh visit.
 - Hover never moves an element (no translate): a card that lifts away from the cursor at its bottom edge loses
   hover, drops back and jitters. Hover changes shadow, border and colour only; `yarn verify` checks it.
 - Copy: plain sentences; the long dash only where Russian grammar needs it (user feedback).

@@ -177,6 +177,59 @@ try {
     await ctx.close();
   }
 
+  console.log('9. anchors land right under the header');
+  // The first text of the target (a kicker or the heading) should sit 24 px under the header, like the install tabs.
+  const gapOf = (page, id) =>
+    page.evaluate((x) => {
+      const t = document.getElementById(x).querySelector('p, h2');
+      return t.getBoundingClientRect().top - document.querySelector('[data-header]').getBoundingClientRect().bottom;
+    }, id);
+  // Smooth scrolling over a long phone page takes a while: wait until the page stops moving.
+  const settle = async (page) => {
+    let last = -1;
+    for (let i = 0; i < 40; i++) {
+      const y = await page.evaluate(() => scrollY);
+      if (y === last) {
+        // …and until the reveal fade-ins (which slide text up by 24 px) have finished.
+        await page.waitForFunction(() => document.getAnimations().every((x) => !(x instanceof CSSTransition) || x.playState === 'finished'));
+        return;
+      }
+      last = y;
+      await page.waitForTimeout(250);
+    }
+  };
+  const near24 = (label, gap) => (gap >= 18 && gap <= 30 ? ok(`${label}: ${Math.round(gap)}px under the header`) : fail(`${label}: ${Math.round(gap)}px under the header`));
+  for (const width of [1280, 375]) {
+    const ctx = await browser.newContext({ viewport: { width, height: 900 }, locale: 'ru-RU' });
+    await ctx.route('https://api.github.com/**', (r) => r.fulfill({ status: 200, contentType: 'application/json', body: FIXTURE }));
+    const page = await ctx.newPage();
+    await page.goto(ru, { waitUntil: 'networkidle' });
+    for (const id of ['features', 'downloads', 'faq']) {
+      // Exactly what a click on a menu link does, whether or not this width shows that link.
+      await page.evaluate((x) => (location.hash = `#${x}`), id);
+      await page.waitForTimeout(300);
+      await settle(page);
+      near24(`${width}: menu → #${id}`, await gapOf(page, id));
+    }
+    // A shared link opened from scratch: the page grows while it loads (fonts, the downloads table), and must still land.
+    const fresh = await ctx.newPage();
+    await fresh.goto(`${ru}#faq`, { waitUntil: 'networkidle' });
+    await fresh.waitForTimeout(300);
+    await settle(fresh);
+    near24(`${width}: fresh visit to #faq`, await gapOf(fresh, 'faq'));
+    // Once the visitor scrolls on their own, the page must not be pulled back to the anchor.
+    await fresh.mouse.move(width / 2, 400);
+    await fresh.mouse.wheel(0, -600);
+    await fresh.waitForTimeout(300);
+    await settle(fresh);
+    const away = await gapOf(fresh, 'faq');
+    await fresh.evaluate(() => dispatchEvent(new Event('citeck:layout')));
+    await fresh.waitForTimeout(600);
+    const after = await gapOf(fresh, 'faq');
+    away > 200 && Math.abs(after - away) < 2 ? ok(`${width}: scrolling away from #faq is left alone`) : fail(`${width}: after scrolling away #faq sits ${Math.round(away)}px, then ${Math.round(after)}px`);
+    await ctx.close();
+  }
+
   console.log('8. editions comparison link');
   for (const [name, url] of [['ru', ru], ['en', en]]) {
     const html = await (await fetch(url)).text();

@@ -81,5 +81,9 @@ const langRedirect = `(function () {
       );
       document.querySelectorAll('.reveal').forEach((el) => io.observe(el));
     </script>
+    <script>
+      import { initAnchorRealign } from '../scripts/anchor';
+      initAnchorRealign();
+    </script>
   </body>
 </html>
