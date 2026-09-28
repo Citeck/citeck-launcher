@@ -139,7 +139,7 @@ export const en: typeof ru = {
       { q: 'Do I need docker compose?', a: 'No. The launcher drives the containers through the Docker API itself, so you need neither docker compose nor compose files. Docker Desktop still shows every container of a stand as one group.' },
       { q: 'How do I move from launcher 1.x?', a: 'Install 2.x. On first start it brings over your namespaces and settings from 1.x. Secrets come over once you enter the master password. The data in Docker volumes stays where it is.' },
       { q: 'Where does my data live?', a: 'In Docker volumes on your computer or server. Nothing is sent anywhere. A backup of all volumes is saved as a single archive.' },
-      { q: 'How is Community different from Enterprise?', a: 'Community is the free open-source edition with the platform core. Enterprise adds support and modules and requires a license key.', compare: true },
+      { q: 'How is Community different from Enterprise?', a: 'Community is the free open-source edition with the platform core. Enterprise adds professional support and extra modules. It needs a license key.', compare: true },
     ],
   },
   cta: { title: 'Run Citeck today', lead: 'Free, open source, on your own hardware.', server: 'Or install on a server with one command:' },
