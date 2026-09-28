@@ -22,7 +22,7 @@ const tracks = [
       <h2 class="text-3xl font-extrabold tracking-[-0.03em] sm:text-5xl">{d.tracks.title}</h2>
       <p class="mt-4 text-lg text-muted dark:text-night-muted">{d.tracks.lead}</p>
     </div>
-    <div role="tablist" aria-label={d.tracks.title} class="tabbar reveal mx-auto mt-10 hidden w-fit gap-1 rounded-2xl border border-slate-200/80 bg-white p-1.5 shadow-sm dark:border-white/10 dark:bg-night-card">
+    <div role="tablist" aria-label={d.tracks.title} class="tabbar reveal mx-auto mt-10 hidden w-fit gap-1 rounded-2xl border border-slate-300/80 bg-white p-1.5 shadow-sm dark:border-white/10 dark:bg-night-card">
       {tracks.map((tr) => (
         <a role="tab" href={`#${tr.id}`} id={`tab-${tr.id}`} aria-controls={tr.id} aria-selected={tr.id === 'desktop' ? 'true' : 'false'} data-tab={tr.id}
           class="inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-muted transition hover:text-ink aria-selected:bg-brand aria-selected:text-white sm:px-5 dark:text-night-muted dark:hover:text-night-ink dark:aria-selected:bg-brand-light dark:aria-selected:text-night">
@@ -32,7 +32,7 @@ const tracks = [
     </div>
     <div class="mt-8 space-y-6">
       {tracks.map((tr) => (
-        <article id={tr.id} role="tabpanel" aria-labelledby={`tab-${tr.id}`} data-panel={tr.id} class="reveal scroll-mt-24 flex min-w-0 flex-col rounded-3xl border border-slate-200/80 bg-white p-7 shadow-sm sm:p-9 dark:border-white/10 dark:bg-night-card">
+        <article id={tr.id} role="tabpanel" aria-labelledby={`tab-${tr.id}`} data-panel={tr.id} class="reveal scroll-mt-24 flex min-w-0 flex-col rounded-3xl border border-slate-300/80 bg-white p-7 shadow-sm sm:p-9 dark:border-white/10 dark:bg-night-card">
           <div class="flex items-center gap-3">
             <div class="grid size-12 place-items-center rounded-2xl bg-gradient-to-br from-brand to-[#8f6fd8] text-white shadow-md"><Icon name={tr.icon} class="size-6" /></div>
             <div>

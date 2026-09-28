@@ -81,7 +81,7 @@ export default function DownloadTable({ labels }: { labels: Dict['downloads'] })
       <p className="mb-4 text-sm font-semibold text-muted dark:text-night-muted">
         {labels.version} {release!.version}
       </p>
-      <div className="overflow-hidden rounded-2xl border border-slate-200 dark:border-white/10">
+      <div className="overflow-hidden rounded-2xl border border-slate-300/80 dark:border-white/10">
         <table className="hidden w-full text-left text-sm sm:table">
           <thead className="bg-slate-50 text-xs uppercase tracking-wider text-muted dark:bg-white/5 dark:text-night-muted">
             <tr>
