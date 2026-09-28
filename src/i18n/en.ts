@@ -22,7 +22,7 @@ export const en: typeof ru = {
   hero: {
     title1: 'The whole Citeck platform —',
     title2: 'one click away',
-    lead: 'The launcher downloads, configures and runs the open\u2011source low\u2011code platform Citeck on your computer or server. It watches and upgrades the services and makes backups on demand, so you can just get to work.',
+    lead: 'The launcher downloads, configures and runs the open\u2011source low\u2011code platform Citeck on your computer or server. It watches and upgrades the services and, when you ask, packs all the data into one archive you can restore from. You just get to work.',
     downloadFor: 'Download for',
     download: 'Download',
     server: 'Install on a server',

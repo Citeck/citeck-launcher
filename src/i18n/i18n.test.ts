@@ -31,7 +31,7 @@ describe('claims match the launcher README', () => {
     });
     it(`${name}: backups are on demand, not automatic and not timed`, () => {
       expect(d.hero.lead).not.toMatch(/и делает бэкапы|backs them up —/);
-      expect(d.hero.lead).toMatch(/по запросу|on demand/);
+      expect(d.hero.lead).toMatch(/по вашей команде|when you ask/);
       expect(JSON.stringify(d.features)).not.toMatch(/за минуту|in a minute/i);
     });
     it(`${name}: tracks warn that the first run takes a while`, () => {
