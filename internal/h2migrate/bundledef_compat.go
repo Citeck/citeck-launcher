@@ -11,7 +11,9 @@ import (
 // one load-bearing way that would silently produce an empty Key on import:
 //   - `key` is a Kotlin BundleKey value class serialized via @JsonValue +
 //     toString() as a JSON STRING (e.g. "release/2025.1.0"); Go's bundle.Def
-//     models it as an object {"version": "..."}.
+//     models it as an object {"version": "..."}. Launchers before 1.3.6 had
+//     no @JsonValue on BundleKey and wrote it as {"rawKey": "..."}; both
+//     shapes are accepted.
 //
 // applications (Map<String, BundleAppDef>), citeckApps (List<BundleAppDef>),
 // and content (DataValue → JSON object) line up byte-for-byte between Kotlin
@@ -31,11 +33,31 @@ import (
 // BundleDef data class. Only fields we forward into Go are listed.
 type kotlinBundleDef struct {
 	// Key is a string in the Kotlin wire format (BundleKey.@JsonValue toString
-	// → rawKey). Go's bundle.Def stores it as an object so we translate here.
-	Key          string                   `json:"key"`
+	// → rawKey), or {"rawKey": "..."} before 1.3.6. Go's bundle.Def stores it
+	// as an object so we translate here.
+	Key          kotlinBundleKey          `json:"key"`
 	Applications map[string]bundle.AppDef `json:"applications"`
 	CiteckApps   []bundle.AppDef          `json:"citeckApps"`
 	Content      map[string]any           `json:"content"`
+}
+
+// kotlinBundleKey reads both wire shapes of Kotlin's BundleKey.
+type kotlinBundleKey string
+
+func (k *kotlinBundleKey) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		*k = kotlinBundleKey(s)
+		return nil
+	}
+	var obj struct {
+		RawKey *string `json:"rawKey"`
+	}
+	if err := json.Unmarshal(data, &obj); err != nil || obj.RawKey == nil {
+		return fmt.Errorf("bundle key is neither a string nor {\"rawKey\": ...}: %s", data)
+	}
+	*k = kotlinBundleKey(*obj.RawKey)
+	return nil
 }
 
 // decodeKotlinBundleDef parses a Jackson-shaped BundleDef JSON blob into Go's
@@ -51,7 +73,7 @@ func decodeKotlinBundleDef(data []byte) (bundle.Def, error) {
 		return bundle.Def{}, fmt.Errorf("unmarshal kotlin bundledef: %w", err)
 	}
 	out := bundle.Def{
-		Key:          bundle.Key{Version: k.Key},
+		Key:          bundle.Key{Version: string(k.Key)},
 		Applications: k.Applications,
 		CiteckApps:   k.CiteckApps,
 		Content:      k.Content,

@@ -204,7 +204,7 @@ func buildNamespaceYAMLMap(nsID string, raw []byte) (map[string]any, error) {
 		}
 	}
 	if v, ok := src["authentication"]; ok && v != nil {
-		out["authentication"] = v
+		out["authentication"] = normalizeLegacyAuth(v)
 	}
 	if v, ok := src["pgAdmin"]; ok && !isEmptyAny(v) {
 		out["pgAdmin"] = v
@@ -212,14 +212,60 @@ func buildNamespaceYAMLMap(nsID string, raw []byte) (map[string]any, error) {
 	if v, ok := src["mongodb"]; ok && !isEmptyAny(v) {
 		out["mongodb"] = v
 	}
-	// Kotlin Jackson key `citeckProxy` -> Go YAML key `proxy`.
+	// Kotlin serialized the proxy as `citeckProxy`, but its builder read `proxy`
+	// (withProxy), and early 1.x entities were stored under that key. Go's YAML
+	// key is `proxy`; `citeckProxy` wins when both are present.
 	if v, ok := src["citeckProxy"]; ok && !isEmptyAny(v) {
+		out["proxy"] = v
+	} else if v, ok := src["proxy"]; ok && !isEmptyAny(v) {
 		out["proxy"] = v
 	}
 	if v, ok := src["webapps"]; ok && !isEmptyAny(v) {
 		out["webapps"] = v
 	}
 	return out, nil
+}
+
+// normalizeLegacyAuth rewrites the early 1.x `users` form — one string of
+// "name:password" pairs separated by commas — into the list Go expects, the way
+// Kotlin's AuthenticationProps.Builder.withUsers read it: names only, the
+// password half dropped. A string with no names leaves `users` out, so the
+// default users apply instead of failing BASIC validation. An absent `type` is
+// left to Go's default, BASIC, which is Kotlin's default too.
+func normalizeLegacyAuth(v any) any {
+	auth, ok := v.(map[string]any)
+	if !ok {
+		return v
+	}
+	users, ok := auth["users"].(string)
+	if !ok {
+		return v
+	}
+	// auth is this call's own freshly decoded JSON, so it is rewritten in place.
+	if names := legacyUserNames(users); len(names) > 0 {
+		auth["users"] = names
+	} else {
+		delete(auth, "users")
+	}
+	return auth
+}
+
+// legacyUserNames splits "name:password,name2,..." into distinct, trimmed,
+// non-blank names in their original order (Kotlin collected them into a
+// LinkedHashSet).
+func legacyUserNames(s string) []string {
+	var names []string
+	seen := make(map[string]bool)
+	for part := range strings.SplitSeq(s, ",") {
+		name, _, _ := strings.Cut(part, ":")
+		name = strings.TrimSpace(name)
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		names = append(names, name)
+	}
+	return names
 }
 
 func isEmptyAny(v any) bool {

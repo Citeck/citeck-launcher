@@ -77,3 +77,17 @@ func TestBundleDefCompat_RoundTripIntoGoJSON(t *testing.T) {
 	require.True(t, ok, "Go BundleDef.key must serialize as object")
 	assert.Equal(t, "release/2025.1.0", keyMap["version"])
 }
+
+// TestBundleDefCompat_PreKey136Object covers launchers before 1.3.6, where
+// BundleKey had no @JsonValue and Jackson wrote it as {"rawKey": "..."} (seen
+// on a real Windows install). Both shapes must yield the same key.
+func TestBundleDefCompat_PreKey136Object(t *testing.T) {
+	def, err := decodeKotlinBundleDef([]byte(`{"key":{"rawKey":"2025.5"},"applications":{"eapps":{"image":"citeck/ecos-apps:2.1"}},` +
+		`"citeckApps":[],"isEmpty":false,"isNotEmpty":true}`))
+	require.NoError(t, err)
+	assert.Equal(t, "2025.5", def.Key.Version)
+	assert.Equal(t, "citeck/ecos-apps:2.1", def.Applications["eapps"].Image)
+
+	_, err = decodeKotlinBundleDef([]byte(`{"key":42}`))
+	assert.Error(t, err, "a key that is neither form is still rejected")
+}

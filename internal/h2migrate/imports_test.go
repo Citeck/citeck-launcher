@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/citeck/citeck-launcher/internal/bundle"
+	"github.com/citeck/citeck-launcher/internal/namespace"
 	"github.com/citeck/citeck-launcher/internal/storage"
 )
 
@@ -593,4 +594,50 @@ func TestNeedsMigration_BothFiles(t *testing.T) {
 	needed, err := NeedsMigration(homeDir)
 	require.NoError(t, err)
 	assert.False(t, needed)
+}
+
+// TestImportNamespacesAcceptsEarlyKotlinShape covers a namespace saved by an
+// early 1.x launcher (seen on a real Windows install): users as one
+// "name:password,..." string, no auth type, the proxy under the builder key
+// `proxy`, and the since-removed alfresco/onlyOffice sections. Kotlin's
+// NamespaceConfig.Builder read all of that; the migration must too, instead of
+// refusing to start the daemon.
+func TestImportNamespacesAcceptsEarlyKotlinShape(t *testing.T) {
+	homeDir := t.TempDir()
+	nsJSON := `{"alfresco":{"enabled":false,"heapSize":"","javaOpts":"","memoryLimit":""},` +
+		`"authentication":{"users":"admin:admin,fet:fet"},"bundleRef":"develop:LATEST","id":"5tbncya",` +
+		`"mongodb":{"image":""},"name":"Citeck Default","onlyOffice":{"enabled":false},` +
+		`"pgAdmin":{"enabled":true,"image":""},"proxy":{"image":"caddy:2.7"},"webapps":{}}`
+	maps := map[string]map[string]string{
+		"entities/saucojy!namespace": {"5tbncya": base64.StdEncoding.EncodeToString([]byte(nsJSON))},
+	}
+	store, err := storage.NewSQLiteStore(homeDir)
+	require.NoError(t, err)
+	defer store.Close()
+
+	result := runImports(t, homeDir, maps, store)
+	assert.Equal(t, 1, result.Namespaces)
+
+	yamlStr, ok, readErr := store.LoadNamespaceConfig("saucojy", "5tbncya")
+	require.NoError(t, readErr)
+	require.True(t, ok)
+	cfg, err := namespace.ParseNamespaceConfig([]byte(yamlStr))
+	require.NoError(t, err)
+	assert.Equal(t, namespace.AuthBasic, cfg.Authentication.Type, "Kotlin's default auth type")
+	assert.Equal(t, []string{"admin", "fet"}, cfg.Authentication.Users)
+	assert.NotContains(t, yamlStr, "admin:admin", "the password half is dropped, as Kotlin did")
+	assert.Equal(t, "caddy:2.7", cfg.Proxy.Image)
+	assert.NotContains(t, yamlStr, "alfresco")
+	assert.NotContains(t, yamlStr, "onlyOffice")
+}
+
+func TestLegacyUserNames(t *testing.T) {
+	for in, want := range map[string][]string{
+		"admin:admin,fet:fet":    {"admin", "fet"},
+		" fet , admin:x ,, fet ": {"fet", "admin"},
+		"solo":                   {"solo"},
+		" , :x ":                 nil,
+	} {
+		assert.Equal(t, want, legacyUserNames(in), "input %q", in)
+	}
 }
