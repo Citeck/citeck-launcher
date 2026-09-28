@@ -69,7 +69,7 @@ export default function DownloadButton({
         {!mobile && (
           <a className={primaryCls} href={pick ? pick.primary.url : RELEASES_PAGE}>
             <DownloadIcon />
-            {pick ? `${labels.downloadFor} ${OS_LABEL[pick.primary.os]}` : labels.download}
+            {pick ? `${labels.downloadFor} ${OS_LABEL[pick.primary.os]} Desktop` : labels.download}
           </a>
         )}
         {serverHref && (

@@ -91,3 +91,12 @@ describe('DownloadButton, what it offers besides the main installer', () => {
     expect(screen.queryByRole('link', { name: labels.allDownloads })).toBeNull();
   });
 });
+
+describe('DownloadButton label', () => {
+  it('names the desktop app: "Скачать для Linux Desktop"', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(fixture))));
+    setUA('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/140.0 Safari/537.36');
+    render(<DownloadButton labels={labels} />);
+    await waitFor(() => expect(screen.getByRole('link', { name: 'Скачать для Linux Desktop' })).toBeTruthy());
+  });
+});

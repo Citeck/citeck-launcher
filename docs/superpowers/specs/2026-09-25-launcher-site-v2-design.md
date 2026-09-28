@@ -30,7 +30,7 @@ generic "application launcher", and whose download logic picks `v1.*` releases. 
 
 0. **Header** (sticky): Citeck logo · Features · Desktop · Server · Docs · GitHub · RU/EN · theme toggle · "Download".
 1. **Hero**: "Вся платформа Citeck — одной кнопкой" / EN equivalent; sub-headline; primary button = installer for the
-   detected OS, secondary = "Install on a server →" (scrolls down to the server track); a link "All systems and
+   detected OS ("Download for Linux Desktop"), secondary = "Install on a server →" (opens the server tab); a link "All systems and
    formats" to the downloads table (no inline list of every file, no bare command — user feedback); meta line
    `v<version> · Free · Open source (LGPL-3.0) · macOS · Windows · Linux`; dashboard screenshot in a tilted,
    floating window.
@@ -40,9 +40,12 @@ generic "application launcher", and whose download logic picks `v1.*` releases. 
    and permissions out of the box; link to citeck.ru.
 4. **Two tracks**: Desktop ("On your computer": Docker Desktop → installer → Quick Start → open in browser) and
    Server ("On a server": Docker → one `curl | bash` → wizard asks domain and HTTPS mode, shows the admin password
-   → open in browser). Under both cards, full width, the captioned server command on ONE line (the user wants it
-   whole and unwrapped; the cards are too narrow for its 95 characters), then a neutral first-run note
-   (several GB of images, usually 10–15 minutes — stated as a fact, not a warning).
+   → open in browser). The two tracks are TABS (Desktop | Server), not side-by-side cards: "Install on a
+   server" (hero) and the header's "Server" open only the server tab, "Desktop" only the desktop one — someone
+   who chose the server should not read desktop steps (user feedback). A `#server` link opens that tab; without
+   JavaScript both panels show one under the other. The server panel is wide enough for the captioned command
+   on ONE line (the user wants it whole and unwrapped). Each panel ends with a neutral first-run note (several
+   GB of images, usually 10–15 minutes — stated as a fact, not a warning).
 5. **Features** (bento grid): self-healing; upgrades with rollback (PostgreSQL, RabbitMQ, …); backup & restore;
    HTTPS out of the box (Let's Encrypt, incl. IP addresses); live status, resources and logs.
 6. **Gallery**: fresh 2.x screenshots (see Assets).

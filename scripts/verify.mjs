@@ -5,7 +5,8 @@
 //  2. JavaScript disabled: every section visible, hero download link points at the releases page;
 //  3. GitHub API unreachable: no version text, fallback link, no console errors;
 //  4. language: de → /en/, ru stays, stored choice wins both ways, /en/ never redirects, query and hash survive,
-//     crawlers and automated browsers stay; the redirect script is the first thing in the Russian <head>.
+//     crawlers and automated browsers stay; the redirect script is the first thing in the Russian <head>;
+//  5. the install tracks are tabs: server links open only the server tab, Desktop only the desktop one.
 // Exits non-zero on any failure.
 import { spawn } from 'node:child_process';
 import { mkdirSync, readFileSync } from 'node:fs';
@@ -167,6 +168,41 @@ try {
     await page.goto(url, { waitUntil: 'networkidle' });
     await page.waitForTimeout(300);
     page.url() === expected ? ok(label) : fail(`${label}: ended on ${page.url()}`);
+    await ctx.close();
+  }
+
+  console.log('5. install tracks are tabs');
+  {
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: 'ru-RU' });
+    const page = await ctx.newPage();
+    const done = watch(page, 'tabs');
+    const shown = () =>
+      page.evaluate(() => ['desktop', 'server'].filter((id) => document.getElementById(id)?.getClientRects().length));
+    const expectOnly = async (label, id) => {
+      const v = await shown();
+      const inView = await page.evaluate((x) => {
+        const r = document.getElementById(x).getBoundingClientRect();
+        return r.top < innerHeight && r.bottom > 0;
+      }, id);
+      const selected = await page.evaluate((x) => document.querySelector(`[role="tab"][aria-controls="${x}"]`)?.getAttribute('aria-selected') ?? null, id);
+      v.length === 1 && v[0] === id && inView && selected === 'true' ? ok(label) : fail(`${label}: shown=${v} inView=${inView} selected=${selected}`);
+    };
+    await page.goto(ru, { waitUntil: 'networkidle' });
+    await page.locator('main a', { hasText: 'Установить на сервер' }).first().click();
+    await page.waitForTimeout(600);
+    await expectOnly('hero "install on a server" opens only the server tab', 'server');
+    await page.locator('header nav a', { hasText: 'Desktop' }).click();
+    await page.waitForTimeout(600);
+    await expectOnly('header "Desktop" opens only the desktop tab', 'desktop');
+    await page.goto(`${ru}#server`, { waitUntil: 'networkidle' });
+    await page.waitForTimeout(600);
+    await expectOnly('a shared #server link opens the server tab', 'server');
+    const cmd = await page.evaluate(() => {
+      const c = document.querySelector('#server code');
+      return c ? c.scrollWidth <= c.clientWidth + 1 : null;
+    });
+    cmd ? ok('the server tab shows the whole command on one line') : fail(`server tab command fits = ${cmd}`);
+    done();
     await ctx.close();
   }
 
