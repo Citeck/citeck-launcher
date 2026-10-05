@@ -463,9 +463,9 @@ func TestDeleteNamespaceDeletesItsOwnSecrets(t *testing.T) {
 	d, mux := newNsCrudTestDaemon(t)
 	require.NoError(t, d.persistNamespaceConfig("wsMain", "nsdel",
 		[]byte("id: nsdel\nname: Doomed\nproxy:\n  port: 80\n")))
-	_, err := loadNamespaceSecrets(d.secretService, "wsMain", "nsdel", wsSecrets("db", "v"), true)
+	_, err := loadNamespaceSecrets(d.secretService, "wsMain", "nsdel", wsSecrets("db", "v"), nsSecretsSeed)
 	require.NoError(t, err)
-	_, err = loadNamespaceSecrets(d.secretService, "wsMain", "nskeep", wsSecrets("db", "v"), true)
+	_, err = loadNamespaceSecrets(d.secretService, "wsMain", "nskeep", wsSecrets("db", "v"), nsSecretsSeed)
 	require.NoError(t, err)
 	require.NoError(t, d.secretService.SaveSecret(storage.Secret{
 		SecretMeta: storage.SecretMeta{ID: "user-token", Name: "token", Type: storage.SecretGitToken},

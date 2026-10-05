@@ -97,19 +97,6 @@ type ProxyConfig struct {
 	Aliases []string `yaml:"aliases"`
 }
 
-// SecretDefault is one entry of the workspace `secrets:` section.
-//
-// The value is a DEFAULT, not the value a namespace runs with: a namespace
-// stores its own copy the first time it needs one, and a later edit here does
-// not reach it. That is the only safe reading for a password — it is written
-// into a database's data volume when the database is first initialized, and a
-// service handed a changed one would simply fail to connect. Only constants
-// for now; the list shape leaves room for a generated kind.
-type SecretDefault struct {
-	ID    string `yaml:"id" json:"id"`
-	Value string `yaml:"value" json:"value"`
-}
-
 // QuickStartVariant describes a quick start option from workspace config.
 type QuickStartVariant struct {
 	Name     string `yaml:"name"`
@@ -311,9 +298,10 @@ type WorkspaceConfig struct {
 	// dedicated launcher generator), defined once here and applied to every
 	// namespace that uses this workspace. See AdditionalAppProps.
 	AdditionalApps []AdditionalAppProps `yaml:"additionalApps,omitempty"`
-	// Secrets are the DEFAULT values of the secrets this workspace's services
-	// reference as `${secret:<id>}`. A namespace copies each one the first time
-	// it needs it and keeps its own value from then on — see SecretDefault.
+	// Secrets are the secrets this workspace's services reference as
+	// `${secret:<id>}`: a DEFAULT value to copy, or a value to generate. A
+	// namespace stores its own value the first time it needs one and keeps it
+	// from then on — see SecretDefault.
 	Secrets []SecretDefault `yaml:"secrets,omitempty"`
 	// Links are custom quick links shown in the launcher sidebar alongside the
 	// built-in ones. See WorkspaceLink.
@@ -1115,6 +1103,10 @@ func parseWorkspaceConfig(raw []byte, path string, logger *slog.Logger) *Workspa
 			logger.Warn("Workspace dependency entry names no image; ignoring it", "app", name, "path", path)
 		}
 	}
+	// Same rule for the secrets section: an entry this launcher cannot use
+	// costs only itself (SecretDefault.UnmarshalYAML is total), and is dropped
+	// here with one line saying why.
+	cfg.Secrets = usableSecrets(cfg.Secrets, path, logger)
 	// Same rule for the contentStorage block: decoding it never fails the
 	// workspace config (ContentStorageConfig.UnmarshalYAML is total), and a
 	// block it could not use is dropped here, once, out loud — unreported, S3

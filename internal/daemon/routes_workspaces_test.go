@@ -307,9 +307,9 @@ func TestWorkspaceDeleteDeletesItsNamespacesSecrets(t *testing.T) {
 		ID: "ws-del", Name: "Doomed", RepoURL: "https://example.test/x.git", RepoBranch: "main",
 	}))
 	require.NoError(t, d.store.SaveNamespaceConfig("ws-del", "ns1", "One", "id: ns1\nname: One\n"))
-	_, err = loadNamespaceSecrets(svc, "ws-del", "ns1", wsSecrets("db", "v"), true)
+	_, err = loadNamespaceSecrets(svc, "ws-del", "ns1", wsSecrets("db", "v"), nsSecretsSeed)
 	require.NoError(t, err)
-	_, err = loadNamespaceSecrets(svc, "ws-other", "ns1", wsSecrets("db", "v"), true)
+	_, err = loadNamespaceSecrets(svc, "ws-other", "ns1", wsSecrets("db", "v"), nsSecretsSeed)
 	require.NoError(t, err)
 
 	rec := httptest.NewRecorder()

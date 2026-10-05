@@ -153,9 +153,11 @@ func (d *Daemon) resolveReloadPlanInputs(act activeNamespace) (*reloadPlanInputs
 	genOpts.DiskContent = readDiskContent(act.volumesBase, fileEdits)
 	genOpts.EditedAppPatches = act.runtime.AppPatchesSnapshot()
 	genOpts.ExtraLicenses = collectExtraLicensesFrom(d.licenses)
-	// A preview stores nothing: a missing value is answered with its default.
+	// A preview stores nothing: a missing constant is answered with its
+	// default, a missing generated value with a placeholder — the real reload
+	// will generate one, so the app is a change here, not an exclusion.
 	if d.secretService != nil {
-		genOpts.NamespaceSecrets = namespaceSecretsFor(d.secretService, act.workspaceID, nsID, resolveResult.Workspace, false)
+		genOpts.NamespaceSecrets = namespaceSecretsFor(d.secretService, act.workspaceID, nsID, resolveResult.Workspace, nsSecretsPreview)
 	}
 	genResp, genErr := namespace.Generate(nsCfg, resolveResult.Bundle, resolveResult.Workspace, act.systemSecrets, genOpts)
 	if genErr != nil {

@@ -407,7 +407,7 @@ func TestHandleResetSecrets_ClearsPendingBlob(t *testing.T) {
 // to protect" — the flag the UI reads to ask for a master password.
 func TestNamespaceSecretsAreNotUserSecrets(t *testing.T) {
 	d, mux := secretsTestMux(t)
-	_, err := loadNamespaceSecrets(d.secretService, "ws", "ns", wsSecrets("observer-db", "observer"), true)
+	_, err := loadNamespaceSecrets(d.secretService, "ws", "ns", wsSecrets("observer-db", "observer"), nsSecretsSeed)
 	require.NoError(t, err)
 
 	rec := httptest.NewRecorder()

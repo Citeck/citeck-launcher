@@ -5,11 +5,14 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+
+	"github.com/citeck/citeck-launcher/internal/bundle"
 )
 
 // secretRefPattern matches `${secret:<id>}`. An id is what a workspace
-// `secrets:` entry names: letters, digits, dot, dash and underscore.
-var secretRefPattern = regexp.MustCompile(`\$\{secret:([A-Za-z0-9._-]+)\}`)
+// `secrets:` entry names — bundle.SecretIDPattern, the one grammar both sides
+// read: letters, digits, dot, dash and underscore.
+var secretRefPattern = regexp.MustCompile(`\$\{secret:(` + bundle.SecretIDPattern + `)\}`)
 
 // resolveSecretRefs substitutes every `${secret:<id>}` the namespace has a
 // value for, and LEAVES IN PLACE every one it has not — so the reference is

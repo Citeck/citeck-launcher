@@ -1124,9 +1124,10 @@ func (e *depsEnv) GenerateDefForVolume(id deps.ID, st deps.DependencyState, moun
 	}
 	if e.d.secretService != nil {
 		genOpts.SecretReader = e.d.nsSecretReader()
-		// Read-only, like the rest of this: the load path already stored them.
+		// Read-only, like the rest of this: the load path already stored them,
+		// and a value invented here would be one the real container never had.
 		genOpts.NamespaceSecrets = namespaceSecretsFor(e.d.secretService, e.act.workspaceID,
-			e.act.nsConfig.ID, e.act.workspaceConfig, false)
+			e.act.nsConfig.ID, e.act.workspaceConfig, nsSecretsRead)
 	}
 	genOpts.DiskContent = readDiskContent(e.act.volumesBase, genOpts.EditedFileEdits)
 

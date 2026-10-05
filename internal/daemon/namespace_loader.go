@@ -506,11 +506,12 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 		genOpts.ExtraLicenses = collectExtraLicensesFrom(license.NewService(in.SecretService))
 	}
 	genOpts.DetachedApps = detached
-	// The namespace's own secret values, seeded from the workspace defaults.
+	// The namespace's own secret values, seeded from the workspace: a
+	// constant's default is copied, a generated one is generated — once.
 	// Boxed only when non-nil: a typed-nil *SecretService in the interface
 	// would pass the nil check inside and panic on the first call.
 	if in.SecretService != nil {
-		genOpts.NamespaceSecrets = namespaceSecretsFor(in.SecretService, wsID, nsID, wsCfg, true)
+		genOpts.NamespaceSecrets = namespaceSecretsFor(in.SecretService, wsID, nsID, wsCfg, nsSecretsSeed)
 	}
 
 	// File-edit deltas (2.7+) are merged onto their templates inside Generate.

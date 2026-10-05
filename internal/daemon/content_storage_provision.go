@@ -206,7 +206,7 @@ func newContentStorageProvisioner(d *Daemon) *contentStorageProvisioner {
 			}
 			// Without seeding: the generation already stored every default
 			// this namespace uses, and a missing one answers the default.
-			return loadNamespaceSecrets(d.secretService, wsID, nsID, ws, false)
+			return loadNamespaceSecrets(d.secretService, wsID, nsID, ws, nsSecretsRead)
 		},
 		now:          time.Now,
 		pollInterval: csPollInterval,

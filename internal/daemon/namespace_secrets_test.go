@@ -33,23 +33,23 @@ func wsSecrets(kv ...string) *bundle.WorkspaceConfig {
 func TestANamespaceKeepsItsOwnSecretValue(t *testing.T) {
 	svc, _ := newNsSecretService(t)
 
-	got, err := loadNamespaceSecrets(svc, "ws", "ns", wsSecrets("db", "first"), true)
+	got, err := loadNamespaceSecrets(svc, "ws", "ns", wsSecrets("db", "first"), nsSecretsSeed)
 	require.NoError(t, err)
 	assert.Equal(t, map[string]string{"db": "first"}, got)
 
-	got, err = loadNamespaceSecrets(svc, "ws", "ns", wsSecrets("db", "changed"), true)
+	got, err = loadNamespaceSecrets(svc, "ws", "ns", wsSecrets("db", "changed"), nsSecretsSeed)
 	require.NoError(t, err)
 	assert.Equal(t, "first", got["db"], "an edited default does not reach an existing namespace")
 
-	got, err = loadNamespaceSecrets(svc, "ws", "ns", wsSecrets(), true)
+	got, err = loadNamespaceSecrets(svc, "ws", "ns", wsSecrets(), nsSecretsSeed)
 	require.NoError(t, err)
 	assert.Equal(t, "first", got["db"], "nor does removing it from the workspace")
 
-	other, err := loadNamespaceSecrets(svc, "ws", "other-ns", wsSecrets("db", "changed"), true)
+	other, err := loadNamespaceSecrets(svc, "ws", "other-ns", wsSecrets("db", "changed"), nsSecretsSeed)
 	require.NoError(t, err)
 	assert.Equal(t, "changed", other["db"], "each namespace has its own copy")
 
-	sameNsOtherWs, err := loadNamespaceSecrets(svc, "ws2", "ns", wsSecrets("db", "ws2"), true)
+	sameNsOtherWs, err := loadNamespaceSecrets(svc, "ws2", "ns", wsSecrets("db", "ws2"), nsSecretsSeed)
 	require.NoError(t, err)
 	assert.Equal(t, "ws2", sameNsOtherWs["db"], "a namespace id is unique only within its workspace")
 }
@@ -57,7 +57,7 @@ func TestANamespaceKeepsItsOwnSecretValue(t *testing.T) {
 // A reload preview answers what seeding WOULD store, and stores nothing.
 func TestAPreviewDoesNotStoreSecrets(t *testing.T) {
 	svc, _ := newNsSecretService(t)
-	got, err := loadNamespaceSecrets(svc, "ws", "ns", wsSecrets("db", "v"), false)
+	got, err := loadNamespaceSecrets(svc, "ws", "ns", wsSecrets("db", "v"), nsSecretsPreview)
 	require.NoError(t, err)
 	assert.Equal(t, "v", got["db"])
 
@@ -71,28 +71,28 @@ func TestAPreviewDoesNotStoreSecrets(t *testing.T) {
 // then generates without them.
 func TestNamespaceSecretsFollowTheVault(t *testing.T) {
 	svc, store := newNsSecretService(t)
-	_, err := loadNamespaceSecrets(svc, "ws", "ns", wsSecrets("db", "observer"), true)
+	_, err := loadNamespaceSecrets(svc, "ws", "ns", wsSecrets("db", "observer"), nsSecretsSeed)
 	require.NoError(t, err)
 	require.NoError(t, svc.SetMasterPassword("pwd", false))
 
 	locked, err := storage.NewSecretService(store)
 	require.NoError(t, err)
 	require.True(t, locked.IsLocked())
-	_, err = loadNamespaceSecrets(locked, "ws", "ns", wsSecrets("db", "observer"), true)
+	_, err = loadNamespaceSecrets(locked, "ws", "ns", wsSecrets("db", "observer"), nsSecretsSeed)
 	require.ErrorIs(t, err, storage.ErrSecretsLocked)
-	assert.Nil(t, namespaceSecretsFor(locked, "ws", "ns", wsSecrets("db", "observer"), true))
+	assert.Nil(t, namespaceSecretsFor(locked, "ws", "ns", wsSecrets("db", "observer"), nsSecretsSeed))
 
 	require.NoError(t, locked.Unlock("pwd"))
-	got, err := loadNamespaceSecrets(locked, "ws", "ns", nil, true)
+	got, err := loadNamespaceSecrets(locked, "ws", "ns", nil, nsSecretsSeed)
 	require.NoError(t, err)
 	assert.Equal(t, "observer", got["db"])
 }
 
 func TestDeletingANamespaceDeletesItsSecrets(t *testing.T) {
 	svc, _ := newNsSecretService(t)
-	_, err := loadNamespaceSecrets(svc, "ws", "ns", wsSecrets("a", "1", "b", "2"), true)
+	_, err := loadNamespaceSecrets(svc, "ws", "ns", wsSecrets("a", "1", "b", "2"), nsSecretsSeed)
 	require.NoError(t, err)
-	_, err = loadNamespaceSecrets(svc, "ws", "keep", wsSecrets("a", "1"), true)
+	_, err = loadNamespaceSecrets(svc, "ws", "keep", wsSecrets("a", "1"), nsSecretsSeed)
 	require.NoError(t, err)
 
 	deleteNamespaceSecrets(svc, "ws", "ns")
