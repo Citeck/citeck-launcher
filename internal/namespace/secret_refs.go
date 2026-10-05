@@ -25,6 +25,21 @@ func resolveSecretRefs(s string, secrets map[string]string) string {
 	})
 }
 
+// ResolveSecretRefs is resolveSecretRefs for a caller outside a generation —
+// the daemon resolving the S3 content-storage credentials it hands to ECOS —
+// plus the ids it had no value for, sorted and without duplicates. Same rule
+// and same id grammar as the generator, so a value that resolves in a
+// container's env resolves here too.
+func ResolveSecretRefs(s string, secrets map[string]string) (resolved string, missing []string) {
+	for _, m := range secretRefPattern.FindAllStringSubmatch(s, -1) {
+		if _, ok := secrets[m[1]]; !ok {
+			missing = append(missing, m[1])
+		}
+	}
+	sort.Strings(missing)
+	return resolveSecretRefs(s, secrets), slices.Compact(missing)
+}
+
 // excludeAppsMissingSecrets removes every app that still carries an unresolved
 // `${secret:<id>}` after all generators have run. A service whose secret did
 // not arrive is not started: running a database with an empty password is how

@@ -1,40 +1,91 @@
 package daemon
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"slices"
+	"strconv"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/citeck/citeck-launcher/internal/api"
+	"github.com/citeck/citeck-launcher/internal/appdef"
+	"github.com/citeck/citeck-launcher/internal/bundle"
 	"github.com/citeck/citeck-launcher/internal/msg"
+	"github.com/citeck/citeck-launcher/internal/namespace"
+	"github.com/citeck/citeck-launcher/internal/storage"
 )
 
 // The one-time connection of ecos-content to an S3 namespace's provider: the
 // daemon creates the secret, endpoint and storage records in ECOS and switches
-// `default-content-storage` to them, once, through the gateway's records API.
+// `default-content-storage` to them, once, through the gateway's records API
+// (content_storage_provision_records.go).
 //
-// THIS FILE IS THE SEAM. What it holds today is the shape every caller depends
-// on — the status the namespace DTO reports, the hook the runtime events reach,
-// the retry the route calls, the reset a namespace switch performs — with the
-// job itself not implemented: every S3 namespace reports "pending". The rules
-// the job has to keep are the ones written down for it:
+// WHEN it runs:
 //
-//   - triggered from OnRuntimeEvent once gateway, emodel, eapps and content are
-//     all RUNNING (never waiting for the NAMESPACE to be running: one unrelated
-//     app can keep it STALLED), single-flight per namespace, bound to d.bgCtx
-//     and canceled by Reset;
-//   - skipped, state left pending, while a snapshot or a dependency migration
-//     holds the long-operation lock; retried on the next qualifying event;
-//   - reaches the gateway directly, bypassing nginx: Runtime.AppHTTPAddress
-//     (gateway, 0) is the address the startup probes use, SERVER_PORT included;
-//   - derives everything from ECOS's own records on every run — no persisted
-//     "done" flag — and never overwrites what an administrator chose;
-//   - never runs for a DB namespace.
+//   - from OnRuntimeEvent (app and namespace status events) once gateway,
+//     emodel, eapps, content AND the provider are all RUNNING — never waiting
+//     for the NAMESPACE to be running, since one unrelated app can keep it
+//     STALLED. The provider is part of the gate because switching the default
+//     storage to an S3 server that is down makes every upload fail at once;
+//   - once per time the platform comes up (the "ran since up" latch): a
+//     restart of any of those apps — a namespace stop, a snapshot import, an
+//     update — re-arms it, so the next run re-derives the answer;
+//   - after an error, again on a qualifying event at most every 5 minutes, and
+//     at once on the Retry route;
+//   - never for a DB namespace, never while the generation reports a
+//     ContentStorageProblem (the provider is not part of the namespace), and
+//     not while a snapshot or a dependency migration/rollback holds the
+//     long-operation lock — the state is left as it is and the next event
+//     asks again;
+//   - single-flight, bound to d.bgCtx, canceled by Reset on a namespace
+//     switch.
 //
-// Concurrency contract for whoever fills it in: OnRuntimeEvent is called from
-// the runtime's event fan-out and must return at once (spawn, never block),
-// and none of these methods may take Daemon.configMu while holding p.mu —
-// Reset is called right after configMu is released on the switch paths, and
-// handleGetNamespace calls Status with a d.active() snapshot in hand.
+// WHAT it does — the decision is re-derived from ECOS's own records on every
+// run, with no persisted "done" flag, so it is right after a snapshot restore
+// or a wiped database, and it never overwrites what an administrator chose:
+//
+//  1. waits until ECOS answers (every 15 s, at most 15 min): the config and
+//     the three records must all report whether they exist. A gateway that is
+//     up is not a platform that is ready — artifacts deploy asynchronously;
+//  2. a default storage other than the built-in LOCAL one is a verdict:
+//     ours → connected, anything else → admin-managed. Nothing is written;
+//  3. our storage record already there while the default is LOCAL means an
+//     administrator switched back on purpose → admin-managed, nothing written;
+//  4. otherwise creates the records that are MISSING (never updates one) and
+//     switches the default, then reads it back → connected.
+//
+// Concurrency: OnRuntimeEvent is called from the runtime's event fan-out and
+// returns at once (it only spawns). None of these methods take Daemon.configMu
+// while holding p.mu — d.active() is always read BEFORE p.mu — and Reset is
+// called right after configMu is released on the switch paths.
+
+const (
+	// contentStorageEventType is the SSE event broadcast whenever the state
+	// changes, so the banner follows without polling. Before and After carry
+	// the previous and the new state, NamespaceID the namespace.
+	contentStorageEventType = "namespace_content_storage"
+
+	// csConfigRef is ecos-content's default storage setting (an eapps config
+	// of emodel) and csLocalStorageRef the built-in database storage it names
+	// out of the box. Every ref carries its app: a ref without one defaults to
+	// `alfresco`.
+	csConfigRef       = "eapps/config@app/emodel$default-content-storage"
+	csLocalStorageRef = "emodel/content-storage@LOCAL"
+
+	csPollInterval = 15 * time.Second
+	csReadyTimeout = 15 * time.Minute
+	csRetryAfter   = 5 * time.Minute
+)
+
+// csPlatformApps are the ECOS apps the connection talks to. The provider is
+// added per namespace (bundle.ContentStorageS3Config.App).
+var csPlatformApps = []string{appdef.AppGateway, appdef.AppEmodel, appdef.AppEapps, appdef.AppContent}
 
 // ContentStorageStatus is the last known state of one namespace's connection.
 type ContentStorageStatus struct {
@@ -53,16 +104,94 @@ type ContentStorageStatus struct {
 type contentStorageProvisioner struct {
 	d *Daemon
 
+	// Seams. Production values are set by newContentStorageProvisioner;
+	// tests replace them before the first event.
+	records      func(addr string) ecosRecords
+	gatewayAddr  func(ctx context.Context, rt *namespace.Runtime) (string, error)
+	secrets      func(wsID, nsID string, ws *bundle.WorkspaceConfig) (map[string]string, error)
+	now          func() time.Time
+	pollInterval time.Duration
+	readyTimeout time.Duration
+	retryAfter   time.Duration
+
+	// kickQueued coalesces a burst of runtime events into one evaluation.
+	kickQueued atomic.Bool
+
 	mu sync.Mutex
-	// nsID is the namespace status belongs to; "" before anything happened.
-	// Status for any other namespace answers pending, so a namespace switch
-	// can never show the previous namespace's verdict even before Reset ran.
+	// wsID/nsID is the namespace status belongs to; "" before anything
+	// happened. Status for any other namespace answers pending, so a namespace
+	// switch can never show the previous namespace's verdict even before
+	// Reset ran.
+	wsID   string
 	nsID   string
 	status ContentStorageStatus
+	// job is the run in flight, nil when none: the single-flight guard. A job
+	// only ever writes state while it is still THIS pointer, which is what
+	// makes a canceled or superseded run harmless.
+	job *csJob
+	// ranSinceUp is the latch: true once a run has started since the platform
+	// last came up, false again as soon as it is seen down.
+	ranSinceUp bool
+	// lastRunAt is when the last run started, for the error-retry throttle.
+	lastRunAt time.Time
 }
 
+// csJob is one run.
+type csJob struct {
+	in     csJobInput
+	cancel context.CancelFunc
+	done   chan struct{}
+	// prior is the state when the run started. A run that re-verifies a
+	// connected or admin-managed namespace keeps showing that verdict instead
+	// of flashing "waiting" on every restart of the platform.
+	prior string
+}
+
+// csJobInput is the namespace a run works for, snapshotted when it starts.
+type csJobInput struct {
+	wsID, nsID string
+	runtime    *namespace.Runtime
+	ws         *bundle.WorkspaceConfig
+	s3         bundle.ContentStorageS3Config
+}
+
+// csGate is whether a run may start for the active namespace right now.
+type csGate int
+
+const (
+	// csGateNotApplicable: nothing to connect — a DB namespace, no provider
+	// configured, or a generation that left the provider out.
+	csGateNotApplicable csGate = iota
+	// csGateBusy: a snapshot or a dependency migration/rollback owns the
+	// namespace's data right now.
+	csGateBusy
+	// csGatePlatformDown: an app the connection needs is not RUNNING.
+	csGatePlatformDown
+	csGateOpen
+)
+
 func newContentStorageProvisioner(d *Daemon) *contentStorageProvisioner {
-	return &contentStorageProvisioner{d: d}
+	return &contentStorageProvisioner{
+		d:       d,
+		records: newHTTPEcosRecords,
+		gatewayAddr: func(ctx context.Context, rt *namespace.Runtime) (string, error) {
+			return rt.AppHTTPAddress(ctx, appdef.AppGateway, 0)
+		},
+		secrets: func(wsID, nsID string, ws *bundle.WorkspaceConfig) (map[string]string, error) {
+			// Boxed only when non-nil: a typed-nil *SecretService would pass
+			// loadNamespaceSecrets' nil check and panic inside it.
+			if d.secretService == nil {
+				return nil, errors.New("no secret store")
+			}
+			// Without seeding: the generation already stored every default
+			// this namespace uses, and a missing one answers the default.
+			return loadNamespaceSecrets(d.secretService, wsID, nsID, ws, false)
+		},
+		now:          time.Now,
+		pollInterval: csPollInterval,
+		readyTimeout: csReadyTimeout,
+		retryAfter:   csRetryAfter,
+	}
 }
 
 // contentStorageProv returns the daemon's provisioner, creating it on first use.
@@ -74,14 +203,29 @@ func (d *Daemon) contentStorageProv() *contentStorageProvisioner {
 }
 
 // OnRuntimeEvent is the hook handleRuntimeEvent calls for every runtime event
-// of the active namespace. It must not block. STUB: the job is not
-// implemented yet, so nothing is triggered.
-func (p *contentStorageProvisioner) OnRuntimeEvent(_ api.EventDto) {}
+// of the active namespace. App and namespace status changes are the ones that
+// can open or close the gate; everything else (stats every few seconds, pull
+// progress) is ignored. It never blocks: the evaluation runs on its own
+// goroutine, and a burst of events folds into one.
+func (p *contentStorageProvisioner) OnRuntimeEvent(evt api.EventDto) {
+	if evt.Type != "app_status" && evt.Type != "namespace_status" {
+		return
+	}
+	if !p.kickQueued.CompareAndSwap(false, true) {
+		return // an evaluation is already queued and will see this state
+	}
+	go func() {
+		p.kickQueued.Store(false)
+		p.evaluate(false, "")
+	}()
+}
 
-// Retry runs the job now for the given namespace (the Retry button). The
-// caller has already checked that the namespace stores its content in S3.
-// STUB: records nothing and starts nothing.
-func (p *contentStorageProvisioner) Retry(_ string) {}
+// Retry runs the job now for the given namespace (the Retry button): it skips
+// the latch and the error throttle, but not the gate — a namespace whose
+// platform is down, or whose data a snapshot owns, runs once that is over.
+func (p *contentStorageProvisioner) Retry(nsID string) {
+	p.evaluate(true, nsID)
+}
 
 // Status answers the connection state of one namespace: pending for anything
 // the provisioner has not worked on.
@@ -99,6 +243,573 @@ func (p *contentStorageProvisioner) Status(nsID string) ContentStorageStatus {
 func (p *contentStorageProvisioner) Reset() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.nsID = ""
+	p.adoptLocked("", "")
+}
+
+// adoptLocked makes the provisioner belong to another namespace: the job in
+// flight is canceled and every verdict forgotten.
+func (p *contentStorageProvisioner) adoptLocked(wsID, nsID string) {
+	if p.job != nil {
+		p.job.cancel()
+		p.job = nil
+	}
+	p.wsID, p.nsID = wsID, nsID
 	p.status = ContentStorageStatus{}
+	p.ranSinceUp = false
+	p.lastRunAt = time.Time{}
+}
+
+// evaluate decides whether a run starts now, and starts it. force is the
+// Retry route; nsID, when set, is the namespace the caller meant, and nothing
+// happens if another one is active by now.
+func (p *contentStorageProvisioner) evaluate(force bool, nsID string) {
+	// Read the daemon and the runtime BEFORE p.mu: the lock rule above.
+	act := p.d.active()
+	if act.nsConfig == nil {
+		return
+	}
+	in, gate := p.gateFor(act)
+
+	p.mu.Lock()
+	if p.wsID != act.workspaceID || p.nsID != act.nsConfig.ID {
+		p.adoptLocked(act.workspaceID, act.nsConfig.ID)
+	}
+	if nsID != "" && nsID != p.nsID {
+		p.mu.Unlock()
+		return
+	}
+	var (
+		evt *api.EventDto
+		job *csJob
+		ctx context.Context
+	)
+	switch gate {
+	case csGateNotApplicable:
+		p.ranSinceUp = false
+	case csGateBusy:
+		// Left exactly as it is; the next event after the operation asks again.
+	case csGatePlatformDown:
+		p.ranSinceUp = false
+		// A Retry while the platform is down cannot run, but it must not leave
+		// the old error up either: the run will happen once the apps are back.
+		if force && p.job == nil && p.status.State == api.ContentStorageStateError {
+			evt = p.setStatusLocked(api.ContentStorageStatePending, msg.Message{})
+		}
+	case csGateOpen:
+		if p.job == nil && (force || p.dueLocked()) {
+			job, ctx, evt = p.startLocked(in)
+		}
+	}
+	p.mu.Unlock()
+
+	p.broadcast(evt)
+	if job != nil {
+		go p.run(ctx, job)
+	}
+}
+
+// gateFor answers whether the active namespace can be connected now, and the
+// input a run needs when it can.
+func (p *contentStorageProvisioner) gateFor(act activeNamespace) (csJobInput, csGate) {
+	if act.runtime == nil || act.nsConfig.ContentStorageType() != namespace.ContentStorageS3 ||
+		act.contentStorageProblem != nil {
+		return csJobInput{}, csGateNotApplicable
+	}
+	s3 := act.workspaceConfig.ContentStorageS3()
+	if s3 == nil {
+		return csJobInput{}, csGateNotApplicable
+	}
+	// Down before busy: a snapshot import stops the platform while it holds
+	// the lock, and the latch has to see that, or the restored platform would
+	// never be re-derived.
+	if !csPlatformRunning(act.runtime, s3.App) {
+		return csJobInput{}, csGatePlatformDown
+	}
+	if longOpOwnsNamespaceData(p.d.longOp.Holder()) {
+		return csJobInput{}, csGateBusy
+	}
+	return csJobInput{
+		wsID: act.workspaceID, nsID: act.nsConfig.ID,
+		runtime: act.runtime, ws: act.workspaceConfig, s3: *s3,
+	}, csGateOpen
+}
+
+// longOpOwnsNamespaceData reports whether the long-operation holder takes the
+// namespace's data away from under everyone: a snapshot restoring volumes, a
+// dependency migration or rollback stopping the namespace. An update pass or
+// an ordinary request does not, and the connection does not wait for them.
+func longOpOwnsNamespaceData(k longOpKind) bool {
+	return k == longOpSnapshot || k == longOpMigration || k == longOpDepsRollback
+}
+
+// csPlatformRunning reports whether every app the connection needs is RUNNING.
+func csPlatformRunning(rt *namespace.Runtime, provider string) bool {
+	for _, name := range append(slices.Clone(csPlatformApps), provider) {
+		app := rt.FindApp(name)
+		if app == nil || app.Status != namespace.AppStatusRunning {
+			return false
+		}
+	}
+	return true
+}
+
+// dueLocked is the latch plus the error throttle.
+func (p *contentStorageProvisioner) dueLocked() bool {
+	if !p.ranSinceUp {
+		return true
+	}
+	return p.status.State == api.ContentStorageStateError && !p.now().Before(p.lastRunAt.Add(p.retryAfter))
+}
+
+// startLocked registers a run. The caller starts its goroutine after
+// unlocking. A daemon that is shutting down starts nothing.
+func (p *contentStorageProvisioner) startLocked(in csJobInput) (job *csJob, ctx context.Context, evt *api.EventDto) {
+	base := p.d.bgCtx
+	if base == nil {
+		base = context.Background()
+	}
+	if base.Err() != nil {
+		return nil, nil, nil
+	}
+	ctx, cancel := context.WithCancel(base) //nolint:gosec // G118: the job owns cancel; finish and adoptLocked call it
+	job = &csJob{in: in, cancel: cancel, done: make(chan struct{}), prior: p.status.State}
+	p.job = job
+	p.ranSinceUp = true
+	p.lastRunAt = p.now()
+	if !csVerdict(job.prior) {
+		evt = p.setStatusLocked(api.ContentStorageStateWaiting, msg.Message{})
+	}
+	return job, ctx, evt
+}
+
+// csVerdict reports whether a state is a settled answer from ECOS.
+func csVerdict(state string) bool {
+	return state == api.ContentStorageStateConnected || state == api.ContentStorageStateAdminManaged
+}
+
+// setStatusLocked records a state and answers the SSE event announcing it —
+// nil when nothing changed — for the caller to broadcast once p.mu is
+// released.
+func (p *contentStorageProvisioner) setStatusLocked(state string, m msg.Message) *api.EventDto {
+	if p.status.State == state && p.status.ErrorMsg.Key == m.Key && slices.Equal(p.status.ErrorMsg.Args, m.Args) {
+		return nil
+	}
+	before := p.status.State
+	if before == "" {
+		before = api.ContentStorageStatePending
+	}
+	p.status = ContentStorageStatus{State: state, ErrorMsg: m, At: p.now()}
+	return &api.EventDto{
+		Type:        contentStorageEventType,
+		Timestamp:   p.status.At.UnixMilli(),
+		NamespaceID: p.nsID,
+		Before:      before,
+		After:       state,
+	}
+}
+
+// setState records a run's state, unless the run is no longer the current one
+// (canceled by a namespace switch, superseded): such a run's word counts for
+// nothing. changed reports whether the state really moved.
+func (p *contentStorageProvisioner) setState(j *csJob, state string, m msg.Message) (changed bool) {
+	p.mu.Lock()
+	if j != p.job {
+		p.mu.Unlock()
+		return false
+	}
+	evt := p.setStatusLocked(state, m)
+	p.mu.Unlock()
+	p.broadcast(evt)
+	return evt != nil
+}
+
+// fail ends a run in the error state.
+func (p *contentStorageProvisioner) fail(j *csJob, m msg.Message) {
+	if p.setState(j, api.ContentStorageStateError, m) {
+		slog.Warn("S3 content storage could not be connected", "ns", j.in.nsID, "provider", j.in.s3.App,
+			"reason", englishForLogs.Render(m))
+	}
+}
+
+// abort ends a run that cannot continue because the platform went away (an
+// app stopped, a snapshot took the lock): the latch is re-armed so the run
+// happens again once the platform is back, and the namespace shows the
+// verdict it had, or pending.
+func (p *contentStorageProvisioner) abort(j *csJob) {
+	p.mu.Lock()
+	if j != p.job {
+		p.mu.Unlock()
+		return
+	}
+	p.ranSinceUp = false
+	var evt *api.EventDto
+	if !csVerdict(j.prior) {
+		evt = p.setStatusLocked(api.ContentStorageStatePending, msg.Message{})
+	}
+	p.mu.Unlock()
+	slog.Info("S3 content storage connection postponed: the platform is not available", "ns", j.in.nsID)
+	p.broadcast(evt)
+}
+
+// finish releases the single-flight slot.
+func (p *contentStorageProvisioner) finish(j *csJob) {
+	p.mu.Lock()
+	if p.job == j {
+		p.job = nil
+	}
+	p.mu.Unlock()
+	j.cancel()
+	close(j.done)
+}
+
+// broadcast sends a state change to every SSE subscriber; nil is no change.
+func (p *contentStorageProvisioner) broadcast(evt *api.EventDto) {
+	if evt != nil {
+		p.d.broadcastEvent(*evt)
+	}
+}
+
+// platformStillUp is the gate again, asked during a run: the apps may stop and
+// a snapshot may start while the run waits for ECOS.
+func (p *contentStorageProvisioner) platformStillUp(j *csJob) bool {
+	return !longOpOwnsNamespaceData(p.d.longOp.Holder()) && csPlatformRunning(j.in.runtime, j.in.s3.App)
+}
+
+// csRecordIDs are the records the connection owns, derived from the provider
+// app. Never ecos-content's own built-in `content-storage-s3*` ids: those are
+// the product's example, and an administrator may have filled them in.
+type csRecordIDs struct {
+	provider string
+	secret   string
+	endpoint string
+	storage  string
+}
+
+func csRecordIDsFor(provider string) csRecordIDs {
+	return csRecordIDs{
+		provider: provider,
+		secret:   "emodel/secret@" + csSecretLocalID(provider),
+		endpoint: "emodel/endpoint@" + csStorageLocalID(provider),
+		storage:  "content/storage@" + csStorageLocalID(provider),
+	}
+}
+
+func csSecretLocalID(provider string) string  { return provider + "-s3-credentials" }
+func csStorageLocalID(provider string) string { return provider + "-s3" }
+
+// csCredentials is the S3 identity handed to ECOS, resolved.
+type csCredentials struct {
+	accessKey, secretKey string
+}
+
+// redact hides the secret key in a text that is about to be logged or shown.
+// An answer from ECOS has no business echoing it, but nothing guarantees it.
+func (c csCredentials) redact(s string) string {
+	if c.secretKey == "" {
+		return s
+	}
+	return strings.ReplaceAll(s, c.secretKey, "***")
+}
+
+// credentials resolves the S3 identity through the namespace's own secret
+// values — the same resolution `${secret:}` gets in the generation, so ECOS is
+// handed the key the provider's container was started with. A value that
+// cannot be read is the error state, before anything is asked or written.
+func (p *contentStorageProvisioner) credentials(in csJobInput) (csCredentials, msg.Message) {
+	values, err := p.secrets(in.wsID, in.nsID, in.ws)
+	if err != nil {
+		if errors.Is(err, storage.ErrSecretsLocked) {
+			return csCredentials{}, msg.New("contentStorage.msg.provision.secretsLocked", "app", in.s3.App)
+		}
+		return csCredentials{}, msg.New("contentStorage.msg.provision.secretsUnreadable", "error", err.Error())
+	}
+	access, missingAccess := namespace.ResolveSecretRefs(in.s3.AccessKey, values)
+	secret, missingSecret := namespace.ResolveSecretRefs(in.s3.SecretKey, values)
+	missing := slices.Concat(missingAccess, missingSecret)
+	slices.Sort(missing)
+	if missing = slices.Compact(missing); len(missing) > 0 {
+		return csCredentials{}, msg.New("contentStorage.msg.provision.secretMissing",
+			"app", in.s3.App, "secrets", strings.Join(missing, ", "))
+	}
+	return csCredentials{accessKey: access, secretKey: secret}, msg.Message{}
+}
+
+// run is one connection attempt.
+func (p *contentStorageProvisioner) run(ctx context.Context, j *csJob) {
+	defer p.finish(j)
+	in := j.in
+	ids := csRecordIDsFor(in.s3.App)
+
+	creds, problem := p.credentials(in)
+	if !problem.Empty() {
+		p.fail(j, problem)
+		return
+	}
+	client, snap, ok := p.awaitReady(ctx, j, ids, creds)
+	if !ok {
+		return
+	}
+	if state, settled := csDecide(snap, ids); settled {
+		p.settle(j, state, snap.defaultRef)
+		return
+	}
+	// Last look before the first write: nothing may be written for a
+	// namespace that is no longer active, or into a platform a snapshot is
+	// about to replace.
+	if ctx.Err() != nil {
+		return
+	}
+	if !p.platformStillUp(j) {
+		p.abort(j)
+		return
+	}
+	p.setState(j, api.ContentStorageStateProvisioning, msg.Message{})
+	if m := p.provision(ctx, client, j, snap, ids, creds); !m.Empty() {
+		if ctx.Err() == nil {
+			p.fail(j, m)
+		}
+		return
+	}
+	p.settle(j, api.ContentStorageStateConnected, ids.storage)
+}
+
+// settle records a verdict from ECOS. Said in the log once per change, not on
+// every re-verification.
+func (p *contentStorageProvisioner) settle(j *csJob, state, defaultRef string) {
+	if !p.setState(j, state, msg.Message{}) {
+		return
+	}
+	if state == api.ContentStorageStateConnected {
+		slog.Info("S3 content storage is connected", "ns", j.in.nsID, "storage", defaultRef)
+		return
+	}
+	slog.Info("S3 content storage is managed by an administrator: the launcher writes nothing",
+		"ns", j.in.nsID, "defaultStorage", defaultRef)
+}
+
+// csDecide is the verdict ECOS's own records already give, before anything is
+// written. settled is false only when the launcher should create what is
+// missing and switch the default.
+func csDecide(snap csSnapshot, ids csRecordIDs) (state string, settled bool) {
+	if snap.defaultRef != "" && snap.defaultRef != csLocalStorageRef {
+		if snap.defaultRef == ids.storage {
+			return api.ContentStorageStateConnected, true
+		}
+		return api.ContentStorageStateAdminManaged, true
+	}
+	if snap.storageExists {
+		// Ours exists and the default is LOCAL: somebody switched back.
+		return api.ContentStorageStateAdminManaged, true
+	}
+	return "", false
+}
+
+// awaitReady polls until ECOS can answer the decision, the platform goes away
+// (abort), the answer is one that waiting will not change (error), or the
+// readiness budget runs out (error). ok is true with a snapshot to decide on.
+func (p *contentStorageProvisioner) awaitReady(ctx context.Context, j *csJob, ids csRecordIDs, creds csCredentials) (ecosRecords, csSnapshot, bool) {
+	deadline := p.now().Add(p.readyTimeout)
+	for {
+		if ctx.Err() != nil {
+			return nil, csSnapshot{}, false
+		}
+		if !p.platformStillUp(j) {
+			p.abort(j)
+			return nil, csSnapshot{}, false
+		}
+		client, snap, err := p.probe(ctx, j.in.runtime, ids)
+		if err == nil {
+			return client, snap, true
+		}
+		if ctx.Err() != nil {
+			return nil, csSnapshot{}, false
+		}
+		if !csRetryable(err) {
+			p.fail(j, msg.New("contentStorage.msg.provision.readFailed", "error", creds.redact(err.Error())))
+			return nil, csSnapshot{}, false
+		}
+		if !p.now().Before(deadline) {
+			p.fail(j, msg.New("contentStorage.msg.provision.notReady",
+				"minutes", strconv.Itoa(int(p.readyTimeout/time.Minute)), "error", creds.redact(err.Error())))
+			return nil, csSnapshot{}, false
+		}
+		slog.Debug("ECOS is not ready for the S3 content storage connection yet", "ns", j.in.nsID, "err", err)
+		timer := time.NewTimer(p.pollInterval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, csSnapshot{}, false
+		case <-timer.C:
+		}
+	}
+}
+
+// probe resolves the gateway and reads the snapshot through it.
+func (p *contentStorageProvisioner) probe(ctx context.Context, rt *namespace.Runtime, ids csRecordIDs) (ecosRecords, csSnapshot, error) {
+	addr, err := p.gatewayAddr(ctx, rt)
+	if err != nil {
+		return nil, csSnapshot{}, err
+	}
+	client := p.records(addr)
+	snap, err := csReadSnapshot(ctx, client, ids)
+	return client, snap, err
+}
+
+// provision creates the missing records and switches the default; a non-empty
+// message is why it stopped. Every write is logged, and none is repeated.
+func (p *contentStorageProvisioner) provision(ctx context.Context, client ecosRecords, j *csJob, snap csSnapshot, ids csRecordIDs, creds csCredentials) msg.Message {
+	app := ids.provider
+	creates := []struct {
+		exists bool
+		ref    string
+		create string
+		atts   map[string]any
+	}{
+		{snap.secretExists, ids.secret, "emodel/secret@", map[string]any{
+			"id":        csSecretLocalID(app),
+			"name":      app + " S3 credentials",
+			"type":      "BASIC",
+			"data?json": map[string]any{"username": creds.accessKey, "password": creds.secretKey},
+		}},
+		{snap.endpointExists, ids.endpoint, "emodel/endpoint@", map[string]any{
+			"id":          csStorageLocalID(app),
+			"name":        app + " S3",
+			"url":         j.in.s3.URL,
+			"credentials": ids.secret,
+		}},
+		{snap.storageExists, ids.storage, "content/storage@", map[string]any{
+			"id":   csStorageLocalID(app),
+			"name": app + " S3",
+			"type": "S3",
+			"config?json": map[string]any{
+				"endpoint":   ids.endpoint,
+				"bucketName": j.in.s3.Bucket,
+			},
+		}},
+	}
+	for _, c := range creates {
+		if c.exists {
+			continue
+		}
+		if _, err := client.Mutate(ctx, c.create, c.atts); err != nil {
+			return msg.New("contentStorage.msg.provision.createFailed", "record", c.ref, "error", creds.redact(err.Error()))
+		}
+		slog.Info("Created an ECOS record for the S3 content storage", "ns", j.in.nsID, "record", c.ref)
+	}
+
+	_, err := client.Mutate(ctx, csConfigRef, map[string]any{
+		"_value?json": map[string]any{"ref": ids.storage, "config": map[string]any{}},
+	})
+	if err != nil {
+		return msg.New("contentStorage.msg.provision.setDefaultFailed", "storage", ids.storage, "error", creds.redact(err.Error()))
+	}
+	slog.Info("Switched the default content storage", "ns", j.in.nsID, "storage", ids.storage)
+
+	after, err := csReadSnapshot(ctx, client, ids)
+	if err != nil {
+		return msg.New("contentStorage.msg.provision.readFailed", "error", creds.redact(err.Error()))
+	}
+	if after.defaultRef != ids.storage {
+		actual := after.defaultRef
+		if actual == "" {
+			actual = "—"
+		}
+		return msg.New("contentStorage.msg.provision.verifyFailed", "storage", ids.storage, "actual", actual)
+	}
+	return msg.Message{}
+}
+
+// csSnapshot is what ECOS says about the connection.
+type csSnapshot struct {
+	// defaultRef is the default content storage, "" when it names none.
+	defaultRef     string
+	secretExists   bool
+	endpointExists bool
+	storageExists  bool
+}
+
+// csNotReadyError is an answer that says ECOS is not done starting: a config
+// not deployed yet, a record source that cannot say whether a record exists.
+// Asking again later is the answer to it.
+type csNotReadyError struct{ reason string }
+
+func (e *csNotReadyError) Error() string { return e.reason }
+
+// csRetryable reports whether the readiness poll should ask again.
+func csRetryable(err error) bool {
+	var notReady *csNotReadyError
+	var rec *ecosRecordsError
+	switch {
+	case errors.As(err, &notReady):
+		return true
+	case errors.As(err, &rec):
+		return rec.retryable()
+	case errors.Is(err, namespace.ErrAppAddressUnknown), errors.Is(err, namespace.ErrAppNotRunning):
+		// A gateway being recreated; platformStillUp ends the wait if it is
+		// really gone.
+		return true
+	default:
+		return false
+	}
+}
+
+// csReadSnapshot reads the default storage and the existence of the three
+// records. Every answer has to be there: a source that cannot say whether a
+// record exists is not ready, and "not there" read from it would create a
+// duplicate of something that exists.
+func csReadSnapshot(ctx context.Context, client ecosRecords, ids csRecordIDs) (csSnapshot, error) {
+	cfg, err := client.Query(ctx, []string{csConfigRef},
+		map[string]string{"value": "_value?json", "notExists": "_notExists?bool"})
+	if err != nil {
+		return csSnapshot{}, fmt.Errorf("read the default content storage: %w", err)
+	}
+	if notExists, ok := jsonBool(cfg[0]["notExists"]); !ok || notExists {
+		return csSnapshot{}, &csNotReadyError{reason: csConfigRef + " is not deployed yet"}
+	}
+	raw := cfg[0]["value"]
+	if jsonNull(raw) {
+		return csSnapshot{}, &csNotReadyError{reason: csConfigRef + " has no value yet"}
+	}
+	var value struct {
+		Ref string `json:"ref"`
+	}
+	if json.Unmarshal(raw, &value) != nil {
+		// A value this launcher does not understand is not one it may replace.
+		return csSnapshot{}, fmt.Errorf("unexpected value of %s: %s", csConfigRef, truncateText(string(raw), 200))
+	}
+
+	refs := []string{ids.secret, ids.endpoint, ids.storage}
+	recs, err := client.Query(ctx, refs, map[string]string{"notExists": "_notExists?bool"})
+	if err != nil {
+		return csSnapshot{}, fmt.Errorf("read the content storage records: %w", err)
+	}
+	exists := make([]bool, len(refs))
+	for i, ref := range refs {
+		notExists, ok := jsonBool(recs[i]["notExists"])
+		if !ok {
+			return csSnapshot{}, &csNotReadyError{reason: ref + " did not say whether it exists"}
+		}
+		exists[i] = !notExists
+	}
+	return csSnapshot{
+		defaultRef:     strings.TrimSpace(value.Ref),
+		secretExists:   exists[0],
+		endpointExists: exists[1],
+		storageExists:  exists[2],
+	}, nil
+}
+
+// jsonBool reads a JSON boolean; ok is false for anything else, null included.
+func jsonBool(raw json.RawMessage) (value, ok bool) {
+	var b *bool
+	if len(raw) == 0 || json.Unmarshal(raw, &b) != nil || b == nil {
+		return false, false
+	}
+	return *b, true
+}
+
+// jsonNull reports whether a raw JSON value is absent or null.
+func jsonNull(raw json.RawMessage) bool {
+	trimmed := strings.TrimSpace(string(raw))
+	return trimmed == "" || trimmed == "null"
 }
