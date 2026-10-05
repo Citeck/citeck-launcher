@@ -18,8 +18,8 @@ import (
 const seaweedfsApp = "seaweedfs"
 
 // contentStorageWorkspace is the reference declaration (testdata), read the
-// way a workspace config is: the provider entry, its secret and the
-// contentStorage block that names it.
+// way a workspace config is: the provider entry, its secrets, its sidebar link
+// and the contentStorage block that names it.
 func contentStorageWorkspace(t *testing.T) *bundle.WorkspaceConfig {
 	t.Helper()
 	data, err := os.ReadFile("testdata/content-storage-workspace.yml")
@@ -51,8 +51,15 @@ func s3Cfg() *Config {
 	return cfg
 }
 
+// contentStorageSecrets is what a namespace has stored for the reference
+// declaration's secrets. Both are GENERATED, so the workspace carries no value
+// for either: the generator only ever sees the namespace's own copies, and a
+// namespace missing either one gets no provider at all.
 func contentStorageSecrets() GenerateOpts {
-	return GenerateOpts{NamespaceSecrets: map[string]string{"seaweedfs-s3": "seaweedfs-s3-secret"}}
+	return GenerateOpts{NamespaceSecrets: map[string]string{
+		"seaweedfs-s3":  "S3keyS3keyS3keyS3keyS3keyS3keyS3keyS3key",
+		"seaweedfs-jwt": "JwtKeyJwtKeyJwtKeyJwtKeyJwtKeyJwtKeyJwtKeyJwtKey",
+	}}
 }
 
 func generateContentStorage(t *testing.T, cfg *Config, bun *bundle.Def, ws *bundle.WorkspaceConfig, opts GenerateOpts) *GenResp {

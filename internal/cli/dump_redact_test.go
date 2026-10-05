@@ -4,10 +4,15 @@ import (
 	"archive/zip"
 	"bytes"
 	"io"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
+
+	"github.com/citeck/citeck-launcher/internal/bundle"
 )
 
 // TestDumpWriter_RedactsEntries verifies the wiring: once a redactor is set on
@@ -104,6 +109,41 @@ func TestSecretRedactor_KeyHeuristic(t *testing.T) {
 			t.Errorf("%q should NOT match the secret-key heuristic", k)
 		}
 	}
+}
+
+// The S3 store's container is configuration — the workspace's additionalApps
+// entry, whose reference copy the namespace tests generate from — so the
+// environment variables that carry a credential are named there, not here.
+// Every one of them must be masked in a dump: a credential added to the entry
+// under a name the heuristic does not know would go into the archive in the
+// clear.
+func TestSecretRedactor_MasksEveryCredentialOfTheS3Store(t *testing.T) {
+	data, err := os.ReadFile("../namespace/testdata/content-storage-workspace.yml")
+	require.NoError(t, err)
+	var ws bundle.WorkspaceConfig
+	require.NoError(t, yaml.Unmarshal(data, &ws))
+	s3 := ws.ContentStorageS3()
+	require.NotNil(t, s3)
+	entry, ok := ws.AdditionalApp(s3.App)
+	require.True(t, ok)
+
+	credential := func(v string) bool {
+		for _, ref := range []string{"${secret:", "${ADMIN_PASSWORD}", "${JWT_SECRET}", "${OIDC_SECRET}", "${RMQ_PASSWORD}", "${KK_ADMIN_PASSWORD}"} {
+			if strings.Contains(v, ref) {
+				return true
+			}
+		}
+		return false
+	}
+	var checked int
+	for key, value := range entry.Environments {
+		if !credential(value) {
+			continue
+		}
+		checked++
+		assert.True(t, secretEnvKeyRe.MatchString(key), "%s carries a credential and is not masked in a dump", key)
+	}
+	assert.Positive(t, checked, "the store's entry names no credential at all?")
 }
 
 // SeaweedFS's keys reach the archive through its container env, and every
