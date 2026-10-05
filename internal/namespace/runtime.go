@@ -192,6 +192,7 @@ type Runtime struct {
 	dependencyPins        map[deps.ID]deps.DependencyState // see NsPersistedState.Dependencies
 	migrationJournal      *deps.MigrationJournal           // see NsPersistedState.DependencyMigration
 	lastMigration         *deps.MigrationResult            // see NsPersistedState.LastDependencyMigration
+	contentStorageSwitch  string                           // see NsPersistedState.ContentStorageSwitchPending
 	reconcilerCfg         *ReconcilerConfig                // optional override from daemon.yml
 	reconcilerEnabled     bool                             // gate for reconcile-diff dispatch from tickUnderLock; default true, flipped by SetReconcilerConfig when daemon.yml sets reconciler.enabled: false.
 	livenessEnabled       bool                             // gate for per-app liveness probe dispatch from tickUnderLock; default true, flipped by SetReconcilerConfig when daemon.yml sets reconciler.livenessEnabled: false.

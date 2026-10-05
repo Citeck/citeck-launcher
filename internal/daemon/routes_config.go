@@ -804,9 +804,13 @@ func (d *Daemon) handlePutConfig(w http.ResponseWriter, r *http.Request) {
 	// BEFORE anything is written. Every other raw save keeps its plain
 	// save-and-reload-later shape. A body that does not parse is left to the
 	// validation inside persistNamespaceConfig, which says why.
-	before := d.loadStoredContentStorage(wsID, nsID).typ
+	stored, err := d.loadStoredContentStorage(wsID, nsID)
+	if err != nil {
+		writeInternalError(w, err)
+		return
+	}
 	parsed, parseErr := namespace.ValidateYAML(body)
-	switching := parseErr == nil && switchedToS3(before, parsed)
+	switching := parseErr == nil && switchedToS3(stored.typ, parsed)
 	if switching {
 		release, ok := d.tryLongOp(w, r, tolerateNothing)
 		if !ok {

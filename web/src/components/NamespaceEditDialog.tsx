@@ -93,6 +93,10 @@ export function NamespaceEditDialog({
   // S3 → DB (CONTENT_STORAGE_DOWNGRADE) whatever the form sends.
   const [storedStorage, setStoredStorage] = useState<ContentStorageType>(CONTENT_STORAGE_DB)
   const [storageChoice, setStorageChoice] = useState<ContentStorageType>(CONTENT_STORAGE_DB)
+  // The namespace keeps its content in an external S3 (the `s3:` block), which
+  // S3 content storage cannot be combined with — something only the edit GET
+  // knows; the options endpoint answers for the bundle alone.
+  const [externalS3, setExternalS3] = useState(false)
   // The bundle the edit GET returned, raw — the daemon's write gate re-asks
   // S3 availability only when the bundle CHANGES, and so does the warning.
   const [loadedBundle, setLoadedBundle] = useState<{ repo: string; key: string } | null>(null)
@@ -122,6 +126,7 @@ export function NamespaceEditDialog({
     setTab('general')
     setStoredStorage(CONTENT_STORAGE_DB)
     setStorageChoice(CONTENT_STORAGE_DB)
+    setExternalS3(false)
     setLoadedBundle(null)
     primeDesktopModeCache().then(setIsDesktop).catch(() => setIsDesktop(false))
 
@@ -165,6 +170,7 @@ export function NamespaceEditDialog({
             const stored = contentStorageTypeOf(n.contentStorage)
             setStoredStorage(stored)
             setStorageChoice(stored)
+            setExternalS3(!!n.externalS3)
             setLoadedBundle({ repo: n.bundleRepo, key: n.bundleKey })
           })
           .catch((e) => setSubmitError((e as Error).message))
@@ -303,8 +309,9 @@ export function NamespaceEditDialog({
   // shown (read-only), whatever the bundle says.
   const s3Opt = s3Options && s3Options.bundle === `${bundleRepo}\n${bundleKey}` ? s3Options.option : null
   const providerApp = s3Opt?.providerApp ?? ''
+  const s3Label = s3OptionLabel(s3Opt?.providerTitle, providerApp)
   const storedS3 = storedStorage === CONTENT_STORAGE_S3
-  const s3Selectable = !storedS3 && !!s3Opt?.available
+  const s3Selectable = !storedS3 && !externalS3 && !!s3Opt?.available
   // A choice of S3 that the current bundle cannot have reads — and saves — as
   // DB: the irreversible direction must never be the one a stale click picks.
   const effectiveStorage: ContentStorageType = storedS3 || (storageChoice === CONTENT_STORAGE_S3 && s3Selectable)
@@ -366,8 +373,10 @@ export function NamespaceEditDialog({
           workspaceId: workspaceId || undefined,
           snapshot: snapshot || undefined,
           useDefaultPassword: true,
-          // Absent = DB, so a DB namespace's payload is what it always was.
-          contentStorage: effectiveStorage === CONTENT_STORAGE_S3 ? CONTENT_STORAGE_S3 : undefined,
+          // Always the choice the form shows — DB included. The daemon reads
+          // the request alone (a template's contentStorage is ignored), so
+          // what was shown is exactly what is created.
+          contentStorage: effectiveStorage,
         }
         await createNamespace(payload)
         toast(t('namespace.form.createSuccess'), 'success')
@@ -548,7 +557,7 @@ export function NamespaceEditDialog({
           {storedS3 ? (
             <>
               <div className="rounded border border-border bg-muted/40 px-2.5 py-1.5 text-sm">
-                {s3OptionLabel(providerApp)}
+                {s3Label}
               </div>
               <p className="mt-1 text-[11px] text-muted-foreground">{t('contentStorage.s3.oneWay')}</p>
               {storedS3Refused && (
@@ -585,12 +594,14 @@ export function NamespaceEditDialog({
                 />
                 <span className="flex flex-col gap-0.5">
                   <span className={`text-xs font-medium ${s3Selectable ? '' : 'text-muted-foreground'}`}>
-                    {s3OptionLabel(providerApp)}
+                    {s3Label}
                   </span>
                   <span className="text-[11px] text-muted-foreground">
                     {s3Selectable
                       ? t('contentStorage.option.s3.hint', { app: providerApp })
-                      : s3UnavailableText(s3Opt?.reason, providerApp, t)}
+                      : externalS3
+                        ? t('contentStorage.reason.externalS3')
+                        : s3UnavailableText(s3Opt?.reason, providerApp, t)}
                   </span>
                 </span>
               </label>

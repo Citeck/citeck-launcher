@@ -30,6 +30,22 @@ func TestWorkspaceContentStorage_IsRead(t *testing.T) {
 	}, *s3)
 }
 
+// The optional title is the product name the option label shows; without it
+// the app id stands in, and its absence never makes the block unusable.
+func TestWorkspaceContentStorage_TheTitleIsOptional(t *testing.T) {
+	titled := parseTestWorkspace(t, contentStorageBlock+"    title: ' SeaweedFS '\n").ContentStorageS3()
+	require.NotNil(t, titled)
+	assert.Equal(t, "SeaweedFS", titled.Title)
+	assert.Equal(t, "SeaweedFS", titled.DisplayName())
+
+	untitled := parseTestWorkspace(t, contentStorageBlock).ContentStorageS3()
+	require.NotNil(t, untitled)
+	assert.Equal(t, "seaweedfs", untitled.DisplayName())
+
+	var none *ContentStorageS3Config
+	assert.Empty(t, none.DisplayName())
+}
+
 // The point of the custom decoder: a block of the WRONG SHAPE must cost only
 // itself. A plain struct field would turn it into a YAML error, and
 // parseWorkspaceConfig answers a YAML error by dropping the whole workspace

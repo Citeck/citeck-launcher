@@ -297,6 +297,10 @@ type ContentStorageDto struct {
 	Type string `json:"type"`
 	// ProviderApp is the workspace's `contentStorage.s3.app`, e.g. "seaweedfs".
 	ProviderApp string `json:"providerApp"`
+	// ProviderTitle is the provider's name for a label — the workspace's
+	// `contentStorage.s3.title`, else the app id ("SeaweedFS"). Empty when the
+	// workspace names no provider.
+	ProviderTitle string `json:"providerTitle,omitempty"`
 	// State is one of the ContentStorageState* values.
 	State string `json:"state"`
 	// Error is why the last connection attempt failed, rendered for the
@@ -305,7 +309,7 @@ type ContentStorageDto struct {
 	// Problem is why this generation could not wire ecos-content to its
 	// provider at all (namespace.ContentStorageProblem's reason code:
 	// NO_CONTENT_APP, NO_PROVIDER_CONFIG, NO_PROVIDER_APP, NO_PROVIDER_IMAGE,
-	// PROVIDER_NOT_GENERATED); empty when it is wired.
+	// PROVIDER_CONFLICT, PROVIDER_NOT_GENERATED); empty when it is wired.
 	Problem string `json:"problem,omitempty"`
 	// At is the RFC 3339 time of the last state change, empty before any.
 	At string `json:"at,omitempty"`
@@ -323,12 +327,15 @@ type ContentStorageOptionDto struct {
 	Available bool `json:"available"`
 	// Reason is why the option is unavailable: NO_CONTENT_APP (hide the
 	// option — the bundle has no ecos-content), NO_PROVIDER_CONFIG,
-	// NO_PROVIDER_APP, NO_PROVIDER_IMAGE (show it disabled with a hint), or
-	// BUNDLE_UNRESOLVED (the bundle is not in the synced repo, so nothing can
-	// be said about it). Empty when Available.
+	// NO_PROVIDER_APP, PROVIDER_CONFLICT, NO_PROVIDER_IMAGE (show it disabled
+	// with a hint), or BUNDLE_UNRESOLVED (the bundle is not in the synced
+	// repo, so nothing can be said about it). Empty when Available.
 	Reason string `json:"reason,omitempty"`
 	// ProviderApp is the workspace's S3 provider, empty when it names none.
 	ProviderApp string `json:"providerApp,omitempty"`
+	// ProviderTitle is the provider's name for the option label (see
+	// ContentStorageDto.ProviderTitle).
+	ProviderTitle string `json:"providerTitle,omitempty"`
 }
 
 // ContentStorageBundleUnresolved is the options/write-gate reason for a bundle
@@ -1338,6 +1345,11 @@ type NamespaceEditDto struct {
 	// empty value leaves it unchanged; DB → S3 is allowed (and starts the
 	// provider), S3 → DB is refused with CONTENT_STORAGE_DOWNGRADE.
 	ContentStorage string `json:"contentStorage,omitempty"`
+	// ExternalS3 is true (GET only) when the namespace stores its content in
+	// an external S3 — the namespace.yml `s3:` block — which S3 content
+	// storage cannot be combined with: the edit dialog shows the S3 option
+	// disabled instead of offering a switch the daemon refuses.
+	ExternalS3 bool `json:"externalS3,omitempty"`
 }
 
 // BundleInfoDto describes a bundle repository and its available versions.

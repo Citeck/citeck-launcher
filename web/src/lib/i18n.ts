@@ -110,8 +110,11 @@ function translate(translations: Translations, key: LocaleKey, params?: Record<s
   const lookup = translations as Partial<Record<string, string>>
   let text = lookup[key] ?? (en as Partial<Record<string, string>>)[key] ?? key
   if (params) {
+    // Every occurrence, as the Go side renders (strings.ReplaceAll): a
+    // sentence may name the same value twice, and a second `{app}` left
+    // literal is never what a translator meant.
     for (const [k, v] of Object.entries(params)) {
-      text = text.replace(`{${k}}`, String(v))
+      text = text.replaceAll(`{${k}}`, String(v))
     }
   }
   return text

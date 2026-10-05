@@ -105,6 +105,40 @@ describe('ContentStorageBanner', () => {
     expect(screen.queryByRole('button')).toBeNull()
   })
 
+  // The gate is the four ECOS apps AND the provider: with the provider stopped
+  // (warned about, never refused) the other four are all running, and the
+  // banner must name what it is still waiting for.
+  it('names the provider among the apps the connection waits for', () => {
+    setNamespace(s3({ state: 'pending' }))
+    render(<ContentStorageBanner />)
+    expect(screen.getByRole('status').textContent).toContain('eapps, content and seaweedfs are running')
+  })
+
+  // A workspace that names no provider has no app id to quote: the title says
+  // so plainly instead of a stand-in like "(S3)".
+  it('words a problem with no provider named without a placeholder', () => {
+    setNamespace(s3({ providerApp: '', problem: 'NO_PROVIDER_CONFIG' }))
+    render(<ContentStorageBanner />)
+    const alert = screen.getByRole('alert')
+    expect(alert.textContent).toContain('ecos-content is not wired to an S3 storage')
+    expect(alert.textContent).not.toContain('(S3)')
+    expect(alert.textContent).toContain('contentStorage.s3')
+  })
+
+  it('words a failed connection with no provider named without a placeholder', () => {
+    setNamespace(s3({ providerApp: '', state: 'error', error: 'boom' }))
+    render(<ContentStorageBanner />)
+    const alert = screen.getByRole('alert')
+    expect(alert.textContent).toContain('ecos-content could not be connected to its S3 storage')
+    expect(alert.textContent).not.toContain('(S3)')
+  })
+
+  it('shows no progress when there is no provider to connect', () => {
+    setNamespace(s3({ providerApp: '', state: 'pending' }))
+    const { container } = render(<ContentStorageBanner />)
+    expect(container.firstChild).toBeNull()
+  })
+
   it('shows a generation problem even on a stopped namespace', () => {
     setNamespace(s3({ state: 'pending', problem: 'NO_PROVIDER_CONFIG' }), 'STOPPED')
     render(<ContentStorageBanner />)

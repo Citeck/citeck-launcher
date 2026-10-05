@@ -56,7 +56,8 @@ func (s *contentStorageSetting) CurrentValue(cfg *namespace.Config, _ *config.Da
 var daemonReachable = daemonIsRunning
 
 func (s *contentStorageSetting) Run(ctx *setupContext, cfg *namespace.Config, _ *config.DaemonConfig) error {
-	providerApp, refusal := contentStorageSwitchCheck(ctx, cfg)
+	avail, refusal := contentStorageSwitchCheck(ctx, cfg)
+	providerApp := avail.ProviderApp
 	if refusal == "" && !daemonReachable() {
 		refusal = i18n.T("setup.content_storage.daemon_required", "app", providerApp)
 	}
@@ -70,7 +71,7 @@ func (s *contentStorageSetting) Run(ctx *setupContext, cfg *namespace.Config, _ 
 		Description: i18n.T("setup.content_storage.hint", "app", providerApp),
 		Options: []prompt.Option[string]{
 			{Label: i18n.T("setup.content_storage.db"), Value: string(namespace.ContentStorageDB), Hint: i18n.T("setup.content_storage.current")},
-			{Label: "S3 (" + providerApp + ")", Value: string(namespace.ContentStorageS3), Hint: i18n.T("setup.content_storage.one_way")},
+			{Label: avail.OptionLabel(), Value: string(namespace.ContentStorageS3), Hint: i18n.T("setup.content_storage.one_way")},
 			{Label: i18n.T("setup.back"), Value: backValue},
 		},
 		Hints: hints(),
@@ -90,29 +91,29 @@ func (s *contentStorageSetting) Run(ctx *setupContext, cfg *namespace.Config, _ 
 }
 
 // contentStorageSwitchCheck answers whether this namespace may switch to S3
-// now, and the provider app it would run. refusal is the operator's sentence
-// when it may not, "" when it may. Pure: everything it reads was resolved when
-// setup started.
+// now, and the availability whose provider it would run. refusal is the
+// operator's sentence when it may not, "" when it may. Pure: everything it
+// reads was resolved when setup started.
 //
 // The availability sentences are the daemon's own (contentStorage.msg.*, the
 // write gate's wording, one asset for both), so the refusal reads the same
 // whether setup explains it up front or the daemon refuses the write.
-func contentStorageSwitchCheck(ctx *setupContext, cfg *namespace.Config) (providerApp, refusal string) {
+func contentStorageSwitchCheck(ctx *setupContext, cfg *namespace.Config) (avail namespace.ContentStorageAvailability, refusal string) {
 	switch {
 	case cfg.ContentStorageType() == namespace.ContentStorageS3:
-		return "", i18n.T("contentStorage.msg.downgrade")
+		return avail, i18n.T("contentStorage.msg.downgrade")
 	case cfg.S3 != nil:
 		// The validation refuses the two together anyway; said here in the
 		// operator's terms instead of after the questions.
-		return "", i18n.T("setup.content_storage.external_s3")
+		return avail, i18n.T("setup.content_storage.external_s3")
 	case ctx == nil || ctx.Bundle == nil:
-		return "", i18n.T("setup.content_storage.bundle_unresolved", "bundle", cfg.BundleRef.String())
+		return avail, i18n.T("setup.content_storage.bundle_unresolved", "bundle", cfg.BundleRef.String())
 	}
-	avail := namespace.ContentStorageS3Availability(ctx.Bundle, ctx.Workspace)
+	avail = namespace.ContentStorageS3Availability(ctx.Bundle, ctx.Workspace)
 	if !avail.Available {
-		return "", contentStorageUnavailableSentence(avail, cfg.BundleRef)
+		return avail, contentStorageUnavailableSentence(avail, cfg.BundleRef)
 	}
-	return avail.ProviderApp, ""
+	return avail, ""
 }
 
 // contentStorageUnavailableSentence words an availability refusal with the
@@ -127,6 +128,8 @@ func contentStorageUnavailableSentence(avail namespace.ContentStorageAvailabilit
 		return i18n.T("contentStorage.msg.unavailable.noProviderApp", "app", avail.ProviderApp)
 	case namespace.ContentStorageNoProviderImage:
 		return i18n.T("contentStorage.msg.unavailable.noProviderImage", "app", avail.ProviderApp, "bundle", ref.String())
+	case namespace.ContentStorageProviderConflict:
+		return i18n.T("contentStorage.msg.unavailable.providerConflict", "app", avail.ProviderApp)
 	default:
 		return i18n.T("setup.content_storage.bundle_unresolved", "bundle", ref.String())
 	}
@@ -232,7 +235,27 @@ func applyThroughDaemon(id string, sctx *setupContext, nsCfg *namespace.Config, 
 		fmt.Println(i18n.T("setup.content_storage.not_applied", "err", detail, "app", providerApp)) //nolint:forbidigo // CLI output
 		return nil
 	}
-	fmt.Println(i18n.T("setup.content_storage.switched", "app", providerApp)) //nolint:forbidigo // CLI output
-	waitForServices(c)
+	status := ""
+	if ns, nsErr := c.GetNamespace(); nsErr == nil && ns != nil {
+		status = ns.Status
+	}
+	note, wait := contentStorageSwitchedNote(status, providerApp)
+	fmt.Println(note) //nolint:forbidigo // CLI output
+	if wait {
+		waitForServices(c)
+	}
 	return nil
+}
+
+// contentStorageSwitchedNote is what the operator is told once the daemon has
+// applied the switch, and whether there is a reload to wait for. On a STOPPED
+// namespace the daemon only cleared the provider's detach and regenerated:
+// nothing starts until the namespace does, so "is starting" would be untrue
+// and the wait would report every app as updated while all of them are
+// stopped. An unknown status is treated as running — the old behavior.
+func contentStorageSwitchedNote(nsStatus, providerApp string) (note string, wait bool) {
+	if nsStatus == string(namespace.NsStatusStopped) {
+		return i18n.T("setup.content_storage.switched_stopped", "app", providerApp), false
+	}
+	return i18n.T("setup.content_storage.switched", "app", providerApp), true
 }

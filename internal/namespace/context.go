@@ -159,7 +159,12 @@ type NsGenContext struct {
 	// ecos-content could not be wired to its provider. Surfaced as
 	// GenResp.ContentStorageProblem; never a generation error.
 	ContentStorageProblem *ContentStorageProblem
-	portsCounter          atomic.Int32
+	// collidedAdditionalApps are the raw additionalApps entries the collision
+	// guard skipped because a platform app already owns the name
+	// (generateAdditionalApps). Read by wireContentStorage: an S3 provider
+	// skipped that way exists in Applications as somebody else.
+	collidedAdditionalApps map[string]bool
+	portsCounter           atomic.Int32
 }
 
 // NewNsGenContext creates a new generation context for the given config and bundle.

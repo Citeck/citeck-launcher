@@ -21,6 +21,8 @@ export const REASON_NO_CONTENT_APP = 'NO_CONTENT_APP'
 export const REASON_NO_PROVIDER_CONFIG = 'NO_PROVIDER_CONFIG'
 export const REASON_NO_PROVIDER_APP = 'NO_PROVIDER_APP'
 export const REASON_NO_PROVIDER_IMAGE = 'NO_PROVIDER_IMAGE'
+/** The provider's name is a platform app's, or it depends on ecos-content itself. */
+export const REASON_PROVIDER_CONFLICT = 'PROVIDER_CONFLICT'
 /** Generation only: the provider was left out (unreadable secret, pruned dependency). */
 export const REASON_PROVIDER_NOT_GENERATED = 'PROVIDER_NOT_GENERATED'
 /** Options/write gate only: the bundle is not in the synced repo, so nothing can be said. */
@@ -41,20 +43,18 @@ export function contentStorageTypeOf(value: string | undefined | null): ContentS
   return (value ?? '').trim().toUpperCase() === CONTENT_STORAGE_S3 ? CONTENT_STORAGE_S3 : CONTENT_STORAGE_DB
 }
 
-// Product names for the provider apps a workspace is known to declare, for the
-// option LABEL only ("S3 (SeaweedFS)", the wording the owner chose). Which app
-// serves S3 is configuration (`contentStorage.s3.app`), so an app missing here
-// is not an error: its id is shown as is. Sentences name the app by its id —
-// that is the row the operator sees in the app table.
-const PROVIDER_PRODUCT_NAMES: Record<string, string> = {
-  seaweedfs: 'SeaweedFS',
-}
-
-/** "S3 (SeaweedFS)" — or just "S3" while the provider is not known. */
-export function s3OptionLabel(providerApp: string | undefined): string {
-  const app = (providerApp ?? '').trim()
-  if (!app) return 'S3'
-  return `S3 (${PROVIDER_PRODUCT_NAMES[app.toLowerCase()] ?? app})`
+/**
+ * The option LABEL: "S3 (SeaweedFS)" — the provider's product name from the
+ * workspace configuration (`contentStorage.s3.title`, reported as
+ * providerTitle), else its app id, else just "S3" while the provider is not
+ * known. Configuration, like the provider itself: no product name is spelled
+ * here, and the CLI builds the same label (namespace.S3OptionLabel).
+ * Sentences name the app by its id — that is the row the operator sees in the
+ * app table.
+ */
+export function s3OptionLabel(providerTitle: string | undefined, providerApp: string | undefined): string {
+  const name = (providerTitle ?? '').trim() || (providerApp ?? '').trim()
+  return name ? `S3 (${name})` : 'S3'
 }
 
 /**
@@ -74,6 +74,8 @@ export function s3UnavailableText(reason: string | undefined, providerApp: strin
       return t('contentStorage.reason.noProviderApp', { app })
     case REASON_NO_PROVIDER_IMAGE:
       return t('contentStorage.reason.noProviderImage', { app })
+    case REASON_PROVIDER_CONFLICT:
+      return t('contentStorage.reason.providerConflict', { app })
     case REASON_BUNDLE_UNRESOLVED:
       return t('contentStorage.unavailable.bundleUnresolved')
     default:
@@ -97,6 +99,8 @@ export function contentStorageProblemText(problem: string, providerApp: string |
       return t('contentStorage.reason.noProviderApp', { app })
     case REASON_NO_PROVIDER_IMAGE:
       return t('contentStorage.reason.noProviderImage', { app })
+    case REASON_PROVIDER_CONFLICT:
+      return t('contentStorage.reason.providerConflict', { app })
     case REASON_PROVIDER_NOT_GENERATED:
       return t('contentStorage.problem.providerNotGenerated', { app })
     default:

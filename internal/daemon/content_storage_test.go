@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -18,6 +19,7 @@ import (
 	"github.com/citeck/citeck-launcher/internal/bundle"
 	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/namespace"
+	"github.com/citeck/citeck-launcher/internal/storage"
 )
 
 const (
@@ -34,6 +36,7 @@ const (
 contentStorage:
   s3:
     app: seaweedfs
+    title: SeaweedFS
     url: http://seaweedfs:8333
     bucket: ecos-content
     accessKey: citeck
@@ -196,6 +199,83 @@ func TestContentStorageGate_SeesS3InAnInvalidStoredConfig(t *testing.T) {
 	assert.Equal(t, api.ErrCodeContentStorageDowngrade, csRefusal(t, err).code)
 }
 
+// A stored file that is not even valid YAML — a hand edit of a server-mode
+// namespace.yml with a syntax error ANYWHERE — used to read as "no block",
+// i.e. DB, so the raw PUT that repairs it could drop the one-way S3 choice on
+// the way. The block is scanned as text instead.
+func TestContentStorageGate_SeesS3InAStoredConfigThatIsNotYAML(t *testing.T) {
+	d, mux := newContentStorageDaemon(t)
+	d.activeNs.nsConfig = &namespace.Config{ID: "ns1"}
+	broken := "id: ns1\nname: X\nbundleRef: community:2026.3\ncontentStorage:\n  type: S3\nproxy: [unclosed\n"
+	var probe map[string]any
+	require.Error(t, yaml.Unmarshal([]byte(broken), &probe), "the fixture must not parse")
+	require.NoError(t, d.store.SaveNamespaceConfig("wsMain", "ns1", "X", broken))
+
+	err := d.persistNamespaceConfig("wsMain", "ns1", csConfigYAML(t, "X", csBundleS3, ""))
+	assert.Equal(t, api.ErrCodeContentStorageDowngrade, csRefusal(t, err).code)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, api.Config,
+		strings.NewReader(string(csConfigYAML(t, "X", csBundleS3, "")))))
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), api.ErrCodeContentStorageDowngrade)
+	stored, _, _ := d.store.LoadNamespaceConfig("wsMain", "ns1")
+	assert.Equal(t, broken, stored, "nothing was written")
+
+	// The repair itself — keeping S3 — goes through.
+	require.NoError(t, d.persistNamespaceConfig("wsMain", "ns1",
+		csConfigYAML(t, "X", csBundleS3, namespace.ContentStorageS3)))
+}
+
+// A store that cannot answer is not "no stored config": the write is refused
+// rather than judged as DB → DB.
+func TestContentStorageGate_AnUnreadableStoreFailsClosed(t *testing.T) {
+	d, mux := newContentStorageDaemon(t)
+	d.activeNs.nsConfig = &namespace.Config{ID: "ns1"}
+	d.store = configReadFailingStore{Store: d.store}
+
+	err := d.persistNamespaceConfig("wsMain", "ns1", csConfigYAML(t, "X", csBundleS3, ""))
+	var unreadable *errStoredConfigUnreadable
+	require.ErrorAs(t, err, &unreadable)
+	assert.True(t, isConfigGateRefusal(err))
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, api.Config,
+		strings.NewReader(string(csConfigYAML(t, "X", csBundleS3, "")))))
+	assert.Equal(t, http.StatusInternalServerError, rec.Code, rec.Body.String())
+}
+
+// configReadFailingStore is a store whose namespace-config read fails.
+type configReadFailingStore struct{ storage.Store }
+
+func (configReadFailingStore) LoadNamespaceConfig(string, string) (raw string, found bool, err error) {
+	return "", false, errors.New("disk on fire")
+}
+
+func TestScanContentStorageType(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want namespace.ContentStorageType
+	}{
+		{"block", "contentStorage:\n  type: S3\nproxy: [\n", namespace.ContentStorageS3},
+		{"quoted, lower case", "contentStorage:\n  type: 's3'\n", namespace.ContentStorageS3},
+		{"flow", "contentStorage: {type: S3}\nproxy: [\n", namespace.ContentStorageS3},
+		{"tab-free CRLF", "contentStorage:\r\n  type: S3\r\n", namespace.ContentStorageS3},
+		{"DB", "contentStorage:\n  type: DB\nproxy: [\n", namespace.ContentStorageDB},
+		{"no block", "name: x\nproxy: [\n", namespace.ContentStorageDB},
+		{"the external s3 block is not content storage", "s3:\n  endpoint: http://minio:9000\ncontentStorage:\n  type: DB\n", namespace.ContentStorageDB},
+		{"S3 under another key", "webapps:\n  content:\n    type: S3\n", namespace.ContentStorageDB},
+		{"a comment is not a value", "contentStorage: # was S3 once\n  type: DB\n", namespace.ContentStorageDB},
+		{"a whole-line comment either", "contentStorage:\n  # type: S3\n  type: DB\n", namespace.ContentStorageDB},
+		{"a word containing s3 is not S3", "contentStorage:\n  type: xs3y\n", namespace.ContentStorageDB},
+		{"the block ends at the next key", "contentStorage:\n  type: DB\nemail:\n  host: s3\n", namespace.ContentStorageDB},
+	}
+	for _, tc := range cases {
+		assert.Equal(t, tc.want, scanContentStorageType(tc.raw), tc.name)
+	}
+}
+
 // The refusal is the daemon's sentence, rendered in the reader's language.
 func TestContentStorageGate_RefusalFollowsTheRequestLocale(t *testing.T) {
 	d, mux := newContentStorageDaemon(t)
@@ -216,6 +296,15 @@ func TestContentStorageGate_RefusalFollowsTheRequestLocale(t *testing.T) {
 	assert.Contains(t, en.Body.String(), "cannot be switched back to the database")
 	require.Equal(t, http.StatusConflict, ru.Code)
 	assert.Contains(t, ru.Body.String(), "вернуть хранение в базу данных нельзя")
+}
+
+// The pending switch is persisted for the next daemon; the load path is the
+// only place that hands it back to the runtime, and the provisioner reads it
+// from there. A guard on the wiring: loadNamespace has no direct test.
+func TestLoadNamespace_RestoresThePendingContentStorageSwitch(t *testing.T) {
+	src, err := os.ReadFile("namespace_loader.go")
+	require.NoError(t, err)
+	assert.Contains(t, string(src), "runtime.RestoreContentStorageSwitch(persistedState.ContentStorageSwitchPending)")
 }
 
 // --- create / edit ---
@@ -268,6 +357,55 @@ func TestCreateNamespace_ContentStorage(t *testing.T) {
 		rec := create(mux, csBundleS3, "minio")
 		assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 	})
+
+	// S3 is one-way, so it is the operator's choice and never a template's:
+	// a template that set it would make an S3 namespace while the dialog
+	// showed the database (and Quick Start sends no choice at all), or refuse
+	// every create on a Community bundle over a field the form hides.
+	t.Run("a template's contentStorage is not a choice", func(t *testing.T) {
+		for _, tc := range []struct {
+			name, template, storage string
+			want                    namespace.ContentStorageType
+		}{
+			{"the default template, DB asked", "", "DB", namespace.ContentStorageDB},
+			{"the default template, nothing asked", "", "", namespace.ContentStorageDB},
+			{"a quick-start template, nothing asked", "quick", "", namespace.ContentStorageDB},
+			{"the default template, S3 asked", "", "S3", namespace.ContentStorageS3},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				d, mux := newContentStorageDaemon(t)
+				ws := parseCSWorkspace(t)
+				s3Template := map[string]any{"contentStorage": map[string]any{"type": "S3"}}
+				ws.NamespaceTemplates = []bundle.NamespaceTemplate{
+					{ID: "default", Config: s3Template},
+					{ID: "quick", Config: s3Template},
+				}
+				d.activeNs.workspaceConfig = ws
+				body := `{"name":"X","authType":"BASIC","users":["admin"],"bundleRepo":"community",` +
+					`"bundleKey":"` + csBundleS3 + `","workspaceId":"wsMain","template":"` + tc.template +
+					`","contentStorage":"` + tc.storage + `"}`
+				rec := httptest.NewRecorder()
+				mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, api.Namespaces, strings.NewReader(body)))
+				require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+				rows, err := d.store.ListNamespaces("wsMain")
+				require.NoError(t, err)
+				require.Len(t, rows, 1)
+				cfg, err := d.loadNamespaceConfigFromStore("wsMain", rows[0].ID)
+				require.NoError(t, err)
+				assert.Equal(t, tc.want, cfg.ContentStorageType())
+			})
+		}
+
+		// And on a Community bundle the template no longer refuses the create.
+		d, mux := newContentStorageDaemon(t)
+		ws := parseCSWorkspace(t)
+		ws.NamespaceTemplates = []bundle.NamespaceTemplate{
+			{ID: "default", Config: map[string]any{"contentStorage": map[string]any{"type": "S3"}}},
+		}
+		d.activeNs.workspaceConfig = ws
+		rec := create(mux, csBundleNoCont, "")
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	})
 }
 
 func putEdit(mux *http.ServeMux, body string) *httptest.ResponseRecorder {
@@ -302,6 +440,56 @@ func TestNamespaceEdit_ContentStorageIsReportedAndOneWay(t *testing.T) {
 	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
 	assert.Contains(t, rec.Body.String(), api.ErrCodeContentStorageDowngrade)
 	assert.Equal(t, "S3", get().ContentStorage)
+	assert.False(t, get().ExternalS3)
+}
+
+// A namespace on an external S3 (the `s3:` block) cannot also have S3 content
+// storage. The edit GET says so, so the dialog shows the option disabled, and
+// a switch sent anyway is refused in the reader's language — not with the
+// validation's English config-speak.
+func TestNamespaceEdit_ExternalS3IsReportedAndTheSwitchRefusedInWords(t *testing.T) {
+	d, mux := newContentStorageDaemon(t)
+	cfg, err := namespace.ParseNamespaceConfig(csConfigYAML(t, "X", csBundleS3, ""))
+	require.NoError(t, err)
+	cfg.S3 = &namespace.S3Config{Endpoint: "https://s3.example.com", Bucket: "b", AccessKey: "a", SecretKey: "s"}
+	raw, err := namespace.MarshalNamespaceConfig(cfg)
+	require.NoError(t, err)
+	require.NoError(t, d.persistNamespaceConfig("wsMain", "ns1", raw))
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, api.NamespaceEditPath("ns1"), http.NoBody))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var dto api.NamespaceEditDto
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &dto))
+	assert.True(t, dto.ExternalS3)
+	assert.Equal(t, "DB", dto.ContentStorage)
+
+	req := httptest.NewRequest(http.MethodPut, api.NamespaceEditPath("ns1"), strings.NewReader(`{"contentStorage":"S3"}`))
+	req.Header.Set(api.LocaleHeader, "ru")
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), api.ErrCodeContentStorageUnavailable)
+	assert.Contains(t, rec.Body.String(), "внешнем S3")
+	stored, err := d.loadNamespaceConfigFromStore("wsMain", "ns1")
+	require.NoError(t, err)
+	assert.Equal(t, namespace.ContentStorageDB, stored.ContentStorageType(), "nothing was written")
+}
+
+// A provider the generator could not wire — here one that depends on
+// ecos-content, which content's dependency on it would close into a cycle —
+// is refused by the write gate, in the gate's own words.
+func TestContentStorageGate_AConflictingProviderIsRefused(t *testing.T) {
+	d, _ := newContentStorageDaemon(t)
+	ws := strings.Replace(csWorkspaceYAML, "  - name: seaweedfs\n", "  - name: seaweedfs\n    dependsOn: [content]\n", 1)
+	require.NotEqual(t, csWorkspaceYAML, ws)
+	require.NoError(t, os.WriteFile(filepath.Join(config.WorkspaceRepoDir("wsMain"), "workspace-v1.yml"), []byte(ws), 0o600))
+
+	err := d.persistNamespaceConfig("wsMain", "ns1", csConfigYAML(t, "X", csBundleS3, namespace.ContentStorageS3))
+	refusal := csRefusal(t, err)
+	assert.Equal(t, api.ErrCodeContentStorageUnavailable, refusal.code)
+	assert.Equal(t, namespace.ContentStorageProviderConflict, refusal.reason)
+	assert.Contains(t, englishForLogs.Render(refusal.message), "depends on ecos-content")
 }
 
 // DB → S3 on a namespace that is not the active one: its provider, held back
@@ -429,7 +617,8 @@ func TestContentStorageOptions(t *testing.T) {
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &dto))
 		return dto
 	}
-	assert.Equal(t, api.ContentStorageOptionDto{Available: true, ProviderApp: csProvider}, ask(csBundleS3).S3)
+	assert.Equal(t, api.ContentStorageOptionDto{Available: true, ProviderApp: csProvider, ProviderTitle: "SeaweedFS"},
+		ask(csBundleS3).S3, "the label's product name is the workspace's, never the launcher's")
 	assert.Equal(t, namespace.ContentStorageNoContentApp, ask(csBundleNoCont).S3.Reason)
 	assert.Equal(t, namespace.ContentStorageNoProviderImage, ask(csBundleNoProv).S3.Reason)
 	unresolved := ask("2099.9").S3
@@ -473,7 +662,7 @@ func TestNamespaceDto_ContentStorage(t *testing.T) {
 	got := d.contentStorageDto(tr, act)
 	require.NotNil(t, got)
 	assert.Equal(t, api.ContentStorageDto{
-		Type: "S3", ProviderApp: csProvider, State: api.ContentStorageStatePending,
+		Type: "S3", ProviderApp: csProvider, ProviderTitle: "SeaweedFS", State: api.ContentStorageStatePending,
 		Problem: namespace.ContentStorageProviderNotGenerated,
 	}, *got)
 }

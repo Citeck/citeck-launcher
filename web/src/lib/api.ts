@@ -562,6 +562,10 @@ export interface NamespaceEditDto {
    *  leaves it unchanged, DB → S3 is allowed, S3 → DB is refused (409
    *  CONTENT_STORAGE_DOWNGRADE). */
   contentStorage?: string
+  /** GET only: the namespace keeps its content in an external S3 (the
+   *  namespace.yml `s3:` block), which S3 content storage cannot be combined
+   *  with — the dialog shows the S3 option disabled. */
+  externalS3?: boolean
 }
 
 /**

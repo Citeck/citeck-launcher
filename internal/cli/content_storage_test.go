@@ -59,6 +59,41 @@ func TestContentStorageStatusLine_SaysWhereTheConnectionIs(t *testing.T) {
 	}
 }
 
+// A STOPPED namespace is not waiting for anything: the daemon keeps no
+// "connected" flag, so every S3 namespace reads pending while stopped (and
+// right after a daemon restart), connected or not. The web banner shows
+// nothing there; the CLI must not print a yellow "waiting" line either.
+func TestContentStorageStatusLine_AStoppedNamespaceIsNotWaiting(t *testing.T) {
+	i18n.InitI18n("en")
+	t.Cleanup(i18n.ResetForTest)
+	for _, state := range []string{api.ContentStorageStatePending, ""} {
+		ns := s3Namespace(&api.ContentStorageDto{Type: "S3", ProviderApp: "seaweedfs", State: state})
+		ns.Status = "STOPPED"
+		line := contentStorageStatusLine(ns)
+		assert.Contains(t, line, "checked when the namespace starts", "state %q", state)
+		assert.NotContains(t, line, "waiting", "state %q", state)
+	}
+
+	// A verdict kept from before the stop is still said as it is, and a
+	// problem still outranks everything.
+	ns := s3Namespace(&api.ContentStorageDto{Type: "S3", ProviderApp: "seaweedfs", State: api.ContentStorageStateConnected})
+	ns.Status = "STOPPED"
+	assert.Contains(t, contentStorageStatusLine(ns), "connected")
+	ns.ContentStorage.Problem = namespace.ContentStorageProviderNotGenerated
+	assert.Contains(t, contentStorageStatusLine(ns), "not connected")
+}
+
+// The label is the workspace's product name when it gives one — the label
+// the web dialog and the install wizard show.
+func TestContentStorageStatusLine_UsesTheProviderTitle(t *testing.T) {
+	i18n.InitI18n("en")
+	t.Cleanup(i18n.ResetForTest)
+	line := contentStorageStatusLine(s3Namespace(&api.ContentStorageDto{
+		Type: "S3", ProviderApp: "seaweedfs", ProviderTitle: "SeaweedFS", State: api.ContentStorageStateConnected,
+	}))
+	assert.True(t, strings.HasPrefix(line, "S3 (SeaweedFS) — "), line)
+}
+
 // A generation problem means the provider is not wired at all: the connection
 // state is moot until the configuration is fixed, so the problem is what the
 // line says.
@@ -71,6 +106,7 @@ func TestContentStorageStatusLine_AProblemOutranksTheState(t *testing.T) {
 		namespace.ContentStorageNoProviderApp:        "additionalApps entry seaweedfs",
 		namespace.ContentStorageNoProviderImage:      "image for seaweedfs",
 		namespace.ContentStorageProviderNotGenerated: "seaweedfs is not part of this namespace",
+		namespace.ContentStorageProviderConflict:     "seaweedfs cannot be the S3 provider",
 		"SOMETHING_NEW": "SOMETHING_NEW",
 	}
 	for code, want := range cases {
@@ -220,14 +256,15 @@ func TestInstallContentStorageAvailability(t *testing.T) {
 // even asked, and only an explicit S3 answer writes the block.
 func TestChooseInstallContentStorage(t *testing.T) {
 	asked := 0
-	answer := func(a namespace.ContentStorageType) func(string) namespace.ContentStorageType {
-		return func(provider string) namespace.ContentStorageType {
+	answer := func(a namespace.ContentStorageType) func(namespace.ContentStorageAvailability) namespace.ContentStorageType {
+		return func(avail namespace.ContentStorageAvailability) namespace.ContentStorageType {
 			asked++
-			assert.Equal(t, "seaweedfs", provider)
+			assert.Equal(t, "seaweedfs", avail.ProviderApp)
+			assert.Equal(t, "S3 (SeaweedFS)", avail.OptionLabel(), "labeled the way the web dialog labels it")
 			return a
 		}
 	}
-	available := namespace.ContentStorageAvailability{Available: true, ProviderApp: "seaweedfs"}
+	available := namespace.ContentStorageAvailability{Available: true, ProviderApp: "seaweedfs", ProviderTitle: "SeaweedFS"}
 
 	assert.Nil(t, chooseInstallContentStorage(
 		namespace.ContentStorageAvailability{Reason: namespace.ContentStorageNoContentApp}, answer(namespace.ContentStorageS3)))
@@ -254,7 +291,7 @@ func TestInstallContentStorageIsWrittenToNamespaceYml(t *testing.T) {
 
 	cfg.ContentStorage = chooseInstallContentStorage(
 		namespace.ContentStorageAvailability{Available: true, ProviderApp: "seaweedfs"},
-		func(string) namespace.ContentStorageType { return namespace.ContentStorageS3 })
+		func(namespace.ContentStorageAvailability) namespace.ContentStorageType { return namespace.ContentStorageS3 })
 	data, err = namespace.MarshalNamespaceConfig(&cfg)
 	require.NoError(t, err)
 	parsed, err := namespace.ParseNamespaceConfig(data)

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"slices"
 	"strconv"
 	"strings"
@@ -50,15 +51,35 @@ import (
 // run, with no persisted "done" flag, so it is right after a snapshot restore
 // or a wiped database, and it never overwrites what an administrator chose:
 //
-//  1. waits until ECOS answers (every 15 s, at most 15 min): the config and
-//     the three records must all report whether they exist. A gateway that is
-//     up is not a platform that is ready — artifacts deploy asynchronously;
+//  1. waits until ECOS answers (every 15 s, at most 15 min): the default
+//     storage config must have a value — a config that is not deployed yet
+//     answers none. A gateway that is up is not a platform that is ready:
+//     artifacts deploy asynchronously;
 //  2. a default storage other than the built-in LOCAL one is a verdict:
 //     ours → connected, anything else → admin-managed. Nothing is written;
 //  3. our storage record already there while the default is LOCAL means an
-//     administrator switched back on purpose → admin-managed, nothing written;
+//     administrator switched back on purpose → admin-managed, nothing written
+//     — UNLESS this launcher's own switch to it is still pending (the marker
+//     below), in which case the switch is finished;
 //  4. otherwise creates the records that are MISSING (never updates one) and
-//     switches the default, then reads it back → connected.
+//     switches the default, then reads it back → connected. A step that
+//     failed in a way the platform can still change (no answer, a record
+//     source not registered yet) is retried within the same budget.
+//
+// The ONE thing persisted (NsPersistedState.ContentStorageSwitchPending) is
+// the storage ref this launcher started switching to, written before its
+// first record and cleared once ECOS answers with a verdict. ECOS's records
+// cannot tell "our run created the storage and then failed or was canceled
+// before the switch" from "an administrator switched back": without the
+// marker the first reads as the second, permanently.
+//
+// ECOS's existence attribute: `_notExists` is answered TRUE only by a value
+// that does not exist (EmptyAttValue, ecos-data's NonExistentDbRecord) and by
+// a record source that is not registered (which answers EmptyAttValue). An
+// EXISTING record never says false — DbRecord, a bean value and the eapps
+// config proxy all leave the attribute unanswered (null). So "missing" is
+// exactly `true`, and a create aimed at a source that is not registered yet
+// fails and is retried rather than read as final.
 //
 // Concurrency: OnRuntimeEvent is called from the runtime's event fan-out and
 // returns at once (it only spawns). None of these methods take Daemon.configMu
@@ -545,32 +566,87 @@ func (p *contentStorageProvisioner) run(ctx context.Context, j *csJob) {
 		p.fail(j, problem)
 		return
 	}
-	client, snap, ok := p.awaitReady(ctx, j, ids, creds)
-	if !ok {
-		return
-	}
-	if state, settled := csDecide(snap, ids); settled {
-		p.settle(j, state, snap.defaultRef)
-		return
-	}
-	// Last look before the first write: nothing may be written for a
-	// namespace that is no longer active, or into a platform a snapshot is
-	// about to replace.
-	if ctx.Err() != nil {
-		return
-	}
-	if !p.platformStillUp(j) {
-		p.abort(j)
-		return
-	}
-	p.setState(j, api.ContentStorageStateProvisioning, msg.Message{})
-	if m := p.provision(ctx, client, j, snap, ids, creds); !m.Empty() {
-		if ctx.Err() == nil {
-			p.fail(j, m)
+	deadline := p.now().Add(p.readyTimeout)
+	for {
+		client, snap, ok := p.awaitReady(ctx, j, ids, creds, deadline)
+		if !ok {
+			return
 		}
-		return
+		pending := in.runtime.ContentStorageSwitch() == ids.storage
+		if state, settled := csDecide(snap, ids, pending); settled {
+			// A verdict from ECOS ends whatever switch was pending: ours is the
+			// default now, or an administrator chose another storage.
+			p.recordSwitch(ctx, j, "")
+			p.settle(j, state, snap.defaultRef)
+			return
+		}
+		// Last look before the first write: nothing may be written for a
+		// namespace that is no longer active, or into a platform a snapshot is
+		// about to replace.
+		if ctx.Err() != nil {
+			return
+		}
+		if !p.platformStillUp(j) {
+			p.abort(j)
+			return
+		}
+		// Recorded BEFORE the first write, so a failure or a daemon death
+		// anywhere between creating the storage and switching the default is
+		// finished by the next run instead of read as an administrator's
+		// choice. A run that is no longer current writes nothing at all.
+		if !p.recordSwitch(ctx, j, ids.storage) {
+			return
+		}
+		p.setState(j, api.ContentStorageStateProvisioning, msg.Message{})
+		step := p.provision(ctx, client, j, snap, ids, creds)
+		if step == nil {
+			p.recordSwitch(ctx, j, "")
+			p.settle(j, api.ContentStorageStateConnected, ids.storage)
+			return
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		if !step.retryable || !p.now().Before(deadline) {
+			p.fail(j, step.msg)
+			return
+		}
+		slog.Info("An S3 content storage step did not go through yet; asking ECOS again",
+			"ns", in.nsID, "reason", englishForLogs.Render(step.msg))
+		if !p.pause(ctx) {
+			return
+		}
 	}
-	p.settle(j, api.ContentStorageStateConnected, ids.storage)
+}
+
+// recordSwitch writes the pending-switch marker (a storage ref) or clears it
+// (""), and answers false when the run is no longer the current one — then
+// nothing is written, here or into ECOS. Held under p.mu with the job check
+// on purpose: Reset (namespace switch, delete) takes p.mu BEFORE the runtime
+// is shut down and its record deleted, so a run that lost the race cannot
+// write a state row back for a namespace that is gone. A failed write is
+// logged by the runtime and stays owed; the in-memory marker still serves
+// this process.
+func (p *contentStorageProvisioner) recordSwitch(ctx context.Context, j *csJob, storageRef string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if j != p.job || ctx.Err() != nil {
+		return false
+	}
+	_ = j.in.runtime.SetContentStorageSwitch(storageRef)
+	return true
+}
+
+// pause waits one poll interval; false when the run was canceled meanwhile.
+func (p *contentStorageProvisioner) pause(ctx context.Context) bool {
+	timer := time.NewTimer(p.pollInterval)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
 }
 
 // settle records a verdict from ECOS. Said in the log once per change, not on
@@ -589,16 +665,18 @@ func (p *contentStorageProvisioner) settle(j *csJob, state, defaultRef string) {
 
 // csDecide is the verdict ECOS's own records already give, before anything is
 // written. settled is false only when the launcher should create what is
-// missing and switch the default.
-func csDecide(snap csSnapshot, ids csRecordIDs) (state string, settled bool) {
+// missing and switch the default. switchPending is whether this launcher's
+// own switch to our storage was started and never confirmed.
+func csDecide(snap csSnapshot, ids csRecordIDs, switchPending bool) (state string, settled bool) {
 	if snap.defaultRef != "" && snap.defaultRef != csLocalStorageRef {
 		if snap.defaultRef == ids.storage {
 			return api.ContentStorageStateConnected, true
 		}
 		return api.ContentStorageStateAdminManaged, true
 	}
-	if snap.storageExists {
-		// Ours exists and the default is LOCAL: somebody switched back.
+	if snap.storageExists && !switchPending {
+		// Ours exists and the default is LOCAL, and it was not this launcher
+		// that left it half-way: somebody switched back.
 		return api.ContentStorageStateAdminManaged, true
 	}
 	return "", false
@@ -607,8 +685,7 @@ func csDecide(snap csSnapshot, ids csRecordIDs) (state string, settled bool) {
 // awaitReady polls until ECOS can answer the decision, the platform goes away
 // (abort), the answer is one that waiting will not change (error), or the
 // readiness budget runs out (error). ok is true with a snapshot to decide on.
-func (p *contentStorageProvisioner) awaitReady(ctx context.Context, j *csJob, ids csRecordIDs, creds csCredentials) (ecosRecords, csSnapshot, bool) {
-	deadline := p.now().Add(p.readyTimeout)
+func (p *contentStorageProvisioner) awaitReady(ctx context.Context, j *csJob, ids csRecordIDs, creds csCredentials, deadline time.Time) (ecosRecords, csSnapshot, bool) {
 	for {
 		if ctx.Err() != nil {
 			return nil, csSnapshot{}, false
@@ -634,12 +711,8 @@ func (p *contentStorageProvisioner) awaitReady(ctx context.Context, j *csJob, id
 			return nil, csSnapshot{}, false
 		}
 		slog.Debug("ECOS is not ready for the S3 content storage connection yet", "ns", j.in.nsID, "err", err)
-		timer := time.NewTimer(p.pollInterval)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
+		if !p.pause(ctx) {
 			return nil, csSnapshot{}, false
-		case <-timer.C:
 		}
 	}
 }
@@ -655,9 +728,52 @@ func (p *contentStorageProvisioner) probe(ctx context.Context, rt *namespace.Run
 	return client, snap, err
 }
 
-// provision creates the missing records and switches the default; a non-empty
-// message is why it stopped. Every write is logged, and none is repeated.
-func (p *contentStorageProvisioner) provision(ctx context.Context, client ecosRecords, j *csJob, snap csSnapshot, ids csRecordIDs, creds csCredentials) msg.Message {
+// csStepError is why provision stopped: the operator's sentence, and whether
+// the same run may go back to reading ECOS and try again.
+type csStepError struct {
+	msg       msg.Message
+	retryable bool
+}
+
+// stepFailed builds a csStepError from a records call that failed.
+func stepFailed(err error, m msg.Message) *csStepError {
+	return &csStepError{msg: m, retryable: csStepRetryable(err)}
+}
+
+// csStepRetryable reports whether a failed WRITE is worth another pass of the
+// same run. Narrower than the readiness poll's rule: a write answered with an
+// ordinary ERROR (HTTP 500) is a refusal that is said at once — the next
+// qualifying event retries it anyway — while no answer at all, a gateway or
+// upstream that is not there yet, and a record source that is not registered
+// yet (its app still starting: ECOS answered "does not exist" for it, which is
+// why the create was attempted) are the platform still coming up. Every write
+// is safe to repeat: the pass re-reads ECOS first, so a create that landed
+// before its answer was lost is seen and skipped, and the default switch is
+// idempotent.
+func csStepRetryable(err error) bool {
+	var rec *ecosRecordsError
+	if !errors.As(err, &rec) {
+		return false
+	}
+	switch rec.Status {
+	case 0, http.StatusNotFound, http.StatusRequestTimeout, http.StatusTooEarly, http.StatusTooManyRequests,
+		http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	}
+	return slices.ContainsFunc(rec.Messages, csSourceNotFound)
+}
+
+// csSourceNotFound reports whether a records message says the record source
+// is not registered (records' RecordsSourceNotFoundException, "Source is not
+// found with id …", and the older "Records source is not found: …").
+func csSourceNotFound(message string) bool {
+	return strings.Contains(strings.ToLower(message), "source is not found")
+}
+
+// provision creates the missing records and switches the default; a non-nil
+// answer is why it stopped. Every write is logged, and none is repeated
+// within a pass.
+func (p *contentStorageProvisioner) provision(ctx context.Context, client ecosRecords, j *csJob, snap csSnapshot, ids csRecordIDs, creds csCredentials) *csStepError {
 	app := ids.provider
 	creates := []struct {
 		exists bool
@@ -692,7 +808,8 @@ func (p *contentStorageProvisioner) provision(ctx context.Context, client ecosRe
 			continue
 		}
 		if _, err := client.Mutate(ctx, c.create, c.atts); err != nil {
-			return msg.New("contentStorage.msg.provision.createFailed", "record", c.ref, "error", creds.redact(err.Error()))
+			return stepFailed(err, msg.New("contentStorage.msg.provision.createFailed",
+				"record", c.ref, "error", creds.redact(err.Error())))
 		}
 		slog.Info("Created an ECOS record for the S3 content storage", "ns", j.in.nsID, "record", c.ref)
 	}
@@ -701,22 +818,26 @@ func (p *contentStorageProvisioner) provision(ctx context.Context, client ecosRe
 		"_value?json": map[string]any{"ref": ids.storage, "config": map[string]any{}},
 	})
 	if err != nil {
-		return msg.New("contentStorage.msg.provision.setDefaultFailed", "storage", ids.storage, "error", creds.redact(err.Error()))
+		return stepFailed(err, msg.New("contentStorage.msg.provision.setDefaultFailed",
+			"storage", ids.storage, "error", creds.redact(err.Error())))
 	}
 	slog.Info("Switched the default content storage", "ns", j.in.nsID, "storage", ids.storage)
 
 	after, err := csReadSnapshot(ctx, client, ids)
 	if err != nil {
-		return msg.New("contentStorage.msg.provision.readFailed", "error", creds.redact(err.Error()))
+		return &csStepError{
+			msg:       msg.New("contentStorage.msg.provision.readFailed", "error", creds.redact(err.Error())),
+			retryable: csRetryable(err),
+		}
 	}
 	if after.defaultRef != ids.storage {
 		actual := after.defaultRef
 		if actual == "" {
 			actual = "—"
 		}
-		return msg.New("contentStorage.msg.provision.verifyFailed", "storage", ids.storage, "actual", actual)
+		return &csStepError{msg: msg.New("contentStorage.msg.provision.verifyFailed", "storage", ids.storage, "actual", actual)}
 	}
-	return msg.Message{}
+	return nil
 }
 
 // csSnapshot is what ECOS says about the connection.
@@ -728,9 +849,9 @@ type csSnapshot struct {
 	storageExists  bool
 }
 
-// csNotReadyError is an answer that says ECOS is not done starting: a config
-// not deployed yet, a record source that cannot say whether a record exists.
-// Asking again later is the answer to it.
+// csNotReadyError is an answer that says ECOS is not done starting: a
+// default-storage config with no value yet. Asking again later is the answer
+// to it.
 type csNotReadyError struct{ reason string }
 
 func (e *csNotReadyError) Error() string { return e.reason }
@@ -754,26 +875,28 @@ func csRetryable(err error) bool {
 }
 
 // csReadSnapshot reads the default storage and the existence of the three
-// records. Every answer has to be there: a source that cannot say whether a
-// record exists is not ready, and "not there" read from it would create a
-// duplicate of something that exists.
+// records.
+//
+// The config's value is the readiness signal: a config artifact that is not
+// deployed yet is an empty record whose `_value` is null, and so is one whose
+// value nobody set — neither is "nothing chosen". A value that is not an
+// object carrying a string `ref` is not one this launcher understands, and so
+// not one it may replace: a hard error, not a reason to write.
+//
+// A record is missing only when ECOS says `_notExists` is TRUE; an existing
+// record leaves the attribute unanswered (see the file comment), so null,
+// absent and false all mean it is there.
 func csReadSnapshot(ctx context.Context, client ecosRecords, ids csRecordIDs) (csSnapshot, error) {
-	cfg, err := client.Query(ctx, []string{csConfigRef},
-		map[string]string{"value": "_value?json", "notExists": "_notExists?bool"})
+	cfg, err := client.Query(ctx, []string{csConfigRef}, map[string]string{"value": "_value?json"})
 	if err != nil {
 		return csSnapshot{}, fmt.Errorf("read the default content storage: %w", err)
 	}
-	if notExists, ok := jsonBool(cfg[0]["notExists"]); !ok || notExists {
-		return csSnapshot{}, &csNotReadyError{reason: csConfigRef + " is not deployed yet"}
-	}
 	raw := cfg[0]["value"]
 	if jsonNull(raw) {
-		return csSnapshot{}, &csNotReadyError{reason: csConfigRef + " has no value yet"}
+		return csSnapshot{}, &csNotReadyError{reason: csConfigRef + " has no value yet (not deployed yet?)"}
 	}
-	var value struct {
-		Ref string `json:"ref"`
-	}
-	if json.Unmarshal(raw, &value) != nil {
+	defaultRef, ok := csDefaultRef(raw)
+	if !ok {
 		// A value this launcher does not understand is not one it may replace.
 		return csSnapshot{}, fmt.Errorf("unexpected value of %s: %s", csConfigRef, truncateText(string(raw), 200))
 	}
@@ -784,19 +907,35 @@ func csReadSnapshot(ctx context.Context, client ecosRecords, ids csRecordIDs) (c
 		return csSnapshot{}, fmt.Errorf("read the content storage records: %w", err)
 	}
 	exists := make([]bool, len(refs))
-	for i, ref := range refs {
-		notExists, ok := jsonBool(recs[i]["notExists"])
-		if !ok {
-			return csSnapshot{}, &csNotReadyError{reason: ref + " did not say whether it exists"}
-		}
-		exists[i] = !notExists
+	for i := range refs {
+		notExists, answered := jsonBool(recs[i]["notExists"])
+		exists[i] = !answered || !notExists
 	}
 	return csSnapshot{
-		defaultRef:     strings.TrimSpace(value.Ref),
+		defaultRef:     defaultRef,
 		secretExists:   exists[0],
 		endpointExists: exists[1],
 		storageExists:  exists[2],
 	}, nil
+}
+
+// csDefaultRef reads the storage ref out of the default-storage config value:
+// a JSON object whose `ref` is a string ("" means nothing chosen). ok is false
+// for any other shape — an array, a scalar, an object without `ref`, a `ref`
+// that is null or not a string.
+func csDefaultRef(raw json.RawMessage) (ref string, ok bool) {
+	var obj map[string]json.RawMessage
+	if json.Unmarshal(raw, &obj) != nil || obj == nil {
+		return "", false
+	}
+	refRaw, present := obj["ref"]
+	if !present || !strings.HasPrefix(strings.TrimSpace(string(refRaw)), `"`) {
+		return "", false
+	}
+	if json.Unmarshal(refRaw, &ref) != nil {
+		return "", false
+	}
+	return strings.TrimSpace(ref), true
 }
 
 // jsonBool reads a JSON boolean; ok is false for anything else, null included.

@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"slices"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -44,11 +46,23 @@ func (e *errContentStorageRefused) Error() string {
 	return fmt.Sprintf("content storage refused (%s)", e.code)
 }
 
-// writeConfigGateRefusal answers the two write-gate refusals
-// persistNamespaceConfig can return — a bundle that needs a newer launcher and
-// a content-storage choice that cannot be written — and reports whether it did.
-// Every write route (create, edit, upgrade, raw config PUT) calls it before its
-// own error mapping.
+// errStoredConfigUnreadable is a write the gate could not judge because the
+// config it would replace could not be read from the store. Refused — failing
+// CLOSED: answering "DB" for a config nobody could read would let any write
+// pass as DB → DB and silently undo a one-way S3 choice.
+type errStoredConfigUnreadable struct{ err error }
+
+func (e *errStoredConfigUnreadable) Error() string {
+	return fmt.Sprintf("read the stored namespace config: %v", e.err)
+}
+
+func (e *errStoredConfigUnreadable) Unwrap() error { return e.err }
+
+// writeConfigGateRefusal answers the write-gate refusals persistNamespaceConfig
+// can return — a bundle that needs a newer launcher, a content-storage choice
+// that cannot be written, a stored config the gate could not read — and
+// reports whether it did. Every write route (create, edit, upgrade, raw config
+// PUT) calls it before its own error mapping.
 func (d *Daemon) writeConfigGateRefusal(w http.ResponseWriter, r *http.Request, err error) bool {
 	var floor *errLauncherTooOld
 	if errors.As(err, &floor) {
@@ -60,6 +74,11 @@ func (d *Daemon) writeConfigGateRefusal(w http.ResponseWriter, r *http.Request, 
 		writeErrorCode(w, http.StatusConflict, cs.code, d.translatorFor(r).Render(cs.message))
 		return true
 	}
+	var unreadable *errStoredConfigUnreadable
+	if errors.As(err, &unreadable) {
+		writeInternalError(w, err)
+		return true
+	}
 	return false
 }
 
@@ -68,7 +87,8 @@ func (d *Daemon) writeConfigGateRefusal(w http.ResponseWriter, r *http.Request, 
 func isConfigGateRefusal(err error) bool {
 	var floor *errLauncherTooOld
 	var cs *errContentStorageRefused
-	return errors.As(err, &floor) || errors.As(err, &cs)
+	var unreadable *errStoredConfigUnreadable
+	return errors.As(err, &floor) || errors.As(err, &cs) || errors.As(err, &unreadable)
 }
 
 // storedContentStorage is what the config currently in the store says about
@@ -81,24 +101,38 @@ type storedContentStorage struct {
 	bundleRef bundle.Ref
 }
 
-func (d *Daemon) loadStoredContentStorage(wsID, nsID string) storedContentStorage {
+// loadStoredContentStorage reads the stored side of the gate. No stored config
+// at all is a namespace being created: DB. A store that cannot be read is an
+// error the caller must refuse on (errStoredConfigUnreadable) — never DB. And a
+// stored file that is not even valid YAML (a hand edit of a server-mode
+// namespace.yml) is scanned as text for its contentStorage block, because a
+// syntax error anywhere in the file would otherwise read as "no block", i.e.
+// DB, on exactly the write that is meant to repair it.
+func (d *Daemon) loadStoredContentStorage(wsID, nsID string) (storedContentStorage, error) {
 	out := storedContentStorage{typ: namespace.ContentStorageDB}
 	if d.store == nil {
-		return out
+		return out, nil
 	}
 	raw, ok, err := d.store.LoadNamespaceConfig(wsID, nsID)
-	if err != nil || !ok {
-		return out
+	if err != nil {
+		return out, &errStoredConfigUnreadable{err: err}
+	}
+	if !ok {
+		return out, nil
 	}
 	var cs struct {
 		ContentStorage *namespace.ContentStorageProps `yaml:"contentStorage"`
 	}
-	if yaml.Unmarshal([]byte(raw), &cs) == nil && cs.ContentStorage != nil {
-		// An unknown type is not S3; it cannot be stored past the validation
-		// anyway.
-		if t, known := namespace.ParseContentStorageType(string(cs.ContentStorage.Type)); known {
-			out.typ = t
+	if yaml.Unmarshal([]byte(raw), &cs) == nil {
+		if cs.ContentStorage != nil {
+			// An unknown type is not S3; it cannot be stored past the
+			// validation anyway.
+			if t, known := namespace.ParseContentStorageType(string(cs.ContentStorage.Type)); known {
+				out.typ = t
+			}
 		}
+	} else {
+		out.typ = scanContentStorageType(raw)
 	}
 	var ref struct {
 		BundleRef bundle.Ref `yaml:"bundleRef"`
@@ -106,7 +140,53 @@ func (d *Daemon) loadStoredContentStorage(wsID, nsID string) storedContentStorag
 	if yaml.Unmarshal([]byte(raw), &ref) == nil {
 		out.bundleRef = ref.BundleRef
 	}
-	return out
+	return out, nil
+}
+
+// s3Word matches S3 as a word of its own, in any case.
+var s3Word = regexp.MustCompile(`(?i)(^|[^a-z0-9_])s3([^a-z0-9_]|$)`)
+
+// scanContentStorageType is the text fallback for a stored config that does
+// not parse as YAML: the top-level `contentStorage:` block — the key's own
+// line and the indented lines under it — read with comments stripped. Any S3
+// there is S3. Deliberately biased that way: reading S3 where there is none
+// only refuses a write that drops it, while missing it would let that write
+// end the one-way choice.
+func scanContentStorageType(raw string) namespace.ContentStorageType {
+	inBlock := false
+	for line := range strings.Lines(raw) {
+		line = strings.TrimRight(line, "\r\n")
+		code := stripYAMLComment(line)
+		if strings.TrimSpace(code) == "" {
+			continue
+		}
+		topLevel := line != "" && line[0] != ' ' && line[0] != '\t'
+		if topLevel {
+			key, rest, found := strings.Cut(code, ":")
+			inBlock = found && strings.TrimSpace(key) == "contentStorage"
+			if !inBlock {
+				continue
+			}
+			code = rest
+		} else if !inBlock {
+			continue
+		}
+		if s3Word.MatchString(code) {
+			return namespace.ContentStorageS3
+		}
+	}
+	return namespace.ContentStorageDB
+}
+
+// stripYAMLComment drops a `#` comment: one at the start of the line or after
+// whitespace (a `#` inside a word is not a comment in YAML).
+func stripYAMLComment(line string) string {
+	for i := 0; i < len(line); i++ {
+		if line[i] == '#' && (i == 0 || line[i-1] == ' ' || line[i-1] == '\t') {
+			return line[:i]
+		}
+	}
+	return line
 }
 
 // contentStorageRefusal is the content-storage half of the write gate. Two
@@ -173,6 +253,8 @@ func contentStorageUnavailableMessage(reason string, ref bundle.Ref, provider st
 		return msg.New("contentStorage.msg.unavailable.noProviderApp", "app", provider)
 	case namespace.ContentStorageNoProviderImage:
 		return msg.New("contentStorage.msg.unavailable.noProviderImage", "app", provider, "bundle", ref.String())
+	case namespace.ContentStorageProviderConflict:
+		return msg.New("contentStorage.msg.unavailable.providerConflict", "app", provider)
 	default:
 		return msg.New("contentStorage.msg.unavailable.bundleUnresolved", "bundle", ref.String())
 	}
@@ -227,12 +309,14 @@ func (d *Daemon) handleContentStorageOptions(w http.ResponseWriter, r *http.Requ
 	opt := api.ContentStorageOptionDto{Reason: api.ContentStorageBundleUnresolved}
 	if avail, ok := d.contentStorageAvailability(wsID, ref); ok {
 		opt = api.ContentStorageOptionDto{
-			Available:   avail.Available,
-			Reason:      avail.Reason,
-			ProviderApp: avail.ProviderApp,
+			Available:     avail.Available,
+			Reason:        avail.Reason,
+			ProviderApp:   avail.ProviderApp,
+			ProviderTitle: avail.ProviderTitle,
 		}
 	} else if s3 := d.workspaceConfigFor(wsID).ContentStorageS3(); s3 != nil {
 		opt.ProviderApp = s3.App
+		opt.ProviderTitle = s3.DisplayName()
 	}
 	writeJSON(w, api.ContentStorageOptionsDto{S3: opt})
 }
@@ -266,11 +350,13 @@ func (d *Daemon) contentStorageDto(t *i18n.Translator, act activeNamespace) *api
 	dto := &api.ContentStorageDto{Type: string(namespace.ContentStorageS3)}
 	if s3 := act.workspaceConfig.ContentStorageS3(); s3 != nil {
 		dto.ProviderApp = s3.App
+		dto.ProviderTitle = s3.DisplayName()
 	}
 	if p := act.contentStorageProblem; p != nil {
 		dto.Problem = p.Reason
 		if dto.ProviderApp == "" {
 			dto.ProviderApp = p.ProviderApp
+			dto.ProviderTitle = p.ProviderApp
 		}
 	}
 	st := d.contentStorageProv().Status(act.nsConfig.ID)

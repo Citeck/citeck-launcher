@@ -138,7 +138,13 @@ func TestContentStorageS3Availability(t *testing.T) {
 
 	t.Run("available", func(t *testing.T) {
 		got := ContentStorageS3Availability(enterpriseBundle(), ws)
-		assert.Equal(t, ContentStorageAvailability{Available: true, ProviderApp: seaweedfsApp}, got)
+		assert.Equal(t, ContentStorageAvailability{Available: true, ProviderApp: seaweedfsApp, ProviderTitle: "SeaweedFS"}, got)
+
+		untitled := *ws
+		untitled.ContentStorage = &bundle.ContentStorageConfig{S3: new(*ws.ContentStorageS3())}
+		untitled.ContentStorage.S3.Title = ""
+		assert.Equal(t, seaweedfsApp, ContentStorageS3Availability(enterpriseBundle(), &untitled).ProviderTitle,
+			"no title: the app id is the label")
 	})
 
 	// A bundle without ecos-content HIDES the option, so its answer must win
@@ -178,6 +184,50 @@ func TestContentStorageS3Availability(t *testing.T) {
 		bun := enterpriseBundle()
 		bun.Dependencies = nil
 		assert.Equal(t, ContentStorageNoProviderImage, ContentStorageS3Availability(bun, ws).Reason)
+	})
+
+	// A name the generator keeps for a platform app — a built-in, or a webapp
+	// the workspace lists and the bundle carries — would get the platform app,
+	// never the provider: the collision guard skips the entry.
+	t.Run("a provider named like a platform app", func(t *testing.T) {
+		renamed := func(name string, webapps ...string) *bundle.WorkspaceConfig {
+			out := *ws
+			out.AdditionalApps = slices.Clone(ws.AdditionalApps)
+			out.AdditionalApps[0].Name = name
+			out.ContentStorage = &bundle.ContentStorageConfig{S3: new(*ws.ContentStorageS3())}
+			out.ContentStorage.S3.App = name
+			for _, w := range webapps {
+				out.Webapps = append(out.Webapps, bundle.WebappConfig{ID: w})
+			}
+			return &out
+		}
+		bun := enterpriseBundle()
+		bun.Applications["edi"] = bundle.AppDef{Image: "enterprise/ecos-edi:1.0"}
+		bun.Dependencies[appdef.AppGateway] = bundle.AppDef{Image: "chrislusf/seaweedfs:4.48"}
+
+		assert.Equal(t, ContentStorageProviderConflict, ContentStorageS3Availability(bun, renamed(appdef.AppGateway)).Reason)
+		assert.Equal(t, ContentStorageProviderConflict, ContentStorageS3Availability(bun, renamed(appdef.AppContent)).Reason)
+		assert.Equal(t, ContentStorageProviderConflict, ContentStorageS3Availability(bun, renamed("edi", "edi", "content")).Reason,
+			"a webapp the workspace lists stays a webapp")
+		assert.True(t, ContentStorageS3Availability(bun, renamed("edi")).Available,
+			"with no webapps list the entry claims the bundle application of its name")
+	})
+
+	// A provider that depends on ecos-content — directly or through another
+	// entry — would close a dependsOn cycle once content depends on it.
+	t.Run("a provider that depends on content", func(t *testing.T) {
+		withDeps := func(entryDeps []string, extra ...bundle.AdditionalAppProps) *bundle.WorkspaceConfig {
+			out := *ws
+			out.AdditionalApps = append(slices.Clone(ws.AdditionalApps), extra...)
+			out.AdditionalApps[0].DependsOn = entryDeps
+			return &out
+		}
+		assert.Equal(t, ContentStorageProviderConflict,
+			ContentStorageS3Availability(enterpriseBundle(), withDeps([]string{appdef.AppContent})).Reason)
+		helper := bundle.AdditionalAppProps{Name: "helper", Image: "busybox", DependsOn: []string{appdef.AppContent}}
+		assert.Equal(t, ContentStorageProviderConflict,
+			ContentStorageS3Availability(enterpriseBundle(), withDeps([]string{"helper"}, helper)).Reason)
+		assert.True(t, ContentStorageS3Availability(enterpriseBundle(), withDeps([]string{appdef.AppGateway})).Available)
 	})
 
 	// The image rule is the generator's: the entry's own image is a fallback.
@@ -294,6 +344,69 @@ func TestWireContentStorage_NoContentAppIsReported(t *testing.T) {
 	resp := generateContentStorage(t, s3Cfg(), bun, contentStorageWorkspace(t), contentStorageSecrets())
 	require.NotNil(t, resp.ContentStorageProblem)
 	assert.Equal(t, ContentStorageNoContentApp, resp.ContentStorageProblem.Reason)
+}
+
+// A provider that depends on ecos-content would close a dependsOn cycle once
+// content depends on it — and a cycle FAILS the generation, i.e. the
+// namespace's load and possibly the daemon's boot, over a workspace entry the
+// operator may not be able to edit. Reported, never wired, never an error.
+func TestWireContentStorage_AProviderThatDependsOnContentIsReported(t *testing.T) {
+	t.Run("directly, in the workspace entry", func(t *testing.T) {
+		ws := contentStorageWorkspace(t)
+		ws.AdditionalApps = slices.Clone(ws.AdditionalApps)
+		ws.AdditionalApps[0].DependsOn = []string{appdef.AppContent}
+		resp := generateContentStorage(t, s3Cfg(), enterpriseBundle(), ws, contentStorageSecrets())
+		content := findGeneratedApp(resp, appdef.AppContent)
+		require.NotNil(t, content)
+		assert.NotContains(t, content.DependsOn, seaweedfsApp)
+		require.NotNil(t, resp.ContentStorageProblem)
+		assert.Equal(t, ContentStorageProviderConflict, resp.ContentStorageProblem.Reason)
+	})
+
+	// Only the generation sees this one: the provider depends on a webapp,
+	// and it is the namespace's own config that makes the webapp wait for
+	// ecos-content. The DB namespace generates fine; S3 must as well.
+	t.Run("through an app the namespace makes wait for content", func(t *testing.T) {
+		ws := contentStorageWorkspace(t)
+		ws.AdditionalApps = slices.Clone(ws.AdditionalApps)
+		ws.AdditionalApps[0].DependsOn = []string{appdef.AppEmodel}
+		cfg := s3Cfg()
+		cfg.Webapps = map[string]WebappProps{appdef.AppEmodel: {DependsOn: []string{appdef.AppContent}}}
+		require.True(t, ContentStorageS3Availability(enterpriseBundle(), ws).Available,
+			"the static answer cannot see the namespace's own dependsOn")
+
+		resp := generateContentStorage(t, cfg, enterpriseBundle(), ws, contentStorageSecrets())
+		content := findGeneratedApp(resp, appdef.AppContent)
+		require.NotNil(t, content)
+		assert.NotContains(t, content.DependsOn, seaweedfsApp)
+		require.NotNil(t, resp.ContentStorageProblem)
+		assert.Equal(t, ContentStorageProviderConflict, resp.ContentStorageProblem.Reason)
+	})
+}
+
+// A provider whose name the generator gives to a platform app — here the
+// vector store, which a bundle naming a qdrant image generates before any
+// additionalApps entry — is skipped by the collision guard. The app that then
+// exists under that name is NOT the S3 server, and content must not be wired
+// to it.
+func TestWireContentStorage_AProviderSkippedByTheCollisionGuardIsReported(t *testing.T) {
+	ws := contentStorageWorkspace(t)
+	ws.AdditionalApps = slices.Clone(ws.AdditionalApps)
+	ws.AdditionalApps[0].Name = appdef.AppQdrant
+	ws.ContentStorage = &bundle.ContentStorageConfig{S3: new(*ws.ContentStorageS3())}
+	ws.ContentStorage.S3.App = appdef.AppQdrant
+	bun := enterpriseBundle()
+	bun.Dependencies[appdef.AppQdrant] = bundle.AppDef{Image: "qdrant/qdrant:v1.15.5"}
+
+	resp := generateContentStorage(t, s3Cfg(), bun, ws, contentStorageSecrets())
+	qdrant := findGeneratedApp(resp, appdef.AppQdrant)
+	require.NotNil(t, qdrant, "the platform app keeps its name")
+	assert.Equal(t, "qdrant/qdrant:v1.15.5", qdrant.Image)
+	content := findGeneratedApp(resp, appdef.AppContent)
+	require.NotNil(t, content)
+	assert.NotContains(t, content.DependsOn, appdef.AppQdrant)
+	require.NotNil(t, resp.ContentStorageProblem)
+	assert.Equal(t, ContentStorageProviderConflict, resp.ContentStorageProblem.Reason)
 }
 
 // The provider is detached by the default template; on an S3 namespace that

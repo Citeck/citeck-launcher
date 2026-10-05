@@ -105,7 +105,7 @@ function optionsByRepo(byBundle: Record<string, ContentStorageOptionDto>) {
   }))
 }
 
-const AVAILABLE: ContentStorageOptionDto = { available: true, providerApp: 'seaweedfs' }
+const AVAILABLE: ContentStorageOptionDto = { available: true, providerApp: 'seaweedfs', providerTitle: 'SeaweedFS' }
 
 async function openCreate(defaults: { bundleRepo: string; bundleKey: string }) {
   vi.mocked(getNamespaceCreateDefaults).mockResolvedValue({
@@ -123,8 +123,10 @@ async function submit(label: RegExp) {
 
 describe('NamespaceEditDialog content storage', () => {
   // Community bundles have no ecos-content: the form must stay exactly what it
-  // was, and the payload must not carry the field.
-  it('asks nothing on a bundle without ecos-content, and sends nothing', async () => {
+  // was. What it creates is still said out loud — the database — because the
+  // daemon reads the request alone: an absent field must never leave room for
+  // anything else (a template) to decide a one-way choice the form did not show.
+  it('asks nothing on a bundle without ecos-content, and creates on the database', async () => {
     await openCreate({ bundleRepo: 'community', bundleKey: '2026.2' })
     await waitFor(() => expect(getContentStorageOptions).toHaveBeenCalledWith('community', '2026.2', undefined, expect.anything()))
 
@@ -133,7 +135,18 @@ describe('NamespaceEditDialog content storage', () => {
 
     await submit(/^Submit$/)
     await waitFor(() => expect(createNamespace).toHaveBeenCalled())
-    expect(vi.mocked(createNamespace).mock.calls[0][0].contentStorage).toBeUndefined()
+    expect(vi.mocked(createNamespace).mock.calls[0][0].contentStorage).toBe('DB')
+  })
+
+  // What the form shows selected is exactly what is sent.
+  it('sends the database when the database is what the form shows', async () => {
+    optionsByRepo({ enterprise: AVAILABLE })
+    await openCreate({ bundleRepo: 'enterprise', bundleKey: '2026.3' })
+    expect(((await screen.findByRole('radio', { name: /Database/ })) as HTMLInputElement).checked).toBe(true)
+
+    await submit(/^Submit$/)
+    await waitFor(() => expect(createNamespace).toHaveBeenCalled())
+    expect(vi.mocked(createNamespace).mock.calls[0][0].contentStorage).toBe('DB')
   })
 
   it('offers S3 on an Enterprise bundle, defaults to the database, and sends S3 only when chosen', async () => {
@@ -180,7 +193,7 @@ describe('NamespaceEditDialog content storage', () => {
 
     await submit(/^Submit$/)
     await waitFor(() => expect(createNamespace).toHaveBeenCalled())
-    expect(vi.mocked(createNamespace).mock.calls[0][0].contentStorage).toBeUndefined()
+    expect(vi.mocked(createNamespace).mock.calls[0][0].contentStorage).toBe('DB')
   })
 
   // An answer is about ONE bundle. Until the daemon has answered for the new
@@ -197,7 +210,7 @@ describe('NamespaceEditDialog content storage', () => {
     expect(screen.queryByRole('radio', { name: /^S3/ })).toBeNull()
     await submit(/^Submit$/)
     await waitFor(() => expect(createNamespace).toHaveBeenCalled())
-    expect(vi.mocked(createNamespace).mock.calls[0][0].contentStorage).toBeUndefined()
+    expect(vi.mocked(createNamespace).mock.calls[0][0].contentStorage).toBe('DB')
   })
 
   it('lets a DB namespace switch to S3, and sends exactly that switch', async () => {
@@ -211,6 +224,23 @@ describe('NamespaceEditDialog content storage', () => {
     await submit(/^Save$/)
     await waitFor(() => expect(putNamespaceEdit).toHaveBeenCalled())
     expect(vi.mocked(putNamespaceEdit).mock.calls[0][1].contentStorage).toBe('S3')
+  })
+
+  // The options endpoint answers for the bundle; only the edit GET knows the
+  // namespace already keeps its content in an external S3, which S3 content
+  // storage cannot be combined with. Offering the switch would only lead to a
+  // refusal on save.
+  it('shows S3 disabled on a namespace with an external S3, and sends nothing', async () => {
+    optionsByRepo({ enterprise: AVAILABLE })
+    await open(edited({ bundleRepo: 'enterprise', bundleKey: '2026.3', contentStorage: 'DB', externalS3: true }))
+
+    const s3 = await screen.findByRole('radio', { name: /^S3 \(SeaweedFS\)/ })
+    expect((s3 as HTMLInputElement).disabled).toBe(true)
+    expect(screen.getByText(/keeps its content in an external S3/)).toBeDefined()
+
+    await submit(/^Save$/)
+    await waitFor(() => expect(putNamespaceEdit).toHaveBeenCalled())
+    expect(vi.mocked(putNamespaceEdit).mock.calls[0][1].contentStorage).toBeUndefined()
   })
 
   it('leaves a DB namespace untouched when the database stays chosen', async () => {
@@ -245,8 +275,8 @@ describe('NamespaceEditDialog content storage', () => {
     // Unavailable for BOTH versions: what differs is only whether the bundle
     // moved.
     optionsByRepo({
-      'enterprise:2026.3': { available: false, reason: 'NO_PROVIDER_IMAGE', providerApp: 'seaweedfs' },
-      'enterprise:2026.2': { available: false, reason: 'NO_PROVIDER_IMAGE', providerApp: 'seaweedfs' },
+      'enterprise:2026.3': { available: false, reason: 'NO_PROVIDER_IMAGE', providerApp: 'seaweedfs', providerTitle: 'SeaweedFS' },
+      'enterprise:2026.2': { available: false, reason: 'NO_PROVIDER_IMAGE', providerApp: 'seaweedfs', providerTitle: 'SeaweedFS' },
     })
     await open(edited({ bundleRepo: 'enterprise', bundleKey: '2026.3', contentStorage: 'S3' }))
     // The provider's name comes from the answer — so it is in.

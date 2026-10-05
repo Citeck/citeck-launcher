@@ -675,6 +675,11 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 		}
 		runtime.RestoreEditedState(appPatches, fEdits)
 		runtime.RestoreRestartState(persistedState.RestartEvents, persistedState.RestartCounts)
+		// The S3 content-storage switch the launcher started and did not see
+		// confirmed (a failure or a daemon death between creating the storage
+		// and switching the default): without it the next connection run would
+		// read "our storage, default LOCAL" as an administrator's choice.
+		runtime.RestoreContentStorageSwitch(persistedState.ContentStorageSwitchPending)
 	} else if len(genOpts.DetachedApps) > 0 {
 		// First start with template detached apps — apply to runtime
 		runtime.SetManualStoppedApps(genOpts.DetachedApps)

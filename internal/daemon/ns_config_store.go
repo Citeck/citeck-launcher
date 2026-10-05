@@ -103,8 +103,10 @@ func (d *Daemon) resolveBundleOffline(wsID string, ref bundle.Ref) (*bundle.Reso
 //
 // It is also where the write gates live, each comparing the config being
 // written with the bundle it names (and, for content storage, with the config
-// it replaces): a refusal comes back as *errLauncherTooOld or
-// *errContentStorageRefused, and writeConfigGateRefusal renders both.
+// it replaces): a refusal comes back as *errLauncherTooOld,
+// *errContentStorageRefused or *errStoredConfigUnreadable (the config being
+// replaced could not be read, so the one-way rule could not be checked), and
+// writeConfigGateRefusal renders each.
 func (d *Daemon) persistNamespaceConfig(wsID, nsID string, bytesToStore []byte) error {
 	cfg, err := namespace.ValidateYAML(bytesToStore)
 	if err != nil {
@@ -113,7 +115,11 @@ func (d *Daemon) persistNamespaceConfig(wsID, nsID string, bytesToStore []byte) 
 	if refusal := d.launcherFloorRefusal(wsID, cfg); refusal != nil {
 		return refusal
 	}
-	if refusal := d.contentStorageRefusal(wsID, d.loadStoredContentStorage(wsID, nsID), cfg); refusal != nil {
+	stored, err := d.loadStoredContentStorage(wsID, nsID)
+	if err != nil {
+		return err
+	}
+	if refusal := d.contentStorageRefusal(wsID, stored, cfg); refusal != nil {
 		return refusal
 	}
 	if err := d.store.SaveNamespaceConfig(wsID, nsID, cfg.Name, string(bytesToStore)); err != nil {

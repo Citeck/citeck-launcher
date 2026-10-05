@@ -8,6 +8,9 @@
 contentStorage:
   s3:
     app: seaweedfs
+    # The product name the content storage option is labelled with:
+    # "S3 (SeaweedFS)". Optional; the app id stands in for it.
+    title: SeaweedFS
     # The endpoint as ecos-content reaches it: the entry's name and S3 port on
     # the namespace network.
     url: http://seaweedfs:8333

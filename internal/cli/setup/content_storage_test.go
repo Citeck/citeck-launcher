@@ -116,9 +116,10 @@ func TestContentStorageSetting_CurrentValue(t *testing.T) {
 
 func TestContentStorageSwitchCheck(t *testing.T) {
 	t.Run("available: the provider comes from the workspace", func(t *testing.T) {
-		provider, refusal := contentStorageSwitchCheck(csSetupContext(t, true), csNamespace(""))
+		avail, refusal := contentStorageSwitchCheck(csSetupContext(t, true), csNamespace(""))
 		assert.Empty(t, refusal)
-		assert.Equal(t, "seaweedfs", provider)
+		assert.Equal(t, "seaweedfs", avail.ProviderApp)
+		assert.Equal(t, "S3 (seaweedfs)", avail.OptionLabel(), "no title in this workspace: the app id is the label")
 	})
 	t.Run("S3 never goes back to DB", func(t *testing.T) {
 		_, refusal := contentStorageSwitchCheck(csSetupContext(t, true), csNamespace(namespace.ContentStorageS3))
@@ -232,6 +233,8 @@ func TestWriteThroughDaemon(t *testing.T) {
 type fakeSetupDaemon struct {
 	refuse string
 	puts   [][]byte
+	// nsStatus is the namespace status the daemon reports; "" is RUNNING.
+	nsStatus string
 }
 
 func (f *fakeSetupDaemon) serve(t *testing.T) {
@@ -271,8 +274,12 @@ func (f *fakeSetupDaemon) serveWith(t *testing.T, onPut func(body []byte) int) {
 		_ = json.NewEncoder(w).Encode(api.ActionResultDto{Success: true, Message: "Configuration saved and applied"})
 	})
 	mux.HandleFunc(api.Namespace, func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(api.NamespaceDto{ID: "default", Status: "RUNNING",
-			Apps: []api.AppDto{{Name: "seaweedfs", Status: api.AppStatusRunning}}})
+		status, appStatus := "RUNNING", api.AppStatusRunning
+		if f.nsStatus != "" {
+			status, appStatus = f.nsStatus, api.AppStatusStopped
+		}
+		_ = json.NewEncoder(w).Encode(api.NamespaceDto{ID: "default", Status: status,
+			Apps: []api.AppDto{{Name: "seaweedfs", Status: appStatus}}})
 	})
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	go func() { _ = srv.Serve(ln) }()
@@ -326,6 +333,39 @@ func TestApplyThroughDaemon_TheDaemonWritesAndSetupRecords(t *testing.T) {
 	assert.Equal(t, "content-storage", entries[0].Record.Setting)
 	assert.Equal(t, "S3", entries[0].Record.Input["type"])
 	assert.Contains(t, out, "Content storage is now S3: seaweedfs is starting")
+}
+
+// On a STOPPED namespace the daemon only clears the provider's detach and
+// regenerates: nothing starts until the namespace does. Saying "is starting"
+// and then waiting — which reports every app as updated while all of them are
+// stopped — would be untrue; the operator is told to start the namespace.
+func TestApplyThroughDaemon_AStoppedNamespaceIsToldToStart(t *testing.T) {
+	f := &fakeSetupDaemon{nsStatus: "STOPPED"}
+	f.serve(t)
+	before, after, _ := applyFixture(t)
+	forward, reverse, err := computeSettingDiff(NamespaceFile, before, after, nil, nil)
+	require.NoError(t, err)
+
+	out := captureStdout(t, func() {
+		require.NoError(t, applyThroughDaemon("content-storage", csSetupContext(t, true), after, nil,
+			before, nil, forward, reverse, func() {}))
+	})
+	require.Len(t, f.puts, 1)
+	assert.Contains(t, out, "The namespace is stopped: seaweedfs starts with it")
+	assert.Contains(t, out, "citeck start")
+	assert.NotContains(t, out, "is starting")
+	assert.NotContains(t, out, "updated successfully", "nothing was waited for")
+}
+
+func TestContentStorageSwitchedNote(t *testing.T) {
+	note, wait := contentStorageSwitchedNote("STOPPED", "seaweedfs")
+	assert.False(t, wait)
+	assert.Contains(t, note, "citeck start")
+	for _, status := range []string{"RUNNING", "STARTING", "STALLED", ""} {
+		note, wait = contentStorageSwitchedNote(status, "seaweedfs")
+		assert.True(t, wait, status)
+		assert.Contains(t, note, "seaweedfs is starting", status)
+	}
 }
 
 // A refusal by the daemon's gate leaves everything as it was: the in-memory

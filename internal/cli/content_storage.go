@@ -27,10 +27,7 @@ func contentStorageStatusLine(ns *api.NamespaceDto) string {
 		return ""
 	}
 	cs := ns.ContentStorage
-	label := "S3"
-	if cs.ProviderApp != "" {
-		label += " (" + cs.ProviderApp + ")"
-	}
+	label := namespace.S3OptionLabel(cs.ProviderTitle, cs.ProviderApp)
 	if cs.Problem != "" {
 		return label + " — " + output.Colorize(output.Red,
 			t("cli.contentStorage.problem", "reason", contentStorageProblemText(cs.Problem, cs.ProviderApp)))
@@ -47,6 +44,14 @@ func contentStorageStatusLine(ns *api.NamespaceDto) string {
 	case api.ContentStorageStateProvisioning:
 		return label + " — " + output.Colorize(output.Yellow, t("cli.contentStorage.state.provisioning"))
 	case api.ContentStorageStatePending, "":
+		if ns.Status == string(namespace.NsStatusStopped) {
+			// Not a wait: nothing happens on a stopped namespace, and the
+			// daemon keeps no "connected" flag, so every S3 namespace reads
+			// pending while stopped — and after every daemon restart —
+			// connected or not. Said neutrally, as the web banner does by
+			// showing nothing.
+			return label + " — " + t("cli.contentStorage.state.checkedOnStart")
+		}
 		return label + " — " + output.Colorize(output.Yellow, t("cli.contentStorage.state.pending"))
 	default:
 		// A state a newer daemon knows and this CLI does not: say it as it
@@ -67,6 +72,8 @@ func contentStorageProblemText(code, providerApp string) string {
 		return t("cli.contentStorage.problem.noProviderApp", "app", providerApp)
 	case namespace.ContentStorageNoProviderImage:
 		return t("cli.contentStorage.problem.noProviderImage", "app", providerApp)
+	case namespace.ContentStorageProviderConflict:
+		return t("cli.contentStorage.problem.providerConflict", "app", providerApp)
 	case namespace.ContentStorageProviderNotGenerated:
 		return t("cli.contentStorage.problem.providerNotGenerated", "app", providerApp)
 	default:

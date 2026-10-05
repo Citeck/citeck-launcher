@@ -2,6 +2,8 @@ package namespace
 
 import (
 	"log/slog"
+	"slices"
+	"strings"
 
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/bundle"
@@ -26,6 +28,13 @@ const (
 	ContentStorageNoProviderConfig = "NO_PROVIDER_CONFIG"
 	ContentStorageNoProviderApp    = "NO_PROVIDER_APP"
 	ContentStorageNoProviderImage  = "NO_PROVIDER_IMAGE"
+	// ContentStorageProviderConflict: the provider cannot be part of the
+	// stand as the workspace declares it — its name is a platform app's (a
+	// built-in, or a webapp the workspace lists and the bundle carries, which
+	// the generator keeps and skips the entry for), or it depends on
+	// ecos-content itself, which content's own dependency on it would turn
+	// into a cycle.
+	ContentStorageProviderConflict = "PROVIDER_CONFLICT"
 	// ContentStorageProviderNotGenerated is a GENERATION problem, never an
 	// availability answer: the configuration offers a provider, but this
 	// generation left it out — a `${secret:}` it references has no value in
@@ -42,6 +51,29 @@ type ContentStorageAvailability struct {
 	// ProviderApp is the workspace's `contentStorage.s3.app`, "" when the
 	// workspace names none.
 	ProviderApp string
+	// ProviderTitle is the provider's name for a label (`contentStorage.s3.
+	// title`, else the app id), "" when the workspace names none.
+	ProviderTitle string
+}
+
+// OptionLabel is the S3 option's label, "S3 (<provider title>)", or plain
+// "S3" while the workspace names no provider. Both the CLI and the web build
+// it the same way, from configuration: the launcher spells no product name.
+func (a ContentStorageAvailability) OptionLabel() string {
+	return S3OptionLabel(a.ProviderTitle, a.ProviderApp)
+}
+
+// S3OptionLabel is OptionLabel for a title and an app id read from a DTO: the
+// title, else the app id, else nothing.
+func S3OptionLabel(title, app string) string {
+	name := strings.TrimSpace(title)
+	if name == "" {
+		name = strings.TrimSpace(app)
+	}
+	if name == "" {
+		return "S3"
+	}
+	return "S3 (" + name + ")"
 }
 
 // ContentStorageS3Availability is the one answer to "may this namespace store
@@ -52,12 +84,14 @@ type ContentStorageAvailability struct {
 // The checks run in the order the UI needs them: a bundle without ecos-content
 // HIDES the option, so that answer must win over every configuration problem.
 // The provider's image is resolved by the precedence generateAdditionalApps
-// applies (additionalAppImage), so "available" here means the generator will
-// really emit the container.
+// applies (additionalAppImage), and a name the generator's collision guard
+// would skip the entry for is refused, so "available" here means the
+// generator will really emit the container.
 func ContentStorageS3Availability(bun *bundle.Def, ws *bundle.WorkspaceConfig) ContentStorageAvailability {
 	var out ContentStorageAvailability
 	if s3 := ws.ContentStorageS3(); s3 != nil {
 		out.ProviderApp = s3.App
+		out.ProviderTitle = s3.DisplayName()
 	}
 	switch {
 	case bun == nil || bun.Applications[appdef.AppContent].Image == "":
@@ -69,6 +103,8 @@ func ContentStorageS3Availability(bun *bundle.Def, ws *bundle.WorkspaceConfig) C
 		switch {
 		case !ok:
 			out.Reason = ContentStorageNoProviderApp
+		case providerNameTaken(bun, ws, out.ProviderApp) || dependsOnContent(ws, entry):
+			out.Reason = ContentStorageProviderConflict
 		case additionalAppImage(bun, ws, entry) == "":
 			out.Reason = ContentStorageNoProviderImage
 		default:
@@ -76,6 +112,47 @@ func ContentStorageS3Availability(bun *bundle.Def, ws *bundle.WorkspaceConfig) C
 		}
 	}
 	return out
+}
+
+// providerNameTaken reports whether the generator would keep a platform app
+// under this name and skip the provider's entry (generateAdditionalApps'
+// collision guard): a built-in, or a bundle webapp the workspace lists in
+// `webapps:` — a listed webapp is never claimed by an additionalApps entry.
+// The guard itself sees the full generated set; this is the part of it the
+// bundle and the workspace already answer, which is what the write gate has.
+func providerNameTaken(bun *bundle.Def, ws *bundle.WorkspaceConfig, name string) bool {
+	if name == appdef.AppContent || bundle.IsReservedAppName(name) {
+		return true
+	}
+	if _, inBundle := bun.Applications[name]; !inBundle || ws == nil {
+		return false
+	}
+	return slices.ContainsFunc(ws.Webapps, func(w bundle.WebappConfig) bool { return w.ID == name })
+}
+
+// dependsOnContent reports whether a workspace entry depends on ecos-content,
+// directly or through other raw additionalApps entries. Content's dependency
+// on its provider would close that into a cycle. Apps outside the workspace's
+// entries are not followed here — the generation walk (wireContentStorage)
+// sees the whole generated set.
+func dependsOnContent(ws *bundle.WorkspaceConfig, entry bundle.AdditionalAppProps) bool {
+	visited := map[string]bool{strings.TrimSpace(entry.Name): true}
+	queue := slices.Clone(entry.DependsOn)
+	for len(queue) > 0 {
+		dep := strings.TrimSpace(queue[0])
+		queue = queue[1:]
+		if dep == appdef.AppContent {
+			return true
+		}
+		if visited[dep] {
+			continue
+		}
+		visited[dep] = true
+		if next, ok := ws.AdditionalApp(dep); ok {
+			queue = append(queue, next.DependsOn...)
+		}
+	}
+	return false
 }
 
 // RequiredApps lists the apps this namespace's own configuration requires to
@@ -141,39 +218,70 @@ func wireContentStorage(ctx *NsGenContext) {
 			"reason", avail.Reason, "provider", avail.ProviderApp)
 		return
 	}
-	if !survivesPrune(ctx, avail.ProviderApp) {
+	if ctx.collidedAdditionalApps[avail.ProviderApp] {
+		// The generator kept a platform app under the provider's name and
+		// skipped the entry: the app that exists is not the S3 server.
+		ctx.ContentStorageProblem = &ContentStorageProblem{
+			Reason: ContentStorageProviderConflict, ProviderApp: avail.ProviderApp,
+		}
+		slog.Warn("The S3 content storage provider's name belongs to a platform app; ecos-content is not wired to it",
+			"provider", avail.ProviderApp)
+		return
+	}
+	survives, reachesContent := providerClosure(ctx, avail.ProviderApp)
+	switch {
+	case reachesContent:
+		// content → provider → … → content: wiring it would be a dependsOn
+		// cycle, which fails the whole generation (detectDependencyCycles) —
+		// over a workspace entry the operator may not even be able to edit.
+		ctx.ContentStorageProblem = &ContentStorageProblem{
+			Reason: ContentStorageProviderConflict, ProviderApp: avail.ProviderApp,
+		}
+		slog.Warn("The S3 content storage provider depends on ecos-content; ecos-content is not wired to it",
+			"provider", avail.ProviderApp)
+	case !survives:
 		ctx.ContentStorageProblem = &ContentStorageProblem{
 			Reason: ContentStorageProviderNotGenerated, ProviderApp: avail.ProviderApp,
 		}
 		slog.Warn("The S3 content storage provider is not part of this generation; ecos-content is not wired to it",
 			"provider", avail.ProviderApp)
-		return
+	default:
+		content.AddDependsOn(avail.ProviderApp)
 	}
-	content.AddDependsOn(avail.ProviderApp)
 }
 
-// survivesPrune reports whether an app is generated and will be kept by
-// pruneAppsWithMissingDeps, i.e. every app it depends on, transitively, is
-// generated too. The visited set keeps a dependency cycle (refused later by
-// detectDependencyCycles) from spinning here first.
-func survivesPrune(ctx *NsGenContext, name string) bool {
+// providerClosure walks the provider's dependsOn closure in the generated
+// set. survives is whether the app is generated and will be kept by
+// pruneAppsWithMissingDeps (every app it depends on, transitively, is
+// generated too); reachesContent is whether ecos-content is in the closure,
+// i.e. whether content's dependency on the provider would close a cycle. The
+// visited set keeps an existing cycle (refused later by detectDependencyCycles)
+// from spinning here first.
+func providerClosure(ctx *NsGenContext, provider string) (survives, reachesContent bool) {
+	if provider == appdef.AppContent {
+		return true, true
+	}
 	visited := make(map[string]bool)
-	var walk func(string) bool
-	walk = func(app string) bool {
+	survives = true
+	var walk func(string)
+	walk = func(app string) {
 		if visited[app] {
-			return true
+			return
 		}
 		visited[app] = true
+		if app == appdef.AppContent {
+			reachesContent = true
+			return
+		}
 		b, ok := ctx.Applications[app]
 		if !ok {
-			return false
+			survives = false
+			return
 		}
 		for _, dep := range b.DependsOn {
-			if !walk(dep) {
-				return false
-			}
+			walk(dep)
 		}
-		return true
 	}
-	return walk(name)
+	walk(provider)
+	return survives, reachesContent
 }

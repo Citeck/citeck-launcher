@@ -50,6 +50,16 @@ type NsPersistedState struct {
 	DependencyMigration *deps.MigrationJournal `json:"dependencyMigration,omitempty"`
 	// LastDependencyMigration is the verdict of the most recent migration.
 	LastDependencyMigration *deps.MigrationResult `json:"lastDependencyMigration,omitempty"`
+
+	// ContentStorageSwitchPending is the ECOS storage ref the daemon has
+	// started connecting ecos-content to but has not yet seen ECOS confirm as
+	// the default: written before the first record is created, cleared once
+	// the default reads back as that storage (or ECOS shows an administrator's
+	// own choice). It is NOT a "done" flag — the verdict is still derived from
+	// ECOS on every run. It only tells the launcher's own unfinished switch
+	// ("our storage exists, the default is still LOCAL") apart from an
+	// administrator who switched back on purpose, which ECOS alone cannot.
+	ContentStorageSwitchPending string `json:"contentStorageSwitchPending,omitempty"`
 }
 
 // statePath returns the path to the persisted state file (namespace-scoped).

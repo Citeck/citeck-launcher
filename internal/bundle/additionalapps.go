@@ -182,6 +182,12 @@ var reservedAppNames = map[string]bool{
 	appdef.AppSttSidecar: true,
 }
 
+// IsReservedAppName reports whether name is one of the built-in infra/core
+// container names an additional app may not reuse (reservedAppNames).
+func IsReservedAppName(name string) bool {
+	return reservedAppNames[strings.TrimSpace(name)]
+}
+
 // overridableTypedNames are the built-in dependencies a TYPED entry may name:
 // doing so configures that cluster rather than colliding with it (the settings
 // are merged onto the launcher's own defaults, field by field).

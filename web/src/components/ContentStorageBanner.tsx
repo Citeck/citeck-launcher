@@ -48,7 +48,10 @@ export function ContentStorageBanner() {
   const { t } = useTranslation()
 
   if (!cs) return null
-  const app = cs.providerApp || 'S3'
+  // Sentences name the provider by its app id (the row in the app table). It
+  // is empty only when the workspace names no provider at all — then a title
+  // without it, never a stand-in like "(S3)".
+  const app = cs.providerApp
 
   if (cs.problem) {
     return (
@@ -58,7 +61,9 @@ export function ContentStorageBanner() {
       >
         <AlertTriangle size={14} className="mt-0.5 shrink-0" />
         <div className="min-w-0 flex-1">
-          <div className="font-medium">{t('contentStorage.banner.problem.title', { app })}</div>
+          <div className="font-medium">
+            {app ? t('contentStorage.banner.problem.title', { app }) : t('contentStorage.banner.problem.titleNoApp')}
+          </div>
           <div className="text-muted-foreground">{contentStorageProblemText(cs.problem, cs.providerApp, t)}</div>
           <div className="text-muted-foreground">{t('contentStorage.banner.problem.hint')}</div>
         </div>
@@ -87,7 +92,9 @@ export function ContentStorageBanner() {
       >
         <AlertTriangle size={14} className="mt-0.5 shrink-0" />
         <div className="min-w-0 flex-1">
-          <div className="font-medium">{t('contentStorage.banner.error.title', { app })}</div>
+          <div className="font-medium">
+            {app ? t('contentStorage.banner.error.title', { app }) : t('contentStorage.banner.error.titleNoApp')}
+          </div>
           {/* The daemon's own sentence, already in this reader's language — it
               is the only part that says WHICH step failed. */}
           {cs.error && <div className="text-muted-foreground">{t('contentStorage.banner.error.reason', { reason: cs.error })}</div>}
@@ -108,6 +115,9 @@ export function ContentStorageBanner() {
 
   if (!isContentStorageInProgress(cs.state)) return null
   if (nsStatus === 'STOPPED' || dismissedNs === nsId) return null
+  // No provider named, no generation problem: nothing is being connected (the
+  // daemon runs nothing without a provider), so there is no progress to show.
+  if (!app) return null
 
   const key = cs.state === STATE_PENDING
     ? 'contentStorage.banner.pending'

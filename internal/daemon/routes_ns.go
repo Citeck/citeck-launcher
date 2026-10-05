@@ -805,13 +805,55 @@ func (d *Daemon) buildNamespaceConfigFromCreate(req api.NamespaceCreateDto, wsID
 	return &nsCfg, nil
 }
 
-// applyCreateContentStorage applies the create request's content storage. An
-// empty value keeps whatever the template said (nothing, for every template
-// today); DB is written as NO block — absent is DB, and every other namespace
-// on the stand has no block either. Whether S3 is allowed for the chosen
-// bundle is the write gate's question (persistNamespaceConfig), asked once
-// the bundle key is pinned.
+// applyEditContentStorage applies the edit form's content storage onto the
+// stored config, answering false (with the response written) when the request
+// is refused before validation. Empty leaves it unchanged.
+func (d *Daemon) applyEditContentStorage(w http.ResponseWriter, r *http.Request, current *namespace.Config, requestedRaw string) bool {
+	if requestedRaw == "" {
+		return true
+	}
+	requested, known := namespace.ParseContentStorageType(requestedRaw)
+	if !known {
+		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeInvalidConfig,
+			fmt.Sprintf("contentStorage must be %s or %s, got %q",
+				namespace.ContentStorageDB, namespace.ContentStorageS3, requestedRaw))
+		return false
+	}
+	before := current.ContentStorageType()
+	// A namespace on an external S3 (the `s3:` block) cannot also have S3
+	// content storage — both decide where ecos-content writes. The validation
+	// would refuse it too, but in English and in config terms; said here the
+	// way the dialog's own hint says it.
+	if requested == namespace.ContentStorageS3 && before != namespace.ContentStorageS3 && current.S3 != nil {
+		writeErrorCode(w, http.StatusConflict, api.ErrCodeContentStorageUnavailable,
+			d.translatorFor(r).T("contentStorage.msg.unavailable.externalS3"))
+		return false
+	}
+	// Only a CHANGE is written: a DB namespace saved as DB keeps having no
+	// block at all. S3 → DB is written as asked and refused by the write gate
+	// (CONTENT_STORAGE_DOWNGRADE), so the refusal is worded in one place.
+	if requested != before {
+		current.ContentStorage = &namespace.ContentStorageProps{Type: requested}
+	}
+	return true
+}
+
+// applyCreateContentStorage sets the new namespace's content storage from the
+// create REQUEST and from nothing else. A workspace template's
+// `contentStorage` is dropped on purpose: S3 cannot be undone, so it is a
+// choice the operator makes in the dialog or the wizard — a template that made
+// it would create an S3 namespace while the form showed (and Quick Start
+// implied) the database, or, on a Community bundle, refuse every create over a
+// field the form does not even show. Empty and DB are both written as NO block
+// — absent is DB, and every other namespace on the stand has no block either.
+// Whether S3 is allowed for the chosen bundle is the write gate's question
+// (persistNamespaceConfig), asked once the bundle key is pinned.
 func applyCreateContentStorage(nsCfg *namespace.Config, requested string) error {
+	if nsCfg.ContentStorage != nil {
+		slog.Warn("The namespace template sets contentStorage; ignored — the content storage of a new namespace is the operator's choice",
+			"template", nsCfg.Template, "type", nsCfg.ContentStorage.Type)
+		nsCfg.ContentStorage = nil
+	}
 	if requested == "" {
 		return nil
 	}
@@ -823,8 +865,6 @@ func applyCreateContentStorage(nsCfg *namespace.Config, requested string) error 
 	}
 	if t == namespace.ContentStorageS3 {
 		nsCfg.ContentStorage = &namespace.ContentStorageProps{Type: namespace.ContentStorageS3}
-	} else {
-		nsCfg.ContentStorage = nil
 	}
 	return nil
 }
@@ -1009,6 +1049,7 @@ func (d *Daemon) handleGetNamespaceEdit(w http.ResponseWriter, r *http.Request) 
 		// Effective, for the reason mongoEnabled is: no namespace that
 		// predates the option has the block, and every one of them is DB.
 		ContentStorage: string(nsCfg.ContentStorageType()),
+		ExternalS3:     nsCfg.S3 != nil,
 	}
 	writeJSON(w, dto)
 }
@@ -1187,21 +1228,8 @@ func (d *Daemon) handlePutNamespaceEdit(w http.ResponseWriter, r *http.Request) 
 		current.MongoDB.Enabled = &enabled
 	}
 	storageBefore := current.ContentStorageType()
-	if req.ContentStorage != "" {
-		requested, known := namespace.ParseContentStorageType(req.ContentStorage)
-		if !known {
-			writeErrorCode(w, http.StatusBadRequest, api.ErrCodeInvalidConfig,
-				fmt.Sprintf("contentStorage must be %s or %s, got %q",
-					namespace.ContentStorageDB, namespace.ContentStorageS3, req.ContentStorage))
-			return
-		}
-		// Only a CHANGE is written: a DB namespace saved as DB keeps having
-		// no block at all. S3 → DB is written as asked and refused by the
-		// write gate below (CONTENT_STORAGE_DOWNGRADE), so the refusal is
-		// worded in one place.
-		if requested != storageBefore {
-			current.ContentStorage = &namespace.ContentStorageProps{Type: requested}
-		}
+	if !d.applyEditContentStorage(w, r, current, req.ContentStorage) {
+		return
 	}
 
 	if valErr := namespace.ValidateNamespaceConfig(current); valErr != nil {

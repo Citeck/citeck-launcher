@@ -65,6 +65,10 @@ func generateAdditionalApps(ctx *NsGenContext) {
 		// containers, stray env) on the real container.
 		if isBuiltInApp(ctx, name) {
 			slog.Error("additionalApps entry collides with a built-in app; skipping to avoid overwriting it", "name", name)
+			if ctx.collidedAdditionalApps == nil {
+				ctx.collidedAdditionalApps = map[string]bool{}
+			}
+			ctx.collidedAdditionalApps[name] = true
 			continue
 		}
 

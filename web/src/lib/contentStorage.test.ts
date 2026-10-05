@@ -15,7 +15,7 @@ import ru from '../locales/ru'
 function translatorFor(table: Record<string, string>) {
   return ((key: string, params?: Record<string, string | number>) => {
     let text = table[key] ?? key
-    for (const [k, v] of Object.entries(params ?? {})) text = text.replace(`{${k}}`, String(v))
+    for (const [k, v] of Object.entries(params ?? {})) text = text.replaceAll(`{${k}}`, String(v))
     return text
   }) as never
 }
@@ -39,16 +39,18 @@ describe('contentStorageTypeOf', () => {
 })
 
 describe('s3OptionLabel', () => {
-  it('names the provider the way the owner chose: "S3 (SeaweedFS)"', () => {
-    expect(s3OptionLabel('seaweedfs')).toBe('S3 (SeaweedFS)')
+  // The product name is the workspace's (contentStorage.s3.title): the UI has
+  // no table of providers, so "S3 (SeaweedFS)" is exactly what the
+  // configuration says — the label the CLI prints too.
+  it('names the provider by the title the workspace gives it', () => {
+    expect(s3OptionLabel('SeaweedFS', 'seaweedfs')).toBe('S3 (SeaweedFS)')
   })
 
-  // The provider is workspace configuration, not launcher code: an app the UI
-  // has no product name for is still labeled, by its id.
-  it('labels an unknown provider by its app id, and a missing one as plain S3', () => {
-    expect(s3OptionLabel('minio')).toBe('S3 (minio)')
-    expect(s3OptionLabel('')).toBe('S3')
-    expect(s3OptionLabel(undefined)).toBe('S3')
+  it('falls back to the app id, and to plain S3 while no provider is known', () => {
+    expect(s3OptionLabel(undefined, 'seaweedfs')).toBe('S3 (seaweedfs)')
+    expect(s3OptionLabel(' ', 'minio')).toBe('S3 (minio)')
+    expect(s3OptionLabel('', '')).toBe('S3')
+    expect(s3OptionLabel(undefined, undefined)).toBe('S3')
   })
 })
 
@@ -58,6 +60,7 @@ describe('s3UnavailableText', () => {
     expect(s3UnavailableText('NO_PROVIDER_APP', 'seaweedfs', enT)).toContain('seaweedfs')
     expect(s3UnavailableText('NO_PROVIDER_IMAGE', 'seaweedfs', enT)).toContain('image for seaweedfs')
     expect(s3UnavailableText('NO_CONTENT_APP', 'seaweedfs', enT)).toContain('ecos-content')
+    expect(s3UnavailableText('PROVIDER_CONFLICT', 'seaweedfs', enT)).toContain('seaweedfs cannot serve S3')
   })
 
   // The one reason the user can fix from the dialog itself.

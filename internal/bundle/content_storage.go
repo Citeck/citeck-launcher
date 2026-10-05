@@ -13,6 +13,7 @@ import (
 //	contentStorage:
 //	  s3:
 //	    app: seaweedfs                 # a workspace additionalApps entry
+//	    title: SeaweedFS               # optional: the product name the UI shows
 //	    url: http://seaweedfs:8333     # the endpoint as ecos-content sees it
 //	    bucket: ecos-content
 //	    accessKey: citeck
@@ -36,13 +37,18 @@ type ContentStorageConfig struct {
 	problem string
 }
 
-// ContentStorageS3Config is one S3 provider. Every field is required: the
-// provider is useless to ecos-content without the endpoint, the bucket and
-// the credentials, so a block missing any of them is treated as absent.
+// ContentStorageS3Config is one S3 provider. Every field but Title is
+// required: the provider is useless to ecos-content without the endpoint, the
+// bucket and the credentials, so a block missing any of them is treated as
+// absent.
 type ContentStorageS3Config struct {
 	// App is the provider app id — a workspace `additionalApps:` entry. A
 	// namespace that chose S3 depends on it and starts it with the namespace.
 	App string
+	// Title is the provider's product name for the option label ("S3
+	// (SeaweedFS)"); optional, and the app id stands in for it. Configuration
+	// for the reason App is: the launcher spells no provider name.
+	Title string
 	// URL is the S3 endpoint as ecos-content reaches it on the namespace
 	// network (http://<app>:<port>).
 	URL    string
@@ -65,6 +71,7 @@ func (c *ContentStorageConfig) UnmarshalYAML(node *yaml.Node) error {
 	var raw struct {
 		S3 *struct {
 			App       string `yaml:"app"`
+			Title     string `yaml:"title"`
 			URL       string `yaml:"url"`
 			Bucket    string `yaml:"bucket"`
 			AccessKey string `yaml:"accessKey"`
@@ -81,6 +88,7 @@ func (c *ContentStorageConfig) UnmarshalYAML(node *yaml.Node) error {
 	}
 	s3 := &ContentStorageS3Config{
 		App:       strings.TrimSpace(raw.S3.App),
+		Title:     strings.TrimSpace(raw.S3.Title),
 		URL:       strings.TrimSpace(raw.S3.URL),
 		Bucket:    strings.TrimSpace(raw.S3.Bucket),
 		AccessKey: strings.TrimSpace(raw.S3.AccessKey),
@@ -109,6 +117,18 @@ func (c *ContentStorageConfig) Problem() string {
 		return ""
 	}
 	return c.problem
+}
+
+// DisplayName is the provider's name for a label: Title, or the app id when
+// the workspace gives none. A nil receiver answers "".
+func (c *ContentStorageS3Config) DisplayName() string {
+	if c == nil {
+		return ""
+	}
+	if c.Title != "" {
+		return c.Title
+	}
+	return c.App
 }
 
 // ContentStorageS3 answers the workspace's S3 content-storage provider, nil

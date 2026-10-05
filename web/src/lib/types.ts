@@ -159,6 +159,8 @@ export interface ContentStorageDto {
   type: string
   /** The workspace's contentStorage.s3.app, e.g. "seaweedfs". */
   providerApp: string
+  /** The provider's name for a label — contentStorage.s3.title, else the app id. */
+  providerTitle?: string
   /** pending | waiting | provisioning | connected | admin-managed | error */
   state: string
   /** Why the last connection attempt failed — already rendered in this
@@ -166,7 +168,7 @@ export interface ContentStorageDto {
   error?: string
   /** Why ecos-content is not wired to its provider at all: NO_CONTENT_APP |
    *  NO_PROVIDER_CONFIG | NO_PROVIDER_APP | NO_PROVIDER_IMAGE |
-   *  PROVIDER_NOT_GENERATED. */
+   *  PROVIDER_CONFLICT | PROVIDER_NOT_GENERATED. */
   problem?: string
   /** RFC 3339 time of the last state change. */
   at?: string
@@ -180,9 +182,12 @@ export interface ContentStorageOptionsDto {
 export interface ContentStorageOptionDto {
   available: boolean
   /** NO_CONTENT_APP (hide the option) | NO_PROVIDER_CONFIG | NO_PROVIDER_APP |
-   *  NO_PROVIDER_IMAGE | BUNDLE_UNRESOLVED (show it disabled with a hint). */
+   *  PROVIDER_CONFLICT | NO_PROVIDER_IMAGE | BUNDLE_UNRESOLVED (show it
+   *  disabled with a hint). */
   reason?: string
   providerApp?: string
+  /** The provider's name for the option label (see ContentStorageDto). */
+  providerTitle?: string
 }
 
 /** One infrastructure dependency of the active namespace. */

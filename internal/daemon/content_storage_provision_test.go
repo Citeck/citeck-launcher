@@ -28,16 +28,25 @@ import (
 const csSecretValue = "s3cret-value-7f1c"
 
 // fakeECOS plays the three ECOS apps behind the gateway: the default storage
-// config, and the records the connection creates.
+// config, and the records the connection creates. It answers `_notExists` the
+// way the records API does: TRUE for a record that is not there, and nothing
+// (null) for one that is — no ECOS value ever says false.
 type fakeECOS struct {
 	mu sync.Mutex
 
 	defaultRef string // the ref inside the config's value
 	valueNull  bool   // the config answers a null value
-	// notDeployedQueries answers this many CONFIG queries with
-	// `_notExists: true` — the artifact not deployed yet.
+	// rawValue, when set, is the config's `_value?json` answer verbatim.
+	rawValue json.RawMessage
+	// notDeployedQueries answers this many CONFIG queries with a null value —
+	// the artifact not deployed yet is an empty record.
 	notDeployedQueries int
 	exists             map[string]bool // full ref -> exists
+	// unregistered are record sources (the part of a ref before '@', with
+	// it) that are not registered yet: every ref there reads `_notExists:
+	// true` whether it exists or not, and a mutation there is refused with a
+	// RecordsSourceNotFoundException — until the count runs out.
+	unregistered map[string]int
 
 	// failQueries answers this many queries with failWith first.
 	failQueries int
@@ -52,6 +61,9 @@ type fakeECOS struct {
 
 	mutateErr     map[string]error // keyed by the id mutated
 	ignoreDefault bool             // accept the default mutation, change nothing
+	// onMutate, when set, is called with the id before a mutation is applied
+	// (outside the lock), so a test can act at an exact step.
+	onMutate func(id string)
 
 	queries   int
 	mutations []fakeMutation
@@ -63,7 +75,16 @@ type fakeMutation struct {
 }
 
 func newFakeECOS() *fakeECOS {
-	return &fakeECOS{defaultRef: csLocalStorageRef, exists: map[string]bool{}, mutateErr: map[string]error{}}
+	return &fakeECOS{defaultRef: csLocalStorageRef, exists: map[string]bool{}, mutateErr: map[string]error{},
+		unregistered: map[string]int{}}
+}
+
+// sourceOf is the record source part of a ref, '@' included.
+func sourceOf(ref string) string {
+	if i := strings.IndexByte(ref, '@'); i >= 0 {
+		return ref[:i+1]
+	}
+	return ref
 }
 
 func (f *fakeECOS) Query(ctx context.Context, refs []string, _ map[string]string) ([]map[string]json.RawMessage, error) {
@@ -93,19 +114,24 @@ func (f *fakeECOS) Query(ctx context.Context, refs []string, _ map[string]string
 	out := make([]map[string]json.RawMessage, len(refs))
 	for i, ref := range refs {
 		m := map[string]json.RawMessage{}
-		if ref == csConfigRef {
+		switch {
+		case ref == csConfigRef:
 			notDeployed := f.notDeployedQueries > 0
 			if notDeployed {
 				f.notDeployedQueries--
 			}
-			m["notExists"], _ = json.Marshal(notDeployed)
-			if f.valueNull {
+			switch {
+			case notDeployed || f.valueNull:
 				m["value"] = json.RawMessage("null")
-			} else {
+			case f.rawValue != nil:
+				m["value"] = f.rawValue
+			default:
 				m["value"], _ = json.Marshal(map[string]any{"ref": f.defaultRef, "config": map[string]any{}})
 			}
-		} else {
-			m["notExists"], _ = json.Marshal(!f.exists[ref])
+		case f.unregistered[sourceOf(ref)] > 0 || !f.exists[ref]:
+			m["notExists"] = json.RawMessage("true")
+		default:
+			m["notExists"] = json.RawMessage("null")
 		}
 		out[i] = m
 	}
@@ -114,12 +140,24 @@ func (f *fakeECOS) Query(ctx context.Context, refs []string, _ map[string]string
 
 func (f *fakeECOS) Mutate(ctx context.Context, id string, atts map[string]any) (string, error) {
 	f.mu.Lock()
+	hook := f.onMutate
+	f.mu.Unlock()
+	if hook != nil {
+		hook(id)
+	}
+	f.mu.Lock()
 	defer f.mu.Unlock()
 	if ctx.Err() != nil {
 		// What the real client does with a canceled request: nothing reaches ECOS.
 		return "", &ecosRecordsError{Err: ctx.Err()}
 	}
 	f.mutations = append(f.mutations, fakeMutation{id: id, atts: atts})
+	if n := f.unregistered[sourceOf(id)]; n > 0 {
+		f.unregistered[sourceOf(id)] = n - 1
+		return "", &ecosRecordsError{Status: http.StatusInternalServerError, Messages: []string{
+			"RecordsSourceNotFoundException: Source is not found with id '" + strings.TrimSuffix(sourceOf(id), "@") + "' and type 'null'",
+		}}
+	}
 	if err := f.mutateErr[id]; err != nil {
 		return "", err
 	}
@@ -413,6 +451,168 @@ func TestContentStorageProvision_VerifiesTheDefaultItSet(t *testing.T) {
 	assert.Contains(t, st.ErrorMsg.Args, csLocalStorageRef)
 }
 
+// --- the launcher's own unfinished switch ---
+
+// A run that created our storage and then could not switch the default left
+// ECOS looking exactly like an administrator who switched back: "our storage
+// exists, the default is LOCAL". Without the pending-switch marker the next
+// run answered admin-managed and never wrote again — the namespace stayed on
+// the database while it believed it was in S3. The marker is the launcher's
+// own record of the switch it started, so the next run finishes it.
+func TestContentStorageProvision_AFailedSwitchIsFinishedByTheNextRun(t *testing.T) {
+	h := newCSHarness(t)
+	h.ecos.mutateErr[csConfigRef] = &ecosRecordsError{Status: http.StatusInternalServerError, Messages: []string{"transient"}}
+	st := h.retry(t)
+	require.Equal(t, api.ContentStorageStateError, st.State)
+	require.Equal(t, "contentStorage.msg.provision.setDefaultFailed", st.ErrorMsg.Key)
+	assert.Equal(t, "content/storage@seaweedfs-s3", h.rt.ContentStorageSwitch(), "the switch is still pending")
+
+	delete(h.ecos.mutateErr, csConfigRef)
+	assert.Equal(t, api.ContentStorageStateConnected, h.retry(t).State)
+	assert.Equal(t, []string{"emodel/secret@", "emodel/endpoint@", "content/storage@", csConfigRef, csConfigRef},
+		h.ecos.mutatedIDs(), "nothing is created twice; only the switch is repeated")
+	assert.Empty(t, h.rt.ContentStorageSwitch(), "a confirmed switch clears the marker")
+}
+
+// The same across a daemon restart: the marker is persisted state, and the
+// next process reads it back (RestoreContentStorageSwitch on load).
+func TestContentStorageProvision_APendingSwitchSurvivesARestart(t *testing.T) {
+	h := newCSHarness(t)
+	h.ecos.mutateErr[csConfigRef] = &ecosRecordsError{Status: http.StatusInternalServerError, Messages: []string{"transient"}}
+	require.Equal(t, api.ContentStorageStateError, h.retry(t).State)
+	pending := h.rt.ContentStorageSwitch()
+	require.NotEmpty(t, pending)
+
+	// A new daemon: a fresh runtime with the persisted marker restored, the
+	// same ECOS.
+	h2 := newCSHarness(t)
+	h2.ecos = h.ecos
+	delete(h2.ecos.mutateErr, csConfigRef)
+	h2.rt.RestoreContentStorageSwitch(pending)
+	assert.Equal(t, api.ContentStorageStateConnected, h2.retry(t).State)
+	assert.Equal(t, "content/storage@seaweedfs-s3", h2.ecos.defaultRef)
+}
+
+// A run canceled between creating the storage and switching the default — a
+// namespace switch, a stop, a daemon shutdown — is finished by the next run,
+// and the canceled run itself writes nothing more.
+func TestContentStorageProvision_ARunCanceledBeforeTheSwitchIsFinishedNextTime(t *testing.T) {
+	h := newCSHarness(t)
+	canceled := make(chan *csJob, 1)
+	h.ecos.onMutate = func(id string) {
+		if id == csConfigRef {
+			h.ecos.mu.Lock()
+			h.ecos.onMutate = nil
+			h.ecos.mu.Unlock()
+			h.p.mu.Lock()
+			j := h.p.job
+			h.p.mu.Unlock()
+			canceled <- j
+			h.p.Reset()
+		}
+	}
+	h.p.Retry("ns1")
+	select {
+	case j := <-canceled:
+		awaitJob(t, j)
+	case <-time.After(10 * time.Second):
+		t.Fatal("the run never reached the default switch")
+	}
+	assert.Equal(t, []string{"emodel/secret@", "emodel/endpoint@", "content/storage@"}, h.ecos.mutatedIDs(),
+		"the canceled switch never reached ECOS")
+	assert.Equal(t, csLocalStorageRef, h.ecos.defaultRef)
+	assert.Equal(t, "content/storage@seaweedfs-s3", h.rt.ContentStorageSwitch())
+
+	assert.Equal(t, api.ContentStorageStateConnected, h.event(t).State)
+	assert.Equal(t, []string{"emodel/secret@", "emodel/endpoint@", "content/storage@", csConfigRef}, h.ecos.mutatedIDs())
+}
+
+// The marker only ever stands for THIS storage. Without it — or with one for
+// another provider's storage — "ours exists, default LOCAL" is still an
+// administrator's choice; and any verdict from ECOS ends a pending switch.
+func TestContentStorageProvision_TheMarkerIsNarrow(t *testing.T) {
+	h := newCSHarness(t)
+	h.ecos.exists["content/storage@seaweedfs-s3"] = true
+	require.NoError(t, h.rt.SetContentStorageSwitch("content/storage@minio-s3"))
+	assert.Equal(t, api.ContentStorageStateAdminManaged, h.retry(t).State)
+	assert.Empty(t, h.ecos.mutatedIDs())
+	assert.Empty(t, h.rt.ContentStorageSwitch(), "a verdict clears a stale marker")
+
+	h2 := newCSHarness(t)
+	require.NoError(t, h2.rt.SetContentStorageSwitch("content/storage@seaweedfs-s3"))
+	h2.ecos.defaultRef = "content/storage@content-storage-s3"
+	assert.Equal(t, api.ContentStorageStateAdminManaged, h2.retry(t).State,
+		"an administrator's own storage wins over a pending switch")
+	assert.Empty(t, h2.ecos.mutatedIDs())
+	assert.Empty(t, h2.rt.ContentStorageSwitch())
+}
+
+// A record source that is not registered yet answers every ref as missing and
+// refuses a create with RecordsSourceNotFoundException. That is the platform
+// still starting, not a verdict: the run asks ECOS again and finishes, and a
+// record the source then reports as present is not created twice.
+func TestContentStorageProvision_ASourceNotRegisteredYetIsWaitedOut(t *testing.T) {
+	h := newCSHarness(t)
+	h.ecos.unregistered["content/storage@"] = 2
+	assert.Equal(t, api.ContentStorageStateConnected, h.retry(t).State)
+	assert.Equal(t, []string{
+		"emodel/secret@", "emodel/endpoint@", "content/storage@", // refused: the source is not there
+		"content/storage@", // refused again
+		"content/storage@", csConfigRef,
+	}, h.ecos.mutatedIDs(), "the secret and the endpoint, created on the first pass, are not created again")
+
+	// An ordinary ERROR on a create is still said at once.
+	h2 := newCSHarness(t)
+	h2.ecos.mutateErr["emodel/endpoint@"] = &ecosRecordsError{Status: http.StatusInternalServerError,
+		Messages: []string{"IllegalArgumentException: url is invalid"}}
+	st := h2.retry(t)
+	assert.Equal(t, api.ContentStorageStateError, st.State)
+	assert.Equal(t, "contentStorage.msg.provision.createFailed", st.ErrorMsg.Key)
+	assert.Equal(t, []string{"emodel/secret@", "emodel/endpoint@"}, h2.ecos.mutatedIDs())
+}
+
+// A write that got no answer at all (the gateway being recreated) is retried
+// within the run; the re-read shows whether it landed.
+func TestContentStorageProvision_AWriteWithNoAnswerIsRetried(t *testing.T) {
+	h := newCSHarness(t)
+	calls := 0
+	h.ecos.onMutate = func(id string) {
+		if id != csConfigRef {
+			return
+		}
+		h.ecos.mu.Lock()
+		defer h.ecos.mu.Unlock()
+		calls++
+		if calls == 1 {
+			h.ecos.mutateErr[csConfigRef] = &ecosRecordsError{Err: errors.New("connection reset by peer")}
+		} else {
+			delete(h.ecos.mutateErr, csConfigRef)
+		}
+	}
+	assert.Equal(t, api.ContentStorageStateConnected, h.retry(t).State)
+	assert.Equal(t, 2, calls)
+}
+
+func TestCSStepRetryable(t *testing.T) {
+	cases := []struct {
+		err  error
+		want bool
+	}{
+		{&ecosRecordsError{Err: errors.New("refused")}, true},
+		{&ecosRecordsError{Status: http.StatusBadGateway, Err: errors.New("x")}, true},
+		{&ecosRecordsError{Status: http.StatusServiceUnavailable, Err: errors.New("x")}, true},
+		{&ecosRecordsError{Status: http.StatusInternalServerError,
+			Messages: []string{"RecordsSourceNotFoundException: Source is not found with id 'storage' and type 'null'"}}, true},
+		{&ecosRecordsError{Status: http.StatusOK, Messages: []string{"Records source is not found: storage"}}, true},
+		{&ecosRecordsError{Status: http.StatusInternalServerError, Messages: []string{"boom"}}, false},
+		{&ecosRecordsError{Status: http.StatusForbidden, Err: errors.New("x")}, false},
+		{errors.New("not a records error"), false},
+	}
+	for _, tc := range cases {
+		assert.Equal(t, tc.want, csStepRetryable(tc.err), tc.err.Error())
+	}
+}
+
 // --- readiness ---
 
 // A gateway that is up is not a platform that is ready: the admin user is
@@ -442,48 +642,81 @@ func TestContentStorageProvision_WaitsUntilECOSIsReady(t *testing.T) {
 	assert.Equal(t, api.ContentStorageStateConnected, h2.retry(t).State)
 }
 
-// A record source that cannot say whether a record exists — the content app's
-// DAO not registered yet — is NOT "the record does not exist". Reading it that
-// way would create a duplicate of something that is there.
-func TestContentStorageSnapshot_AnUnansweredExistenceIsNotReady(t *testing.T) {
-	client := queryFunc(func(refs []string) ([]map[string]json.RawMessage, error) {
-		if refs[0] == csConfigRef {
-			return []map[string]json.RawMessage{{"notExists": json.RawMessage("false"), "value": json.RawMessage(`{"ref":""}`)}}, nil
+// ECOS's existence attribute says TRUE for a record that is not there and
+// nothing at all for one that is: an existing DbRecord, a bean value and the
+// eapps config proxy leave `_notExists` unanswered (null). Reading null — or an
+// absent attribute — as "not ready" kept every real stand waiting until the
+// budget ran out, with nothing ever written.
+func TestContentStorageSnapshot_OnlyTrueIsMissing(t *testing.T) {
+	recs := func(answers ...json.RawMessage) queryFunc {
+		return func(refs []string) ([]map[string]json.RawMessage, error) {
+			if refs[0] == csConfigRef {
+				return []map[string]json.RawMessage{{"value": json.RawMessage(`{"ref":"emodel/content-storage@LOCAL","config":{}}`)}}, nil
+			}
+			out := make([]map[string]json.RawMessage, len(answers))
+			for i, a := range answers {
+				out[i] = map[string]json.RawMessage{}
+				if a != nil {
+					out[i]["notExists"] = a
+				}
+			}
+			return out, nil
 		}
-		return []map[string]json.RawMessage{
-			{"notExists": json.RawMessage("false")},
-			{"notExists": json.RawMessage("true")},
-			{"notExists": json.RawMessage("null")},
-		}, nil
-	})
-	_, err := csReadSnapshot(context.Background(), client, csRecordIDsFor(csProvider))
+	}
+	snap, err := csReadSnapshot(context.Background(),
+		recs(json.RawMessage("null"), nil, json.RawMessage("true")), csRecordIDsFor(csProvider))
+	require.NoError(t, err, "an unanswered existence is an answer: the record is there")
+	assert.True(t, snap.secretExists, "null")
+	assert.True(t, snap.endpointExists, "absent")
+	assert.False(t, snap.storageExists, "true")
+	assert.Equal(t, csLocalStorageRef, snap.defaultRef)
+
+	snap, err = csReadSnapshot(context.Background(),
+		recs(json.RawMessage("false"), json.RawMessage("true"), json.RawMessage("null")), csRecordIDsFor(csProvider))
+	require.NoError(t, err)
+	assert.True(t, snap.secretExists, "false")
+	assert.False(t, snap.endpointExists)
+	assert.True(t, snap.storageExists)
+}
+
+// The config's value is the readiness signal: a config that is not deployed
+// yet is an empty record, whose value is null. A value that is not an object
+// with a string `ref` is not one the launcher understands, and so not one it
+// may replace — a hard error, never "nothing chosen".
+func TestContentStorageSnapshot_TheDefaultValue(t *testing.T) {
+	value := func(raw string) queryFunc {
+		return func(refs []string) ([]map[string]json.RawMessage, error) {
+			if refs[0] == csConfigRef {
+				m := map[string]json.RawMessage{}
+				if raw != "" {
+					m["value"] = json.RawMessage(raw)
+				}
+				return []map[string]json.RawMessage{m}, nil
+			}
+			return []map[string]json.RawMessage{{}, {}, {}}, nil
+		}
+	}
 	var notReady *csNotReadyError
-	require.ErrorAs(t, err, &notReady, "null is not false")
-	assert.Contains(t, err.Error(), "content/storage@seaweedfs-s3")
-	assert.True(t, csRetryable(err))
+	for _, raw := range []string{"null", ""} {
+		_, err := csReadSnapshot(context.Background(), value(raw), csRecordIDsFor(csProvider))
+		require.ErrorAs(t, err, &notReady, "%q", raw)
+		assert.True(t, csRetryable(err))
+	}
 
-	absent := queryFunc(func(refs []string) ([]map[string]json.RawMessage, error) {
-		if refs[0] == csConfigRef {
-			return []map[string]json.RawMessage{{"notExists": json.RawMessage("false"), "value": json.RawMessage(`{"ref":""}`)}}, nil
-		}
-		return []map[string]json.RawMessage{{}, {"notExists": json.RawMessage("true")}, {"notExists": json.RawMessage("true")}}, nil
-	})
-	_, err = csReadSnapshot(context.Background(), absent, csRecordIDsFor(csProvider))
-	require.ErrorAs(t, err, &notReady, "an absent attribute is not false either")
+	snap, err := csReadSnapshot(context.Background(), value(`{"ref":"","config":{}}`), csRecordIDsFor(csProvider))
+	require.NoError(t, err, "an explicitly empty ref is nothing chosen")
+	assert.Empty(t, snap.defaultRef)
+	snap, err = csReadSnapshot(context.Background(), value(`{"ref":" content/storage@x "}`), csRecordIDsFor(csProvider))
+	require.NoError(t, err)
+	assert.Equal(t, "content/storage@x", snap.defaultRef)
 
-	// A config that has no value yet is not ready either; one whose value the
-	// launcher cannot read is not something it may replace — a hard error.
-	nullValue := queryFunc(func([]string) ([]map[string]json.RawMessage, error) {
-		return []map[string]json.RawMessage{{"notExists": json.RawMessage("false"), "value": json.RawMessage("null")}}, nil
-	})
-	_, err = csReadSnapshot(context.Background(), nullValue, csRecordIDsFor(csProvider))
-	require.ErrorAs(t, err, &notReady)
-	strange := queryFunc(func([]string) ([]map[string]json.RawMessage, error) {
-		return []map[string]json.RawMessage{{"notExists": json.RawMessage("false"), "value": json.RawMessage(`["x"]`)}}, nil
-	})
-	_, err = csReadSnapshot(context.Background(), strange, csRecordIDsFor(csProvider))
-	require.Error(t, err)
-	assert.False(t, csRetryable(err))
+	for _, raw := range []string{`["x"]`, `"emodel/content-storage@LOCAL"`, `{}`, `{"storage":"content/storage@x"}`,
+		`{"ref":null}`, `{"ref":{"id":"x"}}`, `{"ref":7}`} {
+		_, err := csReadSnapshot(context.Background(), value(raw), csRecordIDsFor(csProvider))
+		require.Error(t, err, raw)
+		require.NotErrorAs(t, err, &notReady, raw)
+		assert.False(t, csRetryable(err), raw)
+	}
 }
 
 // queryFunc is an ecosRecords that only answers queries.
@@ -886,7 +1119,7 @@ func (s *ecosStub) all() []ecosStubRequest {
 func TestHTTPEcosRecords_Query(t *testing.T) {
 	stub, addr := newECOSStub(t, func(string, []byte) (int, string) {
 		return http.StatusOK, `{"records":[` +
-			`{"id":"eapps/config@app/emodel$default-content-storage","attributes":{"value":{"ref":"emodel/content-storage@LOCAL","config":{}},"notExists":false}},` +
+			`{"id":"eapps/config@app/emodel$default-content-storage","attributes":{"value":{"ref":"emodel/content-storage@LOCAL","config":{}},"notExists":null}},` +
 			`{"id":"content/storage@seaweedfs-s3","attributes":{"notExists":true}}` +
 			`],"messages":[],"hasMore":false,"totalCount":0,"version":1}`
 	})
@@ -1031,10 +1264,16 @@ func TestContentStorageProvision_OverHTTP(t *testing.T) {
 		for _, ref := range refs {
 			if ref == csConfigRef {
 				out = append(out, map[string]any{"id": ref, "attributes": map[string]any{
-					"value": map[string]any{"ref": defaultRef, "config": map[string]any{}}, "notExists": false}})
+					"value": map[string]any{"ref": defaultRef, "config": map[string]any{}}}})
 				continue
 			}
-			out = append(out, map[string]any{"id": ref, "attributes": map[string]any{"notExists": !created[ref]}})
+			// The records API's own shape: true for a record that is not
+			// there, null for one that is.
+			var notExists any
+			if !created[ref] {
+				notExists = true
+			}
+			out = append(out, map[string]any{"id": ref, "attributes": map[string]any{"notExists": notExists}})
 		}
 		b, _ := json.Marshal(map[string]any{"records": out, "messages": []any{}})
 		return http.StatusOK, string(b)
@@ -1055,6 +1294,12 @@ func TestContentStorageProvision_OverHTTP(t *testing.T) {
 		}
 	}
 	require.Len(t, mutations, 4)
+	// The config is asked for its value only: an eapps config never answers
+	// `_notExists`, whether it is deployed or not.
+	assert.JSONEq(t, `{"records":["eapps/config@app/emodel$default-content-storage"],
+		"attributes":{"value":"_value?json"}}`, reqs[0].body)
+	assert.JSONEq(t, `{"records":["emodel/secret@seaweedfs-s3-credentials","emodel/endpoint@seaweedfs-s3","content/storage@seaweedfs-s3"],
+		"attributes":{"notExists":"_notExists?bool"}}`, reqs[1].body)
 	assert.JSONEq(t, `{"records":[{"id":"emodel/secret@","attributes":{
 		"id":"seaweedfs-s3-credentials","name":"seaweedfs S3 credentials","type":"BASIC",
 		"data?json":{"username":"citeck","password":"`+csSecretValue+`"}}}]}`, mutations[0])

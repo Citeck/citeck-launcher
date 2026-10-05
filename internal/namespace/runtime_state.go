@@ -65,6 +65,7 @@ func (r *Runtime) persistState() error {
 		l := *r.lastMigration
 		state.LastDependencyMigration = &l
 	}
+	state.ContentStorageSwitchPending = r.contentStorageSwitch
 	data, err := json.Marshal(state)
 	if err != nil {
 		return fmt.Errorf("marshal namespace state: %w", err)

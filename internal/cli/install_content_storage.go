@@ -44,14 +44,14 @@ func installContentStorageAvailability(ref bundle.Ref, launcherVersion string) n
 // unless S3 is available (Community has no ecos-content, and a workspace with
 // no provider has nothing to offer), and the namespace.yml block for the
 // answer — nil for DB, which is what every other namespace has: absent means
-// DB. ask receives the provider app the S3 option runs.
+// DB. ask receives the availability, whose provider the S3 option runs.
 func chooseInstallContentStorage(avail namespace.ContentStorageAvailability,
-	ask func(providerApp string) namespace.ContentStorageType,
+	ask func(avail namespace.ContentStorageAvailability) namespace.ContentStorageType,
 ) *namespace.ContentStorageProps {
 	if !avail.Available {
 		return nil
 	}
-	if ask(avail.ProviderApp) != namespace.ContentStorageS3 {
+	if ask(avail) != namespace.ContentStorageS3 {
 		return nil
 	}
 	return &namespace.ContentStorageProps{Type: namespace.ContentStorageS3}
@@ -59,14 +59,15 @@ func chooseInstallContentStorage(avail namespace.ContentStorageAvailability,
 
 // promptInstallContentStorage asks the question, with DB first and
 // pre-selected: S3 is the choice that cannot be undone, so it is never the one
-// a reflexive Enter makes.
-func promptInstallContentStorage(providerApp string) namespace.ContentStorageType {
+// a reflexive Enter makes. The S3 option is labeled the way the web dialog
+// labels it ("S3 (SeaweedFS)", from the workspace's provider title).
+func promptInstallContentStorage(avail namespace.ContentStorageAvailability) namespace.ContentStorageType {
 	choice, err := (&prompt.Select[namespace.ContentStorageType]{
 		Title:       t("install.contentStorage.label"),
-		Description: t("install.contentStorage.hint", "app", providerApp),
+		Description: t("install.contentStorage.hint", "app", avail.ProviderApp),
 		Options: []prompt.Option[namespace.ContentStorageType]{
 			{Label: t("install.contentStorage.db"), Value: namespace.ContentStorageDB, Hint: t("install.contentStorage.default")},
-			{Label: "S3 (" + providerApp + ")", Value: namespace.ContentStorageS3},
+			{Label: avail.OptionLabel(), Value: namespace.ContentStorageS3},
 		},
 		Hints: i18nHints(),
 	}).Run()
