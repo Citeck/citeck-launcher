@@ -64,7 +64,10 @@ init-action exec, init-container env/cmd, cloudConfig):
 cloud-config / `dataSources` / webapp-properties — those remain the job of the built-in
 Citeck-app generators (the `webapps:` section). A self-registering service (like the EDI
 sim, via ZooKeeper) needs none of that; a plain HTTP app that must be reachable at a
-proxy path is out of `additionalApps`' scope.
+proxy path is out of `additionalApps`' scope. The one entry the launcher does wire is
+the one a workspace `contentStorage.s3` block names: on a namespace that stores its
+content in S3, ecos-content waits for it and is connected to it once — see
+[Content storage](content-storage.md).
 
 ## Example — the EDI simulator (`citeck-edi-sim`)
 

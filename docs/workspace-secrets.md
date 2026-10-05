@@ -36,7 +36,9 @@ workspace и даже удаление записи до уже существу
 `${ZK_HOST}`: env веб-приложений из конфигурации workspace (`defaultWebappProps`,
 `webapps[].defaultProps`; env из `namespace.yml` не подставляется); env, cmd,
 init-контейнеры, init-действия и `cloudConfig:` записей `additionalApps`; ключ
-`password:` у `type: POSTGRES`.
+`password:` у `type: POSTGRES`; `secretKey` блока `contentStorage.s3` — его
+значение Launcher записывает в ECOS, подключая ecos-content к S3-хранилищу
+(см. [Хранение контента](content-storage.md)).
 
 ## Если значения нет
 

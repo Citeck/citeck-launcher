@@ -1,32 +1,68 @@
 # S3 content storage as a workspace declares it — the reference copy of the
-# blocks the enterprise workspace config carries (workspace-v1.yml). The
-# launcher has no code for the provider: whether it exists is the bundle's
-# answer (it names the `seaweedfs` image in its `dependencies:` section), the
-# entry below is how it is configured, and `contentStorage.s3` is how
-# ecos-content reaches it. The entry, the secret and the contentStorage block
-# travel together.
+# blocks the public workspace config carries (launcher-public-workspace,
+# workspace-v1.yml): the `contentStorage` block, the provider's secret and its
+# additionalApps entry, each byte for byte. The launcher has no code for the
+# provider: whether it exists is the bundle's answer (it names the `seaweedfs`
+# image in its `dependencies:` section), the entry is how it is configured, and
+# `contentStorage.s3` is how ecos-content reaches it. Keep the copies identical.
 contentStorage:
   s3:
     app: seaweedfs
+    # The endpoint as ecos-content reaches it: the entry's name and S3 port on
+    # the namespace network.
     url: http://seaweedfs:8333
+    # The entry's S3_BUCKET — the bucket it creates at start.
     bucket: ecos-content
+    # The entry's AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY.
     accessKey: citeck
     secretKey: ${secret:seaweedfs-s3}
 secrets:
-  # NEVER change this value: a namespace restored from a snapshot into a new
-  # namespace is seeded with the current default, while its database keeps the
-  # key ecos-content was connected with.
+  # SeaweedFS S3 secret key, read by the seaweedfs entry and by
+  # `contentStorage.s3`. NEVER change this value: a namespace restored from a
+  # snapshot into a new namespace is seeded with the current default, while
+  # its database keeps the key ecos-content was connected with. The seaweedfs
+  # entry, this secret, the contentStorage block and `- seaweedfs` in
+  # namespaceTemplates[default].detachedApps travel together.
   - id: seaweedfs-s3
     value: seaweedfs-s3-secret
 additionalApps:
+  # SeaweedFS: an S3-compatible store for ecos-content (Enterprise only —
+  # Community has no ecos-content). Like the observer it is configuration: no
+  # image here — a bundle that names `seaweedfs` in its `dependencies:` section
+  # gets the container, every other bundle gets nothing. It is the provider of
+  # the S3 content storage option (the top-level `contentStorage` block).
+  # A namespace that stores its content in S3 (namespace.yml
+  # `contentStorage: {type: S3}`) needs it: a launcher that supports
+  # contentStorage starts it with that namespace whatever detachedApps says,
+  # makes ecos-content wait for it and connects ecos-content to it once, by
+  # itself. Every other namespace — DB content storage, the default, and any
+  # namespace on an older launcher — does not start it on its own when created
+  # from the `default` template (see detachedApps; a namespace with no or
+  # another template starts it like any new app), and connecting it there is
+  # an explicit step in ECOS after `citeck start seaweedfs`.
+  # Nothing in this file may `dependsOn` it: on a DB namespace it is detached,
+  # and a dependent would wait for it forever. The entry, the seaweedfs-s3
+  # secret, the contentStorage block and the detachedApps line travel
+  # together.
   - name: seaweedfs
     kind: THIRD_PARTY
     cmd:
+      # `weed mini` runs master + volume + filer + S3 in one process. It saves
+      # its flags to /data/mini.options and re-applies a dropped flag once on
+      # the next start (volumeSizeLimitMB is recomputed from disk instead), so
+      # keep this list COMPLETE. It must stay valid for the OLDEST seaweedfs
+      # tag any published bundle names (4.48: -s3.readerCacheSizeMB is new in
+      # 4.48), and changing it recreates seaweedfs on every stand.
       - mini
       - -dir=/data
+      # A stable node identity (the default is the container IP, which changes
+      # on every recreate). It does not limit binding: -ip.bind stays 0.0.0.0.
       - -ip=127.0.0.1
       - -master.telemetry=false
       - -master.volumeSizeLimitMB=256
+      # Memory bounds: the S3 download buffers (4.48 default: unlimited) and
+      # the in-flight upload size (without it parallel multipart uploads
+      # OOM-kill the container even at 1g; uploads beyond it are queued).
       - -s3.readerCacheSizeMB=64
       - -s3.concurrentUploadLimitMB=128
       - -webdav=false
@@ -34,12 +70,24 @@ additionalApps:
       - -s3.port.iceberg=0
       - -s3.port.lance=0
     environments:
+      # One admin S3 identity; anonymous S3 requests are refused. The key is a
+      # public default — rotate it per stand before storing real content, and
+      # in the ECOS secret ecos-content connects with as well: the launcher
+      # writes that record once and never updates it. The filer (8888), volume
+      # (9340) and admin/worker (23646/33646) ports need no credentials at
+      # all: every container on the namespace network can read and write the
+      # bucket through them (server mode publishes nothing, desktop only 8333
+      # on loopback).
       AWS_ACCESS_KEY_ID: citeck
       AWS_SECRET_ACCESS_KEY: ${secret:seaweedfs-s3}
+      # ecos-content's bucket, created at start. Its MinIO client needs the
+      # bucket to exist before the first upload.
       S3_BUCKET: ecos-content
       GOMEMLIMIT: 512MiB
     # The volume name IS how the data is found — never change it.
     volumes: ["seaweedfs2:/data"]
+    # Desktop only, on loopback; server mode publishes nothing but the proxy.
+    # On desktop the HTTP probes go through this published port.
     ports: ["8333:8333"]
     startupConditions:
       - probe:
@@ -54,6 +102,8 @@ additionalApps:
     resources:
       limits: {memory: 1g}
     stopTimeout: 15
+# One line of the `default` template's detachedApps — the template itself
+# carries more apps and a config.
 namespaceTemplates:
   - id: default
     detachedApps:
