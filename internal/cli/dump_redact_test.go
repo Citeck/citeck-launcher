@@ -98,14 +98,16 @@ func TestSecretRedactor_KeyHeuristic(t *testing.T) {
 		// SeaweedFS settings beside its keys: a token lifetime is not a secret.
 		"WEED_JWT_SIGNING_EXPIRES_AFTER_SECONDS", "WEED_JWT_FILER_SIGNING_EXPIRES_AFTER_SECONDS",
 		"WEED_ADMIN_USER", "S3_BUCKET",
+		// The identity half of an access key pair is a user name.
+		"AWS_ACCESS_KEY_ID", "MINIO_ACCESS_KEY_ID",
 	}
 	for _, k := range secret {
-		if !secretEnvKeyRe.MatchString(k) {
+		if !isSecretEnvKey(k) {
 			t.Errorf("%q should match the secret-key heuristic", k)
 		}
 	}
 	for _, k := range notSecret {
-		if secretEnvKeyRe.MatchString(k) {
+		if isSecretEnvKey(k) {
 			t.Errorf("%q should NOT match the secret-key heuristic", k)
 		}
 	}
@@ -141,7 +143,7 @@ func TestSecretRedactor_MasksEveryCredentialOfTheS3Store(t *testing.T) {
 			continue
 		}
 		checked++
-		assert.True(t, secretEnvKeyRe.MatchString(key), "%s carries a credential and is not masked in a dump", key)
+		assert.True(t, isSecretEnvKey(key), "%s carries a credential and is not masked in a dump", key)
 	}
 	assert.Positive(t, checked, "the store's entry names no credential at all?")
 }
@@ -236,6 +238,46 @@ func TestAPublishedValueIsNotTreatedAsASecret(t *testing.T) {
 		"a word the container itself advertises must survive")
 	assert.NotContains(t, out, "7f3Kq2Lm9XvTb1Rn", "a real secret is still masked")
 	assert.Contains(t, out, redactPlaceholder)
+}
+
+// An S3 access key ID is the identity half of the pair — a user name — and
+// the S3 store's is the word `citeck`, published in the workspace config.
+// Harvested as a secret it masked every `citeck_<app>_<ns>` container name and
+// every `harbor.citeck.ru` image in the archive, whenever no container on the
+// host happened to publish `citeck` in the clear: a fresh S3 namespace that
+// fails while its infrastructure is starting has the store's container and
+// none of the webapps' (whose ECOS_WEBAPP_RABBITMQ_USERNAME was the only thing
+// sparing it) — exactly the dump someone sends.
+func TestAnAccessKeyIDIsAnIdentityNotASecret(t *testing.T) {
+	data, err := os.ReadFile("../namespace/testdata/content-storage-workspace.yml")
+	require.NoError(t, err)
+	var ws bundle.WorkspaceConfig
+	require.NoError(t, yaml.Unmarshal(data, &ws))
+	entry, ok := ws.AdditionalApp(ws.ContentStorageS3().App)
+	require.True(t, ok)
+	accessKeyID := entry.Environments["AWS_ACCESS_KEY_ID"]
+	require.Equal(t, ws.ContentStorageS3().AccessKey, accessKeyID)
+	require.True(t, isLikelySecret(accessKeyID), "the case only exists while the ID is long enough to be harvested")
+
+	const s3Key = "Sx0Ty1Uz2Va3Wb4Xc5Yd6Ze7Af8Bg9Ch0Di1Ej2"
+	r := newSecretRedactor()
+	// The store and the infrastructure, before any webapp container exists.
+	r.harvestEnv([]string{
+		"AWS_ACCESS_KEY_ID=" + accessKeyID,
+		"AWS_SECRET_ACCESS_KEY=" + s3Key,
+		"WEED_ADMIN_USER=admin",
+		"S3_BUCKET=ecos-content",
+	})
+	r.harvestEnv([]string{"POSTGRES_USER=postgres", "POSTGRES_PASSWORD=postgres"})
+	r.harvestEnv([]string{"RABBITMQ_DEFAULT_USER=admin", "RABBITMQ_DEFAULT_PASS=admin"})
+	r.finalize()
+
+	out := string(r.redact([]byte("citeck_seaweedfs_ns1 runs harbor.citeck.ru/x; key " + s3Key)))
+	assert.Contains(t, out, "citeck_seaweedfs_ns1 runs harbor.citeck.ru/x",
+		"the access key ID must not mask every identifier that contains it")
+	assert.NotContains(t, out, s3Key, "the secret half of the pair is still masked")
+	assert.False(t, isSecretEnvKey("AWS_ACCESS_KEY_ID"))
+	assert.True(t, isSecretEnvKey("AWS_SECRET_ACCESS_KEY"))
 }
 
 // The rule must not weaken redaction for a secret that merely LOOKS ordinary:

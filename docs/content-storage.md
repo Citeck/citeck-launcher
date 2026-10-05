@@ -397,7 +397,9 @@ SeaweedFS (`weed mini`) — один процесс с несколькими с
   который попадает в каждый снапшот, а переменные окружения не сохраняет: ни
   ключей, ни пароля в томе нет.
 * В системном дампе (`citeck dump-system-info`) значения `AWS_SECRET_ACCESS_KEY`,
-  `WEED_JWT_*_KEY` и `WEED_ADMIN_PASSWORD` замаскированы.
+  `WEED_JWT_*_KEY` и `WEED_ADMIN_PASSWORD` замаскированы. `AWS_ACCESS_KEY_ID`
+  (`citeck`) — имя пользователя, а не секрет, и не маскируется: иначе в дампе
+  пропали бы все имена контейнеров `citeck_*` и образов `harbor.citeck.ru`.
 
 ## Admin UI
 

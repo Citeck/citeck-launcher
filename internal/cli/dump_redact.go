@@ -49,6 +49,21 @@ var secretEnvKeyRe = regexp.MustCompile(
 		`|signing[_-]?(read[_-]?)?key`,
 )
 
+// accessKeyIDEnvKeyRe matches the IDENTITY half of an access key pair
+// (AWS_ACCESS_KEY_ID), which secretEnvKeyRe's `access_key` would otherwise
+// take for the secret half. It is a user name: the S3 content store's is
+// `citeck`, published in the workspace config, and harvested as a secret it
+// masked every `citeck_<app>_<ns>` container and `harbor.citeck.ru` image in
+// the archive whenever no container happened to publish the word in the clear
+// (see secretRedactor.published). The secret half (AWS_SECRET_ACCESS_KEY) does
+// not end in an id and stays masked.
+var accessKeyIDEnvKeyRe = regexp.MustCompile(`(?i)(^|_)access[_-]?key[_-]?id$`)
+
+// isSecretEnvKey reports whether an env var KEY carries a secret VALUE.
+func isSecretEnvKey(k string) bool {
+	return secretEnvKeyRe.MatchString(k) && !accessKeyIDEnvKeyRe.MatchString(k)
+}
+
 // secretRedactor masks known secret VALUES wherever they appear across all dump
 // artifacts. Values are harvested once up front, then redact() is applied to
 // every entry written to the archive.
@@ -94,7 +109,7 @@ func (r *secretRedactor) harvestEnv(env []string) {
 		if !ok {
 			continue
 		}
-		if secretEnvKeyRe.MatchString(k) {
+		if isSecretEnvKey(k) {
 			r.addValue(v)
 			continue
 		}
