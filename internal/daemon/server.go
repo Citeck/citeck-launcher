@@ -122,6 +122,11 @@ type activeNamespace struct {
 	// it must never trigger a sync of its own. A namespace list that waits on
 	// git is a worse bug than a late dot.
 	newerBundle *bundle.NewerBundle
+	// contentStorageProblem is why the last generation could not wire an S3
+	// namespace's ecos-content to its provider (nil when it could, and always
+	// nil for a DB namespace). Recomputed by every generation, like
+	// dependencyUpgrades; surfaced as NamespaceDto.ContentStorage.Problem.
+	contentStorageProblem *namespace.ContentStorageProblem
 }
 
 // Daemon is the main daemon server.
@@ -285,6 +290,11 @@ type Daemon struct {
 	// the crash-recovery tests (migratetest.FakeEnv). nil in production —
 	// depsEnvFor falls back to newDepsEnv.
 	depsEnvFn func(act activeNamespace) migrate.Env
+	// contentStorage connects an S3 namespace's ecos-content to its provider,
+	// once (content_storage_provision.go). Created on first use through
+	// contentStorageProv, so a zero-value test Daemon has one too.
+	contentStorageOnce sync.Once
+	contentStorage     *contentStorageProvisioner
 }
 
 // active returns ONE consistent value-copy snapshot of the active-namespace
@@ -851,6 +861,7 @@ func (d *Daemon) doReloadEx(forceGitPull, startNotRegenerate, refreshImages bool
 	a.appDefs = genResp.Applications
 	a.dependencyUpgrades = genResp.DependencyUpgrades
 	a.dependencies = genResp.Dependencies
+	a.contentStorageProblem = genResp.ContentStorageProblem
 	// "Is there a newer bundle" is recomputed alongside everything else this
 	// generation produced. Guarded against nil rather than assumed: a reload
 	// with a resolve failure still reaches here (resolveErr already returned
@@ -1058,6 +1069,11 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/namespace/dependencies/{id}/rollback/preflight", d.handleDependencyRollbackPreflight)
 	mux.HandleFunc("POST /api/v1/namespace/dependencies/{id}/rollback", d.handleDependencyRollback)
 	mux.HandleFunc("GET /api/v1/diagnostics-file", d.handleDiagnosticsFile)
+
+	// Content storage (DB | S3): the options a dialog may offer for a bundle,
+	// and the retry of the one-time S3 connection.
+	mux.HandleFunc("GET "+api.ContentStorageOptions, d.handleContentStorageOptions)
+	mux.HandleFunc("POST "+api.NamespaceContentStorageProvision, d.handleContentStorageProvision)
 
 	// Config
 	mux.HandleFunc("GET /api/v1/config", d.handleGetConfig)

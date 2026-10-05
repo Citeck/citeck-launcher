@@ -260,7 +260,81 @@ type NamespaceDto struct {
 	// retry already keeps (internal/namespace/persist_retry.go), so the first
 	// write that lands clears it with no action from anyone.
 	StateWriteError string `json:"stateWriteError,omitempty"`
+	// ContentStorage is present only for a namespace that stores its content in
+	// S3: which provider app serves it, whether ecos-content has been connected
+	// to it yet, and why not. A DB namespace (every namespace that predates the
+	// option) carries nothing here.
+	ContentStorage *ContentStorageDto `json:"contentStorage,omitempty"`
 }
+
+// Content storage connection states carried by ContentStorageDto.State. The
+// connection is derived from ECOS's own records every time it is checked —
+// there is no persisted "done" flag — so these describe the last check, not a
+// stored fact.
+const (
+	// ContentStorageStatePending: the platform apps the connection needs are
+	// not all running yet; nothing has been asked.
+	ContentStorageStatePending = "pending"
+	// ContentStorageStateWaiting: the platform is up and the launcher is
+	// polling for it to accept the connection (artifacts deploy
+	// asynchronously, so a RUNNING gateway is not yet a ready one).
+	ContentStorageStateWaiting = "waiting"
+	// ContentStorageStateProvisioning: the launcher is creating the records.
+	ContentStorageStateProvisioning = "provisioning"
+	// ContentStorageStateConnected: ecos-content's default storage is the
+	// provider the launcher configured.
+	ContentStorageStateConnected = "connected"
+	// ContentStorageStateAdminManaged: an administrator chose another default
+	// storage (or switched back on purpose); the launcher writes nothing.
+	ContentStorageStateAdminManaged = "admin-managed"
+	// ContentStorageStateError: the last attempt failed; Error says why.
+	ContentStorageStateError = "error"
+)
+
+// ContentStorageDto is the S3 content storage of the active namespace.
+type ContentStorageDto struct {
+	// Type is "S3" — the only type that is reported.
+	Type string `json:"type"`
+	// ProviderApp is the workspace's `contentStorage.s3.app`, e.g. "seaweedfs".
+	ProviderApp string `json:"providerApp"`
+	// State is one of the ContentStorageState* values.
+	State string `json:"state"`
+	// Error is why the last connection attempt failed, rendered for the
+	// reader's locale. Present with State "error" only.
+	Error string `json:"error,omitempty"`
+	// Problem is why this generation could not wire ecos-content to its
+	// provider at all (namespace.ContentStorageProblem's reason code:
+	// NO_CONTENT_APP, NO_PROVIDER_CONFIG, NO_PROVIDER_APP, NO_PROVIDER_IMAGE,
+	// PROVIDER_NOT_GENERATED); empty when it is wired.
+	Problem string `json:"problem,omitempty"`
+	// At is the RFC 3339 time of the last state change, empty before any.
+	At string `json:"at,omitempty"`
+}
+
+// ContentStorageOptionsDto answers which content storage types a namespace on
+// a given bundle may choose (GET /content-storage/options). DB is always
+// available, so only S3 is described.
+type ContentStorageOptionsDto struct {
+	S3 ContentStorageOptionDto `json:"s3"`
+}
+
+// ContentStorageOptionDto is one content storage option.
+type ContentStorageOptionDto struct {
+	Available bool `json:"available"`
+	// Reason is why the option is unavailable: NO_CONTENT_APP (hide the
+	// option — the bundle has no ecos-content), NO_PROVIDER_CONFIG,
+	// NO_PROVIDER_APP, NO_PROVIDER_IMAGE (show it disabled with a hint), or
+	// BUNDLE_UNRESOLVED (the bundle is not in the synced repo, so nothing can
+	// be said about it). Empty when Available.
+	Reason string `json:"reason,omitempty"`
+	// ProviderApp is the workspace's S3 provider, empty when it names none.
+	ProviderApp string `json:"providerApp,omitempty"`
+}
+
+// ContentStorageBundleUnresolved is the options/write-gate reason for a bundle
+// that is not in the synced copy of its repo: its applications cannot be read,
+// so whether it has ecos-content cannot be answered.
+const ContentStorageBundleUnresolved = "BUNDLE_UNRESOLVED"
 
 // Dependency status values carried by DependencyDto.Status.
 const (
@@ -959,6 +1033,22 @@ const (
 	// unable to open the namespace and pick a different bundle, which is the
 	// only way out of the situation.
 	ErrCodeLauncherTooOld = "LAUNCHER_TOO_OLD"
+	// ErrCodeContentStorageUnavailable is returned (HTTP 409) when the
+	// namespace config being written chooses S3 content storage and the bundle
+	// it names cannot have it: no ecos-content, or the workspace declares no
+	// usable S3 provider. The body names the reason. Raised on WRITE only, like
+	// LAUNCHER_TOO_OLD — an edit that KEEPS S3 but moves to a bundle without
+	// the provider is refused here too.
+	ErrCodeContentStorageUnavailable = "CONTENT_STORAGE_UNAVAILABLE"
+	// ErrCodeContentStorageDowngrade is returned (HTTP 409) when a write would
+	// move a namespace that stores its content in S3 back to the database —
+	// including a raw config PUT that simply drops the `contentStorage:` block.
+	// The files already in S3 are not in the database, so S3 is one-way.
+	ErrCodeContentStorageDowngrade = "CONTENT_STORAGE_DOWNGRADE"
+	// ErrCodeContentStorageNotS3 is returned (HTTP 409) by the provisioning
+	// retry route for a namespace that stores its content in the database:
+	// there is nothing to connect.
+	ErrCodeContentStorageNotS3 = "CONTENT_STORAGE_NOT_S3"
 )
 
 // UpgradeRequestDto is the request body for the namespace upgrade endpoint.
@@ -1183,6 +1273,10 @@ type NamespaceCreateDto struct {
 	Template           string   `json:"template,omitempty"`       // namespace template ID
 	MasterPassword     string   `json:"masterPassword,omitempty"` // encryption master password
 	UseDefaultPassword bool     `json:"useDefaultPassword"`       // use default "citeck" password
+	// ContentStorage is "DB" or "S3" (case-insensitive); empty means DB. S3 is
+	// refused with CONTENT_STORAGE_UNAVAILABLE unless the chosen bundle has
+	// ecos-content and the workspace declares a usable S3 provider.
+	ContentStorage string `json:"contentStorage,omitempty"`
 }
 
 // SnapshotDownloadDto is the request body for downloading a snapshot from a URL.
@@ -1239,6 +1333,11 @@ type NamespaceEditDto struct {
 	// a namespace created at generation 2+ never has MongoDB, so offering the
 	// checkbox there would be offering a switch with nothing behind it.
 	ConfigVersion int `json:"configVersion,omitempty"`
+	// ContentStorage is "DB" or "S3". GET always fills it with the EFFECTIVE
+	// type (DB for a namespace whose namespace.yml has no block). On PUT an
+	// empty value leaves it unchanged; DB → S3 is allowed (and starts the
+	// provider), S3 → DB is refused with CONTENT_STORAGE_DOWNGRADE.
+	ContentStorage string `json:"contentStorage,omitempty"`
 }
 
 // BundleInfoDto describes a bundle repository and its available versions.

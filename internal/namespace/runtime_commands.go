@@ -616,6 +616,47 @@ func (r *Runtime) StartApp(appName string) error {
 	return nil
 }
 
+// ReattachApp clears the operator's detach of one app, for the one caller that
+// may do it on the operator's behalf: an explicit configuration change that
+// makes the namespace REQUIRE the app (switching content storage to S3 needs
+// its provider). It is StartApp's T27 and nothing more, and it works in both
+// namespace states:
+//
+//   - the runtime loop is alive and the app is STOPPED: T27 — the detach is
+//     cleared and the app goes to READY_TO_PULL, so it starts. Clearing the
+//     flag alone would leave it STOPPED for good (stepAllApps has no STOPPED
+//     branch) with its dependents parked in DEPS_WAITING;
+//   - otherwise (a stopped namespace, or one never started in this process,
+//     whose app table is empty): only the persisted detach is cleared, and the
+//     app starts with the namespace, which is what attaching means.
+//
+// Changed reports whether anything was cleared or started; an app that was
+// never detached and is not STOPPED on a live loop is left alone. Ordinary
+// loads and reloads never call this — clearing a detach starts nothing unless
+// an operator action asked for it.
+func (r *Runtime) ReattachApp(appName string) (changed bool) {
+	r.mu.Lock()
+	wasDetached := r.manualStoppedApps[appName]
+	delete(r.manualStoppedApps, appName)
+	loopAlive := r.status == NsStatusRunning || r.status == NsStatusStarting || r.status == NsStatusStalled
+	if app, ok := r.apps[appName]; ok && loopAlive && app.Status == AppStatusStopped {
+		r.resetRetry(appName)
+		r.setAppStatus(app, AppStatusReadyToPull)
+		changed = true
+	}
+	changed = changed || wasDetached
+	if changed {
+		// Same rule as StartApp: persist inline, and a refused write is left
+		// for the loop tail to retry.
+		_ = r.persistUnderLock("reattach-app")
+	}
+	r.mu.Unlock()
+	if changed {
+		r.signalCh.Flush()
+	}
+	return changed
+}
+
 // RetryPullFailedApps re-queues all apps in PULL_FAILED state for pull+start.
 // Called after secrets change so that apps that failed due to missing auth
 // can recover.

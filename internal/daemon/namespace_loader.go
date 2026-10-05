@@ -98,6 +98,9 @@ type loadedNamespace struct {
 	// to, in the same repo — nil when there is none. Same recomputed-every-
 	// generation rule as DependencyUpgrades.
 	NewerBundle *bundle.NewerBundle
+	// ContentStorageProblem is GenResp.ContentStorageProblem of this
+	// generation — same recomputed-every-generation rule.
+	ContentStorageProblem *namespace.ContentStorageProblem
 }
 
 // bundleRepoByID looks up a declared BundlesRepo by id in a workspace config.
@@ -787,6 +790,8 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 		DependencyUpgrades: genResp.DependencyUpgrades,
 		Dependencies:       genResp.Dependencies,
 		NewerBundle:        newerBundle,
+		// Same rule as DependencyUpgrades: what THIS generation found.
+		ContentStorageProblem: genResp.ContentStorageProblem,
 	}, nil
 }
 
@@ -798,6 +803,9 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 // from a torn-down runtime can't drive a different namespace's server.
 func (d *Daemon) handleRuntimeEvent(evt api.EventDto, cloudCfg *CloudConfigServer) {
 	d.broadcastEvent(evt)
+	// App and namespace status changes are what start the one-time S3 content
+	// storage connection; the hook returns at once.
+	d.contentStorageProv().OnRuntimeEvent(evt)
 	if evt.Type != "namespace_status" || cloudCfg == nil {
 		return
 	}
@@ -902,10 +910,11 @@ func (d *Daemon) installLoadedNamespace(loaded *loadedNamespace, wsID, nsID stri
 		wsSyncError:     loaded.WsSyncError,
 		// Same rule as bundleError: recomputed by the generation this load
 		// just ran, so it must travel with it.
-		dependencyUpgrades: loaded.DependencyUpgrades,
-		dependencies:       loaded.Dependencies,
-		newerBundle:        loaded.NewerBundle,
-		acmeRenewal:        nil,
+		dependencyUpgrades:    loaded.DependencyUpgrades,
+		dependencies:          loaded.Dependencies,
+		newerBundle:           loaded.NewerBundle,
+		contentStorageProblem: loaded.ContentStorageProblem,
+		acmeRenewal:           nil,
 		// deferredForSecrets always false here: installLoadedNamespace serves
 		// namespace switch / auto-activate-after-create, both user-initiated —
 		// never the auto-start-on-boot path this gate defers. loaded.DeferredForSecrets
@@ -931,6 +940,8 @@ func (d *Daemon) installLoadedNamespace(loaded *loadedNamespace, wsID, nsID stri
 	}
 	d.activeNs = next
 	d.configMu.Unlock()
+	// The previous namespace's content-storage job and verdict go with it.
+	d.contentStorageProv().Reset()
 
 	if old.runtime != nil {
 		old.runtime.Shutdown()
@@ -974,7 +985,13 @@ func (d *Daemon) installLoadedNamespace(loaded *loadedNamespace, wsID, nsID stri
 // detachedAppsOnLoad is the detach set a freshly loaded namespace generates
 // with: what the operator has stopped by hand, or — for a namespace that has
 // never started, so has no persisted state at all — what its workspace
-// template seeds.
+// template seeds, less the apps the namespace's own configuration requires
+// (namespace.RequiredApps: the S3 provider of an S3 namespace, which the
+// default template holds back for every DB namespace).
+//
+// The operator's own set is NOT filtered: a provider stopped by hand on an S3
+// namespace stays stopped — clearing a detach is only ever done by the
+// explicit action that made the app required (reattachRequiredApps).
 //
 // It is one function rather than two inline blocks because two callers need
 // the answer now: Generate, and the dependency seeding that runs before it.
@@ -995,11 +1012,12 @@ func detachedAppsOnLoad(persisted *namespace.NsPersistedState, wsCfg *bundle.Wor
 		if tmpl.ID != nsCfg.Template || len(tmpl.DetachedApps) == 0 {
 			continue
 		}
-		out := make(map[string]bool, len(tmpl.DetachedApps))
-		for _, name := range tmpl.DetachedApps {
+		seeded := withoutRequiredApps(tmpl.DetachedApps, nsCfg, wsCfg)
+		out := make(map[string]bool, len(seeded))
+		for _, name := range seeded {
 			out[name] = true
 		}
-		slog.Info("Seeded detached apps from template", "template", nsCfg.Template, "apps", tmpl.DetachedApps)
+		slog.Info("Seeded detached apps from template", "template", nsCfg.Template, "apps", seeded)
 		return out
 	}
 	return nil

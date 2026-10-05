@@ -290,6 +290,9 @@ func constructDaemon(opts StartOptions, daemonCfg config.DaemonConfig, socketPat
 			dependencyUpgrades: loaded.DependencyUpgrades,
 			dependencies:       loaded.Dependencies,
 			newerBundle:        loaded.NewerBundle,
+			// What the boot generation found for an S3 namespace's
+			// ecos-content wiring; recomputed by every reload.
+			contentStorageProblem: loaded.ContentStorageProblem,
 		},
 		store:         store,
 		secretService: secretSvc,

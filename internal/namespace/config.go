@@ -115,6 +115,36 @@ type S3Config struct {
 	Region    string `yaml:"region,omitempty" json:"region,omitempty"`
 }
 
+// ContentStorageType is where ecos-content keeps the files of a namespace.
+type ContentStorageType string
+
+// Content storage types. DB is the default and the only answer for every
+// namespace created before the option existed; S3 is the workspace's S3
+// provider (bundle.ContentStorageConfig) and is ONE-WAY — files written to S3
+// are not in the database, so a namespace that chose it never goes back.
+const (
+	ContentStorageDB ContentStorageType = "DB"
+	ContentStorageS3 ContentStorageType = "S3"
+)
+
+// ParseContentStorageType reads an operator's spelling of a type —
+// case-insensitive, surrounding blanks ignored, empty meaning DB. ok is false
+// for anything that is not a known type.
+func ParseContentStorageType(s string) (ContentStorageType, bool) {
+	switch ContentStorageType(strings.ToUpper(strings.TrimSpace(s))) {
+	case "", ContentStorageDB:
+		return ContentStorageDB, true
+	case ContentStorageS3:
+		return ContentStorageS3, true
+	}
+	return "", false
+}
+
+// ContentStorageProps is namespace.yml's `contentStorage:` block.
+type ContentStorageProps struct {
+	Type ContentStorageType `yaml:"type" json:"type"`
+}
+
 // ConfigVersionCurrent is the namespace-config generation this launcher
 // creates. It is written into namespace.yml as `apiVersion: v<N>` at CREATE
 // time only — never on load, and never as an upgrade of an existing file, so
@@ -142,6 +172,27 @@ type Config struct {
 	Webapps        map[string]WebappProps `yaml:"webapps,omitempty" json:"webapps,omitempty"`
 	Email          *EmailConfig           `yaml:"email,omitempty" json:"email,omitempty"`
 	S3             *S3Config              `yaml:"s3,omitempty" json:"s3,omitempty"`
+	// ContentStorage is a POINTER with omitempty, and it is not seeded in
+	// DefaultNamespaceConfig, for the reason MongoDbProps.Enabled is a pointer:
+	// absent is the answer of every namespace that predates the option, and a
+	// seeded or always-written value would rewrite every namespace.yml on its
+	// next save. Absent means DB — see ContentStorageType.
+	ContentStorage *ContentStorageProps `yaml:"contentStorage,omitempty" json:"contentStorage,omitempty"`
+}
+
+// ContentStorageType answers where this namespace keeps its content: DB when
+// the block is absent or names no type. ParseNamespaceConfig has already
+// normalized the spelling, and refused a type it does not know; a config built
+// in code that carries one anyway reads as DB, the type with no side effects.
+func (c *Config) ContentStorageType() ContentStorageType {
+	if c == nil || c.ContentStorage == nil {
+		return ContentStorageDB
+	}
+	t, ok := ParseContentStorageType(string(c.ContentStorage.Type))
+	if !ok {
+		return ContentStorageDB
+	}
+	return t
 }
 
 // DefaultNamespaceConfig returns a namespace config with sensible defaults.
@@ -239,6 +290,14 @@ func ParseNamespaceConfig(data []byte) (*Config, error) {
 	if cfg.ID == "" {
 		cfg.ID = "default"
 	}
+	// `type: s3` is S3: normalize the spelling once, here, so every reader
+	// compares against the constants. An unknown type is left as written for
+	// the validation below to name.
+	if cfg.ContentStorage != nil {
+		if t, ok := ParseContentStorageType(string(cfg.ContentStorage.Type)); ok {
+			cfg.ContentStorage.Type = t
+		}
+	}
 	if err := ValidateNamespaceConfig(&cfg); err != nil {
 		return nil, err
 	}
@@ -295,6 +354,26 @@ func ValidateNamespaceConfig(cfg *Config) error {
 		if cfg.S3.SecretKey == "" {
 			return fmt.Errorf("s3 secret key is required")
 		}
+	}
+	return validateContentStorage(cfg)
+}
+
+// validateContentStorage refuses a content-storage type this launcher does not
+// know, and S3 content storage beside the external `s3:` block: both decide
+// where ecos-content puts its files, and two answers to one question is a
+// stand whose content lands in whichever store happened to win.
+func validateContentStorage(cfg *Config) error {
+	if cfg.ContentStorage == nil {
+		return nil
+	}
+	t, ok := ParseContentStorageType(string(cfg.ContentStorage.Type))
+	if !ok {
+		return fmt.Errorf("contentStorage.type must be %s or %s, got %q",
+			ContentStorageDB, ContentStorageS3, cfg.ContentStorage.Type)
+	}
+	if t == ContentStorageS3 && cfg.S3 != nil {
+		return fmt.Errorf("contentStorage.type %s cannot be combined with the s3 block: "+
+			"both decide where ecos-content stores its files", ContentStorageS3)
 	}
 	return nil
 }

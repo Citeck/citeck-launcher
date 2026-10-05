@@ -557,6 +557,10 @@ export interface NamespaceEditDto {
    *  carried meaning. Decides which legacy toggles are worth showing: a
    *  namespace created at generation 2+ never has MongoDB. */
   configVersion?: number
+  /** "DB" | "S3". GET always fills the effective type; on PUT absent/empty
+   *  leaves it unchanged, DB → S3 is allowed, S3 → DB is refused (409
+   *  CONTENT_STORAGE_DOWNGRADE). */
+  contentStorage?: string
 }
 
 /**

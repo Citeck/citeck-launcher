@@ -200,6 +200,7 @@ func (d *Daemon) teardownActiveNamespaceForDelete(wsID, nsID string) {
 	d.configMu.Lock()
 	old := d.clearActiveNamespaceLocked()
 	d.configMu.Unlock()
+	d.contentStorageProv().Reset()
 
 	if old.runtime != nil {
 		old.runtime.Shutdown() // drains the loop → no further persistState
@@ -495,6 +496,7 @@ func (d *Daemon) handleDeactivateNamespace(w http.ResponseWriter, r *http.Reques
 	d.configMu.Lock()
 	old := d.clearActiveNamespaceLocked()
 	d.configMu.Unlock()
+	d.contentStorageProv().Reset()
 
 	if old.runtime != nil {
 		old.runtime.Shutdown()
@@ -557,11 +559,9 @@ func (d *Daemon) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 
 	nsCfg, err := d.createNamespace(req)
 	if err != nil {
-		var floor *errLauncherTooOld
 		var ce *createNamespaceError
 		switch {
-		case errors.As(err, &floor):
-			d.writeLauncherTooOldError(w, r, floor)
+		case d.writeConfigGateRefusal(w, r, err):
 		case errors.As(err, &ce) && ce.code != "":
 			writeErrorCode(w, ce.status, ce.code, ce.message)
 		case errors.As(err, &ce):
@@ -738,6 +738,9 @@ func (d *Daemon) buildNamespaceConfigFromCreate(req api.NamespaceCreateDto, wsID
 	if req.BundleRepo != "" && req.BundleKey != "" {
 		nsCfg.BundleRef = bundle.Ref{Repo: req.BundleRepo, Key: req.BundleKey}
 	}
+	if err := applyCreateContentStorage(&nsCfg, req.ContentStorage); err != nil {
+		return nil, err
+	}
 
 	// Store the effective snapshot id in the config so the demo data is imported
 	// before start (createNamespace) and re-imported on later restarts only when
@@ -802,6 +805,30 @@ func (d *Daemon) buildNamespaceConfigFromCreate(req api.NamespaceCreateDto, wsID
 	return &nsCfg, nil
 }
 
+// applyCreateContentStorage applies the create request's content storage. An
+// empty value keeps whatever the template said (nothing, for every template
+// today); DB is written as NO block — absent is DB, and every other namespace
+// on the stand has no block either. Whether S3 is allowed for the chosen
+// bundle is the write gate's question (persistNamespaceConfig), asked once
+// the bundle key is pinned.
+func applyCreateContentStorage(nsCfg *namespace.Config, requested string) error {
+	if requested == "" {
+		return nil
+	}
+	t, ok := namespace.ParseContentStorageType(requested)
+	if !ok {
+		return &createNamespaceError{status: http.StatusBadRequest, code: api.ErrCodeInvalidConfig,
+			message: fmt.Sprintf("contentStorage must be %s or %s, got %q",
+				namespace.ContentStorageDB, namespace.ContentStorageS3, requested)}
+	}
+	if t == namespace.ContentStorageS3 {
+		nsCfg.ContentStorage = &namespace.ContentStorageProps{Type: namespace.ContentStorageS3}
+	} else {
+		nsCfg.ContentStorage = nil
+	}
+	return nil
+}
+
 // resolveBundleForCreate returns the selected bundle or a create-time refusal
 // when it cannot be read. The caller also uses it for compatibility defaults.
 func (d *Daemon) resolveBundleForCreate(wsID string, ref bundle.Ref) (*bundle.ResolveResult, *createNamespaceError) {
@@ -841,10 +868,9 @@ func (d *Daemon) persistNewNamespace(wsID string, nsCfg *namespace.Config) error
 			message: fmt.Sprintf("namespace %q already exists", nsCfg.ID)}
 	}
 	if persistErr := d.persistNamespaceConfig(wsID, nsCfg.ID, data); persistErr != nil {
-		// *errLauncherTooOld travels unwrapped so the handler can render it
-		// in the request's language — see handleCreateNamespace.
-		var floor *errLauncherTooOld
-		if errors.As(persistErr, &floor) {
+		// The write-gate refusals travel unwrapped so the handler can render
+		// them in the request's language — see handleCreateNamespace.
+		if isConfigGateRefusal(persistErr) {
 			return persistErr
 		}
 		return &createNamespaceError{status: http.StatusBadRequest, code: api.ErrCodeInvalidConfig,
@@ -980,6 +1006,9 @@ func (d *Daemon) handleGetNamespaceEdit(w http.ResponseWriter, r *http.Request) 
 		PgAdminEnabled: &pgAdminEnabled,
 		MongoEnabled:   &mongoEnabled,
 		ConfigVersion:  nsCfg.Version(),
+		// Effective, for the reason mongoEnabled is: no namespace that
+		// predates the option has the block, and every one of them is DB.
+		ContentStorage: string(nsCfg.ContentStorageType()),
 	}
 	writeJSON(w, dto)
 }
@@ -1157,6 +1186,23 @@ func (d *Daemon) handlePutNamespaceEdit(w http.ResponseWriter, r *http.Request) 
 		enabled := *req.MongoEnabled
 		current.MongoDB.Enabled = &enabled
 	}
+	storageBefore := current.ContentStorageType()
+	if req.ContentStorage != "" {
+		requested, known := namespace.ParseContentStorageType(req.ContentStorage)
+		if !known {
+			writeErrorCode(w, http.StatusBadRequest, api.ErrCodeInvalidConfig,
+				fmt.Sprintf("contentStorage must be %s or %s, got %q",
+					namespace.ContentStorageDB, namespace.ContentStorageS3, req.ContentStorage))
+			return
+		}
+		// Only a CHANGE is written: a DB namespace saved as DB keeps having
+		// no block at all. S3 → DB is written as asked and refused by the
+		// write gate below (CONTENT_STORAGE_DOWNGRADE), so the refusal is
+		// worded in one place.
+		if requested != storageBefore {
+			current.ContentStorage = &namespace.ContentStorageProps{Type: requested}
+		}
+	}
 
 	if valErr := namespace.ValidateNamespaceConfig(current); valErr != nil {
 		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeInvalidConfig, valErr.Error())
@@ -1169,13 +1215,18 @@ func (d *Daemon) handlePutNamespaceEdit(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if err := d.persistNamespaceConfig(wsID, nsID, data); err != nil {
-		var floor *errLauncherTooOld
-		if errors.As(err, &floor) {
-			d.writeLauncherTooOldError(w, r, floor)
+		if d.writeConfigGateRefusal(w, r, err) {
 			return
 		}
 		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeInvalidConfig, err.Error())
 		return
+	}
+
+	// DB → S3 makes the namespace require the S3 provider, which the default
+	// template keeps detached: re-attach it once, as part of this explicit
+	// action, before the reload generates ecos-content's dependency on it.
+	if switchedToS3(storageBefore, current) {
+		d.reattachRequiredApps(wsID, nsID, current)
 	}
 
 	// Reload only when the edited namespace is the active one, so the change

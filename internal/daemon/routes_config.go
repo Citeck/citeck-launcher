@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -274,6 +273,10 @@ func (d *Daemon) handleGetNamespace(w http.ResponseWriter, r *http.Request) {
 	// running the journal is simply its record, and DependencyMigration above
 	// already says so.
 	dto.DependencyRollbackPending = d.rollbackBlocker(t, act)
+	// S3 content storage: the provider, why it is not wired (the last
+	// generation's verdict) and how far its one-time connection got. Nil for
+	// a DB namespace.
+	dto.ContentStorage = d.contentStorageDto(t, act)
 	// When namespace is stopped, runtime clears the app list. Populate from
 	// the resolved config so the UI always shows the full service catalog.
 	if len(dto.Apps) == 0 && len(appDefs) > 0 {
@@ -731,9 +734,7 @@ func (d *Daemon) handleUpgradeNamespace(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if err := d.persistNamespaceConfig(act.workspaceID, nsID, data); err != nil {
-		var floor *errLauncherTooOld
-		if errors.As(err, &floor) {
-			d.writeLauncherTooOldError(w, r, floor)
+		if d.writeConfigGateRefusal(w, r, err) {
 			return
 		}
 		writeInternalError(w, fmt.Errorf("write config: %w", err))
@@ -797,14 +798,46 @@ func (d *Daemon) handlePutConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A raw edit that switches content storage DB → S3 is the one raw save
+	// that acts beyond the file: like the edit dialog, it re-attaches the S3
+	// provider and reloads, so it takes the locks the edit dialog takes —
+	// BEFORE anything is written. Every other raw save keeps its plain
+	// save-and-reload-later shape. A body that does not parse is left to the
+	// validation inside persistNamespaceConfig, which says why.
+	before := d.loadStoredContentStorage(wsID, nsID).typ
+	parsed, parseErr := namespace.ValidateYAML(body)
+	switching := parseErr == nil && switchedToS3(before, parsed)
+	if switching {
+		release, ok := d.tryLongOp(w, r, tolerateNothing)
+		if !ok {
+			return
+		}
+		defer release()
+		if !d.reloadMu.TryLock() {
+			writeErrorCode(w, http.StatusConflict, api.ErrCodeReloadInProgress, "reload already in progress")
+			return
+		}
+		defer d.reloadMu.Unlock()
+	}
+
 	// Validate + persist the user's exact bytes through the choke-point.
 	if err := d.persistNamespaceConfig(wsID, nsID, body); err != nil {
-		var floor *errLauncherTooOld
-		if errors.As(err, &floor) {
-			d.writeLauncherTooOldError(w, r, floor)
+		if d.writeConfigGateRefusal(w, r, err) {
 			return
 		}
 		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeInvalidConfig, fmt.Sprintf("invalid config: %s", err.Error()))
+		return
+	}
+
+	if switching {
+		d.reattachRequiredApps(wsID, nsID, parsed)
+		if d.activeNsID() == nsID {
+			if err := d.invokeReload(); err != nil {
+				writeInternalError(w, fmt.Errorf("reload after the content storage switch: %w", err))
+				return
+			}
+		}
+		writeJSON(w, api.ActionResultDto{Success: true, Message: "Configuration saved and applied"})
 		return
 	}
 

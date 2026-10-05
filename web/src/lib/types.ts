@@ -149,6 +149,40 @@ export interface NamespaceDto {
   // Carried here because that recovery runs at load time — it emits no
   // deps_migration_* event and produces no result.
   dependencyRollbackPending?: string
+  // Present only for a namespace that stores its content in S3 (absent = DB).
+  contentStorage?: ContentStorageDto
+}
+
+/** The S3 content storage of the active namespace (api.ContentStorageDto). */
+export interface ContentStorageDto {
+  /** Always "S3": a DB namespace carries no contentStorage at all. */
+  type: string
+  /** The workspace's contentStorage.s3.app, e.g. "seaweedfs". */
+  providerApp: string
+  /** pending | waiting | provisioning | connected | admin-managed | error */
+  state: string
+  /** Why the last connection attempt failed — already rendered in this
+   *  client's locale (X-Citeck-Locale). Present with state "error" only. */
+  error?: string
+  /** Why ecos-content is not wired to its provider at all: NO_CONTENT_APP |
+   *  NO_PROVIDER_CONFIG | NO_PROVIDER_APP | NO_PROVIDER_IMAGE |
+   *  PROVIDER_NOT_GENERATED. */
+  problem?: string
+  /** RFC 3339 time of the last state change. */
+  at?: string
+}
+
+/** GET /content-storage/options — DB is always available, so only S3 is described. */
+export interface ContentStorageOptionsDto {
+  s3: ContentStorageOptionDto
+}
+
+export interface ContentStorageOptionDto {
+  available: boolean
+  /** NO_CONTENT_APP (hide the option) | NO_PROVIDER_CONFIG | NO_PROVIDER_APP |
+   *  NO_PROVIDER_IMAGE | BUNDLE_UNRESOLVED (show it disabled with a hint). */
+  reason?: string
+  providerApp?: string
 }
 
 /** One infrastructure dependency of the active namespace. */
@@ -450,6 +484,8 @@ export interface NamespaceCreateDto {
   template?: string
   masterPassword?: string
   useDefaultPassword?: boolean
+  /** "DB" | "S3"; absent = DB. */
+  contentStorage?: string
 }
 
 export interface BundleInfoDto {

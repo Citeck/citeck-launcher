@@ -588,6 +588,7 @@ func (d *Daemon) SwitchWorkspace(wsID string) error {
 	// workspace-repo sync error can survive into the new workspace.
 	a.wsSyncError = ""
 	d.configMu.Unlock()
+	d.contentStorageProv().Reset()
 	if old.dockerClient != nil {
 		_ = old.dockerClient.Close()
 	}

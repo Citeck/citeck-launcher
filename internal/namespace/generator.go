@@ -33,6 +33,10 @@ type GenResp struct {
 	CustomLinks           []bundle.WorkspaceLink    // workspace-config custom quick links (with dependsOn gating)
 	DependencyUpgrades    []DependencyUpgrade       // candidates held back by a pin (registry order)
 	Dependencies          map[deps.ID]DependencyGen // effective vs candidate image per dependency
+	// ContentStorageProblem is why an S3 namespace's ecos-content is not wired
+	// to its S3 provider in this generation (nil when it is, and always nil for
+	// a DB namespace). Reported, never an error — see wireContentStorage.
+	ContentStorageProblem *ContentStorageProblem
 }
 
 // GenerateOpts holds optional parameters for namespace generation.
@@ -207,8 +211,12 @@ func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secre
 	warnWorkspaceDependsOnTargets(ctx)
 
 	// Drop any app whose dependsOn points at an app that wasn't generated
-	// (transitively); see pruneAppsWithMissingDeps.
+	// (transitively); see pruneAppsWithMissingDeps. Content storage is wired
+	// between the two: the S3 provider is exactly the kind of app the secrets
+	// pass removes, and a dependsOn on it would make the prune take
+	// ecos-content (and its dependents) along — see wireContentStorage.
 	excludeAppsMissingSecrets(ctx)
+	wireContentStorage(ctx)
 	pruneAppsWithMissingDeps(ctx)
 
 	if err := checkAppDependencyErrors(ctx); err != nil {
@@ -319,6 +327,7 @@ func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secre
 		CustomLinks:           customLinks,
 		DependencyUpgrades:    sortedUpgrades(ctx),
 		Dependencies:          ctx.DependencyImages,
+		ContentStorageProblem: ctx.ContentStorageProblem,
 	}, nil
 }
 

@@ -84,29 +84,53 @@ func resolveAppImage(ctx *NsGenContext, name, namespaceImage, fallback string) s
 // WINNING layer's whole list, so the ladder and the image it resolves to can
 // never come from two different layers.
 func resolveAppImageChain(ctx *NsGenContext, name, namespaceImage, fallback string) []string {
-	if ctx.Bundle != nil {
-		if dep := ctx.Bundle.Dependencies[name]; dep.Image != "" {
-			warnDiscardedImageLayers(ctx, name, dep.Image, namespaceImage)
+	chain, bundleImage := appImageChain(ctx.Bundle, ctx.WorkspaceConfig, name, namespaceImage, fallback)
+	if bundleImage != "" {
+		warnDiscardedImageLayers(ctx, name, bundleImage, namespaceImage)
+	}
+	return chain
+}
+
+// appImageChain is the precedence itself, with no generation context and no
+// logging, so a question asked OUTSIDE a generation — "would this app get an
+// image at all?" (ContentStorageS3Availability) — is answered by the very rule
+// the generator applies rather than by a copy of it. bundleImage is the image
+// the bundle decided on, "" when a lower layer won; it is what the caller warns
+// about.
+func appImageChain(bun *bundle.Def, ws *bundle.WorkspaceConfig, name, namespaceImage, fallback string) (chain []string, bundleImage string) {
+	if bun != nil {
+		if dep := bun.Dependencies[name]; dep.Image != "" {
 			if len(dep.Images) > 0 {
-				return dep.Images
+				return dep.Images, dep.Image
 			}
-			return []string{dep.Image}
+			return []string{dep.Image}, dep.Image
 		}
-		if image := ctx.Bundle.Applications[name].Image; image != "" {
-			warnDiscardedImageLayers(ctx, name, image, namespaceImage)
-			return []string{image}
+		if image := bun.Applications[name].Image; image != "" {
+			return []string{image}, image
 		}
 	}
 	if namespaceImage != "" {
-		return []string{namespaceImage}
+		return []string{namespaceImage}, ""
 	}
-	if chain := ctx.WorkspaceConfig.DependencyImageChain(name); len(chain) > 0 {
-		return chain
+	if chain := ws.DependencyImageChain(name); len(chain) > 0 {
+		return chain, ""
 	}
 	if fallback != "" {
-		return []string{fallback}
+		return []string{fallback}, ""
 	}
-	return nil
+	return nil, ""
+}
+
+// additionalAppImage answers the image a RAW additionalApps entry runs: the
+// bundle's under the entry's name first, the entry's own (registry-resolved)
+// image only as the fallback — generateAdditionalApps' rule, in the one place
+// both it and the content-storage availability read it from.
+func additionalAppImage(bun *bundle.Def, ws *bundle.WorkspaceConfig, def bundle.AdditionalAppProps) string {
+	chain, _ := appImageChain(bun, ws, strings.TrimSpace(def.Name), "", ws.ResolveImageRef(def.Image))
+	if len(chain) == 0 {
+		return ""
+	}
+	return chain[len(chain)-1]
 }
 
 // bundleImageChainOr is bundleImageOr's ladder-aware form: the gate's chain

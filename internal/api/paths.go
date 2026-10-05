@@ -27,6 +27,18 @@ const (
 	NamespaceAdminPassword  = APIV1 + "/namespace/admin-password"
 	RestartEvents           = APIV1 + "/namespace/restart-events"
 
+	// NamespaceContentStorageProvision runs the one-time connection of
+	// ecos-content to the active namespace's S3 provider now (POST, 202), for
+	// the Retry button of a connection that failed. The connection also runs
+	// on its own once the platform is up.
+	NamespaceContentStorageProvision = APIV1 + "/namespace/content-storage/provision"
+
+	// ContentStorageOptions answers which content storage types a namespace on
+	// a bundle may choose (GET ?bundleRepo=&bundleKey=[&workspaceId=]),
+	// resolved offline from the synced bundle repo — the create and edit
+	// dialogs ask it whenever the bundle selection changes.
+	ContentStorageOptions = APIV1 + "/content-storage/options"
+
 	// Dependencies lists the ACTIVE namespace's infrastructure dependencies
 	// (internal/deps: postgres, rabbitmq, zookeeper, keycloak, mongodb) with
 	// the image each one's data runs on, the image the bundle wants, and

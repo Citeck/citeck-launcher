@@ -204,6 +204,10 @@ func decideNewAppDetach(known []string, generated []appdef.ApplicationDef, nsCfg
 	if templates != nil {
 		detachedByTemplate, fresh = templates(templateID, wsCfg)
 	}
+	// An app the namespace's own configuration requires is never held back by
+	// the template — on the load path and the reload path alike, since both
+	// come through here (see detachedAppsOnLoad for the first load).
+	detachedByTemplate = withoutRequiredApps(detachedByTemplate, nsCfg, wsCfg)
 	res := namespace.DecideNewAppDetach(namespace.NewAppDetachInput{
 		Known:            known,
 		Generated:        names,

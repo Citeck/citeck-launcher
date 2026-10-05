@@ -26,7 +26,7 @@ func (p nsStatePersister) SaveNamespaceState(status, stateJSON string) error {
 func loadNsStateFromStore(store storage.Store, wsID, nsID string) *namespace.NsPersistedState {
 	js, ok, err := store.LoadNamespaceState(wsID, nsID)
 	if err != nil {
-		slog.Warn("Failed to load namespace state", "ws", wsID, "ns", nsID, "err", err)
+		slog.Warn("Failed to load namespace state", "ws", wsID, "ns", nsID, "err", err) //nolint:gosec // G706: validated ids
 		return nil
 	}
 	if !ok || js == "" {
@@ -34,7 +34,7 @@ func loadNsStateFromStore(store storage.Store, wsID, nsID string) *namespace.NsP
 	}
 	var st namespace.NsPersistedState
 	if err := json.Unmarshal([]byte(js), &st); err != nil {
-		slog.Warn("Failed to unmarshal namespace state", "ws", wsID, "ns", nsID, "err", err)
+		slog.Warn("Failed to unmarshal namespace state", "ws", wsID, "ns", nsID, "err", err) //nolint:gosec // G706: validated ids
 		return nil
 	}
 	return &st

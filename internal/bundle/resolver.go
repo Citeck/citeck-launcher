@@ -318,6 +318,9 @@ type WorkspaceConfig struct {
 	// Links are custom quick links shown in the launcher sidebar alongside the
 	// built-in ones. See WorkspaceLink.
 	Links []WorkspaceLink `yaml:"links,omitempty"`
+	// ContentStorage names the S3 provider a namespace may choose for its
+	// content instead of the database. See ContentStorageConfig.
+	ContentStorage *ContentStorageConfig `yaml:"contentStorage,omitempty"`
 }
 
 // followAlias resolves a YAML alias node ("*anchor") to the node it points at.
@@ -1111,6 +1114,14 @@ func parseWorkspaceConfig(raw []byte, path string, logger *slog.Logger) *Workspa
 		if dep.Image == "" {
 			logger.Warn("Workspace dependency entry names no image; ignoring it", "app", name, "path", path)
 		}
+	}
+	// Same rule for the contentStorage block: decoding it never fails the
+	// workspace config (ContentStorageConfig.UnmarshalYAML is total), and a
+	// block it could not use is dropped here, once, out loud — unreported, S3
+	// content storage would simply be unavailable with nothing saying why.
+	if problem := cfg.ContentStorage.Problem(); problem != "" {
+		logger.Warn("Workspace contentStorage block is unusable; ignoring it", "problem", problem, "path", path)
+		cfg.ContentStorage = nil
 	}
 	return &cfg
 }

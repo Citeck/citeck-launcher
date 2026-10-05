@@ -67,11 +67,7 @@ func (d *Daemon) launcherFloorRefusal(wsID string, cfg *namespace.Config) *errLa
 	if strings.EqualFold(strings.TrimSpace(cfg.BundleRef.Key), "LATEST") {
 		return nil
 	}
-	resolver := bundle.NewResolverWithAuth(config.BundlesDataDir(wsID), makeTokenLookup(d.secretReaderFunc())).
-		WithWorkspaceOverlay(workspaceConfigOverlay(d.store, wsID)).
-		WithLauncherVersion(d.version)
-	resolver.SetOffline(true)
-	res, err := resolver.Resolve(cfg.BundleRef)
+	res, err := d.resolveBundleOffline(wsID, cfg.BundleRef)
 	if err != nil || res == nil || res.Bundle == nil {
 		return nil
 	}
@@ -85,16 +81,39 @@ func (d *Daemon) launcherFloorRefusal(wsID string, cfg *namespace.Config) *errLa
 	}
 }
 
+// resolveBundleOffline resolves a bundle ref from what is already on disk —
+// no git — for the write gates, which run on every config write (a rename
+// included) and must never wait on a sync.
+func (d *Daemon) resolveBundleOffline(wsID string, ref bundle.Ref) (*bundle.ResolveResult, error) {
+	resolver := bundle.NewResolverWithAuth(config.BundlesDataDir(wsID), makeTokenLookup(d.secretReaderFunc())).
+		WithWorkspaceOverlay(workspaceConfigOverlay(d.store, wsID)).
+		WithLauncherVersion(d.version)
+	resolver.SetOffline(true)
+	res, err := resolver.Resolve(ref)
+	if err != nil {
+		return nil, fmt.Errorf("resolve bundle %s offline: %w", ref, err)
+	}
+	return res, nil
+}
+
 // persistNamespaceConfig is the SINGLE write path for namespace config. It
 // validates the EXACT bytes to be stored (catching bad input and any
 // serializer defect) and only then writes them, with the name denormalized
 // from the parsed config. Every create/edit/raw-edit path must go through it.
+//
+// It is also where the write gates live, each comparing the config being
+// written with the bundle it names (and, for content storage, with the config
+// it replaces): a refusal comes back as *errLauncherTooOld or
+// *errContentStorageRefused, and writeConfigGateRefusal renders both.
 func (d *Daemon) persistNamespaceConfig(wsID, nsID string, bytesToStore []byte) error {
 	cfg, err := namespace.ValidateYAML(bytesToStore)
 	if err != nil {
 		return fmt.Errorf("invalid namespace config: %w", err)
 	}
 	if refusal := d.launcherFloorRefusal(wsID, cfg); refusal != nil {
+		return refusal
+	}
+	if refusal := d.contentStorageRefusal(wsID, d.loadStoredContentStorage(wsID, nsID), cfg); refusal != nil {
 		return refusal
 	}
 	if err := d.store.SaveNamespaceConfig(wsID, nsID, cfg.Name, string(bytesToStore)); err != nil {

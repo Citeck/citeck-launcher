@@ -1,0 +1,179 @@
+package namespace
+
+import (
+	"log/slog"
+
+	"github.com/citeck/citeck-launcher/internal/appdef"
+	"github.com/citeck/citeck-launcher/internal/bundle"
+)
+
+// Content storage: where ecos-content keeps a namespace's files. DB (the
+// default) needs nothing from the launcher. S3 runs the workspace's S3
+// provider — an additionalApps entry the workspace names in its
+// `contentStorage.s3` block — beside the stand, makes content wait for it, and
+// (in the daemon) connects ecos-content to it once.
+//
+// The launcher knows the ECOS side of that contract (the `content` app and the
+// records it is configured through) and NOTHING about the provider: which
+// container serves S3 is configuration, the rule the observer established. No
+// provider name is spelled here.
+
+// Why S3 content storage is not available, as a wire code. The UI hides the
+// option for NO_CONTENT_APP (the bundle has no ecos-content, so the question
+// does not exist — Community) and shows it disabled, with a hint, for the rest.
+const (
+	ContentStorageNoContentApp     = "NO_CONTENT_APP"
+	ContentStorageNoProviderConfig = "NO_PROVIDER_CONFIG"
+	ContentStorageNoProviderApp    = "NO_PROVIDER_APP"
+	ContentStorageNoProviderImage  = "NO_PROVIDER_IMAGE"
+	// ContentStorageProviderNotGenerated is a GENERATION problem, never an
+	// availability answer: the configuration offers a provider, but this
+	// generation left it out — a `${secret:}` it references has no value in
+	// the namespace, or something it depends on is missing.
+	ContentStorageProviderNotGenerated = "PROVIDER_NOT_GENERATED"
+)
+
+// ContentStorageAvailability answers whether a namespace on a given bundle and
+// workspace may store its content in S3.
+type ContentStorageAvailability struct {
+	Available bool
+	// Reason is one of the ContentStorageNo* codes, "" when Available.
+	Reason string
+	// ProviderApp is the workspace's `contentStorage.s3.app`, "" when the
+	// workspace names none.
+	ProviderApp string
+}
+
+// ContentStorageS3Availability is the one answer to "may this namespace store
+// its content in S3", shared by the create/edit write gate, the options the
+// dialogs offer and the generator's own problem report. It reads the bundle and
+// the workspace and nothing else — no Docker, no git.
+//
+// The checks run in the order the UI needs them: a bundle without ecos-content
+// HIDES the option, so that answer must win over every configuration problem.
+// The provider's image is resolved by the precedence generateAdditionalApps
+// applies (additionalAppImage), so "available" here means the generator will
+// really emit the container.
+func ContentStorageS3Availability(bun *bundle.Def, ws *bundle.WorkspaceConfig) ContentStorageAvailability {
+	var out ContentStorageAvailability
+	if s3 := ws.ContentStorageS3(); s3 != nil {
+		out.ProviderApp = s3.App
+	}
+	switch {
+	case bun == nil || bun.Applications[appdef.AppContent].Image == "":
+		out.Reason = ContentStorageNoContentApp
+	case out.ProviderApp == "":
+		out.Reason = ContentStorageNoProviderConfig
+	default:
+		entry, ok := ws.AdditionalApp(out.ProviderApp)
+		switch {
+		case !ok:
+			out.Reason = ContentStorageNoProviderApp
+		case additionalAppImage(bun, ws, entry) == "":
+			out.Reason = ContentStorageNoProviderImage
+		default:
+			out.Available = true
+		}
+	}
+	return out
+}
+
+// RequiredApps lists the apps this namespace's own configuration requires to
+// run, which a workspace template's detachedApps must therefore not hold back:
+// today the S3 provider of an S3 namespace. It answers from the configuration
+// alone — whether the bundle really produces the app is the generator's
+// question, and a name that is not generated subtracts nothing.
+func RequiredApps(cfg *Config, ws *bundle.WorkspaceConfig) []string {
+	if cfg.ContentStorageType() != ContentStorageS3 {
+		return nil
+	}
+	if s3 := ws.ContentStorageS3(); s3 != nil && s3.App != "" {
+		return []string{s3.App}
+	}
+	return nil
+}
+
+// ContentStorageProblem is why an S3 namespace's generation could not wire
+// ecos-content to its provider. It is REPORTED (NamespaceDto.ContentStorage),
+// never a Generate error: an error there fails loadNamespace and can stop the
+// daemon at boot over a provider the operator may simply have to unlock a
+// vault for.
+type ContentStorageProblem struct {
+	// Reason is a ContentStorageNo* code or ContentStorageProviderNotGenerated.
+	Reason string
+	// ProviderApp is the provider the workspace names, "" when it names none.
+	ProviderApp string
+}
+
+// wireContentStorage makes ecos-content of an S3 namespace wait for the S3
+// provider, and nothing else — no env, no gating: ecos-content is connected to
+// the provider through its own records, by the daemon, once the platform is up.
+//
+// It must run AFTER excludeAppsMissingSecrets and BEFORE
+// pruneAppsWithMissingDeps. The provider references the namespace's S3 secret,
+// so it is exactly the app the secrets pass removes when the vault cannot
+// answer; a dependsOn pointing at it then would make the prune delete content,
+// and with it everything that depends on content. For the same reason the
+// provider must also SURVIVE the prune: a provider whose own dependency is
+// missing is about to be removed, and wiring content to it would take content
+// along. In both cases content stays and the problem is reported instead.
+//
+// A DB namespace is untouched: its content def, and therefore its deployment
+// hash, is byte-identical to what every launcher before this one generated.
+func wireContentStorage(ctx *NsGenContext) {
+	if ctx.Config.ContentStorageType() != ContentStorageS3 {
+		return
+	}
+	avail := ContentStorageS3Availability(ctx.Bundle, ctx.WorkspaceConfig)
+	content, ok := ctx.Applications[appdef.AppContent]
+	if !ok {
+		// No ecos-content in this generation: there is nothing to wire, and the
+		// option itself is unavailable. Said, so the namespace does not wait
+		// for a connection that cannot happen.
+		ctx.ContentStorageProblem = &ContentStorageProblem{
+			Reason: ContentStorageNoContentApp, ProviderApp: avail.ProviderApp,
+		}
+		return
+	}
+	if !avail.Available {
+		ctx.ContentStorageProblem = &ContentStorageProblem{Reason: avail.Reason, ProviderApp: avail.ProviderApp}
+		slog.Warn("S3 content storage is not available; ecos-content is not wired to a provider",
+			"reason", avail.Reason, "provider", avail.ProviderApp)
+		return
+	}
+	if !survivesPrune(ctx, avail.ProviderApp) {
+		ctx.ContentStorageProblem = &ContentStorageProblem{
+			Reason: ContentStorageProviderNotGenerated, ProviderApp: avail.ProviderApp,
+		}
+		slog.Warn("The S3 content storage provider is not part of this generation; ecos-content is not wired to it",
+			"provider", avail.ProviderApp)
+		return
+	}
+	content.AddDependsOn(avail.ProviderApp)
+}
+
+// survivesPrune reports whether an app is generated and will be kept by
+// pruneAppsWithMissingDeps, i.e. every app it depends on, transitively, is
+// generated too. The visited set keeps a dependency cycle (refused later by
+// detectDependencyCycles) from spinning here first.
+func survivesPrune(ctx *NsGenContext, name string) bool {
+	visited := make(map[string]bool)
+	var walk func(string) bool
+	walk = func(app string) bool {
+		if visited[app] {
+			return true
+		}
+		visited[app] = true
+		b, ok := ctx.Applications[app]
+		if !ok {
+			return false
+		}
+		for _, dep := range b.DependsOn {
+			if !walk(dep) {
+				return false
+			}
+		}
+		return true
+	}
+	return walk(name)
+}
