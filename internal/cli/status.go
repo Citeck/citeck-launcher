@@ -105,32 +105,8 @@ func newStatusCmd() *cobra.Command {
 			licStatus, depsDto := fetchStatusExtras(c)
 
 			output.PrintResult(ns, func() {
-				// Pad labels to the width of the longest ("License:" = 8)
-				// so the values line up visually. padRight (shared with the
-				// install wizard) is CJK-aware — though labels are ASCII here,
-				// using the same helper keeps alignment logic consistent.
-				output.PrintText("%s  %s", output.Colorize(output.Bold, padRight("Name:", 8)), ns.Name)
-				output.PrintText("%s  %s", output.Colorize(output.Bold, padRight("Status:", 8)), output.ColorizeStatus(ns.Status))
-				if ns.BundleRef != "" {
-					output.PrintText("%s  %s", output.Colorize(output.Bold, padRight("Bundle:", 8)), ns.BundleRef)
-				}
-				if line := formatLicenseLine(licStatus); line != "" {
-					output.PrintText("%s  %s", output.Colorize(output.Bold, padRight("License:", 8)), line)
-				}
-				if hint := dependencyHintLine(ns, depsDto); hint != "" {
-					output.PrintText("%s  %s", output.Colorize(output.Bold, padRight("Deps:", 8)), hint)
-				}
-				// A store that keeps refusing is otherwise invisible here: the
-				// per-app commands answered success (the actions did succeed)
-				// and the only trace is one WARN in the daemon log.
-				if line := stateWriteStatusLine(ns); line != "" {
-					output.PrintText("%s  %s", output.Colorize(output.Bold, padRight("State:", 8)), line)
-				}
-				for _, link := range ns.Links {
-					if link.Name == "Citeck UI" {
-						output.PrintText("%s  %s", output.Colorize(output.Bold, padRight("URL:", 8)), link.URL)
-						break
-					}
+				for _, line := range statusHeaderLines(ns, licStatus, depsDto) {
+					output.PrintText("%s", line)
 				}
 
 				if len(ns.Apps) > 0 {
@@ -150,6 +126,57 @@ func newStatusCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Watch for changes (event stream)")
 
 	return cmd
+}
+
+// statusHeaderLines renders the labeled lines `citeck status` prints above
+// the app table. A line whose value is empty is omitted (the License: line on
+// an older daemon, Deps:/State:/Content storage: on a namespace with nothing to
+// report).
+//
+// Labels are padded to the width of the longest one PRINTED, so the values
+// line up whichever lines a namespace has: "Content storage:" appears on S3
+// namespaces only, and widening every other namespace's header for it would
+// change the output of all of them. padRight (shared with the install wizard)
+// is CJK-aware — though labels are ASCII here, using the same helper keeps
+// alignment logic consistent.
+func statusHeaderLines(ns *api.NamespaceDto, licStatus *api.LicenseStatusDto, depsDto *api.DependenciesDto) []string {
+	type row struct{ label, value string }
+	rows := []row{
+		{"Name:", ns.Name},
+		{"Status:", output.ColorizeStatus(ns.Status)},
+		{"Bundle:", ns.BundleRef},
+		{"License:", formatLicenseLine(licStatus)},
+		{"Deps:", dependencyHintLine(ns, depsDto)},
+		// A store that keeps refusing is otherwise invisible here: the
+		// per-app commands answered success (the actions did succeed) and the
+		// only trace is one WARN in the daemon log.
+		{"State:", stateWriteStatusLine(ns)},
+		{"Content storage:", contentStorageStatusLine(ns)},
+	}
+	for _, link := range ns.Links {
+		if link.Name == "Citeck UI" {
+			rows = append(rows, row{"URL:", link.URL})
+			break
+		}
+	}
+	// Never narrower than "License:", the width every label had before the
+	// content-storage line existed, so a DB namespace's header is unchanged.
+	width := displayWidth("License:")
+	kept := rows[:0]
+	for _, r := range rows {
+		// Name and Status are always printed, even empty: they are the
+		// header's frame, not an optional report.
+		if r.value == "" && r.label != "Name:" && r.label != "Status:" {
+			continue
+		}
+		kept = append(kept, r)
+		width = max(width, displayWidth(r.label))
+	}
+	lines := make([]string, 0, len(kept))
+	for _, r := range kept {
+		lines = append(lines, fmt.Sprintf("%s  %s", output.Colorize(output.Bold, padRight(r.label, width)), r.value))
+	}
+	return lines
 }
 
 // formatLicenseLine renders the value of the "License:" status line.

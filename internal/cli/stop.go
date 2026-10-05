@@ -61,6 +61,7 @@ func newStopCmd() *cobra.Command {
 			// Apps specified → stop each in order, reporting per-app result.
 			if len(args) > 0 {
 				var firstErr error
+				stopped := make([]string, 0, len(args))
 				for _, appName := range args {
 					result, err := c.StopApp(appName)
 					if err != nil {
@@ -70,16 +71,14 @@ func newStopCmd() *cobra.Command {
 						}
 						continue
 					}
+					stopped = append(stopped, appName)
 					output.PrintResult(result, func() {
 						output.PrintText(result.Message)
 					})
 				}
-				// The apps really stopped; whether the DETACH INTENT behind
-				// them was recorded is a separate question (see
-				// state_write_report.go). Asked once for the whole batch — the
-				// condition is namespace-wide, so one round-trip answers for
-				// every app named on the command line.
-				warnIfStateNotSaved(c)
+				// The apps really stopped; what the operator should still be
+				// told about that is asked once for the whole batch.
+				warnAfterAppStop(c, stopped)
 				return firstErr
 			}
 
@@ -115,6 +114,28 @@ func newStopCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&leaveRunning, "leave-running", false, "With --shutdown: exit the daemon without stopping containers (for binary upgrades)")
 
 	return cmd
+}
+
+// warnAfterAppStop prints, on STDERR, what the operator should know about
+// apps that really stopped: that one of them is the S3 content storage of the
+// namespace (content_storage.go), and whether the DETACH INTENT behind them was
+// recorded (state_write_report.go). Both are namespace-wide facts, so one
+// namespace fetch answers for every app named on the command line.
+//
+// stderr and never the exit code, for warnIfStateNotSaved's reasons: the stops
+// succeeded, `--format json` owns stdout, and an unreachable daemon or an
+// older one without these fields simply produces no warning.
+func warnAfterAppStop(c stateWriteChecker, stopped []string) {
+	ensureI18n()
+	ns, err := c.GetNamespace()
+	if err != nil {
+		return
+	}
+	lines := contentStorageStopWarnings(ns, stopped)
+	lines = append(lines, stateNotSavedLines(ns)...)
+	for _, line := range lines {
+		output.Errf("%s", line)
+	}
 }
 
 // streamStopStatus polls the daemon and shows live stop progress until all apps are STOPPED.

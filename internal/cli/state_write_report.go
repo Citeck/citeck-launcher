@@ -50,7 +50,16 @@ type stateWriteChecker interface {
 // action's exit code is never touched.
 func appliedButNotSavedWarning(c stateWriteChecker) []string {
 	ns, err := c.GetNamespace()
-	if err != nil || ns == nil || ns.StateWriteError == "" {
+	if err != nil {
+		return nil
+	}
+	return stateNotSavedLines(ns)
+}
+
+// stateNotSavedLines is appliedButNotSavedWarning on a namespace already
+// fetched, for a caller that reads the same DTO for something else too.
+func stateNotSavedLines(ns *api.NamespaceDto) []string {
+	if ns == nil || ns.StateWriteError == "" {
 		return nil
 	}
 	return []string{

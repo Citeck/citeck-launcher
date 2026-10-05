@@ -590,6 +590,10 @@ func (c *DaemonClient) putRaw(path, contentType string, body []byte, result any)
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", contentType)
+	// The raw PUTs are writes the daemon can REFUSE in its own words (the
+	// namespace-config write gates, an invalid edit), so they state the CLI's
+	// language like every other request.
+	setLocale(req)
 
 	resp, doErr := c.httpClient.Do(req)
 	if doErr != nil {
@@ -615,6 +619,21 @@ func (c *DaemonClient) putRaw(path, contentType string, body []byte, result any)
 		}
 	}
 	return nil
+}
+
+// PutNamespaceConfig replaces the active namespace's namespace.yml with body
+// through the daemon's single write path (PUT /config), so the write gates
+// apply: a content-storage switch the bundle cannot have, or one back from S3,
+// is refused there (409, worded in the CLI's language). A switch from DB to S3
+// is also APPLIED by that call — the daemon re-attaches the S3 provider and
+// reloads before it answers. On an HTTP error the returned error wraps
+// *APIError.
+func (c *DaemonClient) PutNamespaceConfig(body []byte) (*api.ActionResultDto, error) {
+	var dto api.ActionResultDto
+	if err := c.putRaw(api.Config, "text/yaml", body, &dto); err != nil {
+		return nil, fmt.Errorf("put namespace config: %w", err)
+	}
+	return &dto, nil
 }
 
 // GetAppConfig returns the app's effective ApplicationDef YAML plus the

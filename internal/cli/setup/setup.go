@@ -84,10 +84,14 @@ func runSetup(launcherVersion string, args []string) error {
 		return fmt.Errorf("load daemon config: %w", err)
 	}
 
-	// Create setup context with resolved app list.
+	// Create setup context with the resolved bundle and its app list.
+	resolved := resolveSetupBundle(launcherVersion, nsCfg)
 	sctx := &setupContext{
 		PendingSecrets: make(map[string]string),
-		CurrentApps:    resolveAppList(launcherVersion, nsCfg),
+		CurrentApps:    appListFrom(resolved, nsCfg),
+	}
+	if resolved != nil {
+		sctx.Bundle, sctx.Workspace = resolved.Bundle, resolved.Workspace
 	}
 
 	if len(args) > 0 {
@@ -107,22 +111,37 @@ func runSetup(launcherVersion string, args []string) error {
 // diverge, this menu could offer settings for apps a bundle too new for this
 // launcher declares — apps the running bundle does not actually contain.
 func resolveAppList(launcherVersion string, nsCfg *namespace.Config) []string {
+	return appListFrom(resolveSetupBundle(launcherVersion, nsCfg), nsCfg)
+}
+
+// resolveSetupBundle resolves the namespace's bundle OFFLINE (see
+// resolveAppList for the logger and the launcher version). Nil when the bundle
+// cannot be read from disk.
+func resolveSetupBundle(launcherVersion string, nsCfg *namespace.Config) *bundle.ResolveResult {
 	quiet := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	resolver := bundle.NewResolver(config.DataDir()).WithLogger(quiet).WithLauncherVersion(launcherVersion)
 	resolver.SetOffline(true)
 
 	result, err := resolver.Resolve(nsCfg.BundleRef)
-	if err == nil && result.Bundle != nil && len(result.Bundle.Applications) > 0 {
+	if err != nil || result == nil || result.Bundle == nil {
+		if err != nil {
+			slog.Debug("Bundle resolve failed, falling back to namespace config", "err", err)
+		}
+		return nil
+	}
+	return result
+}
+
+// appListFrom answers the app names of a resolved bundle, falling back to the
+// namespace config's webapp keys when there is no bundle to ask.
+func appListFrom(result *bundle.ResolveResult, nsCfg *namespace.Config) []string {
+	if result != nil && result.Bundle != nil && len(result.Bundle.Applications) > 0 {
 		apps := make([]string, 0, len(result.Bundle.Applications))
 		for name := range result.Bundle.Applications {
 			apps = append(apps, name)
 		}
 		sort.Strings(apps)
 		return apps
-	}
-
-	if err != nil {
-		slog.Debug("Bundle resolve failed, falling back to namespace config", "err", err)
 	}
 
 	// Fallback: use keys from nsCfg.Webapps.
@@ -261,7 +280,8 @@ func runSingleSetting(id string, sctx *setupContext, nsCfg *namespace.Config, da
 	}
 
 	// Confirm action.
-	action, err := promptConfirmAction(target)
+	_, daemonApplied := setting.(daemonAppliedSetting)
+	action, err := promptConfirmAction(target, daemonApplied)
 	if err != nil {
 		if isUserAborted(err) {
 			restore()
@@ -272,6 +292,10 @@ func runSingleSetting(id string, sctx *setupContext, nsCfg *namespace.Config, da
 	if action == actionCancel {
 		restore()
 		return nil
+	}
+
+	if daemonApplied {
+		return applyThroughDaemon(id, sctx, nsCfg, daemonCfg, nsBefore, daemonBefore, forward, reverse, restore)
 	}
 
 	// Write changes to disk.
@@ -366,8 +390,10 @@ const (
 	actionApplyOnly                 // Apply config only, no reload
 )
 
-// promptConfirmAction asks the user how to apply the changes.
-func promptConfirmAction(target TargetFile) (confirmAction, error) {
+// promptConfirmAction asks the user how to apply the changes. A setting the
+// daemon applies itself (daemonApplied) is offered apply or cancel only: there
+// is no "config only" for a change the daemon carries out as it writes it.
+func promptConfirmAction(target TargetFile, daemonApplied bool) (confirmAction, error) {
 	const (
 		valApplyReload = "apply_reload"
 		valApplyOnly   = "apply_only"
@@ -378,6 +404,13 @@ func promptConfirmAction(target TargetFile) (confirmAction, error) {
 		{Label: i18n.T("setup.confirm.apply_reload"), Value: valApplyReload},
 		{Label: i18n.T("setup.confirm.apply_only"), Value: valApplyOnly},
 		{Label: i18n.T("setup.confirm.cancel"), Value: valCancel},
+	}
+
+	if daemonApplied {
+		options = []prompt.Option[string]{
+			{Label: i18n.T("setup.confirm.apply_reload"), Value: valApplyReload},
+			{Label: i18n.T("setup.confirm.cancel"), Value: valCancel},
+		}
 	}
 
 	// For daemon config (language), reload is not applicable — simplify to apply/cancel.
@@ -413,23 +446,7 @@ func writeSettingChanges(sctx *setupContext, target TargetFile, cfgPath, histDir
 	nsCfg *namespace.Config, daemonCfg *config.DaemonConfig,
 	beforeNsCfg *namespace.Config, beforeDaemonCfg *config.DaemonConfig,
 ) (*SecretOps, error) {
-	// Bridge check — detect external changes since last snapshot.
-	// Convert the "before" config to JSON so it matches the snapshot format.
-	var beforeObj any
-	if target == DaemonFile {
-		beforeObj = beforeDaemonCfg
-	} else {
-		beforeObj = beforeNsCfg
-	}
-	beforeJSON, jErr := json.MarshalIndent(structToJSONMapOrEmpty(beforeObj), "", "  ")
-	if jErr == nil {
-		bridged, bErr := checkBridge(histDir, beforeJSON)
-		if bErr != nil {
-			slog.Warn("Bridge check failed", "err", bErr)
-		} else if bridged {
-			slog.Info("Recorded external config change as bridge patch")
-		}
-	}
+	recordBridge(target, histDir, beforeNsCfg, beforeDaemonCfg)
 
 	// Write config.
 	if target == DaemonFile {
@@ -457,6 +474,29 @@ func writeSettingChanges(sctx *setupContext, target TargetFile, cfgPath, histDir
 	}
 
 	return secretOps, nil
+}
+
+// recordBridge records, as a bridge patch, any change made to the config file
+// outside setup since the last snapshot — before setup writes its own change
+// on top of it. beforeNsCfg/beforeDaemonCfg are the "before" snapshots.
+func recordBridge(target TargetFile, histDir string, beforeNsCfg *namespace.Config, beforeDaemonCfg *config.DaemonConfig) {
+	// Convert the "before" config to JSON so it matches the snapshot format.
+	var beforeObj any
+	if target == DaemonFile {
+		beforeObj = beforeDaemonCfg
+	} else {
+		beforeObj = beforeNsCfg
+	}
+	beforeJSON, jErr := json.MarshalIndent(structToJSONMapOrEmpty(beforeObj), "", "  ")
+	if jErr != nil {
+		return
+	}
+	bridged, bErr := checkBridge(histDir, beforeJSON)
+	if bErr != nil {
+		slog.Warn("Bridge check failed", "err", bErr)
+	} else if bridged {
+		slog.Info("Recorded external config change as bridge patch")
+	}
 }
 
 // recordSettingPatch records the patch in history and updates the snapshot.
@@ -529,6 +569,8 @@ func buildSettingInput(id string, nsCfg *namespace.Config, dcfg *config.DaemonCo
 		input["letsEncrypt"] = nsCfg.Proxy.TLS.LetsEncrypt
 	case "auth":
 		input["type"] = string(nsCfg.Authentication.Type)
+	case "content-storage":
+		input["type"] = string(nsCfg.ContentStorageType())
 	case "language":
 		input["locale"] = dcfg.Locale
 	case "resources":

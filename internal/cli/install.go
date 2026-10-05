@@ -294,6 +294,12 @@ hostStep:
 			}
 		}
 
+		// Content storage sub-step: asked only when the picked release can keep
+		// its content in S3. Decided on every pass, so a trip back to the
+		// release picker re-asks against the release finally chosen.
+		nsCfg.ContentStorage = chooseInstallContentStorage(
+			installContentStorageAvailability(nsCfg.BundleRef, info.Version), promptInstallContentStorage)
+
 		// --- Step 6: Snapshot selection (optional demo data) ---
 		if wsCfg != nil && len(wsCfg.Snapshots) > 0 {
 			nsCfg.Snapshot = selectSnapshot(wsCfg.Snapshots)

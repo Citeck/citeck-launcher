@@ -158,8 +158,17 @@ func performUndo(target TargetFile, cfgPath, histDir, undoneID string, rec *Patc
 	if cErr := checkReverseApplies(curMap, rec); cErr != nil {
 		return "", fmt.Errorf("%s: %w", i18n.T("setup.history.undo.stale", "id", undoneID), cErr)
 	}
+	storageBefore := contentStorageTypeOf(target, curMap)
 	if aErr := applyPatch(curMap, rec.Reverse); aErr != nil {
 		return "", fmt.Errorf("%s: %w", i18n.T("setup.history.undo.stale", "id", undoneID), aErr)
+	}
+	// Undo writes namespace.yml itself, past the daemon's write gate, so the
+	// content-storage rules have to hold here: S3 never goes back to DB (the
+	// reverse of a `setup content-storage` entry, or of a bridge entry that
+	// recorded the block appearing), and DB → S3 is not a file edit either —
+	// it goes through the daemon, which re-attaches the provider and reloads.
+	if storageBefore != contentStorageTypeOf(target, curMap) {
+		return "", errors.New(i18n.T("setup.history.undo.content_storage", "id", undoneID))
 	}
 
 	snapObj, wErr := validateAndWriteConfig(target, cfgPath, curMap)
@@ -194,6 +203,21 @@ func performUndo(target TargetFile, cfgPath, histDir, undoneID string, rec *Patc
 		newID = filepath.Base(path)
 	}
 	return strings.TrimSuffix(newID, ".json"), nil
+}
+
+// contentStorageTypeOf reads the effective content storage type out of a
+// namespace config map ("" for the daemon config, which has none). A map that
+// does not convert answers DB, the type of every config without the block;
+// the write that follows refuses such a map anyway.
+func contentStorageTypeOf(target TargetFile, m map[string]any) namespace.ContentStorageType {
+	if target != NamespaceFile {
+		return ""
+	}
+	var cfg namespace.Config
+	if mapToStruct(m, &cfg) != nil {
+		return namespace.ContentStorageDB
+	}
+	return cfg.ContentStorageType()
 }
 
 // loadConfigAsMap loads the target config and converts it to a JSON map —

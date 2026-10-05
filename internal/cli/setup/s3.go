@@ -21,8 +21,12 @@ func (s *s3Setting) Title() string          { return i18n.T("setup.s3.title") }
 func (s *s3Setting) Description() string    { return i18n.T("setup.s3.desc") }
 func (s *s3Setting) TargetFile() TargetFile { return NamespaceFile }
 
-func (s *s3Setting) Available(_ *namespace.Config, apps []string) bool {
-	return slices.Contains(apps, appdef.AppContent)
+// Available: only where there is an ecos-content to point at an external S3,
+// and not on a namespace that already stores its content in the S3 content
+// storage — the two decide the same thing, and validation refuses them
+// together.
+func (s *s3Setting) Available(cfg *namespace.Config, apps []string) bool {
+	return slices.Contains(apps, appdef.AppContent) && cfg.ContentStorageType() != namespace.ContentStorageS3
 }
 
 func (s *s3Setting) CurrentValue(cfg *namespace.Config, _ *config.DaemonConfig) string {

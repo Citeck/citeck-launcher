@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/citeck/citeck-launcher/internal/bundle"
 	"github.com/citeck/citeck-launcher/internal/cli/prompt"
 	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/i18n"
@@ -25,6 +26,12 @@ const (
 type setupContext struct {
 	PendingSecrets map[string]string
 	CurrentApps    []string
+	// Bundle and Workspace are the namespace's bundle and workspace config as
+	// resolved OFFLINE when setup started; Bundle is nil when the bundle could
+	// not be read from disk. Read by the settings whose availability depends
+	// on more than the app list (content-storage).
+	Bundle    *bundle.Def
+	Workspace *bundle.WorkspaceConfig
 }
 
 // Setting is the interface that all setup settings implement.
@@ -48,6 +55,17 @@ type actionSetting interface {
 	isActionSetting()
 }
 
+// daemonAppliedSetting is a marker interface for settings whose change the
+// DAEMON must write and apply, because it acts beyond the file: today the
+// content-storage switch, which the daemon re-attaches the S3 provider for and
+// reloads, under its own write gate. runSingleSetting keeps the diff,
+// validation, confirmation and history for it, but hands the write to
+// applyThroughDaemon (content_storage.go) instead of writing namespace.yml
+// itself, and offers no "apply config only" — the daemon applies it at once.
+type daemonAppliedSetting interface {
+	isDaemonAppliedSetting()
+}
+
 // allSettings returns the ordered list of all registered settings.
 func allSettings() []Setting {
 	return []Setting{
@@ -56,6 +74,7 @@ func allSettings() []Setting {
 		&portSetting{},
 		&emailSetting{},
 		&s3Setting{},
+		&contentStorageSetting{},
 		&authSetting{},
 		&resourcesSetting{},
 		&languageSetting{},

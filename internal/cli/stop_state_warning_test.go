@@ -22,12 +22,17 @@ import (
 // per-app stop, and the namespace fetch the "applied but not saved" check reads.
 type appDaemonSocket struct {
 	stateWriteError string
+	contentStorage  *api.ContentStorageDto
 	stopped         []string
 }
 
 func (f *appDaemonSocket) serve(t *testing.T) {
 	t.Helper()
-	dir := t.TempDir()
+	// Not t.TempDir(): it carries the test's name, and a unix socket path is
+	// capped at ~104 bytes on macOS — the long ones fail to bind there.
+	dir, err := os.MkdirTemp("", "citeck-sock")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	t.Setenv("CITECK_RUN", dir)
 	t.Setenv("CITECK_HOST", "")
 
@@ -46,6 +51,7 @@ func (f *appDaemonSocket) serve(t *testing.T) {
 	mux.HandleFunc(api.Namespace, func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(api.NamespaceDto{
 			ID: "ns", Name: "ns", Status: "RUNNING", StateWriteError: f.stateWriteError,
+			ContentStorage: f.contentStorage,
 		})
 	})
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
