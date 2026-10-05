@@ -82,10 +82,17 @@ func TestSecretRedactor_KeyHeuristic(t *testing.T) {
 		"FOO_PASSWORD", "X_PASS", "Y_SECRET", "Z_TOKEN", "DB_CREDENTIALS",
 		"TLS_PRIVATE_KEY", "S3_ACCESS_KEY", "ECOS_WEBAPP_WEB_AUTHENTICATORS_JWT_SECRET",
 		"KC_BOOTSTRAP_ADMIN_PASSWORD",
+		// SeaweedFS: the JWT signing keys, the admin UI password, the S3 key.
+		"WEED_JWT_SIGNING_KEY", "WEED_JWT_SIGNING_READ_KEY",
+		"WEED_JWT_FILER_SIGNING_KEY", "WEED_JWT_FILER_SIGNING_READ_KEY",
+		"WEED_ADMIN_PASSWORD", "AWS_SECRET_ACCESS_KEY",
 	}
 	notSecret := []string{
 		"RABBITMQ_PGP_KEY_ID", "BYPASS_MODE", "PUBLIC_KEY_PATH",
 		"RABBITMQ_DEFAULT_USER", "SERVER_PORT", "ECOS_WEBAPP_RABBITMQ_HOST",
+		// SeaweedFS settings beside its keys: a token lifetime is not a secret.
+		"WEED_JWT_SIGNING_EXPIRES_AFTER_SECONDS", "WEED_JWT_FILER_SIGNING_EXPIRES_AFTER_SECONDS",
+		"WEED_ADMIN_USER", "S3_BUCKET",
 	}
 	for _, k := range secret {
 		if !secretEnvKeyRe.MatchString(k) {
@@ -96,6 +103,40 @@ func TestSecretRedactor_KeyHeuristic(t *testing.T) {
 		if secretEnvKeyRe.MatchString(k) {
 			t.Errorf("%q should NOT match the secret-key heuristic", k)
 		}
+	}
+}
+
+// SeaweedFS's keys reach the archive through its container env, and every
+// copy of them is masked — wherever it appears, e.g. echoed in a log line —
+// while a token lifetime and the admin user name stay readable.
+func TestSecretRedactor_MasksSeaweedFSKeys(t *testing.T) {
+	const (
+		jwtKey   = "q3ZbV7mKc9TfR2xLpW8nHs4YdJ6aGe1Uo5Ni0Bkt"
+		readKey  = "Lx2Mv9Qa7Rb4Sc1Td8Ue5Vf3Wg6Xh0Yi2Zj7Ak4"
+		adminPwd = "Adm1nPassw0rdForTheUI"
+		s3Key    = "Sx0Ty1Uz2Va3Wb4Xc5Yd6Ze7Af8Bg9Ch0Di1Ej2"
+	)
+	r := newSecretRedactor()
+	r.harvestEnv([]string{
+		"WEED_JWT_SIGNING_KEY=" + jwtKey,
+		"WEED_JWT_SIGNING_READ_KEY=" + readKey,
+		"WEED_JWT_FILER_SIGNING_KEY=" + jwtKey,
+		"WEED_JWT_FILER_SIGNING_READ_KEY=" + readKey,
+		"WEED_JWT_SIGNING_EXPIRES_AFTER_SECONDS=86400",
+		"WEED_ADMIN_USER=seaweedadmin",
+		"WEED_ADMIN_PASSWORD=" + adminPwd,
+		"AWS_SECRET_ACCESS_KEY=" + s3Key,
+	})
+	r.finalize()
+	out := string(r.redact([]byte("env: jwt=" + jwtKey + " read=" + readKey +
+		" admin=" + adminPwd + " s3=" + s3Key + " ttl=86400 user=seaweedadmin")))
+	for _, secret := range []string{jwtKey, readKey, adminPwd, s3Key} {
+		if strings.Contains(out, secret) {
+			t.Fatalf("a SeaweedFS key survived redaction: %s", out)
+		}
+	}
+	if !strings.Contains(out, "ttl=86400") || !strings.Contains(out, "user=seaweedadmin") {
+		t.Fatalf("a SeaweedFS setting was masked as a secret: %s", out)
 	}
 }
 

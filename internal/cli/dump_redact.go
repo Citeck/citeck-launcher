@@ -36,9 +36,17 @@ const minSecretLen = 6
 // catch the launcher's secret env vars (RABBITMQ_DEFAULT_PASS,
 // *_RABBITMQ_PASSWORD, *_JWT_SECRET, *_CLIENT_SECRET, KC_BOOTSTRAP_ADMIN_PASSWORD,
 // RMQ_MONITOR_PASSWORD, …) without sweeping up PGP_KEY_ID, PUBLIC_KEY_PATH, etc.
+//
+// A SIGNING key is a secret too: SeaweedFS takes its JWT keys as
+// WEED_JWT_SIGNING_KEY, WEED_JWT_SIGNING_READ_KEY and their WEED_JWT_FILER_*
+// pair, and whoever holds one can mint a token for any file in the store. JWT
+// is deliberately NOT matched as a word of its own — WEED_JWT_SIGNING_EXPIRES_
+// AFTER_SECONDS and the like are settings, and a harvested setting is masked in
+// every artifact of the archive.
 var secretEnvKeyRe = regexp.MustCompile(
 	`(?i)(^|_)(pass|passwd|password|secret|token|credential|credentials)(_|$)` +
-		`|(private|access|api|secret|encryption)[_-]?key`,
+		`|(private|access|api|secret|encryption)[_-]?key` +
+		`|signing[_-]?(read[_-]?)?key`,
 )
 
 // secretRedactor masks known secret VALUES wherever they appear across all dump
