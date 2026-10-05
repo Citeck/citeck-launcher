@@ -28,6 +28,7 @@ import type {
   DependenciesDto,
   DependencyMigrateRequestDto,
   PreflightResult,
+  ContentStorageOptionsDto,
 } from './types'
 import { notifyAuthRequired } from './authGate'
 import { currentLocale } from './i18n'
@@ -597,6 +598,33 @@ export async function getNamespaceCreateDefaults(): Promise<NamespaceCreateDefau
  */
 export async function putNamespaceEdit(id: string, data: NamespaceEditDto): Promise<ActionResultDto> {
   return request('PUT', `/namespaces/${enc(id)}/edit`, { body: data })
+}
+
+/**
+ * Which content storage types a namespace on the given bundle may choose. The
+ * daemon resolves the bundle OFFLINE (no git pull) — the same answer its write
+ * gate will give on save, so the dialog never offers what saving refuses. An
+ * empty bundle asks about the active namespace's own bundle; workspaceId
+ * defaults to the active workspace.
+ */
+export async function getContentStorageOptions(
+  bundleRepo: string,
+  bundleKey: string,
+  workspaceId?: string,
+  signal?: AbortSignal,
+): Promise<ContentStorageOptionsDto> {
+  const params = new URLSearchParams({ bundleRepo, bundleKey })
+  if (workspaceId) params.set('workspaceId', workspaceId)
+  return request('GET', `/content-storage/options?${params.toString()}`, { signal })
+}
+
+/**
+ * Runs the one-time connection of ecos-content to the active namespace's S3
+ * provider now (202) — the Retry button of a connection that failed. The
+ * result arrives as a state change on NamespaceDto.contentStorage.
+ */
+export async function postContentStorageProvision(): Promise<ActionResultDto> {
+  return request('POST', '/namespace/content-storage/provision')
 }
 
 // Phase F1: Secrets

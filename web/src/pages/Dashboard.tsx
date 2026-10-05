@@ -26,6 +26,7 @@ import { RegistryAuthBanner } from '../components/RegistryAuthBanner'
 import { BundleErrorBanner } from '../components/BundleErrorBanner'
 import { StateWriteBanner } from '../components/StateWriteBanner'
 import { DependencyUpgradeBanner } from '../components/DependencyUpgradeBanner'
+import { ContentStorageBanner } from '../components/ContentStorageBanner'
 import { DependenciesDialog } from '../components/DependenciesDialog'
 import { RightDrawer } from '../components/RightDrawer'
 import { AppDrawerContent } from '../components/AppDrawerContent'
@@ -241,6 +242,10 @@ export function Dashboard() {
           back because applying them to existing data would break it — plus the
           pending-rollback state, which nothing else surfaces. */}
       <DependencyUpgradeBanner onDetails={() => setDepsDialogOpen(true)} />
+      {/* S3 content storage (an S3 namespace only): the one-time connection of
+          ecos-content to its provider while it is in progress, failed (with
+          Retry), or impossible because the provider was not generated. */}
+      <ContentStorageBanner />
       {/* Top: sidebar + table + drawer overlay */}
       <div className="flex flex-1 min-h-0 relative">
         {/* Left info panel */}

@@ -1,4 +1,4 @@
-import { useRef } from 'react'
+import { useRef, useState } from 'react'
 import type { AppDto } from '../lib/types'
 import { postAppStop, postAppStart, postAppRestart, getAppFiles } from '../lib/api'
 import { usePanelStore } from '../lib/panels'
@@ -11,6 +11,8 @@ import { useDashboardStore } from '../lib/store'
 import { isEditableFile } from '../lib/files'
 import { initProgressOf } from '../lib/initProgress'
 import { waitingForDepsText } from '../lib/waitingForDeps'
+import { guardedProviderApp } from '../lib/contentStorage'
+import { ConfirmModal } from './ConfirmModal'
 import { StatusBadge } from './StatusBadge'
 import { StatsCell } from './StatsCell'
 import { Square, Play, RotateCw, FileText, Settings, Circle, Lock } from 'lucide-react'
@@ -64,10 +66,21 @@ export function AppTable({ apps, highlightedApp }: AppTableProps) {
   const groups = groupByKind(apps)
   const { t } = useTranslation()
 
+  // The app serving an S3 namespace's content storage (empty on a DB
+  // namespace). Stopping it is the one stop that is asked about first.
+  const providerApp = useDashboardStore((s) => guardedProviderApp(s.namespace?.contentStorage))
+  const nsId = useDashboardStore((s) => s.namespace?.id ?? '')
+  // Scoped to the namespace it was asked in, so a question left open across a
+  // namespace switch can never pop up — or be answered — on another one.
+  const [confirmStop, setConfirmStop] = useState<{ nsId: string; app: string } | null>(null)
+  const stopToConfirm = confirmStop && confirmStop.nsId === nsId && confirmStop.app === providerApp
+    ? confirmStop.app
+    : ''
+
   // Start / stop / restart fire immediately — Kotlin parity. The
   // ConfirmModal that used to gate every click added a click-cost the user
   // had to pay for actions they had already explicitly clicked.
-  const runAction = async (a: NonNullable<AppAction>) => {
+  const doAction = async (a: NonNullable<AppAction>) => {
     try {
       if (a.type === 'stop') await postAppStop(a.appName)
       else if (a.type === 'start') await postAppStart(a.appName)
@@ -76,6 +89,17 @@ export function AppTable({ apps, highlightedApp }: AppTableProps) {
     } catch (err) {
       toast((err as Error).message, 'error')
     }
+  }
+  // …except stopping an S3 namespace's storage provider: ecos-content keeps
+  // its files there, so uploads and downloads fail for as long as it is down
+  // and the operator is unlikely to know that from the app's name. Warned,
+  // never refused (owner ruling) — the CLI prints the same warning on stderr.
+  const runAction = (a: NonNullable<AppAction>) => {
+    if (a.type === 'stop' && providerApp && a.appName === providerApp) {
+      setConfirmStop({ nsId, app: a.appName })
+      return
+    }
+    void doAction(a)
   }
 
   return (
@@ -103,6 +127,20 @@ export function AppTable({ apps, highlightedApp }: AppTableProps) {
           ))}
         </tbody>
       </table>
+      {providerApp && (
+        <ConfirmModal
+          open={stopToConfirm !== ''}
+          title={t('contentStorage.stopProvider.title', { app: providerApp })}
+          message={t('contentStorage.stopProvider.message', { app: providerApp })}
+          confirmLabel={t('table.action.stop')}
+          confirmVariant="danger"
+          onConfirm={() => {
+            setConfirmStop(null)
+            if (stopToConfirm) void doAction({ type: 'stop', appName: stopToConfirm })
+          }}
+          onCancel={() => setConfirmStop(null)}
+        />
+      )}
     </>
   )
 }

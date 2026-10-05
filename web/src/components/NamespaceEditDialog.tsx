@@ -3,6 +3,7 @@ import { RefreshCw } from 'lucide-react'
 import {
   createNamespace,
   getBundles,
+  getContentStorageOptions,
   getNamespaceCreateDefaults,
   getNamespaceEdit,
   getWorkspaceSnapshots,
@@ -10,10 +11,19 @@ import {
   putNamespaceEdit,
   type NamespaceEditDto,
 } from '../lib/api'
-import type { BundleInfoDto, NamespaceCreateDto } from '../lib/types'
+import type { BundleInfoDto, ContentStorageOptionDto, NamespaceCreateDto } from '../lib/types'
 import { useTranslation } from '../lib/i18n'
 import { toast } from '../lib/toast'
 import { primeDesktopModeCache } from '../lib/desktop'
+import {
+  CONTENT_STORAGE_DB,
+  CONTENT_STORAGE_S3,
+  REASON_NO_CONTENT_APP,
+  contentStorageTypeOf,
+  s3OptionLabel,
+  s3UnavailableText,
+  type ContentStorageType,
+} from '../lib/contentStorage'
 import { Select } from './Select'
 import { Modal, ModalField } from './Modal'
 import { LoadingLabel } from './LoadingLabel'
@@ -77,6 +87,19 @@ export function NamespaceEditDialog({
   // still in flight) — treated as the CURRENT generation, so a legacy-only
   // toggle never flashes on a form that has no business showing it.
   const [configVersion, setConfigVersion] = useState(0)
+  // Content storage. `storedStorage` is what the namespace has today (DB in
+  // create mode); `storageChoice` is what the form asks for. S3 is one-way:
+  // a namespace stored as S3 shows it read-only, and the daemon refuses
+  // S3 → DB (CONTENT_STORAGE_DOWNGRADE) whatever the form sends.
+  const [storedStorage, setStoredStorage] = useState<ContentStorageType>(CONTENT_STORAGE_DB)
+  const [storageChoice, setStorageChoice] = useState<ContentStorageType>(CONTENT_STORAGE_DB)
+  // The bundle the edit GET returned, raw — the daemon's write gate re-asks
+  // S3 availability only when the bundle CHANGES, and so does the warning.
+  const [loadedBundle, setLoadedBundle] = useState<{ repo: string; key: string } | null>(null)
+  // GET /content-storage/options for the selected bundle, tagged with the
+  // bundle it answers so a slow reply for a previous selection is never read
+  // as the answer for the current one.
+  const [s3Options, setS3Options] = useState<{ bundle: string; option: ContentStorageOptionDto } | null>(null)
   const [tab, setTab] = useState<'general' | 'advanced'>('general')
 
   const [bundles, setBundles] = useState<BundleInfoDto[]>([])
@@ -97,6 +120,9 @@ export function NamespaceEditDialog({
     }
 
     setTab('general')
+    setStoredStorage(CONTENT_STORAGE_DB)
+    setStorageChoice(CONTENT_STORAGE_DB)
+    setLoadedBundle(null)
     primeDesktopModeCache().then(setIsDesktop).catch(() => setIsDesktop(false))
 
     setBundlesLoading(true)
@@ -136,6 +162,10 @@ export function NamespaceEditDialog({
             setTlsEnabled(!!n.tlsEnabled)
             setMongoEnabled(!!n.mongoEnabled)
             setConfigVersion(n.configVersion ?? 1)
+            const stored = contentStorageTypeOf(n.contentStorage)
+            setStoredStorage(stored)
+            setStorageChoice(stored)
+            setLoadedBundle({ repo: n.bundleRepo, key: n.bundleKey })
           })
           .catch((e) => setSubmitError((e as Error).message))
       }
@@ -220,6 +250,21 @@ export function NamespaceEditDialog({
     }
   }, [bundleRepo, bundles, bundleKey])
 
+  // Ask which content storage the selected bundle can have, whenever the
+  // selection changes — and again after a bundle-list refresh, which is how a
+  // bundle that was not on disk yet (BUNDLE_UNRESOLVED) becomes answerable.
+  // Best-effort: a failed request leaves the answer unknown, which hides the
+  // S3 option (and never offers what saving might refuse).
+  useEffect(() => {
+    if (!open || !bundleRepo || !bundleKey) return
+    const bundle = `${bundleRepo}\n${bundleKey}`
+    const ctl = new AbortController()
+    getContentStorageOptions(bundleRepo, bundleKey, mode === 'create' ? workspaceId : undefined, ctl.signal)
+      .then((o) => setS3Options({ bundle, option: o.s3 }))
+      .catch(() => {})
+    return () => ctl.abort()
+  }, [open, mode, workspaceId, bundleRepo, bundleKey, bundles])
+
   // When the user picks a different bundle repo, auto-select that repo's latest
   // release (versions are newest-first). Only fires on a manual repo change —
   // on initial edit-load the repo is set directly (not through this handler),
@@ -250,6 +295,28 @@ export function NamespaceEditDialog({
   // The tab strip appears only when Advanced has something in it; an empty
   // second tab is worse than no tabs.
   const hasAdvanced = showMongoToggle
+
+  // Content storage, derived. The option is offered only once the daemon has
+  // answered for THIS bundle: a bundle without ecos-content (every Community
+  // bundle) never has the question, so the form stays exactly as it was —
+  // unless the namespace already keeps its content in S3, which is always
+  // shown (read-only), whatever the bundle says.
+  const s3Opt = s3Options && s3Options.bundle === `${bundleRepo}\n${bundleKey}` ? s3Options.option : null
+  const providerApp = s3Opt?.providerApp ?? ''
+  const storedS3 = storedStorage === CONTENT_STORAGE_S3
+  const s3Selectable = !storedS3 && !!s3Opt?.available
+  // A choice of S3 that the current bundle cannot have reads — and saves — as
+  // DB: the irreversible direction must never be the one a stale click picks.
+  const effectiveStorage: ContentStorageType = storedS3 || (storageChoice === CONTENT_STORAGE_S3 && s3Selectable)
+    ? CONTENT_STORAGE_S3
+    : CONTENT_STORAGE_DB
+  const showStorageField = storedS3 || (!!s3Opt && s3Opt.reason !== REASON_NO_CONTENT_APP)
+  // An S3 namespace moved to a bundle that cannot have S3 is refused on save
+  // (CONTENT_STORAGE_UNAVAILABLE). Say so before the click; the daemon still
+  // decides.
+  const bundleChanged = loadedBundle !== null
+    && (loadedBundle.repo !== bundleRepo || loadedBundle.key !== bundleKey)
+  const storedS3Refused = storedS3 && bundleChanged && !!s3Opt && !s3Opt.available
 
   function validate(): boolean {
     const errors: Record<string, string> = {}
@@ -299,6 +366,8 @@ export function NamespaceEditDialog({
           workspaceId: workspaceId || undefined,
           snapshot: snapshot || undefined,
           useDefaultPassword: true,
+          // Absent = DB, so a DB namespace's payload is what it always was.
+          contentStorage: effectiveStorage === CONTENT_STORAGE_S3 ? CONTENT_STORAGE_S3 : undefined,
         }
         await createNamespace(payload)
         toast(t('namespace.form.createSuccess'), 'success')
@@ -323,6 +392,9 @@ export function NamespaceEditDialog({
           // actually offered, so saving a namespace that has no MongoDB
           // question cannot write an answer to it.
           mongoEnabled: showMongoToggle ? mongoEnabled : undefined,
+          // Absent = unchanged. Only the DB → S3 switch is ever sent: the
+          // daemon re-attaches the provider and reloads on exactly that.
+          contentStorage: !storedS3 && effectiveStorage === CONTENT_STORAGE_S3 ? CONTENT_STORAGE_S3 : undefined,
         }
         await putNamespaceEdit(nsId, payload)
         toast(t('nsEdit.saveSuccess'), 'success')
@@ -469,6 +541,68 @@ export function NamespaceEditDialog({
           </button>
         </div>
       </ModalField>
+
+      {showStorageField && (
+        <fieldset className="min-w-0">
+          <legend className="block text-xs font-medium mb-1">{t('contentStorage.label')}</legend>
+          {storedS3 ? (
+            <>
+              <div className="rounded border border-border bg-muted/40 px-2.5 py-1.5 text-sm">
+                {s3OptionLabel(providerApp)}
+              </div>
+              <p className="mt-1 text-[11px] text-muted-foreground">{t('contentStorage.s3.oneWay')}</p>
+              {storedS3Refused && (
+                <p className="mt-1 text-[11px] text-destructive">
+                  {t('contentStorage.bundleChange.refused', {
+                    reason: s3UnavailableText(s3Opt?.reason, providerApp, t),
+                  })}
+                </p>
+              )}
+            </>
+          ) : (
+            <div className="flex flex-col gap-1.5">
+              <label className="flex items-start gap-2 text-sm">
+                <input
+                  type="radio"
+                  name="contentStorage"
+                  className="m-0 mt-0.5 shrink-0"
+                  checked={effectiveStorage === CONTENT_STORAGE_DB}
+                  onChange={() => setStorageChoice(CONTENT_STORAGE_DB)}
+                />
+                <span className="flex flex-col gap-0.5">
+                  <span className="text-xs font-medium">{t('contentStorage.option.db')}</span>
+                  <span className="text-[11px] text-muted-foreground">{t('contentStorage.option.db.hint')}</span>
+                </span>
+              </label>
+              <label className={`flex items-start gap-2 text-sm ${s3Selectable ? '' : 'cursor-not-allowed'}`}>
+                <input
+                  type="radio"
+                  name="contentStorage"
+                  className="m-0 mt-0.5 shrink-0"
+                  disabled={!s3Selectable}
+                  checked={effectiveStorage === CONTENT_STORAGE_S3}
+                  onChange={() => setStorageChoice(CONTENT_STORAGE_S3)}
+                />
+                <span className="flex flex-col gap-0.5">
+                  <span className={`text-xs font-medium ${s3Selectable ? '' : 'text-muted-foreground'}`}>
+                    {s3OptionLabel(providerApp)}
+                  </span>
+                  <span className="text-[11px] text-muted-foreground">
+                    {s3Selectable
+                      ? t('contentStorage.option.s3.hint', { app: providerApp })
+                      : s3UnavailableText(s3Opt?.reason, providerApp, t)}
+                  </span>
+                </span>
+              </label>
+              {effectiveStorage === CONTENT_STORAGE_S3 && (
+                <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-[11px] text-amber-700 dark:text-amber-300">
+                  {t(mode === 'create' ? 'contentStorage.s3.note.create' : 'contentStorage.s3.note.switch', { app: providerApp })}
+                </p>
+              )}
+            </div>
+          )}
+        </fieldset>
+      )}
 
       {mode === 'create' && (
         <ModalField label={t('namespace.form.snapshot')}>

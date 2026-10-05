@@ -278,6 +278,25 @@ describe('useDashboardStore', () => {
     useDashboardStore.getState().stopEventStream()
   })
 
+  // The content storage connection state (NamespaceDto.contentStorage) is
+  // rendered per reader by the daemon, so its SSE event carries no payload
+  // worth patching in place: the store answers it with a namespace refetch,
+  // which is what takes the banner from "connecting" to gone.
+  it('refetches the namespace on a namespace_content_storage event', async () => {
+    mockedGetNamespace.mockResolvedValue({ id: 'ns1', name: 'x', status: 'RUNNING', bundleRef: '', apps: [] })
+    mockedGetHealth.mockResolvedValue({ status: 'healthy', healthy: true, checks: [] })
+    useDashboardStore.getState().startEventStream()
+    const onEvent = mockedConnectEvents.mock.calls[0][0]
+    const base: EventDto = { type: '', seq: 0, timestamp: 0, namespaceId: 'ns1', appName: '', before: '', after: '' }
+
+    onEvent({ ...base, type: 'namespace_content_storage', seq: 1, before: 'waiting', after: 'connected' })
+    expect(mockedGetNamespace).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(150)
+    expect(mockedGetNamespace).toHaveBeenCalledTimes(1)
+
+    useDashboardStore.getState().stopEventStream()
+  })
+
   // The dependency-migration lifecycle is owned by depsStore; the dashboard
   // store is only its SSE transport. Without this routing the Dependencies
   // dialog would show a migration that never moves.
