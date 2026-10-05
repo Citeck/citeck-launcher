@@ -20,7 +20,7 @@ Citeck Launcher ist der einfachste Weg, die Plattform zum Laufen zu bringen — 
 
 ![Citeck Launcher dashboard](screenshots/running.png)
 
-**Sie brauchen:** Docker · **16 GB** RAM für die Community-Edition, **24–32 GB** für Enterprise (~24 Dienste) · **50+ GB** freien Plattenplatz für Images und Daten. Unter Windows und macOS installieren Sie [Docker Desktop](https://www.docker.com/products/docker-desktop/), unter Linux [Docker Engine](https://docs.docker.com/engine/install/) oder Docker Desktop.
+**Sie brauchen:** Docker · **16 GB** RAM für die Community-Edition, **24–32 GB** für Enterprise (~24 Dienste), plus ~1 GB, wenn Inhalte in S3 (SeaweedFS) gespeichert werden · **50+ GB** freien Plattenplatz für Images und Daten. Unter Windows und macOS installieren Sie [Docker Desktop](https://www.docker.com/products/docker-desktop/), unter Linux [Docker Engine](https://docs.docker.com/engine/install/) oder Docker Desktop.
 
 ## Desktop oder Server?
 
@@ -126,6 +126,7 @@ Globale Flags: `--format (text|json)` für Skripte, `--yes/-y` zum Überspringen
 - **Sicherung und Wiederherstellung** — alle Volumes in ein einziges Archiv exportieren und auf diesem oder einem anderen Host wieder importieren
 - **HTTPS ab Werk** — Let's Encrypt mit automatischer Erneuerung (Domains *und* IP-Adressen) oder Ihr eigenes Zertifikat
 - **Status und Logs in Echtzeit** — Ressourcennutzung und Log-Streams für jeden Dienst, in der Desktop-App oder in der CLI
+- **Inhalte in S3** — in Releases der Enterprise-Edition, die SeaweedFS enthalten, lassen sich hochgeladene Dateien statt in der Datenbank in S3 (SeaweedFS) speichern, und der Launcher startet den Speicher und verbindet die Plattform damit
 - Lokalisiert in 8 Sprachen, mit Shell-Vervollständigung für bash, zsh, fish und PowerShell
 
 ## Editionen

@@ -20,7 +20,7 @@ Citeck Launcher — самый простой способ развернуть 
 
 ![Citeck Launcher dashboard](screenshots/running.png)
 
-**Что понадобится:** Docker · **16 ГБ** RAM для редакции Community, **24–32 ГБ** для Enterprise (~24 сервиса) · **50+ ГБ** свободного места на диске под образы и данные. На Windows и macOS установите [Docker Desktop](https://www.docker.com/products/docker-desktop/), на Linux — [Docker Engine](https://docs.docker.com/engine/install/) или Docker Desktop.
+**Что понадобится:** Docker · **16 ГБ** RAM для редакции Community, **24–32 ГБ** для Enterprise (~24 сервиса), плюс ~1 ГБ, если контент хранится в [S3 (SeaweedFS)](../docs/content-storage.md) · **50+ ГБ** свободного места на диске под образы и данные. На Windows и macOS установите [Docker Desktop](https://www.docker.com/products/docker-desktop/), на Linux — [Docker Engine](https://docs.docker.com/engine/install/) или Docker Desktop.
 
 ## Десктоп или сервер?
 
@@ -126,6 +126,7 @@ citeck edit <app>                # править определение при�
 - **Резервное копирование и восстановление** — экспорт всех томов в один архив и импорт обратно на этот же или другой хост
 - **HTTPS из коробки** — Let's Encrypt с авто-обновлением (домены *и* IP-адреса) или ваш собственный сертификат
 - **Состояние и логи в реальном времени** — потребление ресурсов и потоковые логи каждого сервиса, в десктопном приложении или в CLI
+- **Контент в S3** — в релизах Enterprise, в которые входит SeaweedFS, загруженные файлы можно хранить не в базе данных, а в S3 (SeaweedFS), и лаунчер сам запускает хранилище и подключает к нему платформу
 - Локализация на 8 языков и автодополнение для bash, zsh, fish и PowerShell
 
 ## Редакции

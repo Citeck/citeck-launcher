@@ -20,7 +20,7 @@ Citeck Launcher は、このプラットフォームを立ち上げ、その状�
 
 ![Citeck Launcher dashboard](screenshots/running.png)
 
-**必要なもの:** Docker · Community エディションで **16 GB** RAM、Enterprise エディション（約 24 サービス）で **24〜32 GB** · イメージとデータ用に **50 GB 以上**の空きディスク。Windows と macOS では [Docker Desktop](https://www.docker.com/products/docker-desktop/) を、Linux では [Docker Engine](https://docs.docker.com/engine/install/) または Docker Desktop をインストールしてください。
+**必要なもの:** Docker · Community エディションで **16 GB** RAM、Enterprise エディション（約 24 サービス）で **24〜32 GB**、コンテンツを S3 (SeaweedFS) に保存する場合はさらに約 1 GB · イメージとデータ用に **50 GB 以上**の空きディスク。Windows と macOS では [Docker Desktop](https://www.docker.com/products/docker-desktop/) を、Linux では [Docker Engine](https://docs.docker.com/engine/install/) または Docker Desktop をインストールしてください。
 
 ## デスクトップとサーバーのどちらを選ぶか
 
@@ -126,6 +126,7 @@ citeck edit <app>                # kubectl edit スタイルでアプリの定�
 - **バックアップとリストア** — 全ボリュームを単一のアーカイブにエクスポートし、同じホストにも別のホストにもインポートできます
 - **標準で HTTPS** — 自動更新付きの Let's Encrypt（ドメイン*および* IP アドレス）、または独自の証明書
 - **ライブのステータスとログ** — デスクトップアプリでも CLI でも、すべてのサービスのリソース使用状況とストリーミングログを確認できます
+- **S3 にコンテンツを保存** — SeaweedFS を含む Enterprise のリリースでは、アップロードされたファイルをデータベースではなく S3 (SeaweedFS) に保存でき、Launcher がストレージを起動し、プラットフォームをそこに接続します
 - 8 言語にローカライズ済みで、bash、zsh、fish、PowerShell 向けのシェル補完付き
 
 ## エディション

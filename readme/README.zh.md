@@ -20,7 +20,7 @@ Citeck Launcher 是让平台跑起来并持续稳定运行的最简单方式。�
 
 ![Citeck Launcher dashboard](screenshots/running.png)
 
-**你需要准备：** Docker · Community 版需 **16 GB** 内存，Enterprise 版（约 24 个服务）需 **24–32 GB** · **50 GB 以上**空闲磁盘用于存放镜像和数据。在 Windows 和 macOS 上请安装 [Docker Desktop](https://www.docker.com/products/docker-desktop/)，在 Linux 上请安装 [Docker Engine](https://docs.docker.com/engine/install/) 或 Docker Desktop。
+**你需要准备：** Docker · Community 版需 **16 GB** 内存，Enterprise 版（约 24 个服务）需 **24–32 GB**，若内容存储在 S3 (SeaweedFS) 中，还需约 1 GB · **50 GB 以上**空闲磁盘用于存放镜像和数据。在 Windows 和 macOS 上请安装 [Docker Desktop](https://www.docker.com/products/docker-desktop/)，在 Linux 上请安装 [Docker Engine](https://docs.docker.com/engine/install/) 或 Docker Desktop。
 
 ## 桌面应用还是服务器？
 
@@ -126,6 +126,7 @@ citeck edit <app>                # 以 kubectl edit 的方式编辑应用的定�
 - **备份与恢复** — 将所有卷导出为单个归档文件，并在本机或其他主机上导入
 - **开箱即用的 HTTPS** — Let's Encrypt 自动续期（支持域名*和* IP 地址），或使用你自己的证书
 - **实时状态与日志** — 在桌面应用或 CLI 中查看每个服务的资源使用情况和实时日志
+- **内容存储于 S3** — 在包含 SeaweedFS 的 Enterprise 版本中，上传的文件可以保存在 S3 (SeaweedFS) 而不是数据库中，启动器会运行该存储并将平台连接到它
 - 支持 8 种语言的本地化，并提供 bash、zsh、fish 和 PowerShell 的 Shell 补全
 
 ## 版本
