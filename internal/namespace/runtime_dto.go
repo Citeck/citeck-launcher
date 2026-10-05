@@ -257,6 +257,12 @@ func (r *Runtime) generateLinks() []api.LinkDto {
 	// built-in link (whose orders span ~ -100..101) so they always render at
 	// the bottom of the sidebar, regardless of their configured order.
 	const customLinkOrderBase = 1000
+	// A custom link whose category names a built-in one ("Apps", "Resources",
+	// any case) joins that group instead: it gets the group's translated
+	// header and sits after the group's built-ins, before the next group —
+	// Apps built-ins span -10..2 and Resources 100..101, so the configured
+	// order is clamped into a band of its own: Apps 3..99, Resources 102..198.
+	const customAppsOrderBase, customResourcesOrderBase, customGroupOrderSpan = 51.0, 150.0, 48.0
 
 	// Icon names are looked up by `/icons/<name>.svg` in the Web UI; the SVGs
 	// are bundled from the Kotlin launcher's resources/icons/app/ folder.
@@ -317,13 +323,22 @@ func (r *Runtime) generateLinks() []api.LinkDto {
 		}
 		// Pin custom links below every built-in (max built-in order is 101):
 		// customLinkOrderBase + the configured order keeps them at the bottom of
-		// the sidebar while preserving their relative order within the group.
+		// the sidebar while preserving their relative order within the group —
+		// unless the link names a built-in group, which it then joins.
+		category, order := cl.Category, customLinkOrderBase+cl.Order
+		clamped := max(-customGroupOrderSpan, min(customGroupOrderSpan, cl.Order))
+		switch {
+		case strings.EqualFold(cl.Category, catApps):
+			category, order = catApps, customAppsOrderBase+clamped
+		case strings.EqualFold(cl.Category, catResources):
+			category, order = catResources, customResourcesOrderBase+clamped
+		}
 		links = append(links, api.LinkDto{
 			Name:        cl.Name,
 			URL:         cl.URL,
 			Icon:        cl.Icon,
-			Order:       customLinkOrderBase + cl.Order,
-			Category:    cl.Category,
+			Order:       order,
+			Category:    category,
 			Description: cl.Description,
 			Custom:      true,
 			Disabled:    disabled,
@@ -331,13 +346,10 @@ func (r *Runtime) generateLinks() []api.LinkDto {
 		})
 	}
 
-	// Localize the two built-in category headers ("Apps" / "Resources"). Custom
-	// workspace links keep their raw, user-authored category text (they have no
-	// i18n key), so skip them.
+	// Localize the two built-in category headers ("Apps" / "Resources"),
+	// including for a custom link that joined one of them above. Any other
+	// custom category keeps its raw, user-authored text (it has no i18n key).
 	for i := range links {
-		if links[i].Custom {
-			continue
-		}
 		switch links[i].Category {
 		case catApps:
 			links[i].CategoryKey = "links.category.apps"

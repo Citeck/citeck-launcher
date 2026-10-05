@@ -83,6 +83,57 @@ func TestGenerateLinksCustomDependsOn(t *testing.T) {
 	}
 }
 
+// TestCustomLinkJoinsABuiltInGroup pins where a workspace link lands: a
+// category naming a built-in group (any case) joins it — translated header,
+// after the group's built-ins and before the next group, whatever order it was
+// configured with — while any other category stays a raw header at the bottom.
+func TestCustomLinkJoinsABuiltInGroup(t *testing.T) {
+	r := newRuntimeForTest(testConfig(), newMockDocker(), t.TempDir())
+	r.SetCustomLinks([]bundle.WorkspaceLink{
+		{Name: "InApps", URL: "http://x/a", Category: "apps"},
+		{Name: "InAppsFarOrder", URL: "http://x/b", Category: "Apps", Order: 500},
+		{Name: "InAppsNegative", URL: "http://x/c", Category: "APPS", Order: -500},
+		{Name: "InResources", URL: "http://x/d", Category: "Resources", Order: 3},
+		{Name: "Elsewhere", URL: "http://x/e", Category: "Tools"},
+	})
+
+	byName := map[string]api.LinkDto{}
+	maxBuiltInApp, minResource := -1e9, 1e9
+	for _, l := range r.ToNamespaceDto().Links {
+		byName[l.Name] = l
+		if l.Custom {
+			continue
+		}
+		switch l.Category {
+		case "Apps":
+			maxBuiltInApp = max(maxBuiltInApp, l.Order)
+		case "Resources":
+			minResource = min(minResource, l.Order)
+		}
+	}
+	require.Greater(t, minResource, maxBuiltInApp, "fixture: both built-in groups present")
+
+	for _, name := range []string{"InApps", "InAppsFarOrder", "InAppsNegative"} {
+		l := byName[name]
+		assert.Equal(t, "Apps", l.Category, name)
+		assert.Equal(t, "links.category.apps", l.CategoryKey, name+": the group's translated header")
+		assert.Greater(t, l.Order, maxBuiltInApp, name+": after the built-in apps")
+		assert.Less(t, l.Order, minResource, name+": before the resources group")
+	}
+	assert.Less(t, byName["InAppsNegative"].Order, byName["InApps"].Order, "relative order kept inside the band")
+	assert.Less(t, byName["InApps"].Order, byName["InAppsFarOrder"].Order, "relative order kept inside the band")
+
+	res := byName["InResources"]
+	assert.Equal(t, "links.category.resources", res.CategoryKey)
+	assert.Greater(t, res.Order, 101.0, "after the built-in resources")
+	assert.Less(t, res.Order, 1000.0, "before the custom groups")
+
+	other := byName["Elsewhere"]
+	assert.Equal(t, "Tools", other.Category, "a category of its own is kept as written")
+	assert.Empty(t, other.CategoryKey, "and is not translated")
+	assert.GreaterOrEqual(t, other.Order, 1000.0, "and stays at the bottom")
+}
+
 // TestToNamespaceDtoInitProgress pins the AppDto init-progress mapping:
 // InitStep/InitTotal/InitName are populated only while the app is STARTING
 // with the init phase active, and cleared everywhere else (T12 phase-done,

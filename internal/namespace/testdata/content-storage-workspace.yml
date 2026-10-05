@@ -170,9 +170,14 @@ links:
   # namespace that keeps its content in the database). It is the entry's
   # admin port, published on loopback on desktop; in server mode the same URL
   # works through an SSH tunnel (docs/content-storage.md in the launcher
-  # repository). No category: a link's own category is shown untranslated.
+  # repository). "Apps" puts it in the sidebar's own Applications group, after
+  # RabbitMQ and PgAdmin; a launcher before 2.16 shows the link only for a
+  # namespace a newer launcher already ran, under a raw "Apps" header at the
+  # bottom of the sidebar.
   - name: SeaweedFS
     url: http://127.0.0.1:23646
+    icon: seaweedfs
+    category: Apps
     description: "SeaweedFS stores ecos-content files in S3.\nUsername: admin\nPassword: admin"
     dependsOn: [seaweedfs]
 # One line of the `default` template's detachedApps — the template itself

@@ -2,6 +2,8 @@ package namespace
 
 import (
 	"net/url"
+	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -414,5 +416,13 @@ func TestContentStorageProvider_TheLinkIsTheAdminUI(t *testing.T) {
 		l, shown := linkIn(t, generateContentStorage(t, s3Cfg(), enterpriseBundle(), ws, referenceNamespaceSecrets(ws)), AppStatusRunning)
 		require.True(t, shown)
 		assert.False(t, l.Disabled)
+		assert.Equal(t, "links.category.apps", l.CategoryKey, "listed with the other applications, not under a header of its own")
+	})
+	t.Run("its icon ships with the web UI", func(t *testing.T) {
+		require.NotEmpty(t, link.Icon)
+		// The sidebar loads /icons/<icon>.svg and hides a missing image, so a
+		// typo here would silently leave the link without its logo.
+		_, err := os.Stat(filepath.Join("..", "..", "web", "public", "icons", link.Icon+".svg"))
+		assert.NoError(t, err)
 	})
 }

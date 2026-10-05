@@ -306,12 +306,14 @@ export function Dashboard() {
                 {serviceLinks.map((l, i) => {
                   const prevCategory = i > 0 ? (serviceLinks[i - 1].category ?? '') : '__INIT__'
                   const showHeader = (l.category ?? '') !== prevCategory && l.category
-                  const alwaysOn = isLinkAlwaysEnabled(l)
                   // Custom (workspace-config) links carry their own daemon-computed
                   // `disabled` from dependsOn app status — don't re-gate them on
                   // the namespace-wide running flag (their deps may be up while
-                  // other apps aren't, or vice-versa).
-                  const enabled = l.custom ? !l.disabled : (isRunning || alwaysOn)
+                  // other apps aren't, or vice-versa). Nor run them through the
+                  // order>=100 alwaysEnabled fallback: one that joined the
+                  // Resources group sits at order >=100 and would log a bogus
+                  // deprecation warning.
+                  const enabled = l.custom ? !l.disabled : (isRunning || isLinkAlwaysEnabled(l))
                   return (
                     <div key={l.name}>
                       {showHeader && (
