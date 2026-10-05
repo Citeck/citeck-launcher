@@ -17,7 +17,7 @@ import (
 //	    url: http://seaweedfs:8333     # the endpoint as ecos-content sees it
 //	    bucket: ecos-content
 //	    accessKey: citeck
-//	    secretKey: ${secret:seaweedfs-s3}
+//	    secretKey: ${secret:seaweedfs-s3-key}
 //
 // The launcher knows the ECOS side of the contract (ecos-content, its records,
 // the default-storage config) and nothing about the provider: which container

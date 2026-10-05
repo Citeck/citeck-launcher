@@ -36,7 +36,10 @@ import (
 //     storage to an S3 server that is down makes every upload fail at once;
 //   - once per time the platform comes up (the "ran since up" latch): a
 //     restart of any of those apps — a namespace stop, a snapshot import, an
-//     update — re-arms it, so the next run re-derives the answer;
+//     update — re-arms it, so the next run re-derives the answer; a restart
+//     seen while a run is in flight is answered by another run as soon as
+//     that one ends (finish), since the event that brought the platform back
+//     was spent on the run in flight;
 //   - after an error, again on a qualifying event at most every 5 minutes, and
 //     at once on the Retry route;
 //   - never for a DB namespace, never while the generation reports a
@@ -484,14 +487,29 @@ func (p *contentStorageProvisioner) abort(j *csJob) {
 	p.broadcast(evt)
 }
 
-// finish releases the single-flight slot.
+// finish releases the single-flight slot, and asks once more when the latch
+// was re-armed while the run was in flight. The platform went down and came
+// back meanwhile — a provider recreated with a new S3 key between two of the
+// run's looks, say — and the event that brought it back found the slot taken
+// and was spent: the run in flight read the credentials when it STARTED, and
+// nothing else would ever ask again, leaving ECOS on the old key under a
+// "connected" banner until the next restart of the platform. The new
+// evaluation starts a run only if the gate is open now (a platform still
+// down, or a snapshot that postponed the run, starts nothing), and it is
+// registered before done is closed, so whoever waits on this run finds the
+// next one already in the slot.
 func (p *contentStorageProvisioner) finish(j *csJob) {
 	p.mu.Lock()
-	if p.job == j {
+	current := p.job == j
+	if current {
 		p.job = nil
 	}
+	again := current && !p.ranSinceUp
 	p.mu.Unlock()
 	j.cancel()
+	if again {
+		p.evaluate(false, "")
+	}
 	close(j.done)
 }
 
@@ -561,10 +579,49 @@ func (p *contentStorageProvisioner) credentials(in csJobInput) (csCredentials, m
 	missing := slices.Concat(missingAccess, missingSecret)
 	slices.Sort(missing)
 	if missing = slices.Compact(missing); len(missing) > 0 {
-		return csCredentials{}, msg.New("contentStorage.msg.provision.secretMissing",
-			"app", in.s3.App, "secrets", strings.Join(missing, ", "))
+		return csCredentials{}, csMissingSecrets(in, missing)
 	}
 	return csCredentials{accessKey: access, secretKey: secret}, msg.Message{}
+}
+
+// csMissingSecrets says what to do about secret values the namespace does not
+// have, and the two cases want different things. A reference the workspace
+// declares no entry for is fixed in the workspace configuration. A GENERATED
+// secret the workspace does declare is not missing from anywhere: its value is
+// made by the next generation — a reload — and this read never invents one
+// (a desktop secrets reset while the namespace runs is how it gets here).
+// Telling that operator to add an entry that is already there sends them
+// nowhere. When both kinds are missing, the configuration comes first: a
+// reload cannot make a value for an id nobody declared.
+func csMissingSecrets(in csJobInput, missing []string) msg.Message {
+	var undeclared, notGenerated []string
+	for _, id := range missing {
+		if csGeneratedSecret(in.ws, id) {
+			notGenerated = append(notGenerated, id)
+		} else {
+			undeclared = append(undeclared, id)
+		}
+	}
+	if len(undeclared) > 0 {
+		return msg.New("contentStorage.msg.provision.secretMissing",
+			"app", in.s3.App, "secrets", strings.Join(undeclared, ", "))
+	}
+	return msg.New("contentStorage.msg.provision.secretNotGenerated",
+		"app", in.s3.App, "secrets", strings.Join(notGenerated, ", "))
+}
+
+// csGeneratedSecret reports whether the workspace declares id as a GENERATED
+// secret. The first entry for an id is the one that counts, as in seeding.
+func csGeneratedSecret(ws *bundle.WorkspaceConfig, id string) bool {
+	if ws == nil {
+		return false
+	}
+	for _, s := range ws.Secrets {
+		if s.ID == id {
+			return s.Generated
+		}
+	}
+	return false
 }
 
 // run is one connection attempt.

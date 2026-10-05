@@ -57,8 +57,8 @@ func s3Cfg() *Config {
 // namespace missing either one gets no provider at all.
 func contentStorageSecrets() GenerateOpts {
 	return GenerateOpts{NamespaceSecrets: map[string]string{
-		"seaweedfs-s3":  "S3keyS3keyS3keyS3keyS3keyS3keyS3keyS3key",
-		"seaweedfs-jwt": "JwtKeyJwtKeyJwtKeyJwtKeyJwtKeyJwtKeyJwtKeyJwtKey",
+		"seaweedfs-s3-key": "S3keyS3keyS3keyS3keyS3keyS3keyS3keyS3key",
+		"seaweedfs-jwt":    "JwtKeyJwtKeyJwtKeyJwtKeyJwtKeyJwtKeyJwtKeyJwtKey",
 	}}
 }
 

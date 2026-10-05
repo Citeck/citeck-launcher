@@ -3,6 +3,7 @@ package setup
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/citeck/citeck-launcher/internal/cli/prompt"
 	"github.com/citeck/citeck-launcher/internal/client"
@@ -72,10 +73,17 @@ func (s *adminPasswordSetting) Run(_ *setupContext, _ *namespace.Config, _ *conf
 	}
 
 	fmt.Println(i18n.T("setup.admin_password.applying")) //nolint:forbidigo // CLI output
-	if _, apiErr := c.SetAdminPassword(newPass); apiErr != nil {
+	res, apiErr := c.SetAdminPassword(newPass)
+	if apiErr != nil {
 		return fmt.Errorf("set admin password: %w", apiErr)
 	}
 	fmt.Println(i18n.T("setup.admin_password.applied")) //nolint:forbidigo // CLI output
+	// Apps that read the password only when their container is created still
+	// let the OLD one in; "changed for ALL services" must not be the last word.
+	if len(res.RecreateNeeded) > 0 {
+		fmt.Println(i18n.T("setup.admin_password.recreateNeeded", //nolint:forbidigo // CLI output
+			"apps", strings.Join(res.RecreateNeeded, ", ")))
+	}
 	return nil
 }
 

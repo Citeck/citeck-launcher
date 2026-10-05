@@ -19,7 +19,7 @@ contentStorage:
     bucket: ecos-content
     # The entry's AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY.
     accessKey: citeck
-    secretKey: ${secret:seaweedfs-s3}
+    secretKey: ${secret:seaweedfs-s3-key}
 secrets:
   # SeaweedFS keys: the S3 secret key (read by the seaweedfs entry and by
   # `contentStorage.s3`) and the key its file tokens are signed with.
@@ -32,7 +32,7 @@ secrets:
   # connects with up to the new S3 key by itself. The seaweedfs entry, these
   # secrets, the contentStorage block, the SeaweedFS link and `- seaweedfs` in
   # namespaceTemplates[default].detachedApps travel together.
-  - generated: seaweedfs-s3
+  - generated: seaweedfs-s3-key
     length: 40
   - generated: seaweedfs-jwt
     length: 48
@@ -84,12 +84,18 @@ additionalApps:
       - -s3.readerCacheSizeMB=64
       - -s3.concurrentUploadLimitMB=128
       - -webdav=false
-      # Closes the filer's HTTP API (8888): files are read and written through
-      # S3, and inside the store through gRPC.
+      # Closes the filer's HTTP API (8888) AND the master's (9333: /dir/assign
+      # and /dir/lookup, which hand out the tokens the volume server asks for —
+      # with them open, the JWT keys below would keep no HTTP client on the
+      # network out). Files are read and written through S3, and inside the
+      # store through gRPC.
       - -disableHttp
       # The admin UI (23646), behind the login in WEED_ADMIN_* below. It is
       # the default, spelled out so that a newer seaweedfs with another
-      # default does not take it away.
+      # default does not take it away — and, being the default, it does not
+      # beat a saved `admin.ui=false` (see above): a store volume once started
+      # with -admin.ui=false keeps the UI off (the port answers 404) until
+      # that line is deleted from /data/mini.options and seaweedfs restarted.
       - -admin.ui=true
       - -s3.port.iceberg=0
       - -s3.port.lance=0
@@ -107,11 +113,12 @@ additionalApps:
       # (18333, 18888, 19333, 19340, 33646) — closing them takes mTLS, i.e. a
       # security.toml with certificates, which an additionalApps entry cannot
       # ship — and a few read-only pages: the master's status (/ and
-      # /cluster/status on 9333), the volume server's /status and the health
-      # checks. Server mode publishes none of these ports; desktop publishes
-      # 8333 and 23646, on loopback only.
+      # /cluster/status on 9333), the volume server's /status, the admin
+      # port's /metrics (the whole process's Prometheus metrics, per-bucket
+      # traffic included) and the health checks. Server mode publishes none
+      # of these ports; desktop publishes 8333 and 23646, on loopback only.
       AWS_ACCESS_KEY_ID: citeck
-      AWS_SECRET_ACCESS_KEY: ${secret:seaweedfs-s3}
+      AWS_SECRET_ACCESS_KEY: ${secret:seaweedfs-s3-key}
       # One generated key signs and checks the volume server's and the filer's
       # tokens, for writes and reads. Nothing keeps it in the volume, so a new
       # value — a restore into a new namespace — costs nothing.
@@ -120,9 +127,14 @@ additionalApps:
       WEED_JWT_FILER_SIGNING_KEY: ${secret:seaweedfs-jwt}
       WEED_JWT_FILER_SIGNING_READ_KEY: ${secret:seaweedfs-jwt}
       # The admin UI login: the stand's admin, as in RabbitMQ and PgAdmin
-      # (admin / admin on desktop). A password changed with `citeck setup
-      # admin-password` reaches it on the next `citeck reload`, which recreates
-      # the container; the files stay in the volume.
+      # (admin / admin on desktop: there anything on the machine that reaches
+      # 127.0.0.1:23646 — or seaweedfs:23646 on the namespace network — has
+      # the whole store, generated keys or not). A password changed with
+      # `citeck setup admin-password` reaches it on the next `citeck reload`,
+      # which recreates the container; the files stay in the volume. Sessions
+      # already open survive that, for up to 24 h: the key they are signed
+      # with lives in the volume (/data/admin/.session_key) — delete it before
+      # the reload to end them.
       WEED_ADMIN_USER: admin
       WEED_ADMIN_PASSWORD: ${ADMIN_PASSWORD}
       # ecos-content's bucket, created at start. Its MinIO client needs the

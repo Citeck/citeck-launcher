@@ -302,7 +302,11 @@ func TestContentStorageProvider_EveryHTTPPortAsksForACredential(t *testing.T) {
 		return v
 	}
 
-	t.Run("the filer's HTTP API is closed", func(t *testing.T) {
+	t.Run("the filer's HTTP API is closed, and the master's /dir/assign that hands out volume tokens", func(t *testing.T) {
+		// -disableHttp closes both: with the master's HTTP API open, any HTTP
+		// client on the namespace network could ask it for the very token the
+		// volume server's JWT check wants, and the JWT keys would protect
+		// nothing.
 		assert.Contains(t, provider.Cmd, "-disableHttp")
 	})
 

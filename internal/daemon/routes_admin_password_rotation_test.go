@@ -2,8 +2,11 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
+	"maps"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -71,6 +74,14 @@ func classifyAll(calls []execCall) []string {
 type stubAppFinder map[string]*namespace.AppRuntime
 
 func (s stubAppFinder) FindApp(name string) *namespace.AppRuntime { return s[name] }
+
+func (s stubAppFinder) Apps() []*namespace.AppRuntime {
+	out := make([]*namespace.AppRuntime, 0, len(s))
+	for _, name := range slices.Sorted(maps.Keys(s)) {
+		out = append(out, s[name])
+	}
+	return out
+}
 
 // newRotationTestDaemon wires a Daemon with a real SQLite-backed SecretService
 // (unlocked with the default password so the `_admin_password` persistence
@@ -326,4 +337,66 @@ func TestHandleSetAdminPassword_Validation(t *testing.T) {
 		assert.Contains(t, rec.Body.String(), "keycloak container is not running")
 		assert.Empty(t, exec.calls)
 	})
+}
+
+// envApp is a running app whose container carries the given environment.
+func envApp(name string, env ...string) *namespace.AppRuntime {
+	app := &namespace.AppRuntime{Name: name, ContainerID: "c-" + name}
+	for i := 0; i+1 < len(env); i += 2 {
+		app.Def.Environments.Set(env[i], env[i+1])
+	}
+	return app
+}
+
+// The rotation reaches Keycloak, RabbitMQ and PgAdmin inside their running
+// containers. An app that took the password from its configuration when its
+// container was created — a workspace entry's `${ADMIN_PASSWORD}`, the S3
+// store's admin UI login — still lets the OLD one in until it is recreated,
+// and the answer names it, so "changed for ALL services" is not the last word.
+// The three apps rotated at runtime carry the old password in a bootstrap env
+// var they no longer read, and are not named.
+func TestHandleSetAdminPassword_NamesTheAppsStillOnTheOldPassword(t *testing.T) {
+	const old = "old-admin-pass-7"
+	exec := &fakeExecer{}
+	d := newRotationTestDaemon(t, exec)
+	d.activeNs.systemSecrets.AdminPassword = old
+	d.rotationApps = stubAppFinder{
+		appdef.AppKeycloak: envApp(appdef.AppKeycloak, "KC_BOOTSTRAP_ADMIN_PASSWORD", old),
+		appdef.AppRabbitmq: envApp(appdef.AppRabbitmq, "RABBITMQ_DEFAULT_PASS", old),
+		appdef.AppPgadmin:  envApp(appdef.AppPgadmin, "PGADMIN_DEFAULT_PASSWORD", old),
+		"seaweedfs":        envApp("seaweedfs", "WEED_ADMIN_USER", "admin", "WEED_ADMIN_PASSWORD", old),
+		"in-a-url":         envApp("in-a-url", "TARGET", "http://admin:"+old+"@host:9000"),
+		"elsewhere":        envApp("elsewhere", "PASSWORD", "something-else"),
+		"stopped":          {Name: "stopped", Def: envApp("stopped", "PASSWORD", old).Def},
+	}
+
+	rec := postAdminPassword(d, `{"password":"new-secret-1"}`)
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var res struct {
+		Success        bool     `json:"success"`
+		RecreateNeeded []string `json:"recreateNeeded"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &res))
+	assert.True(t, res.Success)
+	assert.Equal(t, []string{"in-a-url", "seaweedfs"}, res.RecreateNeeded,
+		"named: what carries the old password and has a container; not: the three rotated at runtime")
+}
+
+// A password too short to be told apart from an ordinary word — the desktop's
+// fixed "admin" — counts only as a whole value: inside a value it is a user
+// name or a path as often as a password.
+func TestAppsOnTheOldAdminPassword_AShortPasswordMatchesOnlyWhole(t *testing.T) {
+	apps := []*namespace.AppRuntime{
+		envApp("whole", "WEED_ADMIN_PASSWORD", "admin"),
+		envApp("inside", "URL", "http://host/admin/ui"),
+		{Name: "in-cmd", ContainerID: "c", Def: appdef.ApplicationDef{Cmd: []string{"--password=admin"}}},
+	}
+	assert.Equal(t, []string{"whole"}, appsOnTheOldAdminPassword(apps, "admin"))
+	assert.Empty(t, appsOnTheOldAdminPassword(apps, ""))
+
+	inCmd := []*namespace.AppRuntime{
+		{Name: "in-cmd", ContainerID: "c", Def: appdef.ApplicationDef{Cmd: []string{"--password=s3cr3t-pw"}}},
+	}
+	assert.Equal(t, []string{"in-cmd"}, appsOnTheOldAdminPassword(inCmd, "s3cr3t-pw"),
+		"a distinctive password counts inside a value, the command line included")
 }

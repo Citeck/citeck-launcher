@@ -19,6 +19,19 @@ type ActionResultDto struct {
 	StateSaveError string `json:"stateSaveError,omitempty"`
 }
 
+// AdminPasswordResultDto is the response of POST /namespace/admin-password.
+type AdminPasswordResultDto struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+	// RecreateNeeded names the running apps that took the admin password from
+	// their configuration when their container was created — a workspace
+	// entry's `${ADMIN_PASSWORD}`, like the S3 store's admin UI login — and so
+	// still accept the OLD one: the rotation reaches Keycloak, RabbitMQ and
+	// PgAdmin at runtime, anything else only when it is recreated (`citeck
+	// reload`). Sorted; absent when there is none.
+	RecreateNeeded []string `json:"recreateNeeded,omitempty"`
+}
+
 // AppDto represents an application in the namespace.
 type AppDto struct {
 	Name       string `json:"name"`

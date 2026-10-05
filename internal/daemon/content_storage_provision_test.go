@@ -392,19 +392,22 @@ func (h *csHarness) restartPlatform(t *testing.T) {
 	h.setApps(nil)
 }
 
-// wait blocks until the run in flight, if any, has finished.
+// wait blocks until no run is in flight: the one in flight, if any, and the
+// one its finish started in its place (finish registers it before done).
 func (h *csHarness) wait(t *testing.T) {
 	t.Helper()
-	h.p.mu.Lock()
-	j := h.p.job
-	h.p.mu.Unlock()
-	if j == nil {
-		return
-	}
-	select {
-	case <-j.done:
-	case <-time.After(10 * time.Second):
-		t.Fatal("the content storage run did not finish")
+	for {
+		h.p.mu.Lock()
+		j := h.p.job
+		h.p.mu.Unlock()
+		if j == nil {
+			return
+		}
+		select {
+		case <-j.done:
+		case <-time.After(10 * time.Second):
+			t.Fatal("the content storage run did not finish")
+		}
 	}
 }
 
@@ -848,6 +851,83 @@ func TestContentStorageProvision_AKeyChangedOnTheProviderIsNotOverwritten(t *tes
 	assert.Equal(t, api.ContentStorageStateConnected, h.retry(t).State)
 	assert.Empty(t, h.ecos.mutatedIDs())
 	assert.Equal(t, "rotated-by-hand", h.ecos.password())
+}
+
+// The operator who rotated the key by hand may also have put it into a secret
+// of their own and pointed the launcher's endpoint at that one. The launcher
+// no longer knows the key the provider checks, so pointing the endpoint back
+// at its own secret — which holds the namespace's key — would be the very 403
+// the secret guard above avoids: the credentials stay where the operator put
+// them. The endpoint's URL is still the launcher's, and a drifted one is put
+// right on its own.
+func TestContentStorageProvision_AnEndpointPointedAtAHandRotatedKeyKeepsItsCredentials(t *testing.T) {
+	h := newCSHarness(t)
+	h.providerKey = "rotated-by-hand"
+	h.setApps(nil)
+	h.ecos.putRecords(csSecretValue)
+	h.ecos.credentials[csTestEndpointRef] = "operators-s3-credentials"
+	h.ecos.defaultRef = csTestStorageRef
+	assert.Equal(t, api.ContentStorageStateConnected, h.retry(t).State)
+	assert.Empty(t, h.ecos.mutatedIDs(), "neither the secret nor the endpoint is written")
+
+	h.ecos.mu.Lock()
+	h.ecos.urls[csTestEndpointRef] = "http://elsewhere:9000"
+	h.ecos.mu.Unlock()
+	h.restartPlatform(t)
+	h.event(t)
+	_, muts := h.ecos.snapshot()
+	require.Len(t, muts, 1)
+	assert.Equal(t, fakeMutation{id: csTestEndpointRef, atts: map[string]any{"url": "http://seaweedfs:8333"}}, muts[0],
+		"the URL alone")
+	h.ecos.mu.Lock()
+	defer h.ecos.mu.Unlock()
+	assert.Equal(t, "operators-s3-credentials", h.ecos.credentials[csTestEndpointRef])
+	assert.Equal(t, "http://seaweedfs:8333", h.ecos.urls[csTestEndpointRef])
+}
+
+// The platform goes down and comes back while a run is in flight — the
+// provider recreated with a new key between two of the run's looks at it. The
+// event that brought it back found the slot taken and was spent; the run in
+// flight read the OLD key when it started and settles on it, writing nothing.
+// No other event follows, so the run that ends with the latch re-armed asks
+// once more by itself, and the new key reaches ECOS.
+func TestContentStorageProvision_APlatformRestartDuringARunIsNotLost(t *testing.T) {
+	h := newCSHarness(t)
+	require.Equal(t, api.ContentStorageStateConnected, h.retry(t).State)
+	require.Len(t, h.ecos.mutatedIDs(), 4)
+
+	// The next start of the platform: a run begins, reads the key, and waits
+	// for ECOS to answer.
+	block := make(chan struct{})
+	h.ecos.mu.Lock()
+	h.ecos.blockQuery = block
+	before := h.ecos.queries
+	h.ecos.mu.Unlock()
+	h.setApps(map[string]namespace.AppRuntimeStatus{appdef.AppGateway: namespace.AppStatusStopped})
+	h.p.evaluate(false, "")
+	h.setApps(nil)
+	h.p.evaluate(false, "")
+	require.Eventually(t, func() bool { q, _ := h.ecos.snapshot(); return q > before }, 5*time.Second, time.Millisecond,
+		"the run read the key and is waiting on ECOS")
+
+	// Meanwhile the namespace gets a new key and the provider is recreated
+	// with it. Both of its events land while the run is in flight.
+	h.secretValues = map[string]string{"seaweedfs-s3": "the-new-key-mid-run"}
+	h.setApps(map[string]namespace.AppRuntimeStatus{csProvider: namespace.AppStatusStopped})
+	h.p.evaluate(false, "")
+	h.setApps(nil)
+	h.p.evaluate(false, "")
+
+	close(block)
+	h.wait(t)
+	assert.Equal(t, api.ContentStorageStateConnected, h.p.Status("ns1").State)
+	assert.Equal(t, "the-new-key-mid-run", h.ecos.password(), "the restart seen during the run was not lost")
+	assert.Equal(t, []string{"emodel/secret@", "emodel/endpoint@", "content/storage@", csConfigRef, csTestSecretRef},
+		h.ecos.mutatedIDs())
+
+	h.restartPlatform(t)
+	h.event(t)
+	assert.Len(t, h.ecos.mutatedIDs(), 5, "and then it is current")
 }
 
 // An ECOS that does not say when the secret last changed leaves nothing to
@@ -1519,6 +1599,36 @@ func TestContentStorageProvision_AnUnresolvableSecretIsAnErrorWithNoWrites(t *te
 	h3 := newCSHarness(t)
 	h3.secretErr = errors.New("disk on fire")
 	assert.Equal(t, "contentStorage.msg.provision.secretsUnreadable", h3.retry(t).ErrorMsg.Key)
+}
+
+// A GENERATED secret with no value is not missing from the workspace — the
+// entry is there — and adding it again, which is what the "missing" sentence
+// asks, fixes nothing: the next generation makes the value (a desktop secrets
+// reset while the namespace runs is how this happens; the read never invents
+// one). The sentence says to reload. A reference the workspace declares
+// nothing for still asks for the entry, and wins when both are missing.
+func TestContentStorageProvision_AGeneratedSecretWithNoValueAsksForAReload(t *testing.T) {
+	h := newCSHarness(t)
+	h.d.activeNs.workspaceConfig.Secrets = []bundle.SecretDefault{{ID: "seaweedfs-s3", Generated: true}}
+	h.secretValues = map[string]string{}
+	st := h.retry(t)
+	assert.Equal(t, api.ContentStorageStateError, st.State)
+	assert.Equal(t, "contentStorage.msg.provision.secretNotGenerated", st.ErrorMsg.Key)
+	assert.Contains(t, st.ErrorMsg.Args, "seaweedfs-s3")
+	queries, muts := h.ecos.snapshot()
+	assert.Zero(t, queries)
+	assert.Empty(t, muts)
+
+	h2 := newCSHarness(t)
+	ws := h2.d.activeNs.workspaceConfig
+	ws.Secrets = []bundle.SecretDefault{{ID: "seaweedfs-s3", Generated: true}}
+	ws.ContentStorage.S3.AccessKey = "${secret:s3-access}"
+	h2.secretValues = map[string]string{}
+	st = h2.retry(t)
+	assert.Equal(t, "contentStorage.msg.provision.secretMissing", st.ErrorMsg.Key)
+	assert.Contains(t, st.ErrorMsg.Args, "s3-access")
+	assert.NotContains(t, strings.Join(st.ErrorMsg.Args, " "), "seaweedfs-s3",
+		"the undeclared one is what the operator has to fix first")
 }
 
 // The runtime hook ignores what cannot change the gate and never blocks.

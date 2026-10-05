@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/citeck/citeck-launcher/internal/api"
@@ -24,9 +26,11 @@ type containerExecer interface {
 }
 
 // appFinder is the slice of *namespace.Runtime the admin-password handler
-// needs to locate target containers; tests substitute a stub.
+// needs to locate target containers and to list the apps a rotation does not
+// reach at runtime; tests substitute a stub.
 type appFinder interface {
 	FindApp(name string) *namespace.AppRuntime
+	Apps() []*namespace.AppRuntime
 }
 
 // dockerExec returns the container-exec surface for handlers that drive CLI
@@ -92,6 +96,10 @@ func (d *Daemon) handleSetAdminPassword(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "keycloak container is not running")
 		return
 	}
+
+	// The password every container was created with, before anything moves:
+	// what the apps the rotation does not reach still accept afterwards.
+	oldPassword := d.active().systemSecrets.AdminPasswordOrDefault()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -169,14 +177,61 @@ func (d *Daemon) handleSetAdminPassword(w http.ResponseWriter, r *http.Request) 
 	d.activeLocked().systemSecrets.AdminPassword = req.Password
 	d.configMu.Unlock()
 
-	slog.Info("Admin password reset (keycloak master + ecos-app, rabbitmq, pgadmin)")
-	writeJSON(w, api.ActionResultDto{Success: true, Message: "Admin password reset"})
+	recreate := appsOnTheOldAdminPassword(apps.Apps(), oldPassword)
+	slog.Info("Admin password reset (keycloak master + ecos-app, rabbitmq, pgadmin)",
+		"stillOnTheOldPasswordUntilRecreated", recreate)
+	writeJSON(w, api.AdminPasswordResultDto{Success: true, Message: "Admin password reset", RecreateNeeded: recreate})
 
 	// Keycloak, RabbitMQ, and PgAdmin were updated at runtime above — their
 	// containers don't need a restart. Webapps connect to RabbitMQ as the
 	// stable "citeck" SA (not "admin"), so the admin-password change does
 	// not touch ECOS_WEBAPP_RABBITMQ_PASSWORD and webapps do NOT need a
 	// reload here. See addWebappInfraEnv in internal/namespace/generator.go.
+}
+
+// adminPasswordRotatedAtRuntime are the apps handleSetAdminPassword changes
+// the password of inside their running container. Their containers carry the
+// old password too (a bootstrap env var), which they no longer read.
+var adminPasswordRotatedAtRuntime = []string{appdef.AppKeycloak, appdef.AppRabbitmq, appdef.AppPgadmin}
+
+// minDistinctAdminPassword is the shortest old password matched INSIDE a
+// value. A shorter one — the desktop's fixed "admin" — is part of too many
+// ordinary values (a user name, a URL path) to say anything there, and is
+// matched only as a whole value.
+const minDistinctAdminPassword = 6
+
+// appsOnTheOldAdminPassword answers, sorted, the apps with a container whose
+// environment or command line carries the old admin password — what a
+// workspace entry's `${ADMIN_PASSWORD}` resolves into — other than the ones
+// rotated at runtime. Such an app read the password when its container was
+// created and accepts the old one until it is recreated: the admin password
+// rotation would otherwise report "changed for ALL services" while one of them
+// still lets the old, possibly leaked, password in.
+func appsOnTheOldAdminPassword(apps []*namespace.AppRuntime, oldPassword string) []string {
+	if oldPassword == "" {
+		return nil
+	}
+	carries := func(v string) bool {
+		if v == oldPassword {
+			return true
+		}
+		return len(oldPassword) >= minDistinctAdminPassword && strings.Contains(v, oldPassword)
+	}
+	var out []string
+	for _, app := range apps {
+		if app == nil || app.ContainerID == "" || slices.Contains(adminPasswordRotatedAtRuntime, app.Name) {
+			continue
+		}
+		found := slices.ContainsFunc(app.Def.Cmd, carries)
+		for _, e := range app.Def.Environments {
+			found = found || carries(e.Value)
+		}
+		if found {
+			out = append(out, app.Name)
+		}
+	}
+	slices.Sort(out)
+	return out
 }
 
 // resetKeycloakAdminPassword authenticates kcadm.sh using the "citeck"

@@ -281,8 +281,8 @@ func (c *DaemonClient) ReloadPlan() (*api.ReloadPlanDto, error) {
 // kcadm.sh inside the running keycloak container via the daemon.
 // The new password is also stored in the encrypted secret store so the
 // value the daemon knows about stays consistent with what keycloak holds.
-func (c *DaemonClient) SetAdminPassword(password string) (*api.ActionResultDto, error) {
-	var dto api.ActionResultDto
+func (c *DaemonClient) SetAdminPassword(password string) (*api.AdminPasswordResultDto, error) {
+	var dto api.AdminPasswordResultDto
 	err := c.post(api.NamespaceAdminPassword, map[string]string{"password": password}, &dto)
 	return &dto, err
 }

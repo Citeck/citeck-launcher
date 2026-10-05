@@ -20,10 +20,14 @@ import (
 // connected, switched back to the database (our storage still serves every
 // file written to it while it was the default), or about to be connected —
 // each of them that exists is brought up to the namespace's current values;
-// an administrator's edit of either is overwritten. When an administrator
-// pointed the default at a storage of their own, ECOS is theirs and nothing is
-// written, these two included. The storage record and the default are never
-// rewritten here.
+// an administrator's edit of either is overwritten — except while the
+// provider runs with a key that is not the namespace's (an operator replaced
+// it with `citeck edit`): then the launcher no longer knows the key the
+// provider checks, the secret is left alone and the endpoint keeps the
+// credentials it names, and only the endpoint's URL is still put right. When
+// an administrator pointed the default at a storage of their own, ECOS is
+// theirs and nothing is written, these two included. The storage record and
+// the default are never rewritten here.
 //
 // WHY the secret drifts: the key lives in two places — the namespace's secret
 // value, which the provider's container is started with, and ECOS's database,
@@ -68,6 +72,10 @@ const (
 type csOwnPlan struct {
 	secret   string
 	endpoint string
+	// keepEndpointCredentials: the endpoint names credentials other than the
+	// launcher's secret and the provider does not run with the namespace's
+	// key, so an endpoint write sets its URL alone (see planOwnRecords).
+	keepEndpointCredentials bool
 }
 
 func (pl csOwnPlan) empty() bool { return pl.secret == "" && pl.endpoint == "" }
@@ -124,21 +132,40 @@ func (p *contentStorageProvisioner) planOwnRecords(ctx context.Context, client e
 	if err != nil {
 		return csOwnPlan{}, fmt.Errorf("read the S3 secret and endpoint: %w", err)
 	}
+	// Whether the launcher still knows the key the provider checks. When it
+	// does not — an operator replaced it on this stand — neither of the two
+	// writes that would put the namespace's key in front of ecos-content may
+	// happen: the secret is not rewritten with it, and the endpoint is not
+	// pointed back at the launcher's secret, which holds it. Either one is
+	// the very 403 the sync exists to prevent.
+	runsWithKey := csProviderRunsWithKey(j.in.runtime, ids.provider, creds.secretKey)
 	var plan csOwnPlan
 	for i, ref := range refs {
 		switch ref {
 		case ids.secret:
 			plan.secret = csSecretStale(j.in.runtime.ContentStorageSecretWrite(), ids.secret, creds,
 				jsonString(recs[i]["modified"]))
-			if plan.secret != "" && !csProviderRunsWithKey(j.in.runtime, ids.provider, creds.secretKey) {
+			if plan.secret != "" && !runsWithKey {
 				slog.Warn("The S3 key the provider runs with is not this namespace's key (changed with "+
 					"`citeck edit`?): the ECOS secret is left as it is", "ns", j.in.nsID, "provider", ids.provider,
 					"record", ids.secret)
 				plan.secret = ""
 			}
 		case ids.endpoint:
-			plan.endpoint = csEndpointStale(jsonString(recs[i]["url"]), jsonString(recs[i]["credentials"]),
-				j.in.s3.URL, csSecretLocalID(ids.provider))
+			url, credentials := jsonString(recs[i]["url"]), jsonString(recs[i]["credentials"])
+			wantCredentials := csSecretLocalID(ids.provider)
+			if credentials != wantCredentials && !runsWithKey {
+				// The operator who rotated the key by hand may have put it
+				// into a secret of their own and pointed the endpoint at it.
+				// The URL is still the launcher's to keep; the credentials
+				// are judged as they are.
+				slog.Warn("The S3 key the provider runs with is not this namespace's key (changed with "+
+					"`citeck edit`?): the ECOS endpoint keeps the credentials it names", "ns", j.in.nsID,
+					"provider", ids.provider, "record", ids.endpoint, "credentials", credentials)
+				plan.keepEndpointCredentials = true
+				wantCredentials = credentials
+			}
+			plan.endpoint = csEndpointStale(url, credentials, j.in.s3.URL, wantCredentials)
 		}
 	}
 	return plan, nil
@@ -164,10 +191,11 @@ func (p *contentStorageProvisioner) writeOwnRecords(ctx context.Context, client 
 		p.rememberSecretWrite(ctx, client, j, ids, creds)
 	}
 	if plan.endpoint != "" {
-		_, err := client.Mutate(ctx, ids.endpoint, map[string]any{
-			"url":         j.in.s3.URL,
-			"credentials": ids.secret,
-		})
+		atts := map[string]any{"url": j.in.s3.URL}
+		if !plan.keepEndpointCredentials {
+			atts["credentials"] = ids.secret
+		}
+		_, err := client.Mutate(ctx, ids.endpoint, atts)
 		if err != nil {
 			return stepFailed(err, msg.New("contentStorage.msg.provision.updateFailed",
 				"record", ids.endpoint, "error", creds.redact(err.Error())))
@@ -246,8 +274,10 @@ func csEndpointStale(url, credentialsLocalID, wantURL, wantSecretLocalID string)
 // `${secret:}`, so it is there unless an operator replaced it on this stand
 // (`citeck edit <app>`). Then the launcher no longer knows the key the
 // provider checks, an operator who rotated it by hand has put it into ECOS by
-// hand as well, and writing the namespace's key over it would cause exactly
-// the 403 the sync exists to prevent.
+// hand as well — into the launcher's secret or into one of their own that the
+// endpoint names — and writing the namespace's key over it, or pointing the
+// endpoint back at the secret that holds it, would cause exactly the 403 the
+// sync exists to prevent.
 func csProviderRunsWithKey(rt *namespace.Runtime, provider, key string) bool {
 	app := rt.FindApp(provider)
 	if key == "" || app == nil {
