@@ -681,6 +681,9 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 		// and switching the default): without it the next connection run would
 		// read "our storage, default LOCAL" as an administrator's choice.
 		runtime.RestoreContentStorageSwitch(persistedState.ContentStorageSwitchPending)
+		// What the launcher last wrote into its ECOS secret: without it every
+		// daemon start would rewrite a secret that is already current.
+		runtime.RestoreContentStorageSecretWrite(persistedState.ContentStorageSecretWrite)
 	} else if len(genOpts.DetachedApps) > 0 {
 		// First start with template detached apps — apply to runtime
 		runtime.SetManualStoppedApps(genOpts.DetachedApps)

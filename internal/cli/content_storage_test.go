@@ -43,7 +43,7 @@ func TestContentStorageStatusLine_SaysWhereTheConnectionIs(t *testing.T) {
 		{api.ContentStorageStateWaiting, "", []string{"waiting for ECOS"}},
 		{api.ContentStorageStateProvisioning, "", []string{"connecting ecos-content"}},
 		{api.ContentStorageStateConnected, "", []string{"S3 (seaweedfs)", "connected"}},
-		{api.ContentStorageStateAdminManaged, "", []string{"administrator", "changes nothing"}},
+		{api.ContentStorageStateAdminManaged, "", []string{"administrator", "leaves that choice alone"}},
 		{api.ContentStorageStateError, "gateway answered 500", []string{"connection failed", "gateway answered 500", "retries automatically"}},
 		// A state a newer daemon reports and this CLI does not know is shown
 		// as it came, not dropped or guessed.
@@ -107,7 +107,7 @@ func TestContentStorageStatusLine_AProblemOutranksTheState(t *testing.T) {
 		namespace.ContentStorageNoProviderImage:      "image for seaweedfs",
 		namespace.ContentStorageProviderNotGenerated: "seaweedfs is not part of this namespace",
 		namespace.ContentStorageProviderConflict:     "seaweedfs cannot be the S3 provider",
-		"SOMETHING_NEW": "SOMETHING_NEW",
+		"SOMETHING_NEW":                              "SOMETHING_NEW",
 	}
 	for code, want := range cases {
 		line := contentStorageStatusLine(s3Namespace(&api.ContentStorageDto{
@@ -291,7 +291,9 @@ func TestInstallContentStorageIsWrittenToNamespaceYml(t *testing.T) {
 
 	cfg.ContentStorage = chooseInstallContentStorage(
 		namespace.ContentStorageAvailability{Available: true, ProviderApp: "seaweedfs"},
-		func(namespace.ContentStorageAvailability) namespace.ContentStorageType { return namespace.ContentStorageS3 })
+		func(namespace.ContentStorageAvailability) namespace.ContentStorageType {
+			return namespace.ContentStorageS3
+		})
 	data, err = namespace.MarshalNamespaceConfig(&cfg)
 	require.NoError(t, err)
 	parsed, err := namespace.ParseNamespaceConfig(data)

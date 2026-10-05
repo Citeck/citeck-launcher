@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"maps"
 	"net/http"
@@ -62,8 +63,24 @@ type fakeECOS struct {
 	mutateErr     map[string]error // keyed by the id mutated
 	ignoreDefault bool             // accept the default mutation, change nothing
 	// onMutate, when set, is called with the id before a mutation is applied
-	// (outside the lock), so a test can act at an exact step.
+	// (outside the lock), so a test can act at an exact step; onQuery the
+	// same for a query.
 	onMutate func(id string)
+	onQuery  func(refs []string, atts map[string]string)
+
+	// What the records hold, by full ref. passwords is the secret's data —
+	// which the real ECOS never answers; kept so a test can see what the
+	// secret holds now. modified is the secret's `modified`: every save moves
+	// it, and an existing secret nobody stamped answers a fixed time, as a
+	// real one always answers some. noModified answers it as null: an ECOS
+	// that does not say. urls and credentials are the endpoint's `url` and
+	// the local id of its `credentials`.
+	passwords   map[string]string
+	modified    map[string]string
+	noModified  bool
+	urls        map[string]string
+	credentials map[string]string
+	clock       int
 
 	queries   int
 	mutations []fakeMutation
@@ -76,7 +93,68 @@ type fakeMutation struct {
 
 func newFakeECOS() *fakeECOS {
 	return &fakeECOS{defaultRef: csLocalStorageRef, exists: map[string]bool{}, mutateErr: map[string]error{},
-		unregistered: map[string]int{}}
+		unregistered: map[string]int{}, passwords: map[string]string{}, modified: map[string]string{},
+		urls: map[string]string{}, credentials: map[string]string{}}
+}
+
+// The launcher's records in the tests, as full refs.
+const (
+	csTestSecretRef   = "emodel/secret@seaweedfs-s3-credentials"
+	csTestEndpointRef = "emodel/endpoint@seaweedfs-s3"
+	csTestStorageRef  = "content/storage@seaweedfs-s3"
+)
+
+// putRecords makes ECOS hold all three of the launcher's records, as a
+// database restored from another stand or written by an earlier launcher
+// does: the secret with the given password, the endpoint naming the provider
+// and the secret.
+func (f *fakeECOS) putRecords(password string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, ref := range []string{csTestSecretRef, csTestEndpointRef, csTestStorageRef} {
+		f.exists[ref] = true
+	}
+	f.passwords[csTestSecretRef] = password
+	f.modified[csTestSecretRef] = "2026-01-01T00:00:00.000001Z"
+	f.urls[csTestEndpointRef] = "http://seaweedfs:8333"
+	f.credentials[csTestEndpointRef] = "seaweedfs-s3-credentials"
+}
+
+// password is what the launcher's secret holds now.
+func (f *fakeECOS) password() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.passwords[csTestSecretRef]
+}
+
+// stamp records what a mutation wrote into one of the launcher's records.
+// Caller holds f.mu.
+func (f *fakeECOS) stamp(ref string, atts map[string]any) {
+	switch {
+	case strings.HasPrefix(ref, "emodel/secret@"):
+		data, _ := atts["data?json"].(map[string]any)
+		if password, _ := data["password"].(string); password != "" {
+			f.passwords[ref] = password
+		}
+		f.clock++
+		f.modified[ref] = fmt.Sprintf("2026-10-05T10:00:%02d.000001Z", f.clock)
+	case strings.HasPrefix(ref, "emodel/endpoint@"):
+		if url, ok := atts["url"].(string); ok {
+			f.urls[ref] = url
+		}
+		if cred, ok := atts["credentials"].(string); ok {
+			f.credentials[ref] = cred[strings.IndexByte(cred, '@')+1:]
+		}
+	}
+}
+
+// jsonOrNull is a JSON string, or null for "".
+func jsonOrNull(s string) json.RawMessage {
+	if s == "" {
+		return json.RawMessage("null")
+	}
+	b, _ := json.Marshal(s)
+	return b
 }
 
 // sourceOf is the record source part of a ref, '@' included.
@@ -87,7 +165,13 @@ func sourceOf(ref string) string {
 	return ref
 }
 
-func (f *fakeECOS) Query(ctx context.Context, refs []string, _ map[string]string) ([]map[string]json.RawMessage, error) {
+func (f *fakeECOS) Query(ctx context.Context, refs []string, atts map[string]string) ([]map[string]json.RawMessage, error) {
+	f.mu.Lock()
+	hook := f.onQuery
+	f.mu.Unlock()
+	if hook != nil {
+		hook(refs, atts)
+	}
 	f.mu.Lock()
 	f.queries++
 	block, ignoreCtx := f.blockQuery, f.blockIgnoresCtx
@@ -114,8 +198,7 @@ func (f *fakeECOS) Query(ctx context.Context, refs []string, _ map[string]string
 	out := make([]map[string]json.RawMessage, len(refs))
 	for i, ref := range refs {
 		m := map[string]json.RawMessage{}
-		switch {
-		case ref == csConfigRef:
+		if ref == csConfigRef {
 			notDeployed := f.notDeployedQueries > 0
 			if notDeployed {
 				f.notDeployedQueries--
@@ -128,10 +211,31 @@ func (f *fakeECOS) Query(ctx context.Context, refs []string, _ map[string]string
 			default:
 				m["value"], _ = json.Marshal(map[string]any{"ref": f.defaultRef, "config": map[string]any{}})
 			}
-		case f.unregistered[sourceOf(ref)] > 0 || !f.exists[ref]:
-			m["notExists"] = json.RawMessage("true")
-		default:
-			m["notExists"] = json.RawMessage("null")
+			out[i] = m
+			continue
+		}
+		there := f.unregistered[sourceOf(ref)] == 0 && f.exists[ref]
+		for alias := range atts {
+			switch {
+			case alias == "notExists" && !there:
+				m[alias] = json.RawMessage("true")
+			case !there:
+				m[alias] = json.RawMessage("null")
+			case alias == "modified" && strings.HasPrefix(ref, "emodel/secret@") && !f.noModified:
+				stamp := f.modified[ref]
+				if stamp == "" {
+					stamp = "2026-01-01T00:00:00.000001Z"
+				}
+				m[alias] = jsonOrNull(stamp)
+			case alias == "url":
+				m[alias] = jsonOrNull(f.urls[ref])
+			case alias == "credentials":
+				m[alias] = jsonOrNull(f.credentials[ref])
+			default:
+				// Unanswered: what ECOS does for an existing record's
+				// `_notExists`, and for an attribute the record does not have.
+				m[alias] = json.RawMessage("null")
+			}
 		}
 		out[i] = m
 	}
@@ -168,8 +272,18 @@ func (f *fakeECOS) Mutate(ctx context.Context, id string, atts map[string]any) (
 		}
 		return id, nil
 	}
+	if !strings.HasSuffix(id, "@") {
+		// An update of a full ref: ECOS refuses one that is not there.
+		if !f.exists[id] {
+			return "", &ecosRecordsError{Status: http.StatusInternalServerError,
+				Messages: []string{"Record with id '" + id + "' is not found"}}
+		}
+		f.stamp(id, atts)
+		return id, nil
+	}
 	localID, _ := atts["id"].(string)
 	f.exists[id+localID] = true
+	f.stamp(id+localID, atts)
 	return id + localID, nil
 }
 
@@ -198,6 +312,9 @@ type csHarness struct {
 
 	secretValues map[string]string
 	secretErr    error
+	// providerKey, when set, is the key the provider's container runs with
+	// instead of the namespace's: an operator's `citeck edit`.
+	providerKey string
 }
 
 func newCSHarness(t *testing.T) *csHarness {
@@ -240,9 +357,39 @@ func (h *csHarness) setApps(override map[string]namespace.AppRuntimeStatus) {
 		if s, ok := override[name]; ok {
 			st = s
 		}
-		apps = append(apps, &namespace.AppRuntime{Name: name, Status: st, ContainerID: "c-" + name})
+		app := &namespace.AppRuntime{Name: name, Status: st, ContainerID: "c-" + name}
+		if name == csProvider {
+			// The provider runs with the key the generation handed it — the
+			// namespace's own, unless a test says otherwise.
+			key := h.providerKey
+			if key == "" {
+				key = h.secretValues["seaweedfs-s3"]
+			}
+			app.Def.Environments.Set("AWS_ACCESS_KEY_ID", "citeck")
+			app.Def.Environments.Set("AWS_SECRET_ACCESS_KEY", key)
+		}
+		apps = append(apps, app)
 	}
 	h.rt.InjectAppsForTest(apps...)
+}
+
+// newKey gives the namespace a new S3 key the way a desktop secrets reset or
+// a restore into a new namespace does: the provider is recreated with it, and
+// the platform comes up again.
+func (h *csHarness) newKey(t *testing.T, key string) {
+	t.Helper()
+	h.secretValues = map[string]string{"seaweedfs-s3": key}
+	h.setApps(map[string]namespace.AppRuntimeStatus{csProvider: namespace.AppStatusStopped})
+	h.event(t)
+	h.setApps(nil)
+}
+
+// restartPlatform stops and starts the platform, re-arming the latch.
+func (h *csHarness) restartPlatform(t *testing.T) {
+	t.Helper()
+	h.setApps(map[string]namespace.AppRuntimeStatus{appdef.AppGateway: namespace.AppStatusStopped})
+	h.event(t)
+	h.setApps(nil)
 }
 
 // wait blocks until the run in flight, if any, has finished.
@@ -398,20 +545,29 @@ func TestContentStorageProvision_OurStorageBackOnLocalIsAdminManagedWithNoWrites
 	assert.Empty(t, h.ecos.mutatedIDs())
 }
 
-// A run interrupted half-way (or an administrator who made the secret by
-// hand) leaves some records: only the missing ones are created, an existing
-// one is never updated.
+// A run interrupted half-way leaves some records: only the missing ones are
+// created, and the secret it wrote — still holding the current key — is not
+// written again.
 func TestContentStorageProvision_CreatesOnlyWhatIsMissing(t *testing.T) {
 	h := newCSHarness(t)
-	h.ecos.exists["emodel/secret@seaweedfs-s3-credentials"] = true
+	h.ecos.mutateErr["emodel/endpoint@"] = &ecosRecordsError{Status: http.StatusInternalServerError, Messages: []string{"boom"}}
+	require.Equal(t, api.ContentStorageStateError, h.retry(t).State)
+	delete(h.ecos.mutateErr, "emodel/endpoint@")
 	assert.Equal(t, api.ContentStorageStateConnected, h.retry(t).State)
-	assert.Equal(t, []string{"emodel/endpoint@", "content/storage@", csConfigRef}, h.ecos.mutatedIDs())
+	assert.Equal(t, []string{"emodel/secret@", "emodel/endpoint@", "emodel/endpoint@", "content/storage@", csConfigRef},
+		h.ecos.mutatedIDs(), "the secret is created once; the endpoint refused the first time is created the second")
 
+	// Records the launcher has no record of writing — made by hand, or left
+	// by a database from another stand — are its own all the same: the
+	// secret is brought to the namespace's key and the endpoint to the
+	// provider's URL before the missing storage is created and switched to.
 	h2 := newCSHarness(t)
-	h2.ecos.exists["emodel/secret@seaweedfs-s3-credentials"] = true
-	h2.ecos.exists["emodel/endpoint@seaweedfs-s3"] = true
+	h2.ecos.putRecords("typed-by-hand")
+	h2.ecos.exists[csTestStorageRef] = false
+	h2.ecos.urls[csTestEndpointRef] = "http://old-host:8333"
 	assert.Equal(t, api.ContentStorageStateConnected, h2.retry(t).State)
-	assert.Equal(t, []string{"content/storage@", csConfigRef}, h2.ecos.mutatedIDs())
+	assert.Equal(t, []string{csTestSecretRef, csTestEndpointRef, "content/storage@", csConfigRef}, h2.ecos.mutatedIDs())
+	assert.Equal(t, csSecretValue, h2.ecos.password())
 }
 
 // The gateway answers a failed write with messages[] at level ERROR (and HTTP
@@ -483,14 +639,17 @@ func TestContentStorageProvision_APendingSwitchSurvivesARestart(t *testing.T) {
 	pending := h.rt.ContentStorageSwitch()
 	require.NotEmpty(t, pending)
 
-	// A new daemon: a fresh runtime with the persisted marker restored, the
-	// same ECOS.
+	// A new daemon: a fresh runtime with the persisted state restored — the
+	// pending switch and the record of the secret write — the same ECOS.
 	h2 := newCSHarness(t)
 	h2.ecos = h.ecos
 	delete(h2.ecos.mutateErr, csConfigRef)
 	h2.rt.RestoreContentStorageSwitch(pending)
+	h2.rt.RestoreContentStorageSecretWrite(h.rt.ContentStorageSecretWrite())
 	assert.Equal(t, api.ContentStorageStateConnected, h2.retry(t).State)
 	assert.Equal(t, "content/storage@seaweedfs-s3", h2.ecos.defaultRef)
+	assert.Equal(t, []string{"emodel/secret@", "emodel/endpoint@", "content/storage@", csConfigRef, csConfigRef},
+		h2.ecos.mutatedIDs(), "only the switch is repeated")
 }
 
 // A run canceled between creating the storage and switching the default — a
@@ -545,6 +704,319 @@ func TestContentStorageProvision_TheMarkerIsNarrow(t *testing.T) {
 		"an administrator's own storage wins over a pending switch")
 	assert.Empty(t, h2.ecos.mutatedIDs())
 	assert.Empty(t, h2.rt.ContentStorageSwitch())
+}
+
+// --- the launcher's own secret and endpoint ---
+
+// The connection is made once; every later start of the platform finds the
+// secret holding the key the launcher wrote — ECOS says it has not changed
+// since — and writes nothing, on this daemon and on the next one, which reads
+// the record of the write back from the namespace's state.
+func TestContentStorageProvision_ACurrentSecretIsNotWrittenAgain(t *testing.T) {
+	h := newCSHarness(t)
+	require.Equal(t, api.ContentStorageStateConnected, h.retry(t).State)
+	written := h.rt.ContentStorageSecretWrite()
+	require.NotNil(t, written, "the write is recorded")
+	assert.Equal(t, csTestSecretRef, written.Secret)
+	assert.NotEmpty(t, written.Modified)
+	assert.NotContains(t, written.KeyHash, csSecretValue, "the state file never holds the key")
+
+	h.restartPlatform(t)
+	assert.Equal(t, api.ContentStorageStateConnected, h.event(t).State)
+	assert.Len(t, h.ecos.mutatedIDs(), 4, "nothing written on the second start")
+
+	h2 := newCSHarness(t)
+	h2.ecos = h.ecos
+	h2.rt.RestoreContentStorageSecretWrite(written)
+	assert.Equal(t, api.ContentStorageStateConnected, h2.retry(t).State)
+	assert.Len(t, h2.ecos.mutatedIDs(), 4, "nor by the next daemon")
+}
+
+// A snapshot restored into a NEW namespace: ECOS's database comes with all
+// three records, ours as the default, and the secret holding the key of the
+// stand the snapshot was taken on, while the provider runs with the new
+// namespace's key. Every upload would be refused under a "connected" banner;
+// the secret is rewritten to the current key — and only the secret.
+func TestContentStorageProvision_ARestoredDatabaseGetsTheNamespaceKey(t *testing.T) {
+	h := newCSHarness(t)
+	h.ecos.putRecords("the-old-stands-key")
+	h.ecos.defaultRef = csTestStorageRef
+	events := h.subscribe(t)
+
+	st := h.event(t)
+	assert.Equal(t, api.ContentStorageStateConnected, st.State)
+	_, muts := h.ecos.snapshot()
+	require.Len(t, muts, 1)
+	assert.Equal(t, fakeMutation{id: csTestSecretRef, atts: map[string]any{
+		"type":      "BASIC",
+		"data?json": map[string]any{"username": "citeck", "password": csSecretValue},
+	}}, muts[0], "an update of the existing record; its name is left alone")
+	assert.Equal(t, csSecretValue, h.ecos.password())
+	assert.Equal(t, []string{api.ContentStorageStateWaiting, api.ContentStorageStateConnected}, drainStates(events))
+
+	h.restartPlatform(t)
+	h.event(t)
+	assert.Len(t, h.ecos.mutatedIDs(), 1, "repaired once")
+}
+
+// A desktop secrets reset gives the namespace a new key and recreates the
+// provider with it; ECOS keeps the old one. The next start writes the new key.
+func TestContentStorageProvision_ANewNamespaceKeyReachesECOS(t *testing.T) {
+	h := newCSHarness(t)
+	require.Equal(t, api.ContentStorageStateConnected, h.retry(t).State)
+
+	h.newKey(t, "the-new-key-after-a-reset")
+	assert.Equal(t, api.ContentStorageStateConnected, h.event(t).State)
+	assert.Equal(t, []string{"emodel/secret@", "emodel/endpoint@", "content/storage@", csConfigRef, csTestSecretRef},
+		h.ecos.mutatedIDs())
+	assert.Equal(t, "the-new-key-after-a-reset", h.ecos.password())
+
+	h.restartPlatform(t)
+	h.event(t)
+	assert.Len(t, h.ecos.mutatedIDs(), 5, "and then it is current")
+}
+
+// The secret and the endpoint are the launcher's: an administrator's edit of
+// either — seen as the secret's `modified` moving, and as the endpoint naming
+// another URL or other credentials — is overwritten. Nothing else is.
+func TestContentStorageProvision_AnEditOfTheLaunchersRecordsIsOverwritten(t *testing.T) {
+	h := newCSHarness(t)
+	require.Equal(t, api.ContentStorageStateConnected, h.retry(t).State)
+
+	h.ecos.mu.Lock()
+	h.ecos.passwords[csTestSecretRef] = "edited-in-ecos"
+	h.ecos.modified[csTestSecretRef] = "2026-10-05T11:11:11.000001Z"
+	h.ecos.credentials[csTestEndpointRef] = "somebody-elses-secret"
+	h.ecos.mu.Unlock()
+	h.restartPlatform(t)
+	assert.Equal(t, api.ContentStorageStateConnected, h.event(t).State)
+	_, muts := h.ecos.snapshot()
+	require.Len(t, muts, 6)
+	assert.Equal(t, csTestSecretRef, muts[4].id)
+	assert.Equal(t, fakeMutation{id: csTestEndpointRef, atts: map[string]any{
+		"url": "http://seaweedfs:8333", "credentials": csTestSecretRef,
+	}}, muts[5])
+	assert.Equal(t, csSecretValue, h.ecos.password())
+
+	h.ecos.mu.Lock()
+	h.ecos.urls[csTestEndpointRef] = "http://elsewhere:9000"
+	h.ecos.mu.Unlock()
+	h.restartPlatform(t)
+	h.event(t)
+	assert.Equal(t, csTestEndpointRef, h.ecos.mutatedIDs()[6], "a URL edit alone is enough")
+	assert.Len(t, h.ecos.mutatedIDs(), 7, "the secret, unchanged since, is not")
+}
+
+// An administrator who pointed the default at a storage of their own owns
+// ECOS: the launcher writes nothing — not even its own stale secret — and
+// does not even ask about it.
+func TestContentStorageProvision_AnAdministratorsStorageLeavesOurRecordsAlone(t *testing.T) {
+	h := newCSHarness(t)
+	h.ecos.putRecords("the-old-stands-key")
+	h.ecos.urls[csTestEndpointRef] = "http://elsewhere:9000"
+	h.ecos.defaultRef = "content/storage@content-storage-s3"
+	assert.Equal(t, api.ContentStorageStateAdminManaged, h.retry(t).State)
+	queries, muts := h.ecos.snapshot()
+	assert.Empty(t, muts)
+	assert.Equal(t, 2, queries, "the default and the existence of the records, nothing more")
+	assert.Equal(t, "the-old-stands-key", h.ecos.password())
+}
+
+// Switched back to the database on purpose, ours still holds every file
+// written to it while it was the default — and the key is the namespace's,
+// which nobody but the launcher can see. The secret is kept current; the
+// default stays where the administrator put it.
+func TestContentStorageProvision_SwitchedBackToTheDatabaseKeepsOurSecretCurrent(t *testing.T) {
+	h := newCSHarness(t)
+	h.ecos.putRecords("the-old-stands-key")
+	assert.Equal(t, api.ContentStorageStateAdminManaged, h.retry(t).State)
+	assert.Equal(t, []string{csTestSecretRef}, h.ecos.mutatedIDs())
+	assert.Equal(t, csSecretValue, h.ecos.password())
+	assert.Equal(t, csLocalStorageRef, h.ecos.defaultRef)
+}
+
+// The provider runs with another key than the namespace's: an operator
+// changed it on this stand (`citeck edit seaweedfs`) and, the documentation
+// says, put the new one into ECOS by hand. The launcher cannot know the key
+// the provider checks, and writing the namespace's would break the stand.
+func TestContentStorageProvision_AKeyChangedOnTheProviderIsNotOverwritten(t *testing.T) {
+	h := newCSHarness(t)
+	h.providerKey = "rotated-by-hand"
+	h.setApps(nil)
+	h.ecos.putRecords("rotated-by-hand")
+	h.ecos.defaultRef = csTestStorageRef
+	assert.Equal(t, api.ContentStorageStateConnected, h.retry(t).State)
+	assert.Empty(t, h.ecos.mutatedIDs())
+	assert.Equal(t, "rotated-by-hand", h.ecos.password())
+}
+
+// An ECOS that does not say when the secret last changed leaves nothing to
+// compare: the secret is written on every start, which is harmless — an
+// upsert of the same key.
+func TestContentStorageProvision_WithoutModifiedTheSecretIsWrittenEveryStart(t *testing.T) {
+	h := newCSHarness(t)
+	h.ecos.noModified = true
+	h.ecos.putRecords(csSecretValue)
+	h.ecos.defaultRef = csTestStorageRef
+	h.rt.RestoreContentStorageSecretWrite(&namespace.ContentStorageSecretWrite{
+		Secret: csTestSecretRef, KeyHash: mustKeyHash(t, csCredentials{accessKey: "citeck", secretKey: csSecretValue}),
+	})
+	h.event(t)
+	h.restartPlatform(t)
+	h.event(t)
+	assert.Equal(t, []string{csTestSecretRef, csTestSecretRef}, h.ecos.mutatedIDs())
+}
+
+// A key that cannot be read stops the run before ECOS is asked anything — a
+// locked vault, or a generated key nobody stored (READ answers nothing for
+// it): nothing is written, the stale secret included.
+func TestContentStorageProvision_AnUnreadableKeyWritesNothing(t *testing.T) {
+	for name, set := range map[string]func(h *csHarness){
+		"locked":  func(h *csHarness) { h.secretErr = storage.ErrSecretsLocked },
+		"missing": func(h *csHarness) { h.secretValues = map[string]string{} },
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newCSHarness(t)
+			h.ecos.putRecords("the-old-stands-key")
+			h.ecos.defaultRef = csTestStorageRef
+			set(h)
+			assert.Equal(t, api.ContentStorageStateError, h.retry(t).State)
+			queries, muts := h.ecos.snapshot()
+			assert.Zero(t, queries)
+			assert.Empty(t, muts)
+		})
+	}
+}
+
+// A refused update is the error state — "connected" over a key the provider
+// rejects is what the update is for — with the key redacted.
+func TestContentStorageProvision_ARefusedSecretUpdateIsTheErrorState(t *testing.T) {
+	h := newCSHarness(t)
+	h.ecos.putRecords("the-old-stands-key")
+	h.ecos.defaultRef = csTestStorageRef
+	h.ecos.mutateErr[csTestSecretRef] = &ecosRecordsError{Status: http.StatusInternalServerError,
+		Messages: []string{"IllegalAccessException: Access denied for " + csSecretValue}}
+	st := h.retry(t)
+	assert.Equal(t, api.ContentStorageStateError, st.State)
+	assert.Equal(t, "contentStorage.msg.provision.updateFailed", st.ErrorMsg.Key)
+	assert.Contains(t, st.ErrorMsg.Args, csTestSecretRef)
+	assert.NotContains(t, englishForLogs.Render(st.ErrorMsg), csSecretValue)
+	assert.Nil(t, h.rt.ContentStorageSecretWrite(), "a refused write is not recorded")
+
+	delete(h.ecos.mutateErr, csTestSecretRef)
+	assert.Equal(t, api.ContentStorageStateConnected, h.retry(t).State)
+	assert.Equal(t, csSecretValue, h.ecos.password())
+}
+
+// A run that stops being THE run between writing the secret and recording
+// it — a namespace switch, a delete — records nothing: the record of a write
+// must never land in another namespace's state, or bring a deleted one's back.
+func TestContentStorageProvision_ACanceledRunRecordsNoSecretWrite(t *testing.T) {
+	h := newCSHarness(t)
+	h.ecos.putRecords("the-old-stands-key")
+	h.ecos.defaultRef = csTestStorageRef
+	canceled := make(chan *csJob, 1)
+	h.ecos.onQuery = func(refs []string, atts map[string]string) {
+		// The read-back of `modified`, right after the secret was written.
+		if len(atts) == 1 && atts["modified"] != "" {
+			h.p.mu.Lock()
+			j := h.p.job
+			h.p.mu.Unlock()
+			canceled <- j
+			h.p.Reset()
+		}
+	}
+	h.p.Retry("ns1")
+	select {
+	case j := <-canceled:
+		awaitJob(t, j)
+	case <-time.After(10 * time.Second):
+		t.Fatal("the run never wrote the secret")
+	}
+	require.Equal(t, []string{csTestSecretRef}, h.ecos.mutatedIDs(), "the write itself went through")
+	assert.Nil(t, h.rt.ContentStorageSecretWrite())
+	h.p.mu.Lock()
+	assert.Empty(t, h.p.status.State, "and the canceled run left no verdict")
+	h.p.mu.Unlock()
+}
+
+// A snapshot that takes the namespace's data between the read of the
+// launcher's records and the write: nothing is written into the platform it
+// is about to replace, and the run is postponed, not failed.
+func TestContentStorageProvision_TheSecretIsNotWrittenUnderASnapshot(t *testing.T) {
+	h := newCSHarness(t)
+	h.ecos.putRecords("the-old-stands-key")
+	h.ecos.defaultRef = csTestStorageRef
+	h.ecos.onQuery = func(_ []string, atts map[string]string) {
+		if _, owned := atts["url"]; owned {
+			h.ecos.mu.Lock()
+			h.ecos.onQuery = nil
+			h.ecos.mu.Unlock()
+			assert.True(t, h.d.longOp.TryLock(longOpSnapshot)) // the run's goroutine: no FailNow
+		}
+	}
+	assert.Equal(t, api.ContentStorageStatePending, h.retry(t).State)
+	assert.Empty(t, h.ecos.mutatedIDs())
+
+	h.d.longOp.Unlock()
+	assert.Equal(t, api.ContentStorageStateConnected, h.event(t).State, "the latch was re-armed")
+	assert.Equal(t, []string{csTestSecretRef}, h.ecos.mutatedIDs())
+}
+
+func mustKeyHash(t *testing.T, c csCredentials) string {
+	t.Helper()
+	hash, err := csKeyHash(c)
+	require.NoError(t, err)
+	return hash
+}
+
+func TestCSSecretStale(t *testing.T) {
+	creds := csCredentials{accessKey: "citeck", secretKey: "k1"}
+	written := &namespace.ContentStorageSecretWrite{Secret: csTestSecretRef, KeyHash: mustKeyHash(t, creds), Modified: "T1"}
+	cases := []struct {
+		name     string
+		last     *namespace.ContentStorageSecretWrite
+		creds    csCredentials
+		modified string
+		stale    bool
+	}{
+		{"current", written, creds, "T1", false},
+		{"never written", nil, creds, "T1", true},
+		{"another provider's secret", &namespace.ContentStorageSecretWrite{
+			Secret: "emodel/secret@minio-s3-credentials", KeyHash: written.KeyHash, Modified: "T1"}, creds, "T1", true},
+		{"a new secret key", written, csCredentials{accessKey: "citeck", secretKey: "k2"}, "T1", true},
+		{"a new access key", written, csCredentials{accessKey: "admin", secretKey: "k1"}, "T1", true},
+		{"saved since", written, creds, "T2", true},
+		{"ECOS does not say", written, creds, "", true},
+		{"an unreadable hash", &namespace.ContentStorageSecretWrite{Secret: csTestSecretRef, KeyHash: "md5:x", Modified: "T1"}, creds, "T1", true},
+	}
+	for _, tc := range cases {
+		assert.Equal(t, tc.stale, csSecretStale(tc.last, csTestSecretRef, tc.creds, tc.modified) != "", tc.name)
+	}
+}
+
+// The digest is salted per write — two of the same key differ — and still
+// recognizes the key it was made of, and nothing else. NUL separates the two
+// keys, so moving a character from one to the other is another identity.
+func TestCSKeyHash(t *testing.T) {
+	creds := csCredentials{accessKey: "citeck", secretKey: "s3cret"}
+	a, b := mustKeyHash(t, creds), mustKeyHash(t, creds)
+	assert.NotEqual(t, a, b)
+	assert.True(t, csKeyHashMatches(a, creds))
+	assert.True(t, csKeyHashMatches(b, creds))
+	assert.False(t, csKeyHashMatches(a, csCredentials{accessKey: "citecks", secretKey: "3cret"}))
+	assert.True(t, strings.HasPrefix(a, "sha256:"))
+	assert.NotContains(t, a, "s3cret")
+	for _, bad := range []string{"", "sha256", "sha256:", "sha256::", "sha256:zz:00", "md5:00:00", a + "x"} {
+		assert.False(t, csKeyHashMatches(bad, creds), bad)
+	}
+}
+
+func TestCSEndpointStale(t *testing.T) {
+	assert.Empty(t, csEndpointStale("http://seaweedfs:8333", "seaweedfs-s3-credentials", "http://seaweedfs:8333", "seaweedfs-s3-credentials"))
+	assert.NotEmpty(t, csEndpointStale("http://seaweedfs:8333/", "seaweedfs-s3-credentials", "http://seaweedfs:8333", "seaweedfs-s3-credentials"))
+	assert.NotEmpty(t, csEndpointStale("http://seaweedfs:8333", "", "http://seaweedfs:8333", "seaweedfs-s3-credentials"))
+	assert.NotEmpty(t, csEndpointStale("", "seaweedfs-s3-credentials", "http://seaweedfs:8333", "seaweedfs-s3-credentials"))
 }
 
 // A record source that is not registered yet answers every ref as missing and
@@ -1320,6 +1792,68 @@ func TestContentStorageProvision_OverHTTP(t *testing.T) {
 		"content/storage@seaweedfs-s3":           true,
 	}, maps.Clone(created))
 	mu.Unlock()
+}
+
+// Bringing the secret up to date, over the real client: a restored database
+// (ours is the default, the endpoint is right, the secret holds another
+// stand's key and the launcher has no record of writing it). Pins the read of
+// the launcher's own records — `modified` as text, the endpoint's credentials
+// by local id — the update by full ref with the type and the data only, and
+// the read-back of `modified` that the record of the write keeps.
+func TestContentStorageProvision_SecretUpdateOverHTTP(t *testing.T) {
+	const modified = "2026-10-05T10:23:45.844528Z"
+	stub, addr := newECOSStub(t, func(path string, body []byte) (int, string) {
+		if path == ecosRecordsMutatePath {
+			return http.StatusOK, `{"records":[{"id":"` + csTestSecretRef + `","attributes":{}}]}`
+		}
+		var req struct {
+			Records    []string          `json:"records"`
+			Attributes map[string]string `json:"attributes"`
+		}
+		_ = json.Unmarshal(body, &req)
+		out := make([]map[string]any, 0, len(req.Records))
+		for _, ref := range req.Records {
+			atts := map[string]any{}
+			for alias := range req.Attributes {
+				switch {
+				case alias == "value":
+					atts[alias] = map[string]any{"ref": csTestStorageRef, "config": map[string]any{}}
+				case ref == csTestSecretRef && alias == "modified":
+					atts[alias] = modified
+				case ref == csTestEndpointRef && alias == "url":
+					atts[alias] = "http://seaweedfs:8333"
+				case ref == csTestEndpointRef && alias == "credentials":
+					atts[alias] = "seaweedfs-s3-credentials"
+				default:
+					atts[alias] = nil
+				}
+			}
+			out = append(out, map[string]any{"id": ref, "attributes": atts})
+		}
+		b, _ := json.Marshal(map[string]any{"records": out, "messages": []any{}})
+		return http.StatusOK, string(b)
+	})
+
+	h := newCSHarness(t)
+	h.p.records = newHTTPEcosRecords
+	h.p.gatewayAddr = func(context.Context, *namespace.Runtime) (string, error) { return addr, nil }
+	assert.Equal(t, api.ContentStorageStateConnected, h.retry(t).State)
+
+	reqs := stub.all()
+	require.Len(t, reqs, 5)
+	assert.JSONEq(t, `{"records":["`+csTestSecretRef+`","`+csTestEndpointRef+`"],
+		"attributes":{"modified":"modified?str","url":"url?str","credentials":"credentials?localId"}}`, reqs[2].body)
+	assert.Equal(t, ecosRecordsMutatePath, reqs[3].path)
+	assert.JSONEq(t, `{"records":[{"id":"`+csTestSecretRef+`","attributes":{
+		"type":"BASIC","data?json":{"username":"citeck","password":"`+csSecretValue+`"}}}]}`, reqs[3].body)
+	assert.JSONEq(t, `{"records":["`+csTestSecretRef+`"],"attributes":{"modified":"modified?str"}}`, reqs[4].body)
+	for _, r := range reqs {
+		assert.Equal(t, "admin", r.user)
+	}
+	written := h.rt.ContentStorageSecretWrite()
+	require.NotNil(t, written)
+	assert.Equal(t, modified, written.Modified)
+	assert.True(t, csKeyHashMatches(written.KeyHash, csCredentials{accessKey: "citeck", secretKey: csSecretValue}))
 }
 
 // The state reaches the namespace DTO, rendered for the reader.

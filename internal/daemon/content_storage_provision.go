@@ -56,22 +56,31 @@ import (
 //     answers none. A gateway that is up is not a platform that is ready:
 //     artifacts deploy asynchronously;
 //  2. a default storage other than the built-in LOCAL one is a verdict:
-//     ours → connected, anything else → admin-managed. Nothing is written;
+//     ours → connected, anything else → admin-managed;
 //  3. our storage record already there while the default is LOCAL means an
-//     administrator switched back on purpose → admin-managed, nothing written
-//     — UNLESS this launcher's own switch to it is still pending (the marker
-//     below), in which case the switch is finished;
-//  4. otherwise creates the records that are MISSING (never updates one) and
-//     switches the default, then reads it back → connected. A step that
-//     failed in a way the platform can still change (no answer, a record
-//     source not registered yet) is retried within the same budget.
+//     administrator switched back on purpose → admin-managed, the default is
+//     left alone — UNLESS this launcher's own switch to it is still pending
+//     (the marker below), in which case the switch is finished;
+//  4. otherwise creates the records that are MISSING and switches the
+//     default, then reads it back → connected. A step that failed in a way
+//     the platform can still change (no answer, a record source not
+//     registered yet) is retried within the same budget.
 //
-// The ONE thing persisted (NsPersistedState.ContentStorageSwitchPending) is
-// the storage ref this launcher started switching to, written before its
-// first record and cleared once ECOS answers with a verdict. ECOS's records
-// cannot tell "our run created the storage and then failed or was canceled
-// before the switch" from "an administrator switched back": without the
-// marker the first reads as the second, permanently.
+// The default and the storage record are never rewritten. The secret and the
+// endpoint are the launcher's OWN, and on every run that does not end on an
+// administrator's own storage as the default, the ones that exist are brought
+// up to the namespace's current key and provider URL first, an
+// administrator's edit included (content_storage_provision_owned.go).
+//
+// Two things are persisted, and neither is a verdict. The pending switch
+// (NsPersistedState.ContentStorageSwitchPending) is the storage ref this
+// launcher started switching to, written before its first record and cleared
+// once ECOS answers with a verdict. ECOS's records cannot tell "our run
+// created the storage and then failed or was canceled before the switch" from
+// "an administrator switched back": without the marker the first reads as the
+// second, permanently. The secret write (NsPersistedState.
+// ContentStorageSecretWrite) is what the launcher last wrote into its secret,
+// because ECOS never hands a secret's data back.
 //
 // ECOS's existence attribute: `_notExists` is answered TRUE only by a value
 // that does not exist (EmptyAttValue, ecos-data's NonExistentDbRecord) and by
@@ -204,8 +213,11 @@ func newContentStorageProvisioner(d *Daemon) *contentStorageProvisioner {
 			if d.secretService == nil {
 				return nil, errors.New("no secret store")
 			}
-			// Without seeding: the generation already stored every default
-			// this namespace uses, and a missing one answers the default.
+			// READ: never stores or invents a value. The generation already
+			// stored what this namespace uses; a constant nobody stored answers
+			// its default, a GENERATED value nobody stored answers nothing — no
+			// container was started with it — and credentials() refuses it as
+			// missing, before ECOS is asked anything.
 			return loadNamespaceSecrets(d.secretService, wsID, nsID, ws, nsSecretsRead)
 		},
 		now:          time.Now,
@@ -572,39 +584,8 @@ func (p *contentStorageProvisioner) run(ctx context.Context, j *csJob) {
 		if !ok {
 			return
 		}
-		pending := in.runtime.ContentStorageSwitch() == ids.storage
-		if state, settled := csDecide(snap, ids, pending); settled {
-			// A verdict from ECOS ends whatever switch was pending: ours is the
-			// default now, or an administrator chose another storage.
-			p.recordSwitch(ctx, j, "")
-			p.settle(j, state, snap.defaultRef)
-			return
-		}
-		// Last look before the first write: nothing may be written for a
-		// namespace that is no longer active, or into a platform a snapshot is
-		// about to replace.
-		if ctx.Err() != nil {
-			return
-		}
-		if !p.platformStillUp(j) {
-			p.abort(j)
-			return
-		}
-		// Recorded BEFORE the first write, so a failure or a daemon death
-		// anywhere between creating the storage and switching the default is
-		// finished by the next run instead of read as an administrator's
-		// choice. A run that is no longer current writes nothing at all.
-		if !p.recordSwitch(ctx, j, ids.storage) {
-			return
-		}
-		p.setState(j, api.ContentStorageStateProvisioning, msg.Message{})
-		step := p.provision(ctx, client, j, snap, ids, creds)
-		if step == nil {
-			p.recordSwitch(ctx, j, "")
-			p.settle(j, api.ContentStorageStateConnected, ids.storage)
-			return
-		}
-		if ctx.Err() != nil {
+		step, done := p.pass(ctx, client, j, snap, ids, creds)
+		if done || ctx.Err() != nil {
 			return
 		}
 		if !step.retryable || !p.now().Before(deadline) {
@@ -617,6 +598,61 @@ func (p *contentStorageProvisioner) run(ctx context.Context, j *csJob) {
 			return
 		}
 	}
+}
+
+// pass decides on one reading of ECOS and acts on it. done is true when the
+// run is over — a verdict recorded, or the run canceled or postponed, each
+// already said — and step is what failed otherwise, for the caller to retry
+// or report.
+func (p *contentStorageProvisioner) pass(ctx context.Context, client ecosRecords, j *csJob, snap csSnapshot, ids csRecordIDs, creds csCredentials) (step *csStepError, done bool) {
+	pending := j.in.runtime.ContentStorageSwitch() == ids.storage
+	if state, settled := csDecide(snap, ids, pending); settled {
+		// A verdict from ECOS ends whatever switch was pending: ours is the
+		// default now, or an administrator chose another storage. A run that
+		// is no longer current says and writes nothing more.
+		if !p.recordSwitch(ctx, j, "") {
+			return nil, true
+		}
+		// The verdict is not a reason to leave the launcher's own secret on a
+		// key the provider no longer accepts: "connected" over a 403 is the
+		// one answer worse than none.
+		if failed, ended := p.keepOwnRecords(ctx, client, j, snap, ids, creds); failed != nil || ended {
+			return failed, ended
+		}
+		p.settle(j, state, snap.defaultRef)
+		return nil, true
+	}
+	if !p.mayWrite(ctx, j) {
+		return nil, true
+	}
+	// Recorded BEFORE the first write, so a failure or a daemon death anywhere
+	// between creating the storage and switching the default is finished by
+	// the next run instead of read as an administrator's choice. A run that is
+	// no longer current writes nothing at all.
+	if !p.recordSwitch(ctx, j, ids.storage) {
+		return nil, true
+	}
+	p.setState(j, api.ContentStorageStateProvisioning, msg.Message{})
+	if failed := p.provision(ctx, client, j, snap, ids, creds); failed != nil {
+		return failed, false
+	}
+	p.recordSwitch(ctx, j, "")
+	p.settle(j, api.ContentStorageStateConnected, ids.storage)
+	return nil, true
+}
+
+// mayWrite is the last look before a write into ECOS: nothing may be written
+// for a namespace that is no longer active, or into a platform a snapshot is
+// about to replace. A platform that went away postpones the run (abort).
+func (p *contentStorageProvisioner) mayWrite(ctx context.Context, j *csJob) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	if !p.platformStillUp(j) {
+		p.abort(j)
+		return false
+	}
+	return true
 }
 
 // recordSwitch writes the pending-switch marker (a storage ref) or clears it
@@ -659,7 +695,7 @@ func (p *contentStorageProvisioner) settle(j *csJob, state, defaultRef string) {
 		slog.Info("S3 content storage is connected", "ns", j.in.nsID, "storage", defaultRef)
 		return
 	}
-	slog.Info("S3 content storage is managed by an administrator: the launcher writes nothing",
+	slog.Info("S3 content storage is managed by an administrator: the launcher leaves the default storage alone",
 		"ns", j.in.nsID, "defaultStorage", defaultRef)
 }
 
@@ -770,10 +806,20 @@ func csSourceNotFound(message string) bool {
 	return strings.Contains(strings.ToLower(message), "source is not found")
 }
 
-// provision creates the missing records and switches the default; a non-nil
-// answer is why it stopped. Every write is logged, and none is repeated
-// within a pass.
+// provision brings the launcher's existing secret and endpoint up to date,
+// creates the missing records and switches the default; a non-nil answer is
+// why it stopped. Every write is logged, and none is repeated within a pass.
 func (p *contentStorageProvisioner) provision(ctx context.Context, client ecosRecords, j *csJob, snap csSnapshot, ids csRecordIDs, creds csCredentials) *csStepError {
+	// Before the switch: a secret left by an earlier run, a restored database
+	// or an administrator may hold a key the provider no longer accepts.
+	plan, readErr := p.planOwnRecords(ctx, client, j, snap, ids, creds)
+	if readErr != nil {
+		return csReadStep(readErr, creds)
+	}
+	if step := p.writeOwnRecords(ctx, client, j, ids, plan, creds); step != nil {
+		return step
+	}
+
 	app := ids.provider
 	creates := []struct {
 		exists bool
@@ -812,6 +858,9 @@ func (p *contentStorageProvisioner) provision(ctx context.Context, client ecosRe
 				"record", c.ref, "error", creds.redact(err.Error())))
 		}
 		slog.Info("Created an ECOS record for the S3 content storage", "ns", j.in.nsID, "record", c.ref)
+		if c.ref == ids.secret {
+			p.rememberSecretWrite(ctx, client, j, ids, creds)
+		}
 	}
 
 	_, err := client.Mutate(ctx, csConfigRef, map[string]any{
@@ -825,10 +874,7 @@ func (p *contentStorageProvisioner) provision(ctx context.Context, client ecosRe
 
 	after, err := csReadSnapshot(ctx, client, ids)
 	if err != nil {
-		return &csStepError{
-			msg:       msg.New("contentStorage.msg.provision.readFailed", "error", creds.redact(err.Error())),
-			retryable: csRetryable(err),
-		}
+		return csReadStep(err, creds)
 	}
 	if after.defaultRef != ids.storage {
 		actual := after.defaultRef

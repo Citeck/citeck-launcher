@@ -305,6 +305,9 @@ func TestLoadNamespace_RestoresThePendingContentStorageSwitch(t *testing.T) {
 	src, err := os.ReadFile("namespace_loader.go")
 	require.NoError(t, err)
 	assert.Contains(t, string(src), "runtime.RestoreContentStorageSwitch(persistedState.ContentStorageSwitchPending)")
+	// The same for the record of the launcher's last S3 secret write: without
+	// it every daemon start rewrites a secret that is already current.
+	assert.Contains(t, string(src), "runtime.RestoreContentStorageSecretWrite(persistedState.ContentStorageSecretWrite)")
 }
 
 // --- create / edit ---

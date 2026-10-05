@@ -60,6 +60,32 @@ type NsPersistedState struct {
 	// ("our storage exists, the default is still LOCAL") apart from an
 	// administrator who switched back on purpose, which ECOS alone cannot.
 	ContentStorageSwitchPending string `json:"contentStorageSwitchPending,omitempty"`
+	// ContentStorageSecretWrite is the launcher's record of its own last write
+	// of the S3 credentials into ECOS. Like the switch marker it is not a
+	// verdict: it only lets a run tell "ECOS's secret holds the key this
+	// namespace runs with" from "somebody wrote it since", because ECOS never
+	// hands the secret's data back (see ContentStorageSecretWrite).
+	ContentStorageSecretWrite *ContentStorageSecretWrite `json:"contentStorageSecretWrite,omitempty"`
+}
+
+// ContentStorageSecretWrite records one write of the S3 credentials into the
+// ECOS secret the launcher owns (emodel/secret@<app>-s3-credentials). ECOS
+// keeps the secret's data to itself — no attribute, query or fingerprint
+// returns it — so the only way to know the record still holds the namespace's
+// key, without rewriting it on every start, is to remember what was written
+// and when ECOS says it last changed.
+type ContentStorageSecretWrite struct {
+	// Secret is the ECOS ref that was written; a record for another provider's
+	// secret says nothing about this one.
+	Secret string `json:"secret"`
+	// KeyHash identifies the access key and secret key that were written:
+	// "sha256:<salt hex>:<digest hex>", salted per write. Never the key itself —
+	// the state file is not a secret store.
+	KeyHash string `json:"keyHash"`
+	// Modified is the record's `modified` as ECOS answered it right after the
+	// write; "" when ECOS did not say. Any later save — an administrator's
+	// edit, a database restored from another stand — moves it.
+	Modified string `json:"modified,omitempty"`
 }
 
 // statePath returns the path to the persisted state file (namespace-scoped).
