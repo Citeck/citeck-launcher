@@ -1,0 +1,11 @@
+## 新功能
+- **内容存储：数据库或 S3。** 使用包含 SeaweedFS 的 Enterprise bundle（首个为 2026.3-RC6）的命名空间，可以将上传的文件保存在 S3 中，而不是保存在自己的 PostgreSQL 数据库中：在创建或编辑命名空间的对话框中，将**内容存储方式**设为 **S3 (SeaweedFS)**。默认仍为**数据库**，现有命名空间的内容继续保存在数据库中。在其他 Enterprise bundle 上，该字段可见，但 S3 选项不可用，并会说明原因。
+- 选择 S3 后，启动器会随命名空间一起启动 SeaweedFS，并在平台启动后自行将 ecos-content 连接到 SeaweedFS，无需在 ECOS 中做任何设置。如果管理员已在 ECOS 中将其他存储设为默认，启动器不会改动这一选择。在桌面版中，仪表盘上的横幅会显示连接进度，连接失败时会提供**重试**按钮；启动器也会自行重试。
+- 命名空间之后也可以从数据库切换到 S3，但无法再切换回来。切换前上传的文件仍保存在数据库中。
+- 在桌面版中，如果命名空间的内容存储在 S3 中，停止 SeaweedFS 需要确认，`citeck stop seaweedfs` 也会输出警告：SeaweedFS 停止期间无法上传或下载文件。
+- 命名空间的 S3 密钥变更后，启动器会同步更新 ECOS 中的副本，例如将快照恢复到新命名空间后，或在桌面版中重置主密码后。
+- 服务器模式：`citeck install` 在选定 release 后会询问内容的存储位置（如果该 release 支持 S3），`citeck setup content-storage` 可将现有命名空间切换到 S3（需要 daemon 正在运行），对于内容存储在 S3 中的命名空间，`citeck status` 会显示 `Content storage:` 一行。
+- 在桌面版中，bundle 包含 SeaweedFS 的命名空间会在侧边栏的**应用**分组中显示 **SeaweedFS** 链接，用于打开 SeaweedFS 的管理界面（用户名 `admin`，密码 `admin`）。SeaweedFS 未运行时（例如内容存储在数据库中时），该链接显示为灰色、不可用。
+- `citeck setup admin-password` 现在会列出在重新创建之前仍接受旧密码的应用（例如 SeaweedFS）；`citeck reload` 会重新创建它们。
+- 面向工作区配置的作者：`secrets:` 现在支持自动生成的条目。`- generated: <id>`（可选 `length:`，16–128，默认 40）为每个命名空间生成各自的随机值：只生成一次，之后保持不变。2.16 之前的启动器会跳过这类条目：在命名空间还没有已保存的值时，这些启动器不会生成引用它的应用。
+- 面向工作区配置的作者：`category: Apps` 或 `Resources` 的 `links:` 条目现在会归入相应的内置侧边栏分组（“应用”或“资源”），而不再在底部单独显示一个标题。
