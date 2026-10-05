@@ -293,7 +293,7 @@ func TestContentStorageGate_RefusalFollowsTheRequestLocale(t *testing.T) {
 	en, ru := put("en"), put("ru")
 	require.Equal(t, http.StatusConflict, en.Code, en.Body.String())
 	assert.Contains(t, en.Body.String(), api.ErrCodeContentStorageDowngrade)
-	assert.Contains(t, en.Body.String(), "cannot be switched back to the database")
+	assert.Contains(t, en.Body.String(), "cannot be switched back to storing its content in the database")
 	require.Equal(t, http.StatusConflict, ru.Code)
 	assert.Contains(t, ru.Body.String(), "вернуть хранение в базу данных нельзя")
 }

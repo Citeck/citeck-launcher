@@ -261,7 +261,7 @@ describe('NamespaceEditDialog content storage', () => {
 
     expect(await screen.findByText('Content storage')).toBeDefined()
     expect(screen.queryByRole('radio')).toBeNull()
-    expect(screen.getByText(/cannot be switched back to the database/)).toBeDefined()
+    expect(screen.getByText(/cannot be switched back to storing its content in the database/)).toBeDefined()
 
     await submit(/^Save$/)
     await waitFor(() => expect(putNamespaceEdit).toHaveBeenCalled())

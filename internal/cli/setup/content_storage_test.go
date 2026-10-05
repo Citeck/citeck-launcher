@@ -123,7 +123,7 @@ func TestContentStorageSwitchCheck(t *testing.T) {
 	})
 	t.Run("S3 never goes back to DB", func(t *testing.T) {
 		_, refusal := contentStorageSwitchCheck(csSetupContext(t, true), csNamespace(namespace.ContentStorageS3))
-		assert.Contains(t, refusal, "cannot be switched back to the database")
+		assert.Contains(t, refusal, "cannot be switched back to storing its content in the database")
 	})
 	t.Run("an external S3 block is the other answer to the same question", func(t *testing.T) {
 		cfg := csNamespace("")
