@@ -1,0 +1,2 @@
+## Fixes
+- After the Launcher version changes, the workspace repository is refreshed without waiting for its pull timer. The successful version is remembered per clone; same-version desktop restarts keep the normal timer, and server restarts keep manual sync. Explicit offline mode, imported workspaces and the user’s Skip decision are respected. Failed pulls keep the cached configuration and remain eligible for retry.

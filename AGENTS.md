@@ -111,6 +111,11 @@ Workspace configuration filenames are selected in this order: `workspace-v2.yml`
 Launcher 2.16.1+ reads v2 first. Keep public v1 compatible with older launchers;
 generated secrets and managed SeaweedFS belong in v2. The raw editor and saved
 workspace delta use the same selected file as the resolver.
+Launcher 2.16.2+ passes its version to workspace git sync. Each clone records
+`.git/citeck-sync-version` only after successful sync; a version mismatch
+bypasses the pull timer. Server namespace load allows only this workspace
+refresh while leaving separate bundle repositories offline/manual. Explicit
+`--offline`, manual workspace imports and host-level Skip remain authoritative.
 
 ### Go Daemon + CLI (`internal/`)
 

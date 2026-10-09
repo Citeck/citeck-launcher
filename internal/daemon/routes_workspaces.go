@@ -659,7 +659,8 @@ func (d *Daemon) resolveWorkspaceConfigForSwitch(ws storage.WorkspaceDto) (*bund
 	}
 	resolver := bundle.NewResolverWithAuth(config.BundlesDataDir(ws.ID), makeTokenLookup(d.secretReaderFunc())).
 		WithWorkspaceRepo(buildWorkspaceRepoOpts(ws, d.secretService)).
-		WithWorkspaceOverlay(workspaceConfigOverlay(d.store, ws.ID))
+		WithWorkspaceOverlay(workspaceConfigOverlay(d.store, ws.ID)).
+		WithLauncherVersion(d.version)
 	// Server mode never auto-pulls git (SwitchWorkspace is desktop-only via
 	// requireDesktop, but keep the guard for symmetry with other resolvers).
 	if !config.IsDesktopMode() {

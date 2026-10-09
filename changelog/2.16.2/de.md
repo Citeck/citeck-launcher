@@ -1,0 +1,2 @@
+## Korrekturen
+- Nach einem Versionswechsel des Launchers wird das Workspace-Repository ohne Warten auf den Pull-Timer aktualisiert. Die erfolgreiche Version wird je Klon gespeichert; Desktop-Neustarts derselben Version behalten den Timer bei, Server-Neustarts die manuelle Synchronisierung. Offline-Modus, importierte Workspaces und die Entscheidung zum Überspringen werden respektiert. Fehlgeschlagene Pulls behalten die zwischengespeicherte Konfiguration und können erneut versucht werden.

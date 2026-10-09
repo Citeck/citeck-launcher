@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/citeck/citeck-launcher/internal/fsutil"
 	gogit "github.com/go-git/go-git/v5"
 	gogitconfig "github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
@@ -41,6 +42,9 @@ type RepoOpts struct {
 	Token string
 	// PullPeriod skips pull if last sync was within this duration. Zero means always pull.
 	PullPeriod time.Duration
+	// RefreshVersion bypasses PullPeriod until this clone has successfully
+	// synced with that launcher version. Empty preserves ordinary throttling.
+	RefreshVersion string
 }
 
 // lastSyncTimes tracks when each repo was last synced.
@@ -224,9 +228,16 @@ var pullHardDeadlineGrace = 30 * time.Second
 // unit-tested with a blocking stand-in.
 var cloneOrPullRunner = func(ctx context.Context, opts RepoOpts) error {
 	// 8b-12: dedup concurrent clone/pull on same directory
-	_, err, _ := cloneFlight.Do(opts.DestDir, func() (any, error) {
+	_, err, shared := cloneFlight.Do(opts.DestDir, func() (any, error) {
 		return nil, cloneOrPullInner(ctx, opts)
 	})
+	// A version-aware caller may have shared a throttled operation started
+	// without a version. Recheck its own requirement after that flight ends.
+	if err == nil && shared && NeedsVersionRefresh(opts.DestDir, opts.RefreshVersion) && !IsSkipped(HostFromURL(opts.URL)) {
+		_, err, _ = cloneFlight.Do(opts.DestDir, func() (any, error) {
+			return nil, cloneOrPullInner(ctx, opts)
+		})
+	}
 	return err //nolint:wrapcheck // wrapped by CloneOrPullWithAuth's done-branch
 }
 
@@ -304,7 +315,7 @@ func cloneOrPullInner(ctx context.Context, opts RepoOpts) error {
 		return nil
 	}
 
-	if opts.PullPeriod > 0 {
+	if opts.PullPeriod > 0 && !NeedsVersionRefresh(opts.DestDir, opts.RefreshVersion) {
 		lastSyncMu.Lock()
 		loadPersistedSyncLocked(opts.DestDir)
 		lastSync := lastSyncTimes[opts.DestDir]
@@ -382,6 +393,11 @@ func recordSync(opts RepoOpts) {
 	syncStoreLoaded[opts.DestDir] = struct{}{}
 	lastSyncMu.Unlock()
 	saveRepoMeta(opts)
+	if version := strings.TrimSpace(opts.RefreshVersion); version != "" {
+		if err := fsutil.AtomicWriteFile(repoSyncVersionPath(opts.DestDir), []byte(version+"\n"), 0o644); err != nil {
+			slog.Warn("Failed to record launcher version after repository sync", "dir", opts.DestDir, "err", err)
+		}
+	}
 
 	syncStoreMu.RLock()
 	store := syncStore
@@ -398,6 +414,25 @@ func recordSync(opts RepoOpts) {
 	if err := store.SetGitRepoState(entry); err != nil {
 		slog.Warn("Failed to persist git repo sync state", "path", entry.Path, "err", err)
 	}
+}
+
+func repoSyncVersionPath(destDir string) string {
+	return filepath.Join(destDir, ".git", "citeck-sync-version")
+}
+
+// NeedsVersionRefresh reports whether an existing clone has not successfully
+// synced with this launcher version. Missing clones are left to normal clone
+// policy; server startup must not turn an uninstalled workspace into a clone.
+func NeedsVersionRefresh(destDir, version string) bool {
+	version = strings.TrimSpace(version)
+	if version == "" {
+		return false
+	}
+	if _, err := os.Stat(filepath.Join(destDir, ".git")); err != nil {
+		return false
+	}
+	data, err := os.ReadFile(repoSyncVersionPath(destDir)) //nolint:gosec // fixed sidecar inside the clone
+	return err != nil || strings.TrimSpace(string(data)) != version
 }
 
 // readHeadHash returns the HEAD commit hash of a working repo. Best-effort:

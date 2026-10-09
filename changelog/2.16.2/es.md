@@ -1,0 +1,2 @@
+## Correcciones
+- Al cambiar la versión del Launcher, se actualiza el repositorio del workspace sin esperar al temporizador de pull. La versión actualizada se guarda por clon; los reinicios desktop con la misma versión mantienen el temporizador y los del servidor la sincronización manual. Se respetan el modo sin conexión, los workspaces importados y la opción Omitir. Si falla el pull, se conserva la configuración en caché y se puede volver a intentar.

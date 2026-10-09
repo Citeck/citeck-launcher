@@ -639,15 +639,18 @@ type Resolver struct {
 	// is better than a 502 — and wrong for anything asking "is this config
 	// CURRENT". See WorkspacePullError.
 	wsPullErr error
-	// launcherVersion is this build's version, used ONLY to resolve LATEST to
-	// the newest bundle this launcher can run. Empty (the default) keeps the
-	// historical behavior: LATEST is the newest version, full stop.
+	// launcherVersion selects runnable LATEST bundles and refreshes the
+	// workspace once when the launcher version changes. Empty preserves the
+	// historical newest-bundle selection and timer-only pull policy.
 	//
 	// It is not a safety mechanism and must not become one — a construction
 	// site that forgets WithLauncherVersion loses the convenience, never the
 	// refusal. The refusal lives on the config WRITE paths, which do not go
 	// through the resolver.
 	launcherVersion string
+	// Server namespace load permits just a workspace refresh after a launcher
+	// version change, while bundle repositories retain offline/manual policy.
+	refreshWorkspaceOnVersionChange bool
 }
 
 // NewResolver creates a resolver without auth support.
@@ -680,10 +683,19 @@ func (r *Resolver) WithWorkspaceOverlay(fn func(raw []byte) ([]byte, error)) *Re
 }
 
 // WithLauncherVersion tells the resolver which launcher it is running inside,
-// so LATEST can skip bundles that declare a higher minLauncherVersion.
+// so LATEST can skip bundles that declare a higher minLauncherVersion and
+// workspace pulls bypass their timer once after a launcher version change.
 // Chainable.
 func (r *Resolver) WithLauncherVersion(v string) *Resolver {
 	r.launcherVersion = v
+	return r
+}
+
+// WithWorkspaceRefreshOnVersionChange permits a version-change refresh of an
+// existing workspace clone even with offline bundle resolution. Explicit
+// --offline callers must not enable it.
+func (r *Resolver) WithWorkspaceRefreshOnVersionChange() *Resolver {
+	r.refreshWorkspaceOnVersionChange = true
 	return r
 }
 
@@ -760,12 +772,12 @@ func (r *Resolver) resolveWorkspace() (cfg *WorkspaceConfig, repoDir string) {
 
 	// Priority 2: cloned workspace repo (git pull if online)
 	var syncErr error
-	if !r.offline {
+	if !r.offline || (r.refreshWorkspaceOnVersionChange && git.NeedsVersionRefresh(defaultRepoDir, r.launcherVersion)) {
 		repoURL, repoBranch, pullPeriod, token := r.workspaceRepoSettings()
 		gitCtx, gitCancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		err := git.CloneOrPullWithAuth(gitCtx, git.RepoOpts{
 			URL: repoURL, Branch: repoBranch, Token: token,
-			DestDir: defaultRepoDir, PullPeriod: pullPeriod,
+			DestDir: defaultRepoDir, PullPeriod: pullPeriod, RefreshVersion: r.launcherVersion,
 		})
 		gitCancel()
 		if err != nil {

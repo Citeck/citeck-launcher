@@ -2,15 +2,108 @@ package git
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	gogit "github.com/go-git/go-git/v5"
+	gogitconfig "github.com/go-git/go-git/v5/config"
+	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestRefreshVersionBypassesTimerOnceAndSurvivesRestart(t *testing.T) {
+	resetGitState(t)
+	defer resetGitState(t)
+	upstream := newLocalUpstream(t)
+	home := t.TempDir()
+	store := newFakeSyncStore()
+	SetSyncStateStore(store, home)
+	opts := RepoOpts{URL: upstream, Branch: "master", DestDir: filepath.Join(home, "clone"), PullPeriod: time.Hour, RefreshVersion: "2.16.1"}
+	require.NoError(t, CloneOrPullWithAuth(context.Background(), opts))
+	change := func(value string) {
+		t.Helper()
+		repo, err := gogit.PlainOpen(upstream)
+		require.NoError(t, err)
+		wt, err := repo.Worktree()
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(filepath.Join(upstream, "file.txt"), []byte(value), 0o600))
+		_, err = wt.Add("file.txt")
+		require.NoError(t, err)
+		_, err = wt.Commit(value, &gogit.CommitOptions{Author: &object.Signature{Name: "test", Email: "test@example.com"}})
+		require.NoError(t, err)
+	}
+	content := func() string {
+		t.Helper()
+		data, err := os.ReadFile(filepath.Join(opts.DestDir, "file.txt"))
+		require.NoError(t, err)
+		return string(data)
+	}
+	change("new workspace")
+	require.NoError(t, CloneOrPullWithAuth(context.Background(), opts))
+	assert.Equal(t, "hello\n", content(), "same version respects the recent timer")
+	opts.RefreshVersion = "2.16.2"
+	require.NoError(t, CloneOrPullWithAuth(context.Background(), opts))
+	assert.Equal(t, "new workspace", content(), "a new launcher version must pull immediately")
+	assert.False(t, NeedsVersionRefresh(opts.DestDir, opts.RefreshVersion))
+	change("later workspace")
+	// Recreate the in-process cache while retaining persisted sync time and
+	// the on-disk version marker, as a same-version daemon restart does.
+	lastSyncMu.Lock()
+	delete(lastSyncTimes, opts.DestDir)
+	lastSyncMu.Unlock()
+	SetSyncStateStore(store, home)
+	require.NoError(t, CloneOrPullWithAuth(context.Background(), opts))
+	assert.Equal(t, "new workspace", content(), "same-version restart does not force another pull")
+	opts.RefreshVersion = "2.16.1"
+	require.NoError(t, CloneOrPullWithAuth(context.Background(), opts))
+	assert.Equal(t, "later workspace", content(), "version changes include rollback")
+}
+
+func TestRefreshVersionFailureAndUserSkipRemainPending(t *testing.T) {
+	upstream := newLocalUpstream(t)
+	opts := RepoOpts{URL: upstream, Branch: "master", DestDir: filepath.Join(t.TempDir(), "clone"), PullPeriod: time.Hour, RefreshVersion: "2.16.1"}
+	require.NoError(t, CloneOrPullWithAuth(context.Background(), opts))
+	var requests atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	t.Cleanup(srv.Close)
+	opts.URL = srv.URL + "/repo.git"
+	opts.RefreshVersion = "2.16.2"
+	repo, err := gogit.PlainOpen(opts.DestDir)
+	require.NoError(t, err)
+	require.NoError(t, repo.DeleteRemote("origin"))
+	_, err = repo.CreateRemote(&gogitconfig.RemoteConfig{Name: "origin", URLs: []string{opts.URL}})
+	require.NoError(t, err)
+	saveRepoMeta(opts)
+	host := HostFromURL(opts.URL)
+	SkipPullForHost(host, time.Hour)
+	t.Cleanup(func() { SkipPullForHost(host, 0) })
+	require.NoError(t, CloneOrPullWithAuth(context.Background(), opts))
+	assert.Zero(t, requests.Load(), "version refresh respects user Skip")
+	assert.True(t, NeedsVersionRefresh(opts.DestDir, opts.RefreshVersion))
+	SkipPullForHost(host, 0)
+	require.Error(t, CloneOrPullWithAuth(context.Background(), opts))
+	assert.Equal(t, int64(1), requests.Load())
+	assert.True(t, NeedsVersionRefresh(opts.DestDir, opts.RefreshVersion), "failed pull must be retried without waiting for the timer")
+	marker, err := os.ReadFile(repoSyncVersionPath(opts.DestDir))
+	require.NoError(t, err)
+	assert.Equal(t, "2.16.1\n", string(marker))
+	// A version-unaware successful caller must not erase the marker.
+	opts.RefreshVersion = ""
+	recordSync(opts)
+	marker, err = os.ReadFile(repoSyncVersionPath(opts.DestDir))
+	require.NoError(t, err)
+	assert.Equal(t, "2.16.1\n", string(marker))
+}
 
 func TestCloneOrPull_PublicRepo(t *testing.T) {
 	if testing.Short() {

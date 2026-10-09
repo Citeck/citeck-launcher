@@ -64,7 +64,8 @@ func workspaceConfigOverlay(store storage.Store, wsID string) func(raw []byte) (
 // against and the editor diffs against. Returns nil when nothing resolved.
 func (d *Daemon) resolveWorkspaceBaselineRaw(ws storage.WorkspaceDto) []byte {
 	resolver := bundle.NewResolverWithAuth(config.BundlesDataDir(ws.ID), makeTokenLookup(d.secretReaderFunc())).
-		WithWorkspaceRepo(buildWorkspaceRepoOpts(ws, d.secretService))
+		WithWorkspaceRepo(buildWorkspaceRepoOpts(ws, d.secretService)).
+		WithLauncherVersion(d.version)
 	if !config.IsDesktopMode() {
 		resolver.SetOffline(true)
 	}
@@ -90,7 +91,8 @@ func (d *Daemon) refreshActiveWorkspaceConfigCache() {
 	}
 	resolver := bundle.NewResolverWithAuth(config.BundlesDataDir(wsID), makeTokenLookup(d.secretReaderFunc())).
 		WithWorkspaceRepo(buildWorkspaceRepoOpts(*ws, d.secretService)).
-		WithWorkspaceOverlay(workspaceConfigOverlay(d.store, wsID))
+		WithWorkspaceOverlay(workspaceConfigOverlay(d.store, wsID)).
+		WithLauncherVersion(d.version)
 	if !config.IsDesktopMode() {
 		resolver.SetOffline(true)
 	}

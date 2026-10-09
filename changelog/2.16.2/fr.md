@@ -1,0 +1,2 @@
+## Corrections
+- Après un changement de version du Launcher, le dépôt workspace est actualisé sans attendre le délai de pull. La version réussie est mémorisée pour chaque clone ; les redémarrages desktop de même version conservent le délai, ceux du serveur la synchronisation manuelle. Le mode hors ligne, les workspaces importés et le choix Ignorer sont respectés. En cas d’échec, la configuration en cache reste disponible et une nouvelle tentative reste possible.

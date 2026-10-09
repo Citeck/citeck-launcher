@@ -255,6 +255,7 @@ func (d *Daemon) resolveActiveWorkspaceConfig(ws storage.WorkspaceDto) (*bundle.
 	resolver := bundle.NewResolverWithAuth(config.BundlesDataDir(ws.ID), makeTokenLookup(d.secretReaderFunc())).
 		WithWorkspaceRepo(opts).
 		WithWorkspaceOverlay(workspaceConfigOverlay(d.store, ws.ID)).
+		WithLauncherVersion(d.version).
 		WithForcePull()
 	if !config.IsDesktopMode() {
 		resolver.SetOffline(true)

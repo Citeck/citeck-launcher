@@ -3,18 +3,75 @@ package bundle
 import (
 	"bytes"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	gogit "github.com/go-git/go-git/v5"
 	gogitconfig "github.com/go-git/go-git/v5/config"
+	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/citeck/citeck-launcher/internal/config"
+	launchergit "github.com/citeck/citeck-launcher/internal/git"
 )
+
+func TestWorkspaceVersionRefreshHonorsOfflineImportAndBundlePolicy(t *testing.T) {
+	upstream := t.TempDir()
+	repo, err := gogit.PlainInit(upstream, false)
+	require.NoError(t, err)
+	wt, err := repo.Worktree()
+	require.NoError(t, err)
+	commit := func(name, content string) {
+		t.Helper()
+		require.NoError(t, os.WriteFile(filepath.Join(upstream, name), []byte(content), 0o600))
+		_, addErr := wt.Add(name)
+		require.NoError(t, addErr)
+		_, commitErr := wt.Commit(name, &gogit.CommitOptions{Author: &object.Signature{Name: "test", Email: "test@example.com"}})
+		require.NoError(t, commitErr)
+	}
+	commit("workspace-v1.yml", "quickStartVariants:\n  - name: Old\n")
+	dataDir := t.TempDir()
+	opts := WorkspaceRepoOpts{URL: upstream, Branch: "master", PullPeriod: time.Hour}
+	initial := NewResolver(dataDir).WithWorkspaceRepo(opts).WithLauncherVersion("2.16.1")
+	require.Equal(t, "Old", initial.ResolveWorkspaceOnly().QuickStartVariants[0].Name)
+	commit("workspace-v2.yml", "quickStartVariants:\n  - name: New\n")
+	clone := filepath.Join(dataDir, "bundles", "workspace")
+	// Explicit offline keeps the cached v1 even on a new launcher version.
+	offline := NewResolver(dataDir).WithWorkspaceRepo(opts).WithLauncherVersion("2.16.2")
+	offline.SetOffline(true)
+	assert.Equal(t, "Old", offline.ResolveWorkspaceOnly().QuickStartVariants[0].Name)
+	assert.True(t, launchergit.NeedsVersionRefresh(clone, "2.16.2"))
+	// Manual ZIP imports keep priority over the managed git clone.
+	manual := filepath.Join(dataDir, "repo")
+	require.NoError(t, os.MkdirAll(manual, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(manual, "workspace-v1.yml"), []byte("quickStartVariants:\n  - name: Manual\n"), 0o600))
+	server := NewResolver(dataDir).WithWorkspaceRepo(opts).WithLauncherVersion("2.16.2").WithWorkspaceRefreshOnVersionChange()
+	server.SetOffline(true)
+	assert.Equal(t, "Manual", server.ResolveWorkspaceOnly().QuickStartVariants[0].Name)
+	assert.True(t, launchergit.NeedsVersionRefresh(clone, "2.16.2"))
+	require.NoError(t, os.RemoveAll(manual))
+	assert.Equal(t, "New", server.ResolveWorkspaceOnly().QuickStartVariants[0].Name, "server startup refresh bypasses the workspace timer")
+	assert.False(t, launchergit.NeedsVersionRefresh(clone, "2.16.2"))
+	var requests atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	t.Cleanup(srv.Close)
+	server.syncBundleRepo("separate", BundlesRepo{URL: srv.URL})
+	assert.Zero(t, requests.Load(), "server bundle repositories remain manual/offline")
+	// Server startup with no installed clone must not start cloning from git.
+	empty := NewResolver(t.TempDir()).WithWorkspaceRepo(WorkspaceRepoOpts{URL: srv.URL}).WithLauncherVersion("2.16.2").WithWorkspaceRefreshOnVersionChange()
+	empty.SetOffline(true)
+	assert.Empty(t, empty.ResolveWorkspaceOnly().QuickStartVariants)
+	assert.Zero(t, requests.Load())
+}
 
 func TestLoadWorkspaceConfig(t *testing.T) {
 	dir := t.TempDir()

@@ -316,10 +316,13 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 		WithWorkspaceRepo(lookupWorkspaceRepoOpts(in.Store, in.SecretService, wsID)).
 		WithWorkspaceOverlay(workspaceConfigOverlay(in.Store, wsID)).
 		WithLauncherVersion(in.LauncherVersion)
-	// Server mode: never auto-pull git repos (use 'citeck update' for manual sync).
-	// Desktop mode: auto-pull with throttling. --offline flag: skip git entirely.
+	// Server mode keeps bundle sync manual, but refreshes an existing workspace
+	// clone once after a launcher version change. --offline skips every sync.
 	if in.Offline || !config.IsDesktopMode() {
 		resolver.SetOffline(true)
+	}
+	if !in.Offline && !config.IsDesktopMode() {
+		resolver.WithWorkspaceRefreshOnVersionChange()
 	}
 	wsCfg := resolver.ResolveWorkspaceOnly()
 	// Record (never fail on) a custom-workspace-repo sync failure: startup
