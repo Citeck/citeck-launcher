@@ -7,7 +7,7 @@
 придумывает Launcher, своё для каждого namespace).
 
 ```yaml
-# workspace-v1.yml
+# workspace-v2.yml
 secrets:
   # Константа: умолчание, которое namespace скопирует себе.
   - id: billing-db

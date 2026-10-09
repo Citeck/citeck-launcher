@@ -109,6 +109,52 @@ webapps:
 	assert.Equal(t, "eproc", cfg.Webapps[0].ID)
 }
 
+func TestWorkspaceConfigVersionPriority(t *testing.T) {
+	dir := t.TempDir()
+	files := []string{"workspace-v2.yml", "workspace-v2.yaml", "workspace-v1.yml", "workspace-v1.yaml", "workspace.yml"}
+	for _, name := range files {
+		raw := "quickStartVariants:\n  - name: " + name + "\n"
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(raw), 0o600))
+	}
+	for _, name := range files {
+		raw, path, ok := loadRawWorkspaceConfig(dir)
+		require.True(t, ok)
+		assert.Equal(t, filepath.Join(dir, name), path)
+		assert.Contains(t, string(raw), name)
+		cfg := loadWorkspaceConfig(dir, nil)
+		require.NotNil(t, cfg)
+		require.Len(t, cfg.QuickStartVariants, 1)
+		assert.Equal(t, name, cfg.QuickStartVariants[0].Name)
+		require.NoError(t, os.Remove(path))
+	}
+	_, _, ok := loadRawWorkspaceConfig(dir)
+	assert.False(t, ok)
+}
+
+func TestWorkspaceV2RawAndOverlayUseSameBaseline(t *testing.T) {
+	dir := t.TempDir()
+	repoDir := filepath.Join(dir, "repo")
+	require.NoError(t, os.MkdirAll(repoDir, 0o755))
+	v1 := "quickStartVariants:\n  - name: Legacy\n"
+	v2 := "quickStartVariants:\n  - name: Current\nsecrets:\n  - id: generated-key\n    generated:\n      length: 48\n"
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, "workspace-v1.yml"), []byte(v1), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, "workspace-v2.yml"), []byte(v2), 0o600))
+	r := NewResolver(dir).WithWorkspaceOverlay(func(raw []byte) ([]byte, error) {
+		assert.Equal(t, v2, string(raw))
+		return bytes.ReplaceAll(raw, []byte("Current"), []byte("Edited")), nil
+	})
+	r.SetOffline(true)
+	cfg := r.ResolveWorkspaceOnly()
+	require.NotNil(t, cfg)
+	assert.Equal(t, "Edited", cfg.QuickStartVariants[0].Name)
+	require.Len(t, cfg.Secrets, 1)
+	assert.True(t, cfg.Secrets[0].Generated)
+	assert.Equal(t, 48, cfg.Secrets[0].GeneratedLength())
+	raw, gotDir := r.ResolveWorkspaceRaw()
+	assert.Equal(t, v2, string(raw))
+	assert.Equal(t, repoDir, gotDir)
+}
+
 // TestWorkspaceOverlay verifies the WithWorkspaceOverlay seam: the overlay
 // transforms the raw workspace-v1.yml bytes before parsing, so the resolved
 // WorkspaceConfig reflects the injected change; a nil overlay is a no-op; and

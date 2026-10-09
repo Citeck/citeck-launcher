@@ -7,6 +7,7 @@
 
 - [Запуск приложений и detach](app-startup-and-detach.md)
 - [Приоритет конфигурации и образов](config-layers.md)
+- [Версии формата workspace](workspace-formats.md)
 - [Секреты workspace](workspace-secrets.md)
 - [Дополнительные приложения](additional-apps.md)
 - [Объявленные базы и хранилища](databases.md)

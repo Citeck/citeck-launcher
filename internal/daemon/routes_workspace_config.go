@@ -15,7 +15,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// workspace-config editing — let the operator hand-edit workspace-v1.yml from
+// workspace-config editing — let the operator hand-edit workspace YAML from
 // the Welcome screen. The user's changes are stored as a structural delta (the
 // same filemerge engine the per-app config editor uses) under a key-value state
 // key and re-applied onto the git reference at every resolve via the resolver's
@@ -24,7 +24,7 @@ import (
 
 // workspaceConfigFile is the logical filename handed to the filemerge engine so
 // it picks the structural-YAML delta path (extension-driven).
-const workspaceConfigFile = "workspace-v1.yml"
+const workspaceConfigFile = "workspace.yml"
 
 // wsConfigDeltaKey returns the key-value state key holding the manual
 // workspace-config delta (a namespace.FileEdit JSON blob) for a workspace.
@@ -33,7 +33,7 @@ func wsConfigDeltaKey(wsID string) string {
 }
 
 // workspaceConfigOverlay builds the resolver overlay closure for wsID: it loads
-// the stored manual delta and re-applies it onto the raw git workspace-v1.yml.
+// the stored manual delta and re-applies it onto the raw git workspace YAML.
 // Returns nil when there's nothing it could overlay (no store / no wsID) so the
 // resolver keeps its zero-overhead path. A missing or corrupt delta yields the
 // git reference verbatim; only a genuine apply failure surfaces an error (which
@@ -59,7 +59,7 @@ func workspaceConfigOverlay(store storage.Store, wsID string) func(raw []byte) (
 	}
 }
 
-// resolveWorkspaceBaselineRaw resolves the PRISTINE git workspace-v1.yml bytes
+// resolveWorkspaceBaselineRaw resolves the PRISTINE git workspace YAML bytes
 // for a workspace (NO overlay) — the baseline the user's delta is computed
 // against and the editor diffs against. Returns nil when nothing resolved.
 func (d *Daemon) resolveWorkspaceBaselineRaw(ws storage.WorkspaceDto) []byte {

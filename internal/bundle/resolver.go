@@ -269,7 +269,7 @@ type QdrantProps struct {
 	GrpcPort    int    `yaml:"grpcPort,omitempty"`
 }
 
-// WorkspaceConfig is the top-level workspace-v1.yml structure.
+// WorkspaceConfig is the top-level workspace configuration structure.
 type WorkspaceConfig struct {
 	QuickStartVariants []QuickStartVariant `yaml:"quickStartVariants,omitempty"`
 	Snapshots          []SnapshotDef       `yaml:"snapshots,omitempty"`
@@ -617,7 +617,7 @@ type Resolver struct {
 	offline     bool         // skip all git operations, fail if local data missing
 	forcePull   bool         // bypass the per-repo PullPeriod throttle (PullPeriod=0) for "Force Update"
 	logger      *slog.Logger // nil → falls back to slog.Default()
-	// wsOverlay, when set, transforms the RAW workspace-v1.yml bytes right
+	// wsOverlay, when set, transforms the RAW selected workspace YAML bytes right
 	// after they are read from disk and BEFORE parsing — the seam the daemon
 	// uses to re-apply the user's manual workspace-config delta on top of the
 	// git reference at every resolve. Living behind a plain func([]byte) keeps
@@ -1060,11 +1060,11 @@ func (r *Resolver) lookupRepoToken(bundleRepo *BundlesRepo) string {
 }
 
 // loadRawWorkspaceConfig returns the raw bytes of the first existing workspace
-// config file in repoDir (workspace-v1.yml priority order), the path it was
+// config file in repoDir (v2 before v1, then the unversioned legacy file), the path it was
 // read from, and whether one was found. These are the PRE-overlay bytes — the
 // pristine git reference — used both for parsing and as the editor baseline.
 func loadRawWorkspaceConfig(repoDir string) (raw []byte, path string, ok bool) {
-	candidates := []string{"workspace-v1.yml", "workspace-v1.yaml", "workspace.yml"}
+	candidates := []string{"workspace-v2.yml", "workspace-v2.yaml", "workspace-v1.yml", "workspace-v1.yaml", "workspace.yml"}
 	for _, name := range candidates {
 		p := filepath.Join(repoDir, name)
 		data, err := os.ReadFile(p) //nolint:gosec // path is constructed from fixed filenames within repoDir
@@ -1076,7 +1076,7 @@ func loadRawWorkspaceConfig(repoDir string) (raw []byte, path string, ok bool) {
 	return nil, "", false
 }
 
-// parseWorkspaceConfig unmarshals raw workspace-v1.yml bytes, logging (never
+// parseWorkspaceConfig unmarshals raw selected workspace YAML bytes, logging (never
 // failing hard on) a parse error so callers fall through to the next priority.
 func parseWorkspaceConfig(raw []byte, path string, logger *slog.Logger) *WorkspaceConfig {
 	if logger == nil {
@@ -1149,7 +1149,7 @@ func (r *Resolver) loadWorkspaceConfigOverlaid(repoDir string) *WorkspaceConfig 
 }
 
 // ResolveWorkspaceRaw resolves the workspace repo (git-syncing exactly as the
-// normal resolve does) and returns the RAW workspace-v1.yml bytes BEFORE any
+// normal resolve does) and returns the RAW selected workspace YAML bytes BEFORE any
 // overlay, plus the dir they came from. The workspace-config editor uses this
 // to compute the git baseline the user's delta is layered on; build the
 // resolver WITHOUT an overlay so the returned bytes are the pristine reference.
@@ -1252,7 +1252,7 @@ func (r *Resolver) unknownBundleRepoError(cfg *WorkspaceConfig, repoID string) e
 
 	// Name the actual YAML key: without it the reader has to already know the
 	// schema to act on this error.
-	msg := fmt.Sprintf("bundle repo %q is not declared under bundleRepos: in workspace-v1.yml (%s); "+
+	msg := fmt.Sprintf("bundle repo %q is not declared under bundleRepos: in the workspace YAML (%s); "+
 		"workspace repo: %s (branch %s)", repoID, known, url, branch)
 	if syncFailed {
 		// Rendered verbatim in a Web UI toast: lead with what to do, then the

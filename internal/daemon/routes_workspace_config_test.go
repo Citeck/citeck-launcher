@@ -68,6 +68,34 @@ func TestWorkspaceConfig_GetBaselineNoDelta(t *testing.T) {
 	assert.Equal(t, base, dto.Content) // no delta → content == baseline
 }
 
+func TestWorkspaceConfig_V2KeepsLegacyDeltaAndNewFields(t *testing.T) {
+	v1 := "quickStartVariants:\n  - name: Original\n"
+	d, mux := wsConfigTestMux(t, v1)
+	// Existing edits made while only v1 existed must survive selecting v2.
+	require.Equal(t, http.StatusOK, wsCfgPut(t, mux, "quickStartVariants:\n  - name: Edited\n").Code)
+	v2 := v1 + "secrets:\n  - id: generated-key\n    generated:\n      length: 48\n"
+	repoDir := filepath.Join(config.DataDir(), "repo")
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, "workspace-v2.yml"), []byte(v2), 0o600))
+	dto := wsCfgGet(t, mux)
+	assert.Equal(t, v2, dto.Baseline)
+	assert.Contains(t, dto.Content, "Edited")
+	assert.Contains(t, dto.Content, "generated:")
+	require.Equal(t, http.StatusOK, wsCfgPut(t, mux, strings.ReplaceAll(v2, "Original", "New edit")).Code)
+	dto = wsCfgGet(t, mux)
+	assert.Contains(t, dto.Content, "New edit")
+	assert.Equal(t, v2, dto.Baseline)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/workspaces/default/config/reset", http.NoBody))
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, v2, wsCfgGet(t, mux).Content)
+	blob, err := d.store.GetStateValue(wsConfigDeltaKey("default"))
+	require.NoError(t, err)
+	assert.Empty(t, blob)
+	legacy, err := os.ReadFile(filepath.Join(repoDir, "workspace-v1.yml"))
+	require.NoError(t, err)
+	assert.Equal(t, v1, string(legacy))
+}
+
 func TestWorkspaceConfig_PutStoresDeltaAndGetReflectsIt(t *testing.T) {
 	base := "quickStartVariants:\n  - name: Original\n"
 	d, mux := wsConfigTestMux(t, base)

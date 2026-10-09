@@ -14,10 +14,10 @@ interface WorkspaceConfigDialogProps {
   onSaved: () => void
 }
 
-const WS_CONFIG_FILE = 'workspace-v1.yml'
+const WS_CONFIG_FILE = 'workspace.yml'
 
 /**
- * Raw-YAML editor for the workspace configuration (workspace-v1.yml). The git
+ * Raw-YAML editor for the workspace configuration (selected workspace YAML). The git
  * repo is the reference; the user's edits are stored as a delta on the daemon
  * and re-applied on top of the git reference at every resolve — the
  * workspace-scoped counterpart of the per-app AppConfigEditor (same CodeEditor +

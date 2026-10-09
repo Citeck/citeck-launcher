@@ -253,7 +253,7 @@ citeck start seaweedfs
 ## Конфигурация workspace
 
 ```yaml
-# workspace-v1.yml
+# workspace-v2.yml
 secrets:
   - id: seaweedfs-s3-key      # ключ S3: свой у каждого namespace
     generated:

@@ -106,6 +106,12 @@ e2e with `./scripts/test/test-deb-upgrade.sh` (needs Docker + GTK3 dev libs).
 
 ## Architecture
 
+Workspace configuration filenames are selected in this order: `workspace-v2.yml`,
+`workspace-v2.yaml`, `workspace-v1.yml`, `workspace-v1.yaml`, `workspace.yml`.
+Launcher 2.16.1+ reads v2 first. Keep public v1 compatible with older launchers;
+generated secrets and managed SeaweedFS belong in v2. The raw editor and saved
+workspace delta use the same selected file as the resolver.
+
 ### Go Daemon + CLI (`internal/`)
 
 | Package | Purpose |
