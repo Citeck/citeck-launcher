@@ -298,16 +298,25 @@ func TestContentStorageGate_RefusalFollowsTheRequestLocale(t *testing.T) {
 	assert.Contains(t, ru.Body.String(), "вернуть хранение в базу данных нельзя")
 }
 
-// The pending switch is persisted for the next daemon; the load path is the
-// only place that hands it back to the runtime, and the provisioner reads it
-// from there. A guard on the wiring: loadNamespace has no direct test.
+// The real namespace load restores content-storage state from the store,
+// without writing a STOPPED placeholder over the persisted namespace status.
 func TestLoadNamespace_RestoresThePendingContentStorageSwitch(t *testing.T) {
-	src, err := os.ReadFile("namespace_loader.go")
+	d, _ := newContentStorageDaemon(t)
+	require.NoError(t, d.persistNamespaceConfig("wsMain", "ns1", csConfigYAML(t, "X", csBundleS3, namespace.ContentStorageS3)))
+	state := namespace.NsPersistedState{Status: namespace.NsStatusStopped, ContentStorageSwitchPending: csTestStorageRef,
+		ContentStorageDefaultSet: true, KnownApps: []string{csProvider, "content"}}
+	raw, err := json.Marshal(state)
 	require.NoError(t, err)
-	assert.Contains(t, string(src), "runtime.RestoreContentStorageSwitch(persistedState.ContentStorageSwitchPending)")
-	// The same for the record of the launcher's last S3 secret write: without
-	// it every daemon start rewrites a secret that is already current.
-	assert.Contains(t, string(src), "runtime.RestoreContentStorageSecretWrite(persistedState.ContentStorageSecretWrite)")
+	require.NoError(t, d.store.SaveNamespaceState("wsMain", "ns1", string(state.Status), string(raw)))
+	loaded, err := loadNamespace(loadNamespaceInput{Store: d.store, SecretService: d.secretService, WorkspaceID: "wsMain", NamespaceID: "ns1", Offline: true, Desktop: true})
+	require.NoError(t, err)
+	require.NotNil(t, loaded.Runtime)
+	t.Cleanup(loaded.Runtime.Shutdown)
+	if loaded.DockerClient != nil {
+		t.Cleanup(func() { _ = loaded.DockerClient.Close() })
+	}
+	assert.Equal(t, csTestStorageRef, loaded.Runtime.ContentStorageSwitch())
+	assert.True(t, loaded.Runtime.ContentStorageDefaultSet())
 }
 
 // --- create / edit ---
@@ -681,4 +690,37 @@ func TestContentStorageProvisioner_StatusIsNamespacePinned(t *testing.T) {
 	assert.Equal(t, api.ContentStorageStatePending, p.Status("ns2").State)
 	p.Reset()
 	assert.Equal(t, api.ContentStorageStatePending, p.Status("ns1").State)
+}
+
+func TestNamespaceDto_ExternalContentStorage(t *testing.T) {
+	d, _ := newContentStorageDaemon(t)
+	act := activeNamespace{nsConfig: &namespace.Config{ID: "external", S3: &namespace.S3Config{Endpoint: "https://external.example"}}, workspaceConfig: parseCSWorkspace(t)}
+	got := d.contentStorageDto(englishForLogs, act)
+	require.NotNil(t, got)
+	assert.Equal(t, "S3", got.Type)
+	assert.Empty(t, got.ProviderApp, "external S3 does not inherit the workspace provider")
+	assert.Empty(t, got.ProviderTitle, "plain S3 label when there is no managed provider")
+}
+
+func TestExternalS3RemovalWriteGate(t *testing.T) {
+	d, _ := newContentStorageDaemon(t)
+	err := d.contentStorageRefusal("ws1", storedContentStorage{external: true}, &namespace.Config{ID: "ns1"})
+	require.NotNil(t, err)
+	assert.Equal(t, api.ErrCodeContentStorageDowngrade, err.code)
+	assert.Nil(t, d.contentStorageRefusal("ws1", storedContentStorage{external: true}, &namespace.Config{ID: "ns1", S3: &namespace.S3Config{Endpoint: "https://external.example"}}))
+}
+
+func TestLoadStoredExternalS3SurvivesInvalidOtherFields(t *testing.T) {
+	for _, raw := range []string{
+		"id: ns1\ns3:\n  endpoint: https://external.example\n",
+		"id: ns1\ns3:\n  endpoint: https://external.example\nother: [invalid\n",
+	} {
+		t.Run(raw, func(t *testing.T) {
+			d, _ := newContentStorageDaemon(t)
+			require.NoError(t, d.store.SaveNamespaceConfig("wsMain", "ns1", "X", raw))
+			stored, err := d.loadStoredContentStorage("wsMain", "ns1")
+			require.NoError(t, err)
+			assert.True(t, stored.external)
+		})
+	}
 }

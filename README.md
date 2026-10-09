@@ -87,7 +87,7 @@ Login:            admin / <generated password>
 
 Two things to know about that screen:
 
-- **The admin password is shown once.** Copy it — it can't be recovered afterwards. If you lose it, reset it with `citeck setup admin-password`.
+- **The admin password is shown once.** Copy it and keep it safe. If you lose it, reset it with `citeck setup admin-password`.
 - **With a self-signed certificate your browser will warn you.** That's expected — click *Advanced* → *Proceed*.
 
 If something still looks stuck after ~20 minutes, start with `citeck diagnose` (add `--fix` to let it repair what it can) and `citeck logs <app>`.
@@ -121,6 +121,8 @@ citeck setup                     # change settings (admin password, TLS, email, 
 citeck edit <app>                # edit an app's definition, kubectl-edit style
 ```
 
+Snapshots omit secrets by default and assume restore on the same server with the same credentials. For transfer with credentials, use `citeck snapshot export --include-secrets`. It includes namespace keys and JWT/OIDC/admin/service-account credentials in plaintext `secrets.json`; imported system credentials belong to the destination namespace. The archive does not include namespace configuration or external S3 objects. See [snapshot format and limits](docs/snapshots.md).
+
 Note that `citeck stop <app>` **detaches** the app: it stays stopped across restarts and reloads until you run `citeck start <app>`. That's also the way to free memory on a small host — detaching a few optional apps saves several GB.
 
 Global flags: `--format (text|json)` for scripting and `--yes` to skip confirmations. Long-running commands (`start`, `stop`, `restart`, `reload`, `snapshot import`, `deps upgrade`, `deps rollback`) take `-d/--detach` to return immediately instead of waiting. Full reference: `citeck --help` or the [commands reference](https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher_server/commands.html).
@@ -139,6 +141,8 @@ Global flags: `--format (text|json)` for scripting and `--yes` to skip confirmat
 The **Community** edition is fully open source and free, and covers the platform's core functionality. The commercial **Enterprise** edition adds professional support and additional features; installing it requires a license key issued by Citeck. This launcher installs either one.
 
 ## Documentation
+
+- [Repository operator guides and audit history](docs/README.md)
 
 - **Server mode:** [install and configuration](https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher_server.html) (`daemon.yml` / `namespace.yml`) and the [commands reference](https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher_server/commands.html)
 - **Desktop app:** [desktop-mode docs](https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher.html)

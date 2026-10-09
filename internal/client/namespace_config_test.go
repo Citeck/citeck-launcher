@@ -1,10 +1,12 @@
 package client
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"github.com/citeck/citeck-launcher/internal/api"
@@ -70,5 +72,54 @@ func TestPutNamespaceConfigRefusalIsAnAPIError(t *testing.T) {
 	}
 	if apiErr.Status != http.StatusConflict || apiErr.Message != "cannot go back" {
 		t.Errorf("APIError = %+v", apiErr)
+	}
+}
+
+func TestGetContentStorageOptionsUsesExplicitBundle(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != api.ContentStorageOptions {
+			t.Errorf("request = %s %s", r.Method, r.URL.Path)
+		}
+		if r.URL.Query().Get("bundleRepo") != "enterprise + repo" || r.URL.Query().Get("bundleKey") != "LATEST" {
+			t.Errorf("query = %v", r.URL.Query())
+		}
+		_, _ = w.Write([]byte(`{"s3":{"available":true,"providerApp":"seaweedfs"}}`))
+	}))
+	defer srv.Close()
+	options, err := newTestClient(srv).GetContentStorageOptions("enterprise + repo", "LATEST")
+	if err != nil || options == nil || !options.S3.Available || options.S3.ProviderApp != "seaweedfs" {
+		t.Fatalf("options = %+v, err = %v", options, err)
+	}
+}
+
+func TestExportSnapshotSecretsOptIn(t *testing.T) {
+	for _, include := range []bool{false, true} {
+		t.Run(strconv.FormatBool(include), func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var body struct {
+					IncludeSecrets bool `json:"includeSecrets"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Error(err)
+				}
+				if body.IncludeSecrets != include {
+					t.Error("wrong secret export policy")
+				}
+				if r.URL.Query().Get("output") != "/snapshot dir" {
+					t.Error("output path changed")
+				}
+				_, _ = w.Write([]byte(`{"success":true}`))
+			}))
+			defer srv.Close()
+			var err error
+			if include {
+				_, err = newTestClient(srv).ExportSnapshot("/snapshot dir", true)
+			} else {
+				_, err = newTestClient(srv).ExportSnapshot("/snapshot dir")
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }

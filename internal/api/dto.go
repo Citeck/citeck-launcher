@@ -395,8 +395,10 @@ const (
 
 // DependencyDto is one infrastructure dependency of the active namespace.
 type DependencyDto struct {
-	ID  string `json:"id"`  // internal/deps id ("postgres")
-	App string `json:"app"` // generated container name ("postgres")
+	// MigrationStepIDs is the plan preview, including workspace-declared dependency families.
+	MigrationStepIDs []string `json:"migrationStepIds,omitempty"`
+	ID               string   `json:"id"`  // internal/deps id ("postgres")
+	App              string   `json:"app"` // generated container name ("postgres")
 	// CurrentImage is what the DATA runs on (the pin), falling back to the
 	// image the last generation emitted when nothing is pinned yet.
 	CurrentImage   string `json:"currentImage"`
@@ -899,24 +901,25 @@ const (
 
 // ErrCodeAppNotFound and related constants are machine-readable error codes for API consumers.
 const (
-	ErrCodeAppNotFound        = "APP_NOT_FOUND"
-	ErrCodeSnapshotInProgress = "SNAPSHOT_IN_PROGRESS"
-	ErrCodeInvalidConfig      = "INVALID_CONFIG"
-	ErrCodeInvalidRequest     = "INVALID_REQUEST"
-	ErrCodeSSRFBlocked        = "SSRF_BLOCKED"
-	ErrCodeRateLimited        = "RATE_LIMITED"
-	ErrCodeNotConfigured      = "NOT_CONFIGURED"
-	ErrCodeAppAlreadyRunning  = "APP_ALREADY_RUNNING"
-	ErrCodeNamespaceRunning   = "NAMESPACE_RUNNING"
-	ErrCodeCSRFMissing        = "CSRF_MISSING"
-	ErrCodeInternalError      = "INTERNAL_ERROR"
-	ErrCodeNamespaceExists    = "NAMESPACE_EXISTS"
-	ErrCodeReloadInProgress   = "RELOAD_IN_PROGRESS"
-	ErrCodeDesktopOnly        = "DESKTOP_ONLY"
-	ErrCodeWorkspaceExists    = "WORKSPACE_EXISTS"
-	ErrCodeWorkspaceNotFound  = "WORKSPACE_NOT_FOUND"
-	ErrCodeNamespaceNotFound  = "NAMESPACE_NOT_FOUND"
-	ErrCodeWorkspaceInUse     = "WORKSPACE_IN_USE"
+	ErrCodeAppNotFound              = "APP_NOT_FOUND"
+	ErrCodeSnapshotInProgress       = "SNAPSHOT_IN_PROGRESS"
+	ErrCodeSnapshotImportIncomplete = "SNAPSHOT_IMPORT_INCOMPLETE"
+	ErrCodeInvalidConfig            = "INVALID_CONFIG"
+	ErrCodeInvalidRequest           = "INVALID_REQUEST"
+	ErrCodeSSRFBlocked              = "SSRF_BLOCKED"
+	ErrCodeRateLimited              = "RATE_LIMITED"
+	ErrCodeNotConfigured            = "NOT_CONFIGURED"
+	ErrCodeAppAlreadyRunning        = "APP_ALREADY_RUNNING"
+	ErrCodeNamespaceRunning         = "NAMESPACE_RUNNING"
+	ErrCodeCSRFMissing              = "CSRF_MISSING"
+	ErrCodeInternalError            = "INTERNAL_ERROR"
+	ErrCodeNamespaceExists          = "NAMESPACE_EXISTS"
+	ErrCodeReloadInProgress         = "RELOAD_IN_PROGRESS"
+	ErrCodeDesktopOnly              = "DESKTOP_ONLY"
+	ErrCodeWorkspaceExists          = "WORKSPACE_EXISTS"
+	ErrCodeWorkspaceNotFound        = "WORKSPACE_NOT_FOUND"
+	ErrCodeNamespaceNotFound        = "NAMESPACE_NOT_FOUND"
+	ErrCodeWorkspaceInUse           = "WORKSPACE_IN_USE"
 	// ErrCodeNamespaceNotRunning is returned (HTTP 409) by the per-app start
 	// and restart routes while the namespace is not running. The runtime's app
 	// registry is built by doStart and the loop that drives a per-app

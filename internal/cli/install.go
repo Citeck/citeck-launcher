@@ -17,6 +17,7 @@ import (
 	"github.com/citeck/citeck-launcher/internal/cli/bundlepicker"
 	"github.com/citeck/citeck-launcher/internal/cli/prompt"
 	"github.com/citeck/citeck-launcher/internal/config"
+	"github.com/citeck/citeck-launcher/internal/daemon"
 	"github.com/citeck/citeck-launcher/internal/docker"
 	"github.com/citeck/citeck-launcher/internal/fsutil"
 	"github.com/citeck/citeck-launcher/internal/namespace"
@@ -353,9 +354,8 @@ hostStep:
 	if nsCfg.Snapshot != "" {
 		printDoneTitle(t("install.snapshot.label"))
 		if impErr := importInstallSnapshot(context.Background(), nsCfg.Snapshot); impErr != nil {
-			// Non-fatal: surface clearly but keep the install going so the
-			// operator can still start a (demo-less) platform and retry.
-			output.Errf("%s", t("install.snapshot.failed", "err", impErr.Error()))
+			// Imported volumes and their credentials must agree before start.
+			return fmt.Errorf("restore install snapshot: %w", impErr)
 		}
 	}
 
@@ -777,6 +777,15 @@ func readAdminPasswordFromOpenStore(store storage.Store) string {
 	if err != nil {
 		svc = nil // degrade to state + plain-file inspection only
 	}
+	if state, stateErr := store.GetState(); stateErr == nil && state != nil && state.NamespaceID() != "" {
+		value, exists, lookupErr := systemsecrets.NamespaceOverride(svc, state.WorkspaceID, state.NamespaceID(), systemsecrets.IDAdminPassword)
+		if lookupErr != nil {
+			return ""
+		}
+		if exists {
+			return value
+		}
+	}
 	if loc, ok := systemsecrets.Lookup(store, svc, systemsecrets.IDAdminPassword); ok {
 		return loc.Value
 	}
@@ -966,10 +975,20 @@ func importInstallSnapshot(ctx context.Context, snapshotID string) error {
 	defer dc.Close()
 
 	output.PrintText("   %s", t("install.snapshot.importing"))
-	meta, err := snapshot.Import(ctx, dc, destPath, config.ResolveVolumesBase(wsID, nsID), nil)
+	svc, err := openSecretService()
+	if err != nil {
+		return fmt.Errorf("open snapshot secret store: %w", err)
+	}
+
+	stateStore, err := storage.NewFileStore(config.ConfDir(), filepath.Join(config.DataDir(), "runtime"))
+	if err != nil {
+		return fmt.Errorf("open snapshot state store: %w", err)
+	}
+	meta, err := snapshot.Import(ctx, dc, destPath, config.ResolveVolumesBase(wsID, nsID), daemon.SnapshotDestination(stateStore, svc, wsID, nsID, nil), nil)
 	if err != nil {
 		return fmt.Errorf("import snapshot: %w", err)
 	}
+
 	output.PrintText("   %s", t("install.snapshot.imported", "count", strconv.Itoa(len(meta.Volumes))))
 	return nil
 }

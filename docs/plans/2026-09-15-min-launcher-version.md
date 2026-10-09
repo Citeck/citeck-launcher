@@ -1,6 +1,9 @@
 # `minLauncherVersion` Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Historical completed plan.** The feature is implemented in Go Launcher.
+> Unchecked boxes and commands below record the original implementation sequence,
+> not pending work. Do not execute the plan again. Current operator instructions:
+> [configuration layers](../config-layers.md), [dependency upgrades](../postgres-major-upgrade.md).
 
 **Goal:** A bundle can declare the launcher it needs; a launcher below that floor refuses to
 create or edit a namespace onto it, `LATEST` quietly picks the newest bundle it *can* run, and the

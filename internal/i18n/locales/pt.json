@@ -81,6 +81,7 @@
   "snapshot.stopped": "Namespace parado",
   "snapshot.stopTimeout": "tempo esgotado aguardando a parada do namespace (parado em {status})",
   "snapshot.notFound": "snapshot \"{name}\" não encontrado. Execute 'citeck snapshot list' para ver os snapshots disponíveis",
+  "snapshot.import.pending": "A importação do snapshot está incompleta. Repita a importação antes de iniciar o namespace.",
   "snapshot.import.detach": "Snapshot importado, início do namespace acionado (use `citeck status` para acompanhar).",
   "snapshot.import.background": "O namespace continuará iniciando em segundo plano. Execute `citeck status` para acompanhar.",
   "snapshot.waitingCompletion": "Aguardando conclusão...",
@@ -564,14 +565,9 @@
   "contentStorage.msg.unavailable.externalS3": "Este namespace armazena seu conteúdo em um S3 externo (o bloco s3 da sua configuração), que não pode ser combinado com o armazenamento de conteúdo no S3.",
   "contentStorage.msg.unavailable.bundleUnresolved": "O bundle {bundle} não está no repositório de bundles sincronizado, portanto não é possível verificar o armazenamento no S3 para ele. Sincronize o repositório (atualização forçada) e tente novamente.",
   "contentStorage.msg.notS3": "Este namespace armazena seu conteúdo no banco de dados; não há armazenamento S3 a conectar.",
-  "contentStorage.msg.provision.secretsLocked": "Os segredos do namespace estão bloqueados, então as credenciais S3 de {app} não podem ser lidas e o ecos-content não pode ser conectado a ele. Desbloqueie os segredos e tente novamente.",
-  "contentStorage.msg.provision.secretsUnreadable": "Não foi possível ler os segredos do namespace, então o ecos-content não pode ser conectado ao seu armazenamento S3: {error}",
-  "contentStorage.msg.provision.secretMissing": "As credenciais S3 de {app} fazem referência a segredos para os quais este namespace não tem valor: {secrets}. Adicione-os aos secrets da configuração do workspace e tente novamente.",
-  "contentStorage.msg.provision.secretNotGenerated": "As credenciais S3 de {app} fazem referência a segredos gerados para os quais este namespace ainda não tem valor: {secrets}. Recarregue o namespace para gerá-los (citeck reload ou “Atualizar e iniciar”); o ecos-content será conectado com a nova chave quando {app} for reiniciado com ela.",
   "contentStorage.msg.provision.notReady": "O ECOS não ficou pronto para a conexão do armazenamento de conteúdo S3 em {minutes} minutos. Última resposta: {error}",
   "contentStorage.msg.provision.readFailed": "Não foi possível ler as configurações do armazenamento de conteúdo no ECOS: {error}",
   "contentStorage.msg.provision.createFailed": "Não foi possível criar {record} no ECOS: {error}",
-  "contentStorage.msg.provision.updateFailed": "Não foi possível atualizar {record} no ECOS: {error}",
   "contentStorage.msg.provision.setDefaultFailed": "Não foi possível definir {storage} como armazenamento de conteúdo padrão no ECOS: {error}",
   "contentStorage.msg.provision.verifyFailed": "{storage} foi definido como armazenamento de conteúdo padrão, mas o ECOS agora informa {actual}.",
   "deps.msg.busy.rollback": "há uma reversão de dependência em andamento — aguarde até que ela termine",
@@ -595,5 +591,8 @@
   "deps.msg.event.rolledBackWithWarning": "{id} revertido para {image}; {error}",
   "deps.msg.action.migrationStarted": "Migração de {id} para {image} iniciada",
   "deps.msg.action.rollbackStarted": "Reversão de {id} para {image} iniciada",
-  "apps.msg.namespaceNotRunning": "O namespace não está em execução — inicie-o primeiro e depois inicie esta aplicação separadamente."
+  "apps.msg.namespaceNotRunning": "O namespace não está em execução — inicie-o primeiro e depois inicie esta aplicação separadamente.",
+  "contentStorage.msg.local.desktopOnly": "A exportação do ambiente S3 local está disponível apenas no desktop.",
+  "contentStorage.msg.local.notConfigured": "Este namespace não tem um ambiente S3 nativo para exportar.",
+  "contentStorage.msg.local.providerNotReady": "O provedor S3 deve estar em execução com a porta de desktop publicada."
 }

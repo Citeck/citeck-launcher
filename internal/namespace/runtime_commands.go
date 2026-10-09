@@ -28,6 +28,10 @@ import (
 // with refreshImages=true via updateAndStartAsync); false for a plain boot
 // auto-start, which relies on cached digests.
 func (r *Runtime) Start(apps []appdef.ApplicationDef, refreshImages bool) {
+	if r.SnapshotImportPending() {
+		slog.Warn("Incomplete snapshot import blocks namespace start")
+		return
+	}
 	if r.testMode {
 		// testMode runtimes are driven exclusively via StepOnce. Spawning
 		// runtimeLoop here would race with the test driver. Catching this in
@@ -553,6 +557,10 @@ func (r *Runtime) StopApp(appName string) error { //nolint:gocyclo // single-pas
 // Other source states fall through to RestartApp.
 func (r *Runtime) StartApp(appName string) error {
 	r.mu.Lock()
+	if r.snapshotImportPending {
+		r.mu.Unlock()
+		return fmt.Errorf("snapshot import incomplete; repeat import before starting")
+	}
 	app, ok := r.apps[appName]
 	if !ok {
 		r.mu.Unlock()
@@ -714,6 +722,10 @@ func (r *Runtime) RetryPullFailedApps() int {
 // `user_restart` is consequently no longer produced anywhere.
 func (r *Runtime) RestartApp(appName string) error { //nolint:gocyclo // single-pass dispatch over the per-status restart branches
 	r.mu.Lock()
+	if r.snapshotImportPending {
+		r.mu.Unlock()
+		return fmt.Errorf("snapshot import incomplete; repeat import before starting")
+	}
 	if _, ok := r.apps[appName]; !ok {
 		r.mu.Unlock()
 		return fmt.Errorf("app %q not found", appName)

@@ -2,8 +2,6 @@ package daemon
 
 import (
 	"crypto/rand"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -25,7 +23,7 @@ import (
 // safe reading for a password — it is written into a database's data volume
 // when the database is first initialized, and a service handed a changed one
 // would simply fail to connect. A generated value is therefore one per
-// NAMESPACE: nothing carries it to another one, a snapshot included.
+// NAMESPACE: only an explicit snapshot restore carries it to another one.
 //
 // The copies are SecretService rows of type NAMESPACE, so they are encrypted
 // like every other secret once a master password exists, and stored as is
@@ -43,7 +41,7 @@ type namespaceSecretStore interface {
 // namespaceSecretScope names the namespace a row belongs to. A namespace id is
 // unique only within its workspace, so both are part of it.
 func namespaceSecretScope(wsID, nsID string) string {
-	return "ns:" + wsID + "/" + nsID
+	return storage.NamespaceSecretScope(wsID, nsID)
 }
 
 // namespaceSecretRowID is the row id. It is a digest rather than the readable
@@ -51,8 +49,7 @@ func namespaceSecretScope(wsID, nsID string) string {
 // scope's separators nor a workspace-chosen secret id are safe there. The
 // readable parts live in Scope and Name.
 func namespaceSecretRowID(wsID, nsID, secretID string) string {
-	sum := sha256.Sum256([]byte(wsID + "\x00" + nsID + "\x00" + secretID))
-	return "ns-" + hex.EncodeToString(sum[:12])
+	return storage.NamespaceSecretID(wsID, nsID, secretID)
 }
 
 // namespaceSecretMode says what loading a namespace's secrets may do. Three
@@ -67,9 +64,8 @@ const (
 	// store, whoever asks); a generated one answers nothing at all, so
 	// `${secret:<id>}` stays unresolved and whatever needs it is left out.
 	// For callers that act on the values after a generation has already
-	// seeded them — the content-storage provisioner, which hands the S3 key to
-	// ECOS (a key nobody stored is a key no container was started with), and
-	// the dependency migration's temp containers.
+	// seeded them, such as the dependency migration's temp containers. A key
+	// nobody stored is a key no container was started with.
 	//
 	// The zero value on purpose: a caller that forgets to choose cannot write.
 	nsSecretsRead namespaceSecretMode = iota

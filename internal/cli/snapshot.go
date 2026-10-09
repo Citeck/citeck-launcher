@@ -60,6 +60,7 @@ func newSnapshotListCmd() *cobra.Command {
 
 func newSnapshotExportCmd() *cobra.Command {
 	var outputDir string
+	var includeSecrets bool
 	cmd := &cobra.Command{
 		Use:   "export",
 		Short: "Export namespace volumes to a snapshot",
@@ -89,7 +90,7 @@ func newSnapshotExportCmd() *cobra.Command {
 
 			// Export (always wait for completion)
 			err = snapshotAndWait(c, "snapshot_complete", "snapshot_error", func() (*api.ActionResultDto, error) {
-				return c.ExportSnapshot(dir)
+				return c.ExportSnapshot(dir, includeSecrets)
 			})
 			if err != nil {
 				// Try to restart even on export failure
@@ -115,6 +116,7 @@ func newSnapshotExportCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&outputDir, "dir", "", "Write snapshot to this directory (absolute path)")
+	cmd.Flags().BoolVar(&includeSecrets, "include-secrets", false, "Include namespace and system credentials in secrets.json (plaintext)")
 	return cmd
 }
 
@@ -202,12 +204,7 @@ func newSnapshotImportCmd() *cobra.Command {
 				return c.ImportSnapshot(name)
 			})
 			if err != nil {
-				if wasRunning {
-					output.PrintText(t("snapshot.startingBack"))
-					if _, startErr := c.StartNamespace(); startErr != nil {
-						output.Errf("%s", t("snapshot.restartWarn", "error", startErr.Error()))
-					}
-				}
+				// Import may already have replaced data; never restart after failure.
 				return err
 			}
 

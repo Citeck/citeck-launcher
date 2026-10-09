@@ -81,6 +81,7 @@
   "snapshot.stopped": "Namespace detenido",
   "snapshot.stopTimeout": "tiempo de espera agotado al detener el namespace (atascado en {status})",
   "snapshot.notFound": "snapshot \"{name}\" no encontrado. Ejecute 'citeck snapshot list' para ver los snapshots disponibles",
+  "snapshot.import.pending": "La importación del snapshot está incompleta. Repita la importación antes de iniciar el namespace.",
   "snapshot.import.detach": "Snapshot importado, inicio del namespace en curso (use `citeck status` para supervisar).",
   "snapshot.import.background": "El namespace sigue iniciándose en segundo plano. Ejecute `citeck status` para supervisar.",
   "snapshot.waitingCompletion": "Esperando finalización...",
@@ -564,14 +565,9 @@
   "contentStorage.msg.unavailable.externalS3": "Este namespace guarda su contenido en un S3 externo (el bloque s3 de su configuración), que no se puede combinar con el almacenamiento de contenido en S3.",
   "contentStorage.msg.unavailable.bundleUnresolved": "El bundle {bundle} no está en el repositorio de bundles sincronizado, así que no se puede comprobar el almacenamiento en S3 para él. Sincronice el repositorio (actualización forzada) y vuelva a intentarlo.",
   "contentStorage.msg.notS3": "Este namespace guarda su contenido en la base de datos; no hay ningún almacenamiento S3 que conectar.",
-  "contentStorage.msg.provision.secretsLocked": "Los secretos del namespace están bloqueados, por lo que no se pueden leer las credenciales S3 de {app} ni conectar ecos-content a él. Desbloquee los secretos y vuelva a intentarlo.",
-  "contentStorage.msg.provision.secretsUnreadable": "No se pudieron leer los secretos del namespace, por lo que no se puede conectar ecos-content a su almacenamiento S3: {error}",
-  "contentStorage.msg.provision.secretMissing": "Las credenciales S3 de {app} hacen referencia a secretos para los que este namespace no tiene valor: {secrets}. Añádalos a los secretos de la configuración del espacio de trabajo y vuelva a intentarlo.",
-  "contentStorage.msg.provision.secretNotGenerated": "Las credenciales S3 de {app} hacen referencia a secretos generados para los que este namespace aún no tiene valor: {secrets}. Recargue el namespace para generarlos (citeck reload o «Actualizar e iniciar»); ecos-content se conectará con la nueva clave cuando {app} se haya reiniciado con ella.",
   "contentStorage.msg.provision.notReady": "ECOS no estuvo listo para conectar el almacenamiento de contenido S3 en {minutes} minutos. Última respuesta: {error}",
   "contentStorage.msg.provision.readFailed": "No se pudo leer la configuración del almacenamiento de contenido desde ECOS: {error}",
   "contentStorage.msg.provision.createFailed": "No se pudo crear {record} en ECOS: {error}",
-  "contentStorage.msg.provision.updateFailed": "No se pudo actualizar {record} en ECOS: {error}",
   "contentStorage.msg.provision.setDefaultFailed": "No se pudo establecer {storage} como almacenamiento de contenido predeterminado en ECOS: {error}",
   "contentStorage.msg.provision.verifyFailed": "{storage} se estableció como almacenamiento de contenido predeterminado, pero ahora ECOS indica {actual}.",
   "deps.msg.busy.rollback": "hay una reversión de dependencia en curso: espere a que termine",
@@ -595,5 +591,8 @@
   "deps.msg.event.rolledBackWithWarning": "{id} revertido a {image}; {error}",
   "deps.msg.action.migrationStarted": "Migración de {id} a {image} iniciada",
   "deps.msg.action.rollbackStarted": "Reversión de {id} a {image} iniciada",
-  "apps.msg.namespaceNotRunning": "El namespace no está en ejecución: inícielo primero y después inicie esta aplicación por separado."
+  "apps.msg.namespaceNotRunning": "El namespace no está en ejecución: inícielo primero y después inicie esta aplicación por separado.",
+  "contentStorage.msg.local.desktopOnly": "La exportación del entorno S3 local solo está disponible en desktop.",
+  "contentStorage.msg.local.notConfigured": "Este namespace no tiene un entorno S3 nativo para exportar.",
+  "contentStorage.msg.local.providerNotReady": "El proveedor S3 debe estar en ejecución con su puerto de desktop publicado."
 }

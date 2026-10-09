@@ -3,6 +3,7 @@
 // Snapshot format (compatible with Kotlin launcher):
 //
 //	snapshot.zip
+//	├── secrets.json      — optional portable namespace/system secret name/value pairs
 //	├── meta.json         — NamespaceSnapshotMeta
 //	├── postgres.tar.zst  — compressed tar of volume data
 //	├── rabbitmq.tar.zst
@@ -26,6 +27,7 @@ import (
 	"time"
 
 	"github.com/citeck/citeck-launcher/internal/config"
+	"github.com/citeck/citeck-launcher/internal/deps"
 	"github.com/citeck/citeck-launcher/internal/docker"
 	"github.com/citeck/citeck-launcher/internal/fsutil"
 )
@@ -37,8 +39,9 @@ const (
 
 // NamespaceSnapshotMeta is the top-level snapshot metadata.
 type NamespaceSnapshotMeta struct {
-	Volumes   []VolumeSnapshotMeta `json:"volumes"`
-	CreatedAt time.Time            `json:"createdAt"`
+	Volumes      []VolumeSnapshotMeta             `json:"volumes"`
+	CreatedAt    time.Time                        `json:"createdAt"`
+	Dependencies map[deps.ID]deps.DependencyState `json:"dependencies,omitempty"`
 }
 
 // VolumeSnapshotMeta describes one volume in the snapshot.
@@ -130,7 +133,18 @@ func exportSources(ctx context.Context, dc volumeOps, volumesBase string, includ
 // Export creates a snapshot ZIP of all namespace volumes.
 // The namespace MUST be stopped before calling this.
 // volumesBase is the runtime directory containing volumes/ subdirectory.
-func Export(ctx context.Context, dc volumeOps, outputPath, volumesBase string, include map[string]bool, progress VolumeProgressFunc) (*NamespaceSnapshotMeta, error) {
+func Export(ctx context.Context, dc volumeOps, outputPath, volumesBase string, include map[string]bool, secrets SecretStore, dependencies map[deps.ID]deps.DependencyState, progress VolumeProgressFunc) (*NamespaceSnapshotMeta, error) {
+	values := map[string]string{}
+	if secrets != nil {
+		var err error
+		values, err = secrets.Read()
+		if err != nil {
+			return nil, fmt.Errorf("export namespace secrets: %w", err)
+		}
+		if values == nil {
+			values = map[string]string{}
+		}
+	}
 	sources, err := exportSources(ctx, dc, volumesBase, include)
 	if err != nil {
 		return nil, err
@@ -177,6 +191,17 @@ func Export(ctx context.Context, dc volumeOps, outputPath, volumesBase string, i
 		})
 	}
 
+	meta.Dependencies = DependencyStatesForVolumes(meta.Volumes, dependencies)
+	if secrets != nil {
+		secretData, marshalErr := json.MarshalIndent(values, "", "  ")
+		if marshalErr != nil {
+			return nil, fmt.Errorf("marshal secrets.json: %w", marshalErr)
+		}
+		if writeErr := os.WriteFile(filepath.Join(tmpDir, secretsFileName), secretData, 0o600); writeErr != nil {
+			return nil, fmt.Errorf("write secrets.json: %w", writeErr)
+		}
+	}
+
 	// Write meta.json
 	metaData, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {
@@ -208,7 +233,7 @@ func Export(ctx context.Context, dc volumeOps, outputPath, volumesBase string, i
 
 // Import restores volumes from a snapshot ZIP into bind-mount directories.
 // The namespace MUST be stopped before calling this.
-func Import(ctx context.Context, dc volumeOps, zipPath, volumesBase string, progress VolumeProgressFunc) (*NamespaceSnapshotMeta, error) {
+func Import(ctx context.Context, dc volumeOps, zipPath, volumesBase string, secrets SecretStore, progress VolumeProgressFunc) (*NamespaceSnapshotMeta, error) {
 	// Estimate needed space (3x ZIP size) and check available disk
 	if zipInfo, err := os.Stat(zipPath); err == nil {
 		needed := zipInfo.Size() * 3
@@ -244,11 +269,17 @@ func Import(ctx context.Context, dc volumeOps, zipPath, volumesBase string, prog
 		return nil, fmt.Errorf("snapshot contains no volumes")
 	}
 
-	// Validate volume metadata from untrusted meta.json before any filesystem operations
-	for _, vol := range meta.Volumes {
-		if valErr := validateVolumeSnapshotMeta(vol); valErr != nil {
-			return nil, valErr
-		}
+	if validationErr := validateSnapshotData(meta, tmpDir); validationErr != nil {
+		return nil, validationErr
+	}
+
+	values, haveSecrets, err := readSnapshotSecrets(tmpDir)
+	if err != nil {
+		return nil, err
+	}
+	plan, err := prepareSnapshotRestore(secrets, &meta, values, haveSecrets)
+	if err != nil {
+		return nil, err
 	}
 
 	// Ensure launcher-utils image
@@ -256,12 +287,22 @@ func Import(ctx context.Context, dc volumeOps, zipPath, volumesBase string, prog
 		return nil, fmt.Errorf("ensure utils image: %w", utilsErr)
 	}
 
+	for _, vol := range meta.Volumes {
+		if err := checkVolumeArchive(ctx, dc, filepath.Join(tmpDir, vol.DataFile)); err != nil {
+			return nil, err
+		}
+	}
+
+	if err := plan.Begin(); err != nil {
+		return nil, fmt.Errorf("mark incomplete snapshot restore: %w", err)
+	}
+
 	// Restore onto a clean slate so leftover files can't mix with the snapshot
 	// and corrupt stateful stores (e.g. mongo WiredTiger). Server mode moves the
-	// whole existing volumes dir aside (kept as volumes.bak-<ts> for recovery);
+	// selected existing volume dirs aside (kept in volumes.bak-* for recovery);
 	// desktop clears each named volume inside importVolume.
 	if !config.IsDesktopMode() {
-		if err := backupServerVolumesDir(volumesBase); err != nil {
+		if err := backupServerVolumesDir(volumesBase, meta.Volumes...); err != nil {
 			return nil, fmt.Errorf("back up existing volumes: %w", err)
 		}
 	}
@@ -284,6 +325,9 @@ func Import(ctx context.Context, dc volumeOps, zipPath, volumesBase string, prog
 		}
 	}
 
+	if err := plan.Commit(); err != nil {
+		return nil, fmt.Errorf("commit snapshot restore: %w", err)
+	}
 	slog.Info("Snapshot imported", "volumes", len(meta.Volumes))
 	return &meta, nil
 }
@@ -303,7 +347,7 @@ func exportVolume(ctx context.Context, dc volumeOps, sourceBind, outputPath stri
 
 	// Command: archive volume contents + capture root ownership
 	cmd := []string{"sh", "-c", fmt.Sprintf(
-		`cd /source && find . -mindepth 1 -printf '%%P\n' | tar %s -cvf "/dest/%s" -T - 2>/dev/null; stat -c "%%u:%%g|0%%a" /source`,
+		`cd /source && tar %s -cf "/dest/%s" . && stat -c "%%u:%%g|0%%a" /source`,
 		tarFlag, dataFile,
 	)}
 
@@ -341,7 +385,7 @@ func exportVolume(ctx context.Context, dc volumeOps, sourceBind, outputPath stri
 // restores onto a clean tree (mixing leftover files with the snapshot corrupts
 // stateful stores like mongo). A missing or empty dir is a no-op. The backup is
 // kept — not deleted — so an operator can recover the pre-import data.
-func backupServerVolumesDir(volumesBase string) error {
+func backupServerVolumesDir(volumesBase string, volumes ...VolumeSnapshotMeta) error {
 	volsDir := filepath.Join(volumesBase, "volumes")
 	entries, err := os.ReadDir(volsDir)
 	if err != nil {
@@ -353,6 +397,10 @@ func backupServerVolumesDir(volumesBase string) error {
 	if len(entries) == 0 {
 		return nil
 	}
+	if len(volumes) > 0 {
+		return backupSelectedServerVolumes(volumesBase, entries, volumes)
+	}
+
 	bak := filepath.Join(volumesBase, "volumes.bak-"+time.Now().UTC().Format("2006-01-02T15-04-05Z"))
 	if err := os.Rename(volsDir, bak); err != nil {
 		return fmt.Errorf("rename %s to %s: %w", volsDir, bak, err)
@@ -381,7 +429,7 @@ func importVolume(ctx context.Context, dc volumeOps, vol VolumeSnapshotMeta, tar
 		// contents before restoring — otherwise leftover files (e.g. a diverged
 		// mongo WiredTiger set) mix with the snapshot and corrupt the store.
 		// Server mode gets a clean tree from Import's volumes-dir backup instead.
-		clearCmd = "find /dest -mindepth 1 -delete 2>/dev/null; "
+		clearCmd = "find /dest -mindepth 1 -delete && "
 	} else {
 		hostDir := filepath.Join(volumesBase, "volumes", vol.Name)
 		if err := os.MkdirAll(hostDir, 0o755); err != nil { //nolint:gosec // G301: volume dirs need 0o755 for Docker access
@@ -432,11 +480,14 @@ func importVolume(ctx context.Context, dc volumeOps, vol VolumeSnapshotMeta, tar
 
 // createZip creates a ZIP file from all files in srcDir.
 func createZip(zipPath, srcDir string) error {
-	f, err := os.Create(zipPath) //nolint:gosec // G304: zipPath is an internal snapshot path
+	f, err := os.OpenFile(zipPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600) //nolint:gosec // G304: zipPath is an internal snapshot path
 	if err != nil {
 		return fmt.Errorf("create zip %s: %w", zipPath, err)
 	}
 	defer f.Close()
+	if err := f.Chmod(0o600); err != nil {
+		return fmt.Errorf("restrict snapshot permissions: %w", err)
+	}
 
 	w := zip.NewWriter(f)
 	defer w.Close()
@@ -476,6 +527,12 @@ func createZip(zipPath, srcDir string) error {
 	if walkErr != nil {
 		return fmt.Errorf("walk %s: %w", srcDir, walkErr)
 	}
+	if err := w.Close(); err != nil {
+		return fmt.Errorf("close snapshot zip: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("close snapshot file: %w", err)
+	}
 	return nil
 }
 
@@ -491,6 +548,10 @@ func validateVolumeSnapshotMeta(vol VolumeSnapshotMeta) error {
 	if vol.DataFile == "" || filepath.Base(vol.DataFile) != vol.DataFile {
 		return fmt.Errorf("invalid dataFile in snapshot: %q", vol.DataFile)
 	}
+	if !strings.HasSuffix(vol.DataFile, ".tar.zst") && !strings.HasSuffix(vol.DataFile, ".tar.xz") {
+		return fmt.Errorf("unsupported snapshot volume archive format")
+	}
+
 	if sanitizeFileName(vol.DataFile) != vol.DataFile {
 		return fmt.Errorf("dataFile contains unsafe characters: %q", vol.DataFile)
 	}
@@ -506,3 +567,72 @@ func isValidChown(s string) bool { return chownPattern.MatchString(s) }
 var chmodPattern = regexp.MustCompile(`^0?[0-7]{3,4}$`)
 
 func isValidChmod(s string) bool { return chmodPattern.MatchString(s) }
+
+// checkVolumeArchive verifies compression/tar integrity before existing data is
+// backed up or cleared. Volume contents are not printed into the operation log.
+func checkVolumeArchive(ctx context.Context, dc volumeOps, path string) error {
+	flag := "--zstd"
+	if strings.HasSuffix(path, ".tar.xz") {
+		flag = "--xz"
+	}
+	cmd := []string{"sh", "-c", fmt.Sprintf(`tar %s -tf "/source/%s" >/dev/null`, flag, filepath.Base(path))}
+	_, exitCode, err := dc.RunUtilsContainer(ctx, cmd, []string{filepath.Dir(path) + ":/source:ro"})
+	if err != nil {
+		return fmt.Errorf("validate snapshot volume archive: %w", err)
+	}
+	if exitCode != 0 {
+		return fmt.Errorf("snapshot volume archive validation failed: %s", filepath.Base(path))
+	}
+	return nil
+}
+
+func validateSnapshotData(meta NamespaceSnapshotMeta, dir string) error {
+	names := make(map[string]bool)
+	files := make(map[string]bool)
+	for _, vol := range meta.Volumes {
+		if valErr := validateVolumeSnapshotMeta(vol); valErr != nil {
+			return valErr
+		}
+		if names[vol.Name] || files[vol.DataFile] {
+			return fmt.Errorf("duplicate volume entry in snapshot")
+		}
+		names[vol.Name], files[vol.DataFile] = true, true
+		info, statErr := os.Lstat(filepath.Join(dir, vol.DataFile))
+		if statErr != nil || !info.Mode().IsRegular() {
+			return fmt.Errorf("snapshot volume data file is missing or not regular: %s", vol.DataFile)
+		}
+	}
+
+	return nil
+}
+
+func backupSelectedServerVolumes(base string, entries []os.DirEntry, volumes []VolumeSnapshotMeta) error {
+	selected := make(map[string]bool, len(volumes))
+	for _, vol := range volumes {
+		selected[vol.Name] = true
+	}
+	var names []string
+	for _, entry := range entries {
+		if selected[entry.Name()] {
+			names = append(names, entry.Name())
+		}
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	backup, err := os.MkdirTemp(base, "volumes.bak-"+time.Now().UTC().Format("20060102T150405Z")+"-")
+	if err != nil {
+		return fmt.Errorf("create volume backup: %w", err)
+	}
+	for index, name := range names {
+		if renameErr := os.Rename(filepath.Join(base, "volumes", name), filepath.Join(backup, name)); renameErr != nil {
+			for _, moved := range names[:index] {
+				if rollbackErr := os.Rename(filepath.Join(backup, moved), filepath.Join(base, "volumes", moved)); rollbackErr != nil {
+					return fmt.Errorf("rollback volume backup: %w", rollbackErr)
+				}
+			}
+			return fmt.Errorf("back up selected volume: %w", renameErr)
+		}
+	}
+	return nil
+}

@@ -79,11 +79,14 @@ const PLAN_STEPS: Record<string, readonly string[]> = {
   // precisely for an older/newer daemon mismatch, so a missing entry here is
   // a real gap, not a hypothetical one.
   qdrant: COPY_STEPS,
+  seaweedfs: COPY_STEPS,
 }
 
 /** The dependencies whose plan COPIES the data volume instead of dumping it —
  *  the confirm screen describes the wrong operation otherwise. */
-const copyPlan = (id: string) => PLAN_STEPS[id] === COPY_STEPS
+const copyPlan = (item: DependencyDto) => item.migrationStepIds
+  ? item.migrationStepIds.includes('copy-volume')
+  : PLAN_STEPS[item.id] === COPY_STEPS
 
 
 const BTN_PRIMARY = 'rounded-md bg-primary text-primary-foreground px-3 py-1.5 text-xs font-medium hover:bg-primary/90 disabled:opacity-50'
@@ -596,7 +599,7 @@ export function DependenciesDialog({ open, onClose }: Props) {
           {/* The two plans do different things to the data, and one sentence
               cannot describe both: PostgreSQL dumps and restores, RabbitMQ and
               ZooKeeper copy the volume and upgrade the copy. */}
-          <p>{t(copyPlan(view.item.id) ? 'deps.confirm.introCopy' : 'deps.confirm.intro',
+          <p>{t(copyPlan(view.item) ? 'deps.confirm.introCopy' : 'deps.confirm.intro',
             { id: view.item.id, from: view.item.currentImage, to: view.item.targetImage })}</p>
           {/* ZooKeeper 3.8 and 3.9 share one on-disk format, so its "migration"
               is a container swap. Saying so is the honest version of a screen

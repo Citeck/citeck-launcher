@@ -7,12 +7,14 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/citeck/citeck-launcher/internal/api"
 	"github.com/citeck/citeck-launcher/internal/appdef"
+	"github.com/citeck/citeck-launcher/internal/bundle"
 	"github.com/citeck/citeck-launcher/internal/namespace"
 	"github.com/citeck/citeck-launcher/internal/systemsecrets"
 )
@@ -97,9 +99,10 @@ func (d *Daemon) handleSetAdminPassword(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// The password every container was created with, before anything moves:
-	// what the apps the rotation does not reach still accept afterwards.
-	oldPassword := d.active().systemSecrets.AdminPasswordOrDefault()
+	// Keep the previous system value for best-effort detection of apps whose
+	// original password slots cannot be identified from workspace metadata.
+	rotationState := d.active()
+	oldPassword := rotationState.systemSecrets.AdminPasswordOrDefault()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -167,7 +170,11 @@ func (d *Daemon) handleSetAdminPassword(w http.ResponseWriter, r *http.Request) 
 	// full rationale. Then update the in-memory copy so subsequent kcadm.sh
 	// invocations in this same daemon lifetime (e.g. a second
 	// `citeck setup admin-password`) authenticate with the new value.
-	if err := systemsecrets.Set(d.store, d.secretService, systemsecrets.IDAdminPassword, req.Password); err != nil {
+	nsID := ""
+	if rotationState.nsConfig != nil {
+		nsID = rotationState.nsConfig.ID
+	}
+	if err := systemsecrets.SetForNamespace(d.store, d.secretService, rotationState.workspaceID, nsID, systemsecrets.IDAdminPassword, req.Password); err != nil {
 		slog.Warn("Admin password reset OK in keycloak, but failed to persist to launcher state", "err", err)
 	}
 	// In-place rotation on the LIVE activeNamespace (under configMu, without
@@ -177,7 +184,7 @@ func (d *Daemon) handleSetAdminPassword(w http.ResponseWriter, r *http.Request) 
 	d.activeLocked().systemSecrets.AdminPassword = req.Password
 	d.configMu.Unlock()
 
-	recreate := appsOnTheOldAdminPassword(apps.Apps(), oldPassword)
+	recreate := appsNeedingAdminPasswordRecreate(apps.Apps(), rotationState.workspaceConfig, oldPassword, req.Password)
 	slog.Info("Admin password reset (keycloak master + ecos-app, rabbitmq, pgadmin)",
 		"stillOnTheOldPasswordUntilRecreated", recreate)
 	writeJSON(w, api.AdminPasswordResultDto{Success: true, Message: "Admin password reset", RecreateNeeded: recreate})
@@ -187,6 +194,65 @@ func (d *Daemon) handleSetAdminPassword(w http.ResponseWriter, r *http.Request) 
 	// stable "citeck" SA (not "admin"), so the admin-password change does
 	// not touch ECOS_WEBAPP_RABBITMQ_PASSWORD and webapps do NOT need a
 	// reload here. See addWebappInfraEnv in internal/namespace/generator.go.
+}
+
+// appsNeedingAdminPasswordRecreate uses the workspace's unresolved templates
+// to recognize a password slot even after several rotations or a daemon
+// restart. A previous-value search alone loses the first deployed password as
+// soon as the system secret moves a second time. Apps without source metadata
+// retain the existing best-effort detection by the previous value.
+func appsNeedingAdminPasswordRecreate(apps []*namespace.AppRuntime, ws *bundle.WorkspaceConfig, oldPassword, password string) []string {
+	var out []string
+	for _, app := range apps {
+		if app == nil || app.ContainerID == "" || slices.Contains(adminPasswordRotatedAtRuntime, app.Name) {
+			continue
+		}
+		known, stale := false, false
+		if entry, ok := ws.AdditionalApp(app.Name); ok {
+			for key, template := range entry.Environments {
+				if !strings.Contains(template, "${ADMIN_PASSWORD}") {
+					continue
+				}
+				known = true
+				deployed, exists := app.Def.Environments.Get(key)
+				stale = stale || !exists || !adminPasswordTemplateMatches(template, deployed, password)
+			}
+			for i, template := range entry.Cmd {
+				if strings.Contains(template, "${ADMIN_PASSWORD}") {
+					known = true
+					stale = stale || i >= len(app.Def.Cmd) || !adminPasswordTemplateMatches(template, app.Def.Cmd[i], password)
+				}
+			}
+		}
+		if stale || (!known && len(appsOnTheOldAdminPassword([]*namespace.AppRuntime{app}, oldPassword)) > 0) {
+			out = append(out, app.Name)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+var adminPasswordTemplateVar = regexp.MustCompile(`\$\{[^}]+\}`)
+
+// Other template variables can have arbitrary resolved values. Match their
+// slots freely, but quote every literal and require each ADMIN_PASSWORD slot
+// to hold the requested password; a username or URL path is never evidence.
+func adminPasswordTemplateMatches(template, deployed, password string) bool {
+	var pattern strings.Builder
+	pattern.WriteString("(?s)^")
+	end := 0
+	for _, loc := range adminPasswordTemplateVar.FindAllStringIndex(template, -1) {
+		pattern.WriteString(regexp.QuoteMeta(template[end:loc[0]]))
+		if template[loc[0]:loc[1]] == "${ADMIN_PASSWORD}" {
+			pattern.WriteString(regexp.QuoteMeta(password))
+		} else {
+			pattern.WriteString(".*")
+		}
+		end = loc[1]
+	}
+	pattern.WriteString(regexp.QuoteMeta(template[end:]))
+	pattern.WriteString("$")
+	return regexp.MustCompile(pattern.String()).MatchString(deployed)
 }
 
 // adminPasswordRotatedAtRuntime are the apps handleSetAdminPassword changes

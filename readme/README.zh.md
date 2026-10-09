@@ -82,7 +82,7 @@ Login:            admin / <generated password>
 
 关于这个界面，有两点需要注意：
 
-- **管理员密码只显示一次。** 请复制保存——之后无法找回。如果丢失，可用 `citeck setup admin-password` 重置。
+- **管理员密码只显示一次。** 请复制并妥善保存。如果丢失，可用 `citeck setup admin-password` 重置。
 - **使用自签名证书时，浏览器会发出警告。** 这是预期行为——点击*高级* → *继续访问*。
 
 如果约 20 分钟后仍看起来卡住，请先运行 `citeck diagnose`（加上 `--fix` 可让它自动修复能处理的问题）和 `citeck logs <app>`。
@@ -109,12 +109,14 @@ citeck logs <app> -f             # 流式查看日志（不指定应用则查看
 citeck stop <app>                # 停止某个应用——并在重启后仍保持停止状态
 citeck start <app>               # 重新启动它（重新纳管）
 citeck reload                    # 应用配置变更，仅重建发生变化的部分
-citeck snapshot export <name>    # 备份所有卷（先停止平台，随后重新启动）
+citeck snapshot export           # 备份所有卷（先停止平台，随后重新启动）
 citeck upgrade <bundle:version>  # 切换到另一个平台版本
 citeck diagnose --fix            # 健康检查，可选自动修复
 citeck setup                     # 修改设置（管理员密码、TLS、邮件、资源……）
 citeck edit <app>                # 以 kubectl edit 的方式编辑应用的定义
 ```
+
+快照默认不包含密钥，适用于在同一服务器上使用原有凭据恢复。如需连同凭据迁移，请运行 `citeck snapshot export --include-secrets`。namespace 密钥及 JWT/OIDC/admin/SA 会以明文存入 `secrets.json`；导入的系统密钥仅用于目标 namespace。快照不包含 namespace 配置和外部 S3 对象。[格式和限制](../docs/snapshots.md)（俄语）。
 
 请注意，`citeck stop <app>` 会将应用**分离（detach）**：在你运行 `citeck start <app>` 之前，它会在重启和重新加载后依然保持停止状态。这也是在小内存主机上释放内存的方式——分离几个可选应用可以节省数 GB。
 

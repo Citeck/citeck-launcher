@@ -126,6 +126,12 @@ func (d *Daemon) dependencyItems(ctx context.Context, t *i18n.Translator, act ac
 			// pin follows it once the container runs.
 			item.Status = api.DependencyPendingMinor
 		}
+		if migrator, ok := migrate.MigratorFor(desc.ID()); ok {
+			if preview, ok := migrator.(interface{ StepIDs() []string }); ok {
+				item.MigrationStepIDs = preview.StepIDs()
+			}
+		}
+
 		if v, ok := desc.ParseVersion(current); ok {
 			item.CurrentVersion = v.String()
 		}
@@ -362,6 +368,9 @@ func (d *Daemon) journalBlocker(t *i18n.Translator, act activeNamespace) string 
 	rt := act.runtime
 	if rt == nil {
 		return ""
+	}
+	if rt.SnapshotImportPending() {
+		return t.T("snapshot.import.pending")
 	}
 	j := rt.MigrationJournal()
 	if j == nil {

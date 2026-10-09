@@ -81,6 +81,7 @@
   "snapshot.stopped": "Namespace gestoppt",
   "snapshot.stopTimeout": "Zeitüberschreitung beim Stoppen des Namespaces (hängt bei {status})",
   "snapshot.notFound": "Snapshot \"{name}\" nicht gefunden. 'citeck snapshot list' ausführen, um verfügbare Snapshots anzuzeigen",
+  "snapshot.import.pending": "Der Snapshot-Import ist unvollständig. Wiederholen Sie den Import, bevor Sie den Namespace starten.",
   "snapshot.import.detach": "Snapshot importiert, Start des Namespaces eingeleitet (zum Verfolgen: `citeck status`).",
   "snapshot.import.background": "Der Namespace startet im Hintergrund weiter. Zum Verfolgen: `citeck status`.",
   "snapshot.waitingCompletion": "Warte auf Abschluss...",
@@ -564,14 +565,9 @@
   "contentStorage.msg.unavailable.externalS3": "Dieser Namespace speichert seine Inhalte in einem externen S3 (dem s3-Block seiner Konfiguration), das sich nicht mit dem S3-Inhaltsspeicher kombinieren lässt.",
   "contentStorage.msg.unavailable.bundleUnresolved": "Bundle {bundle} ist nicht im synchronisierten Bundle-Repository, daher kann der S3-Inhaltsspeicher dafür nicht geprüft werden. Synchronisieren Sie das Repository (Force Update) und versuchen Sie es erneut.",
   "contentStorage.msg.notS3": "Dieser Namespace speichert seine Inhalte in der Datenbank; es gibt keinen S3-Speicher zu verbinden.",
-  "contentStorage.msg.provision.secretsLocked": "Die Geheimnisse des Namespace sind gesperrt, daher können die S3-Zugangsdaten von {app} nicht gelesen und ecos-content nicht damit verbunden werden. Entsperren Sie die Geheimnisse und versuchen Sie es erneut.",
-  "contentStorage.msg.provision.secretsUnreadable": "Die Geheimnisse des Namespace konnten nicht gelesen werden, daher kann ecos-content nicht mit seinem S3-Speicher verbunden werden: {error}",
-  "contentStorage.msg.provision.secretMissing": "Die S3-Zugangsdaten von {app} verweisen auf Geheimnisse, für die dieser Namespace keinen Wert hat: {secrets}. Fügen Sie sie den secrets der Workspace-Konfiguration hinzu und versuchen Sie es erneut.",
-  "contentStorage.msg.provision.secretNotGenerated": "Die S3-Zugangsdaten von {app} verweisen auf generierte Geheimnisse, für die dieser Namespace noch keinen Wert hat: {secrets}. Laden Sie den Namespace neu, um sie zu erzeugen (citeck reload oder „Aktualisieren & Starten“); ecos-content wird mit dem neuen Schlüssel verbunden, sobald {app} damit neu gestartet ist.",
   "contentStorage.msg.provision.notReady": "ECOS war innerhalb von {minutes} Minuten nicht bereit für die Verbindung des S3-Inhaltsspeichers. Letzte Antwort: {error}",
   "contentStorage.msg.provision.readFailed": "Die Einstellungen des Inhaltsspeichers konnten nicht aus ECOS gelesen werden: {error}",
   "contentStorage.msg.provision.createFailed": "{record} konnte in ECOS nicht angelegt werden: {error}",
-  "contentStorage.msg.provision.updateFailed": "{record} konnte in ECOS nicht aktualisiert werden: {error}",
   "contentStorage.msg.provision.setDefaultFailed": "{storage} konnte in ECOS nicht als Standard-Inhaltsspeicher festgelegt werden: {error}",
   "contentStorage.msg.provision.verifyFailed": "{storage} wurde als Standard-Inhaltsspeicher festgelegt, aber ECOS meldet jetzt {actual}.",
   "deps.msg.busy.rollback": "ein Rollback einer Abhängigkeit läuft — warten Sie, bis es abgeschlossen ist",
@@ -595,5 +591,8 @@
   "deps.msg.event.rolledBackWithWarning": "{id} wurde auf {image} zurückgesetzt; {error}",
   "deps.msg.action.migrationStarted": "Migration von {id} auf {image} gestartet",
   "deps.msg.action.rollbackStarted": "Rollback von {id} auf {image} gestartet",
-  "apps.msg.namespaceNotRunning": "Der Namespace läuft nicht — starten Sie ihn zuerst, danach lässt sich die einzelne Anwendung starten."
+  "apps.msg.namespaceNotRunning": "Der Namespace läuft nicht — starten Sie ihn zuerst, danach lässt sich die einzelne Anwendung starten.",
+  "contentStorage.msg.local.desktopOnly": "Der Export der lokalen S3-Umgebung ist nur auf dem Desktop verfügbar.",
+  "contentStorage.msg.local.notConfigured": "Dieser Namespace hat keine native S3-Umgebung zum Exportieren.",
+  "contentStorage.msg.local.providerNotReady": "Der S3-Anbieter muss mit veröffentlichtem Desktop-Port laufen."
 }

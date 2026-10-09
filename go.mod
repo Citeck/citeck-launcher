@@ -1,6 +1,6 @@
 module github.com/citeck/citeck-launcher
 
-go 1.26.6
+go 1.26.9
 
 require (
 	github.com/cespare/xxhash/v2 v2.3.0

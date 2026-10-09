@@ -42,6 +42,9 @@ func TestDispatcherDispatchRuns(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("worker result not received")
 	}
+	// Receiving the buffered result does not synchronize with the subsequent
+	// Flush. Wait for the worker before asserting its completion signal.
+	wg.Wait()
 	// Signal flushed.
 	select {
 	case <-sig.C():

@@ -283,3 +283,69 @@ func cloneResult(res *deps.MigrationResult) *deps.MigrationResult {
 	c := *res
 	return &c
 }
+
+// ApplySnapshotPins merges only restored dependency state and clears obsolete journals.
+func ApplySnapshotPins(state *NsPersistedState, pins map[deps.ID]deps.DependencyState) {
+	if state.Dependencies == nil {
+		state.Dependencies = make(map[deps.ID]deps.DependencyState)
+	}
+	maps.Copy(state.Dependencies, pins)
+	if state.DependencyMigration != nil {
+		if _, restored := pins[state.DependencyMigration.ID]; restored {
+			state.DependencyMigration = nil
+		}
+	}
+	if state.LastDependencyMigration != nil {
+		if _, restored := pins[state.LastDependencyMigration.ID]; restored {
+			state.LastDependencyMigration = nil
+		}
+	}
+}
+
+// SnapshotImportPending blocks starts until all restored metadata commits.
+func (r *Runtime) SnapshotImportPending() bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.snapshotImportPending
+}
+
+// RestoreSnapshotImportPending is load-time only; it does not persist.
+func (r *Runtime) RestoreSnapshotImportPending(pending bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.snapshotImportPending = pending
+}
+
+// BeginSnapshotImport is durable BEFORE any volume changes.
+func (r *Runtime) BeginSnapshotImport() error {
+	r.awaitStoppedLoopExit()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.status != NsStatusStopped {
+		return fmt.Errorf("snapshot import requires a stopped namespace")
+	}
+	r.snapshotImportPending = true
+	return r.persistUnderLock("snapshot-import-pending")
+}
+
+// CommitSnapshotDependencies publishes the new runtime pins only AFTER the
+// external keys+state transaction commits. Failed commits keep the start gate.
+func (r *Runtime) CommitSnapshotDependencies(pins map[deps.ID]deps.DependencyState, commit func(*NsPersistedState) error) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.status != NsStatusStopped {
+		return fmt.Errorf("snapshot commit requires a stopped namespace")
+	}
+	state := r.persistedStateUnderLock()
+	ApplySnapshotPins(state, pins)
+	state.SnapshotImportPending = false
+	if err := commit(state); err != nil {
+		return fmt.Errorf("commit restored namespace metadata: %w", err)
+	}
+	r.dependencyPins = state.Dependencies
+	r.migrationJournal = state.DependencyMigration
+	r.lastMigration = state.LastDependencyMigration
+	r.snapshotImportPending = false
+	r.dirty.Store(false)
+	return nil
+}

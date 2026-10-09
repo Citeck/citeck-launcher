@@ -117,6 +117,14 @@ async function openCreate(defaults: { bundleRepo: string; bundleKey: string }) {
   await waitFor(() => expect(screen.getByDisplayValue('Citeck #1')).toBeDefined())
 }
 
+async function openStorage() {
+  await act(async () => { (await screen.findByRole('tab', { name: 'Advanced' })).click() })
+}
+
+async function openGeneral() {
+  await act(async () => { screen.getByRole('tab', { name: 'General' }).click() })
+}
+
 async function submit(label: RegExp) {
   await act(async () => { screen.getAllByRole('button', { name: label }).at(-1)!.click() })
 }
@@ -142,7 +150,8 @@ describe('NamespaceEditDialog content storage', () => {
   it('sends the database when the database is what the form shows', async () => {
     optionsByRepo({ enterprise: AVAILABLE })
     await openCreate({ bundleRepo: 'enterprise', bundleKey: '2026.3' })
-    expect(((await screen.findByRole('radio', { name: /Database/ })) as HTMLInputElement).checked).toBe(true)
+    expect(screen.queryByRole('radio')).toBeNull()
+    expect(screen.getByRole('tab', { name: 'Advanced' })).toBeDefined()
 
     await submit(/^Submit$/)
     await waitFor(() => expect(createNamespace).toHaveBeenCalled())
@@ -152,6 +161,7 @@ describe('NamespaceEditDialog content storage', () => {
   it('offers S3 on an Enterprise bundle, defaults to the database, and sends S3 only when chosen', async () => {
     optionsByRepo({ enterprise: AVAILABLE })
     await openCreate({ bundleRepo: 'enterprise', bundleKey: '2026.3' })
+    await openStorage()
 
     const db = await screen.findByRole('radio', { name: /Database/ })
     const s3 = screen.getByRole('radio', { name: /S3 \(SeaweedFS\)/ })
@@ -163,6 +173,8 @@ describe('NamespaceEditDialog content storage', () => {
     await act(async () => { s3.click() })
     expect(screen.getByText(/seaweedfs will start with the namespace/)).toBeDefined()
     expect(screen.getByText(/The choice is final/)).toBeDefined()
+    await openGeneral()
+    expect(screen.queryByRole('radio')).toBeNull()
 
     await submit(/^Submit$/)
     await waitFor(() => expect(createNamespace).toHaveBeenCalled())
@@ -172,6 +184,7 @@ describe('NamespaceEditDialog content storage', () => {
   it('shows S3 disabled, with the reason, when the workspace declares no provider', async () => {
     optionsByRepo({ enterprise: { available: false, reason: 'NO_PROVIDER_CONFIG' } })
     await openCreate({ bundleRepo: 'enterprise', bundleKey: '2026.3' })
+    await openStorage()
 
     const s3 = await screen.findByRole('radio', { name: /^S3/ })
     expect((s3 as HTMLInputElement).disabled).toBe(true)
@@ -183,11 +196,14 @@ describe('NamespaceEditDialog content storage', () => {
   it('drops an S3 choice when the bundle changes to one that cannot have it', async () => {
     optionsByRepo({ enterprise: AVAILABLE })
     await openCreate({ bundleRepo: 'enterprise', bundleKey: '2026.3' })
+    await openStorage()
     await act(async () => { (await screen.findByRole('radio', { name: /^S3/ })).click() })
 
     optionsByRepo({ enterprise: { available: false, reason: 'NO_PROVIDER_IMAGE', providerApp: 'seaweedfs' } })
+    await openGeneral()
     // The refresh button re-reads the bundle list, which re-asks the daemon.
     await act(async () => { screen.getByRole('button', { name: 'Refresh bundles (git pull)' }).click() })
+    await openStorage()
     await waitFor(() => expect(screen.getByText(/names an image for seaweedfs/)).toBeDefined())
     expect((screen.getByRole('radio', { name: /Database/ }) as HTMLInputElement).checked).toBe(true)
 
@@ -202,8 +218,10 @@ describe('NamespaceEditDialog content storage', () => {
     vi.mocked(getContentStorageOptions).mockImplementation((_repo: string, key: string) =>
       key === '2026.3' ? Promise.resolve({ s3: AVAILABLE }) : new Promise(() => {}))
     await openCreate({ bundleRepo: 'enterprise', bundleKey: '2026.3' })
+    await openStorage()
     await act(async () => { (await screen.findByRole('radio', { name: /^S3/ })).click() })
 
+    await openGeneral()
     await act(async () => { screen.getByRole('button', { name: /2026\.3/ }).click() })
     await act(async () => { screen.getByRole('option', { name: '2026.2' }).click() })
 
@@ -216,6 +234,7 @@ describe('NamespaceEditDialog content storage', () => {
   it('lets a DB namespace switch to S3, and sends exactly that switch', async () => {
     optionsByRepo({ enterprise: AVAILABLE })
     await open(edited({ bundleRepo: 'enterprise', bundleKey: '2026.3', contentStorage: 'DB' }))
+    await openStorage()
 
     const s3 = await screen.findByRole('radio', { name: /^S3/ })
     await act(async () => { s3.click() })
@@ -233,6 +252,7 @@ describe('NamespaceEditDialog content storage', () => {
   it('shows S3 disabled on a namespace with an external S3, and sends nothing', async () => {
     optionsByRepo({ enterprise: AVAILABLE })
     await open(edited({ bundleRepo: 'enterprise', bundleKey: '2026.3', contentStorage: 'DB', externalS3: true }))
+    await openStorage()
 
     const s3 = await screen.findByRole('radio', { name: /^S3 \(SeaweedFS\)/ })
     expect((s3 as HTMLInputElement).disabled).toBe(true)
@@ -246,6 +266,7 @@ describe('NamespaceEditDialog content storage', () => {
   it('leaves a DB namespace untouched when the database stays chosen', async () => {
     optionsByRepo({ enterprise: AVAILABLE })
     await open(edited({ bundleRepo: 'enterprise', bundleKey: '2026.3', contentStorage: 'DB' }))
+    await openStorage()
     await screen.findByRole('radio', { name: /^S3/ })
 
     await submit(/^Save$/)
@@ -258,6 +279,7 @@ describe('NamespaceEditDialog content storage', () => {
   it('shows an S3 namespace read-only, even on a bundle the daemon says nothing about', async () => {
     vi.mocked(getContentStorageOptions).mockRejectedValue(new Error('offline'))
     await open(edited({ bundleRepo: 'enterprise', bundleKey: '2026.3', contentStorage: 'S3' }))
+    await openStorage()
 
     expect(await screen.findByText('Content storage')).toBeDefined()
     expect(screen.queryByRole('radio')).toBeNull()
@@ -279,13 +301,16 @@ describe('NamespaceEditDialog content storage', () => {
       'enterprise:2026.2': { available: false, reason: 'NO_PROVIDER_IMAGE', providerApp: 'seaweedfs', providerTitle: 'SeaweedFS' },
     })
     await open(edited({ bundleRepo: 'enterprise', bundleKey: '2026.3', contentStorage: 'S3' }))
+    await openStorage()
     // The provider's name comes from the answer — so it is in.
     await screen.findByText('S3 (SeaweedFS)')
     expect(screen.queryByText(/Saving will be refused/)).toBeNull()
 
+    await openGeneral()
     await act(async () => { screen.getByRole('button', { name: /2026\.3/ }).click() })
     await act(async () => { screen.getByRole('option', { name: '2026.2' }).click() })
 
+    await openStorage()
     const warning = await screen.findByText(/Saving will be refused/)
     expect(warning.textContent).toContain('names an image for seaweedfs')
   })

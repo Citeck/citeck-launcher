@@ -111,7 +111,7 @@ func generateBundleWebapps(ctx *NsGenContext, bun *bundle.Def, wsCfg *bundle.Wor
 	claimed := make(map[string]bool)
 	if wsCfg != nil {
 		for _, a := range wsCfg.AdditionalApps {
-			if a.IsEnabled() && !a.IsTyped() && !wsWebapps[strings.TrimSpace(a.Name)] {
+			if a.IsEnabled() && (!a.IsTyped() || a.Type == bundle.AppTypeSeaweedFS) && !wsWebapps[strings.TrimSpace(a.Name)] {
 				claimed[strings.TrimSpace(a.Name)] = true
 			}
 		}

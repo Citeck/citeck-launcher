@@ -359,13 +359,14 @@ func (c *DaemonClient) ListSnapshots() ([]api.SnapshotDto, error) {
 
 // ExportSnapshot triggers a volume snapshot export.
 // If outputDir is non-empty, the snapshot is written there instead of the default directory.
-func (c *DaemonClient) ExportSnapshot(outputDir string) (*api.ActionResultDto, error) {
+func (c *DaemonClient) ExportSnapshot(outputDir string, includeSecrets ...bool) (*api.ActionResultDto, error) {
 	path := api.SnapshotsExport
 	if outputDir != "" {
 		path += "?output=" + url.QueryEscape(outputDir)
 	}
 	var dto api.ActionResultDto
-	err := c.post(path, nil, &dto)
+	body := map[string]bool{"includeSecrets": len(includeSecrets) > 0 && includeSecrets[0]}
+	err := c.post(path, body, &dto)
 	return &dto, err
 }
 
@@ -619,6 +620,32 @@ func (c *DaemonClient) putRaw(path, contentType string, body []byte, result any)
 		}
 	}
 	return nil
+}
+
+// GetContentStorageLocalEnv exports native S3 env for desktop IDE use.
+func (c *DaemonClient) GetContentStorageLocalEnv() (map[string]string, error) {
+	var env map[string]string
+	if err := c.get(api.ContentStorageLocalEnv, &env); err != nil {
+		return nil, fmt.Errorf("get local S3 environment: %w", err)
+	}
+	return env, nil
+}
+
+// GetContentStorageOptions asks the running daemon to resolve a bundle offline,
+// including its launcher-version constraint and active workspace configuration.
+func (c *DaemonClient) GetContentStorageOptions(repo, key string) (*api.ContentStorageOptionsDto, error) {
+	var dto api.ContentStorageOptionsDto
+	params := url.Values{"bundleRepo": {repo}, "bundleKey": {key}}
+	if err := c.get(api.ContentStorageOptions+"?"+params.Encode(), &dto); err != nil {
+		return nil, fmt.Errorf("get content storage options: %w", err)
+	}
+	return &dto, nil
+}
+
+// GetStoredNamespaceConfig reads the current persisted config, including edits
+// not yet applied by reload. Used to check the input of a history undo.
+func (c *DaemonClient) GetStoredNamespaceConfig() (string, error) {
+	return c.getRaw(api.Config)
 }
 
 // PutNamespaceConfig replaces the active namespace's namespace.yml with body

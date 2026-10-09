@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/bundle"
 )
@@ -283,10 +285,29 @@ func applyEmailConfig(app *AppBuilder, ctx *NsGenContext) {
 }
 
 // applyS3Config configures external S3 storage settings for the content app.
-// Note: bucket and region are stored in namespace.yml S3Config for reference and
-// configured at the app level (content-storage endpoint), not passed as env vars here.
+// Bucket and optional region configure the native storage artifact; endpoint
+// and credentials use their existing native environment providers.
 func applyS3Config(app *AppBuilder, ctx *NsGenContext) {
 	s3 := ctx.Config.S3
+	// Override only the built-in native storage artifact. Endpoint and secret
+	// stay in their environment providers; no provider-derived records exist.
+	// YAML encoding keeps arbitrary valid bucket strings out of template syntax.
+	storageConfig := map[string]string{"endpoint": "emodel/endpoint@content-storage-s3-endpoint", "bucketName": s3.Bucket}
+	if region := strings.TrimSpace(s3.Region); region != "" {
+		storageConfig["region"] = region
+	}
+	artifact, err := yaml.Marshal(map[string]any{
+		"id":     "content-storage-s3",
+		"name":   map[string]string{"en": "S3 content storage", "ru": "Хранилище контента для S3"},
+		"type":   "S3",
+		"config": storageConfig,
+	})
+	if err != nil {
+		panic(err)
+	} // a map containing strings is always YAML-encodable
+	const nativeArtifact = "app/content/s3/content-storage-s3.yml"
+	ctx.Files[nativeArtifact] = artifact
+	app.AddVolume("./" + nativeArtifact + ":/app/resources/eapps/artifacts/content/storage/content-storage-s3.yml:ro")
 	app.AddEnv("ECOS_ENDPOINT_CONTENT_STORAGE_S3_ENDPOINT_URL", s3.Endpoint)
 	app.AddEnv("ECOS_ENDPOINT_CONTENT_STORAGE_S3_ENDPOINT_CREDENTIALS", "content-storage-s3-credentials")
 	app.AddEnv("ECOS_SECRET_CONTENT_STORAGE_S3_CREDENTIALS_TYPE", "BASIC")

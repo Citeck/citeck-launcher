@@ -316,7 +316,7 @@ func (errReader) Read([]byte) (int, error) { return 0, errors.New("no entropy") 
 // generated key would never exist), the reload plan PREVIEWs (or it would
 // store, or report the app excluded), and everything that acts on values
 // outside a generation only READS (or it would invent a key no container
-// has — the provisioner would hand it to ECOS).
+// has).
 func TestEverySecretLoadNamesItsMode(t *testing.T) {
 	cases := []struct {
 		file, fn, call, mode string
@@ -325,7 +325,6 @@ func TestEverySecretLoadNamesItsMode(t *testing.T) {
 		{"server.go", "doReloadEx", "namespaceSecretsFor", "nsSecretsSeed"},
 		{"routes_reloadplan.go", "resolveReloadPlanInputs", "namespaceSecretsFor", "nsSecretsPreview"},
 		{"deps_env.go", "GenerateDefForVolume", "namespaceSecretsFor", "nsSecretsRead"},
-		{"content_storage_provision.go", "newContentStorageProvisioner", "loadNamespaceSecrets", "nsSecretsRead"},
 	}
 	for _, c := range cases {
 		t.Run(c.fn, func(t *testing.T) {

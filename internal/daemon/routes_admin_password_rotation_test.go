@@ -13,7 +13,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/citeck/citeck-launcher/internal/api"
 	"github.com/citeck/citeck-launcher/internal/appdef"
+	"github.com/citeck/citeck-launcher/internal/bundle"
 	"github.com/citeck/citeck-launcher/internal/namespace"
 	"github.com/citeck/citeck-launcher/internal/storage"
 	"github.com/citeck/citeck-launcher/internal/systemsecrets"
@@ -399,4 +401,58 @@ func TestAppsOnTheOldAdminPassword_AShortPasswordMatchesOnlyWhole(t *testing.T) 
 	}
 	assert.Equal(t, []string{"in-cmd"}, appsOnTheOldAdminPassword(inCmd, "s3cr3t-pw"),
 		"a distinctive password counts inside a value, the command line included")
+}
+
+// Repeating a rotation before reload must keep reporting the provider's
+// original deployed password, even after the system secret moves again.
+func TestAdminPasswordRotationKeepsReportingAnUnrecreatedProvider(t *testing.T) {
+	d := newRotationTestDaemon(t, &fakeExecer{})
+	d.activeNs.systemSecrets.AdminPassword = "original-password"
+	d.activeNs.workspaceConfig = &bundle.WorkspaceConfig{AdditionalApps: []bundle.AdditionalAppProps{
+		{Name: "store", Environments: map[string]string{"ADMIN_LOGIN": "admin", "ADMIN_PASSWORD": "${ADMIN_PASSWORD}"}},
+	}}
+	provider := envApp("store", "ADMIN_LOGIN", "admin", "ADMIN_PASSWORD", "original-password")
+	d.rotationApps.(stubAppFinder)["store"] = provider
+	rotate := func(password string, want []string) {
+		t.Helper()
+		rec := postAdminPassword(d, `{"password":"`+password+`"}`)
+		require.Equal(t, http.StatusOK, rec.Code)
+		var res api.AdminPasswordResultDto
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &res))
+		assert.Equal(t, want, res.RecreateNeeded)
+	}
+	rotate("second-password", []string{"store"})
+	rotate("third-password", []string{"store"})
+	// A new daemon resolves the persisted password, but adopts the old
+	// container definition: the warning still comes from source metadata.
+	restored, err := systemsecrets.Get(d.store, d.secretService, systemsecrets.IDAdminPassword, func() string { t.Fatal("must exist"); return "" })
+	require.NoError(t, err)
+	d.activeNs.systemSecrets.AdminPassword = restored
+	rotate("fourth-password", []string{"store"})
+	// A provider already recreated with the requested credential needs no
+	// warning, even when its username happens to equal the previous password.
+	provider.Def.Environments.Set("ADMIN_PASSWORD", "fifth-password")
+	rotate("fifth-password", nil)
+}
+
+func TestAdminPasswordSourceMetadataMatchesOnlyCredentialSlots(t *testing.T) {
+	ws := &bundle.WorkspaceConfig{AdditionalApps: []bundle.AdditionalAppProps{
+		{Name: "store", Environments: map[string]string{"URL": "http://${USER}:${ADMIN_PASSWORD}@host/${PATH}", "USERNAME": "admin"}, Cmd: []string{"serve", "--password=${ADMIN_PASSWORD}"}},
+	}}
+	app := envApp("store", "USERNAME", "old-password", "URL", "http://operator:new-password@host/admin")
+	app.Def.Cmd = []string{"serve", "--password=new-password"}
+	assert.Empty(t, appsNeedingAdminPasswordRecreate([]*namespace.AppRuntime{app}, ws, "old-password", "new-password"), "unrelated username does not count")
+	app.Def.Cmd[1] = "--password=first-password"
+	assert.Equal(t, []string{"store"}, appsNeedingAdminPasswordRecreate([]*namespace.AppRuntime{app}, ws, "old-password", "new-password"), "command credential must match too")
+	app.Def.Cmd[1] = "--password=new-password"
+	app.Def.Environments.Set("URL", "http://operator:first-password@host/admin")
+	assert.Equal(t, []string{"store"}, appsNeedingAdminPasswordRecreate([]*namespace.AppRuntime{app}, ws, "old-password", "new-password"), "composed credential must match")
+}
+
+func TestAdminPasswordTemplateQuotesPasswordAndLiterals(t *testing.T) {
+	const password = "pa.$[ss]+(word)?"
+	assert.True(t, adminPasswordTemplateMatches("https://${USER}:${ADMIN_PASSWORD}@host/${PATH}", "https://admin:"+password+"@host/a", password))
+	assert.False(t, adminPasswordTemplateMatches("--password=${ADMIN_PASSWORD}", "--password=paXssssword", password))
+	assert.True(t, adminPasswordTemplateMatches("${ADMIN_PASSWORD}/${ADMIN_PASSWORD}", password+"/"+password, password))
+	assert.False(t, adminPasswordTemplateMatches("${ADMIN_PASSWORD}/${ADMIN_PASSWORD}", password+"/old-password", password))
 }

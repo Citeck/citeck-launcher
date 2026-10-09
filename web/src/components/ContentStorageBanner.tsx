@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { AlertTriangle, HardDrive, Loader2, RotateCw, X } from 'lucide-react'
 import { useDashboardStore } from '../lib/store'
+import { useActiveWorkspaceId } from '../lib/daemonStatus'
 import { useTranslation } from '../lib/i18n'
 import { postContentStorageProvision } from '../lib/api'
 import { toast } from '../lib/toast'
@@ -41,6 +42,7 @@ import {
 export function ContentStorageBanner() {
   const cs = useDashboardStore((s) => s.namespace?.contentStorage)
   const nsId = useDashboardStore((s) => s.namespace?.id ?? '')
+  const workspaceId = useActiveWorkspaceId()
   const nsStatus = useDashboardStore((s) => s.namespace?.status)
   const dismissedNs = useContentStorageBannerStore((s) => s.dismissedNs)
   const dismissProgress = useContentStorageBannerStore((s) => s.dismissProgress)
@@ -114,7 +116,7 @@ export function ContentStorageBanner() {
   }
 
   if (!isContentStorageInProgress(cs.state)) return null
-  if (nsStatus === 'STOPPED' || dismissedNs === nsId) return null
+  if (nsStatus === 'STOPPED' || dismissedNs === JSON.stringify([workspaceId, nsId])) return null
   // No provider named, no generation problem: nothing is being connected (the
   // daemon runs nothing without a provider), so there is no progress to show.
   if (!app) return null
@@ -138,7 +140,7 @@ export function ContentStorageBanner() {
         aria-label={t('contentStorage.banner.dismiss')}
         title={t('contentStorage.banner.dismiss')}
         className="shrink-0 rounded p-0.5 hover:bg-sky-500/20"
-        onClick={() => dismissProgress(nsId)}
+        onClick={() => dismissProgress(JSON.stringify([workspaceId, nsId]))}
       >
         <X size={14} />
       </button>

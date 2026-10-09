@@ -25,8 +25,22 @@ func (r *Runtime) persistState() error {
 	if r.statePersister == nil {
 		return nil
 	}
+	state := r.persistedStateUnderLock()
+	data, err := json.Marshal(state)
+	if err != nil {
+		return fmt.Errorf("marshal namespace state: %w", err)
+	}
+	if err := r.statePersister.SaveNamespaceState(string(state.Status), string(data)); err != nil {
+		return fmt.Errorf("persist namespace state: %w", err)
+	}
+	return nil
+}
+
+// persistedStateUnderLock captures the complete runtime-owned state for a commit.
+func (r *Runtime) persistedStateUnderLock() *NsPersistedState {
 	state := &NsPersistedState{
-		Status: r.status,
+		Status:                r.status,
+		SnapshotImportPending: r.snapshotImportPending,
 	}
 	for name := range r.manualStoppedApps {
 		state.ManualStoppedApps = append(state.ManualStoppedApps, name)
@@ -66,18 +80,8 @@ func (r *Runtime) persistState() error {
 		state.LastDependencyMigration = &l
 	}
 	state.ContentStorageSwitchPending = r.contentStorageSwitch
-	if r.contentStorageSecret != nil {
-		w := *r.contentStorageSecret
-		state.ContentStorageSecretWrite = &w
-	}
-	data, err := json.Marshal(state)
-	if err != nil {
-		return fmt.Errorf("marshal namespace state: %w", err)
-	}
-	if err := r.statePersister.SaveNamespaceState(string(state.Status), string(data)); err != nil {
-		return fmt.Errorf("persist namespace state: %w", err)
-	}
-	return nil
+	state.ContentStorageDefaultSet = r.contentStorageDefaultSet
+	return state
 }
 
 // persistUnderLock writes the whole record and settles the dirty flag

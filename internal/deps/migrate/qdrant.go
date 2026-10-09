@@ -163,3 +163,6 @@ done
 cat <&3
 `, "qdrant-get", path}
 }
+
+// StepIDs is the single-hop preview vocabulary; a running plan publishes its full route.
+func (QdrantMigrator) StepIDs() []string { return CopyStepIDs() }

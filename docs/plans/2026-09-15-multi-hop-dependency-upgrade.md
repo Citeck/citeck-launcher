@@ -1,6 +1,9 @@
 # Multi-hop dependency upgrade — implementation plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Historical completed plan.** The feature is implemented in Go Launcher.
+> Unchecked boxes and commands below record the original implementation sequence,
+> not pending work. Do not execute the plan again. Current operator instructions:
+> [configuration layers](../config-layers.md), [dependency upgrades](../postgres-major-upgrade.md).
 
 **Goal:** An image value may be a LIST; in the `dependencies:` section that list is a ladder the launcher walks rung by rung in one migration, and everywhere else its first element is taken.
 

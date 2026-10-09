@@ -82,7 +82,7 @@ Login:            admin / <generated password>
 
 この画面について知っておくべきことが 2 つあります:
 
-- **管理者パスワードは一度しか表示されません。** 必ずコピーしてください — 後から復元することはできません。紛失した場合は `citeck setup admin-password` でリセットしてください。
+- **管理者パスワードは一度しか表示されません。** 必ずコピーして安全に保管してください。紛失した場合は `citeck setup admin-password` でリセットしてください。
 - **自己署名証明書を使うと、ブラウザーが警告を表示します。** これは想定どおりの動作です。*詳細設定* → *アクセスする* をクリックしてください。
 
 20 分ほど経っても先に進んでいないように見える場合は、まず `citeck diagnose`（`--fix` を付けると修復可能なものを自動で修復します）と `citeck logs <app>` から確認してください。
@@ -109,12 +109,14 @@ citeck logs <app> -f             # ログをストリーミングする（アプ
 citeck stop <app>                # アプリを停止し、再起動後も停止したままにする
 citeck start <app>               # 再び起動する（再アタッチ）
 citeck reload                    # 設定変更を適用し、変更されたものだけを再作成する
-citeck snapshot export <name>    # 全ボリュームをバックアップする（プラットフォームを停止し、その後再起動する）
+citeck snapshot export           # 全ボリュームをバックアップする（プラットフォームを停止し、その後再起動する）
 citeck upgrade <bundle:version>  # 別のプラットフォームバージョンに切り替える
 citeck diagnose --fix            # ヘルスチェック（任意で自動修復）
 citeck setup                     # 設定を変更する（管理者パスワード、TLS、メール、リソースなど）
 citeck edit <app>                # kubectl edit スタイルでアプリの定義を編集する
 ```
+
+スナップショットには既定でシークレットを含めず、同じサーバーと認証情報での復元を想定しています。認証情報も移行する場合は `citeck snapshot export --include-secrets` を使用します。namespace のキーと JWT/OIDC/admin/SA は平文の `secrets.json` に保存され、インポートしたシステムキーは移行先 namespace のみに適用されます。namespace 設定と外部 S3 オブジェクトは含まれません。[形式と制限](../docs/snapshots.md)（ロシア語）。
 
 `citeck stop <app>` はアプリを**デタッチ**する点に注意してください。`citeck start <app>` を実行するまで、再起動やリロードをまたいで停止したままになります。これは小規模なホストでメモリを解放する方法でもあります — 必須ではないアプリをいくつかデタッチすれば数 GB を節約できます。
 

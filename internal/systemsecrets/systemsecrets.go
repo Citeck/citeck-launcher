@@ -260,3 +260,54 @@ func migrateJWTSecretToStdBase64(stored string) string {
 	slog.Info("Migrated JWT secret from RawURLEncoding to StdEncoding")
 	return base64.StdEncoding.EncodeToString(raw)
 }
+
+// NamespaceName is reserved for a snapshot's namespace-specific system credential.
+// Keeping imported credentials in the destination vault avoids overwriting other stands.
+func NamespaceName(id string) string { return "@citeck/system/" + strings.TrimPrefix(id, "_") }
+
+// NamespaceOverride reads only an explicitly imported override. Missing overrides
+// retain the existing profile policy, including locked-vault startup behavior.
+func NamespaceOverride(svc *storage.SecretService, wsID, nsID, id string) (value string, exists bool, err error) {
+	if svc == nil {
+		return "", false, nil
+	}
+	metas, err := svc.ListSecrets()
+	if err != nil {
+		return "", false, fmt.Errorf("list namespace system credentials: %w", err)
+	}
+	name := NamespaceName(id)
+	for _, meta := range metas {
+		if !storage.IsNamespaceSecret(meta) || meta.Scope != storage.NamespaceSecretScope(wsID, nsID) || meta.Name != name {
+			continue
+		}
+		row, readErr := svc.GetSecret(meta.ID)
+		if readErr != nil {
+			return "", false, fmt.Errorf("read namespace system credential %s: %w", id, readErr)
+		}
+		if row == nil || row.Value == "" {
+			return "", false, fmt.Errorf("invalid namespace system credential %s", id)
+		}
+		return row.Value, true, nil
+	}
+	return "", false, nil
+}
+
+// SetForNamespace preserves an imported namespace override during admin rotation.
+// Stands without an override retain the historic global persistence policy.
+func SetForNamespace(store storage.Store, svc *storage.SecretService, wsID, nsID, id, value string) error {
+	_, exists, err := NamespaceOverride(svc, wsID, nsID, id)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return Set(store, svc, id, value)
+	}
+	name := NamespaceName(id)
+	if saveErr := svc.SaveSecret(storage.Secret{SecretMeta: storage.SecretMeta{
+		ID: storage.NamespaceSecretID(wsID, nsID, name), Name: name,
+		Type: storage.SecretNamespace, Scope: storage.NamespaceSecretScope(wsID, nsID),
+	}, Value: value}); saveErr != nil {
+		return fmt.Errorf("persist namespace system credential %s: %w", id, saveErr)
+	}
+	return nil
+}

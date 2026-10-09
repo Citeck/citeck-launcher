@@ -277,3 +277,6 @@ func waitForRabbit(ctx context.Context, env Env, container string, p StepProgres
 func atLeastSeries(v deps.Version, major, minor int) bool {
 	return v.Major > major || (v.Major == major && v.Minor >= minor)
 }
+
+// StepIDs is the single-hop preview vocabulary; a running plan publishes its full route.
+func (RabbitMigrator) StepIDs() []string { return CopyStepIDs() }

@@ -1,13 +1,7 @@
 package namespace
 
-// The two pieces of content-storage state the launcher keeps: which storage it
-// is in the middle of switching ecos-content to (NsPersistedState.
-// ContentStorageSwitchPending), and what it last wrote into the ECOS secret it
-// owns (NsPersistedState.ContentStorageSecretWrite). Neither is a verdict —
-// that is re-derived from ECOS on every run. They live on the Runtime for the
-// reason every persisted field does: persistState rebuilds the whole record
-// from Runtime fields, so a value kept anywhere else would be erased by the
-// next unrelated write.
+// The runtime persists unfinished switches and confirmation history in the
+// same state record as lifecycle data. Neither replaces reading ECOS config.
 
 // RestoreContentStorageSwitch installs the persisted marker on the load path.
 // No persist, for the reason RestoreDependencyState does not: the load path
@@ -29,63 +23,42 @@ func (r *Runtime) ContentStorageSwitch() string {
 
 // SetContentStorageSwitch records (a ref) or clears ("") the marker and
 // persists it inline: it is written right before the launcher's first write
-// into ECOS, and a daemon that dies between creating the storage and
-// switching the default must find it on its next start. A failed write is
+// into ECOS, and a daemon that dies between writing the default and
+// confirming it must find it on its next start. A failed write is
 // returned and stays owed — r.dirty keeps it for the loop tail, like every
 // other inline mutation — and the in-memory value still serves this process.
 func (r *Runtime) SetContentStorageSwitch(storageRef string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.contentStorageSwitch == storageRef {
+	if r.contentStorageSwitch == storageRef && !r.dirty.Load() {
 		return nil
 	}
 	r.contentStorageSwitch = storageRef
 	return r.persistUnderLock("content-storage-switch")
 }
 
-// RestoreContentStorageSecretWrite installs the persisted record of the
-// launcher's last S3 credentials write on the load path. No persist, for the
-// reason RestoreContentStorageSwitch does not.
-func (r *Runtime) RestoreContentStorageSecretWrite(w *ContentStorageSecretWrite) {
+// RestoreContentStorageDefaultSet restores switch history without persisting.
+func (r *Runtime) RestoreContentStorageDefaultSet(set bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.contentStorageSecret = copySecretWrite(w)
+	r.contentStorageDefaultSet = set
 }
 
-// ContentStorageSecretWrite answers the launcher's record of its last write of
-// the S3 credentials into ECOS — a copy — or nil when there is none.
-func (r *Runtime) ContentStorageSecretWrite() *ContentStorageSecretWrite {
+// ContentStorageDefaultSet distinguishes initial LOCAL from a later admin choice.
+func (r *Runtime) ContentStorageDefaultSet() bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return copySecretWrite(r.contentStorageSecret)
+	return r.contentStorageDefaultSet
 }
 
-// SetContentStorageSecretWrite records a write of the S3 credentials into ECOS
-// and persists it inline, so the next daemon does not rewrite a secret that is
-// already current. A failed write is returned and stays owed, as for the
-// switch marker; losing it costs one redundant rewrite of the secret, never a
-// stale one.
-func (r *Runtime) SetContentStorageSecretWrite(w *ContentStorageSecretWrite) error {
+// CompleteContentStorageSwitch atomically records confirmation and clears the WAL.
+func (r *Runtime) CompleteContentStorageSwitch() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if secretWriteEqual(r.contentStorageSecret, w) {
+	if r.contentStorageDefaultSet && r.contentStorageSwitch == "" && !r.dirty.Load() {
 		return nil
 	}
-	r.contentStorageSecret = copySecretWrite(w)
-	return r.persistUnderLock("content-storage-secret-write")
-}
-
-func copySecretWrite(w *ContentStorageSecretWrite) *ContentStorageSecretWrite {
-	if w == nil {
-		return nil
-	}
-	cp := *w
-	return &cp
-}
-
-func secretWriteEqual(a, b *ContentStorageSecretWrite) bool {
-	if a == nil || b == nil {
-		return a == b
-	}
-	return *a == *b
+	r.contentStorageDefaultSet = true
+	r.contentStorageSwitch = ""
+	return r.persistUnderLock("content-storage-default-set")
 }

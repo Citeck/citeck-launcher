@@ -2,10 +2,9 @@
 # blocks the public workspace config carries (launcher-public-workspace,
 # workspace-v1.yml): the `contentStorage` block, the provider's secrets, its
 # additionalApps entry and its sidebar link, each byte for byte. The launcher
-# has no code for the provider: whether it exists is the bundle's answer (it
-# names the `seaweedfs` image in its `dependencies:` section), the entry is how
-# it is configured, and `contentStorage.s3` is how ecos-content reaches it.
-# Keep the copies identical.
+# owns the SEAWEEDFS container defaults and migration frame. The bundle names
+# its image, settings tune mini, and `contentStorage.s3` connects ecos-content.
+# This is a recipe fixture; published workspaces must carry the matching provider declaration.
 contentStorage:
   s3:
     app: seaweedfs
@@ -25,145 +24,42 @@ secrets:
   # `contentStorage.s3`) and the key its file tokens are signed with.
   # GENERATED: each namespace draws its own values the first time and keeps
   # them for good, so no stand runs on a key published here. A launcher that
-  # predates generated secrets skips these entries; a namespace with no values
-  # yet then gets no seaweedfs at all instead of one with an empty key. A
+  # supports nested generated options and managed SEAWEEDFS is required. A
   # namespace restored from a snapshot into a new namespace gets new values;
-  # on an S3 namespace the launcher brings the ECOS secret ecos-content
-  # connects with up to the new S3 key by itself. The seaweedfs entry, these
+  # on an S3 namespace generation supplies the new key to ecos-content
+  # through native ECOS_SECRET_* environment variables. The seaweedfs entry, these
   # secrets, the contentStorage block, the SeaweedFS link and `- seaweedfs` in
   # namespaceTemplates[default].detachedApps travel together.
-  - generated: seaweedfs-s3-key
-    length: 40
-  - generated: seaweedfs-jwt
-    length: 48
+  - id: seaweedfs-s3-key
+    generated:
+      length: 40
+  - id: seaweedfs-jwt
+    generated:
+      length: 48
 additionalApps:
-  # SeaweedFS: an S3-compatible store for ecos-content (Enterprise only —
-  # Community has no ecos-content). Like the observer it is configuration: no
-  # image here — a bundle that names `seaweedfs` in its `dependencies:` section
-  # gets the container, every other bundle gets nothing. It is the provider of
-  # the S3 content storage option (the top-level `contentStorage` block).
-  # A namespace that stores its content in S3 (namespace.yml
-  # `contentStorage: {type: S3}`) needs it: a launcher that supports
-  # contentStorage starts it with that namespace whatever detachedApps says,
-  # makes ecos-content wait for it and connects ecos-content to it once, by
-  # itself, and keeps ecos-content's key in step with the namespace's. A
-  # namespace with DB content storage — the default — does not start it on
-  # its own when created from the `default` template (see detachedApps; a
-  # namespace with no or another template starts it like any new app), and
-  # connecting it there is an explicit step in ECOS after
-  # `citeck start seaweedfs`.
-  # No app in this file may `dependsOn` it: on a DB namespace it is detached,
-  # and a dependent would wait for it forever (the SeaweedFS link's dependsOn
-  # only greys the link out). The entry, the seaweedfs-* secrets, the
-  # contentStorage block, the SeaweedFS link and the detachedApps line travel
-  # together.
+  # Managed local SeaweedFS. Launcher owns mini, /data, volume generations,
+  # stable node identity, standard probes, resource defaults and desktop ports.
+  # The bundle supplies the image; absent image means no store is generated.
+  # settings overrides only optional mini flags, as scalar YAML values.
+  # References below resolve separately for every namespace. Native ECOS env
+  # gives ecos-content the same S3 key; JWT keys stay with the provider.
   - name: seaweedfs
-    kind: THIRD_PARTY
-    cmd:
-      # `weed mini` runs master + volume + filer + S3 + the admin UI in one
-      # process. It saves its flags to /data/mini.options and re-applies a
-      # dropped flag once on the next start (volumeSizeLimitMB is recomputed
-      # from disk instead), so keep this list COMPLETE. A saved value also
-      # wins over a flag passed with its DEFAULT value (mini cannot tell the
-      # two apart): a flag goes back to its default only by deleting its line
-      # from mini.options. It must stay valid for the OLDEST seaweedfs tag any
-      # published bundle names (4.48: -s3.readerCacheSizeMB is new in 4.48),
-      # and changing it recreates seaweedfs on every stand. No credential ever
-      # goes here — it would be saved into the volume with the flags; they are
-      # environment variables below, which mini does not save.
-      - mini
-      - -dir=/data
-      # A stable node identity (the default is the container IP, which changes
-      # on every recreate). It does not limit binding: -ip.bind stays 0.0.0.0.
-      - -ip=127.0.0.1
-      - -master.telemetry=false
-      - -master.volumeSizeLimitMB=256
-      # Memory bounds: the S3 download buffers (4.48 default: unlimited) and
-      # the in-flight upload size (without it parallel multipart uploads
-      # OOM-kill the container even at 1g; uploads beyond it are queued).
-      - -s3.readerCacheSizeMB=64
-      - -s3.concurrentUploadLimitMB=128
-      - -webdav=false
-      # Closes the filer's HTTP API (8888) AND the master's (9333: /dir/assign
-      # and /dir/lookup, which hand out the tokens the volume server asks for —
-      # with them open, the JWT keys below would keep no HTTP client on the
-      # network out). Files are read and written through S3, and inside the
-      # store through gRPC.
-      - -disableHttp
-      # The admin UI (23646), behind the login in WEED_ADMIN_* below. It is
-      # the default, spelled out so that a newer seaweedfs with another
-      # default does not take it away — and, being the default, it does not
-      # beat a saved `admin.ui=false` (see above): a store volume once started
-      # with -admin.ui=false keeps the UI off (the port answers 404) until
-      # that line is deleted from /data/mini.options and seaweedfs restarted.
-      - -admin.ui=true
-      - -s3.port.iceberg=0
-      - -s3.port.lance=0
+    type: SEAWEEDFS
+    settings:
+      admin.ui: true
+      s3.readerCacheSizeMB: 64
+      s3.concurrentUploadLimitMB: 128
     environments:
-      # What each port asks for:
-      # - S3 (8333): this key pair, one identity; anonymous requests are
-      #   refused. The secret key is the namespace's own generated value; on
-      #   an S3 namespace the launcher keeps the ECOS secret ecos-content
-      #   connects with on it.
-      # - filer HTTP (8888): closed by -disableHttp.
-      # - volume HTTP (9340): reading or writing a file needs a token signed
-      #   with the JWT key below.
-      # - admin UI (23646): the WEED_ADMIN_* login below.
-      # Still open to every container on the namespace network: the gRPC ports
-      # (18333, 18888, 19333, 19340, 33646) — closing them takes mTLS, i.e. a
-      # security.toml with certificates, which an additionalApps entry cannot
-      # ship — and a few read-only pages: the master's status (/ and
-      # /cluster/status on 9333), the volume server's /status, the admin
-      # port's /metrics (the whole process's Prometheus metrics, per-bucket
-      # traffic included) and the health checks. Server mode publishes none
-      # of these ports; desktop publishes 8333 and 23646, on loopback only.
       AWS_ACCESS_KEY_ID: citeck
       AWS_SECRET_ACCESS_KEY: ${secret:seaweedfs-s3-key}
-      # One generated key signs and checks the volume server's and the filer's
-      # tokens, for writes and reads. Nothing keeps it in the volume, so a new
-      # value — a restore into a new namespace — costs nothing.
       WEED_JWT_SIGNING_KEY: ${secret:seaweedfs-jwt}
       WEED_JWT_SIGNING_READ_KEY: ${secret:seaweedfs-jwt}
       WEED_JWT_FILER_SIGNING_KEY: ${secret:seaweedfs-jwt}
       WEED_JWT_FILER_SIGNING_READ_KEY: ${secret:seaweedfs-jwt}
-      # The admin UI login: the stand's admin, as in RabbitMQ and PgAdmin
-      # (admin / admin on desktop: there anything on the machine that reaches
-      # 127.0.0.1:23646 — or seaweedfs:23646 on the namespace network — has
-      # the whole store, generated keys or not). A password changed with
-      # `citeck setup admin-password` reaches it on the next `citeck reload`,
-      # which recreates the container; the files stay in the volume. Sessions
-      # already open survive that, for up to 24 h: the key they are signed
-      # with lives in the volume (/data/admin/.session_key) — delete it before
-      # the reload to end them.
       WEED_ADMIN_USER: admin
       WEED_ADMIN_PASSWORD: ${ADMIN_PASSWORD}
-      # ecos-content's bucket, created at start. Its MinIO client needs the
-      # bucket to exist before the first upload.
       S3_BUCKET: ecos-content
-      GOMEMLIMIT: 512MiB
-    # The volume name IS how the data is found — never change it.
-    volumes: ["seaweedfs2:/data"]
-    # Desktop only, on loopback: S3 (the HTTP probes go through it too) and
-    # the admin UI. Server mode publishes nothing but the proxy; there the
-    # admin UI is reached through an SSH tunnel (docs/content-storage.md in
-    # the launcher repository).
-    ports: ["8333:8333", "23646:23646"]
-    startupConditions:
-      - probe:
-          http: {path: /healthz, port: 8333}
-          periodSeconds: 5
-          failureThreshold: 60
-          timeoutSeconds: 5
-    livenessProbe:
-      http: {path: /healthz, port: 8333}
-      failureThreshold: 7
-      timeoutSeconds: 5
-    resources:
-      limits: {memory: 1g}
-    stopTimeout: 15
-# Extra links in the launcher's sidebar (desktop; server mode has no sidebar).
-# A link whose dependsOn app the namespace does not have is hidden, one whose
-# app is not RUNNING is shown greyed out. Launchers before 2.8 ignore the key.
+
 links:
   # The SeaweedFS admin UI: the bucket's files, volumes, cluster state. Hidden
   # where the bundle ships no SeaweedFS, greyed out where it is detached (a

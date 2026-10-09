@@ -137,3 +137,6 @@ func waitForZookeeper(ctx context.Context, env Env, container string, p StepProg
 func zkAdminCmd(command string) []string {
 	return []string{"curl", "-fsS", zkAdminCommands + command}
 }
+
+// StepIDs is the single-hop preview vocabulary; a running plan publishes its full route.
+func (ZookeeperMigrator) StepIDs() []string { return CopyStepIDs() }

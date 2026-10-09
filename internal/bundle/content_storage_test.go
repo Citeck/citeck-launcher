@@ -78,9 +78,7 @@ webapps:
 	}
 }
 
-// Every field is required — without the endpoint, the bucket or the
-// credentials the provider is useless to ecos-content, so S3 must read as
-// unavailable rather than half-configured.
+// Missing endpoint or credentials must make S3 unavailable. Bucket is native.
 func TestWorkspaceContentStorage_AMissingFieldMakesItAbsent(t *testing.T) {
 	var logs bytes.Buffer
 	cfg := parseWorkspaceConfig([]byte(`
@@ -92,7 +90,7 @@ contentStorage:
 `), "workspace-v1.yml", slog.New(slog.NewTextHandler(&logs, nil)))
 	require.NotNil(t, cfg)
 	assert.Nil(t, cfg.ContentStorageS3())
-	assert.Contains(t, logs.String(), "bucket")
+	assert.NotContains(t, logs.String(), "missing bucket")
 	assert.Contains(t, logs.String(), "secretKey")
 }
 
@@ -106,9 +104,8 @@ func TestWorkspaceContentStorage_AnEmptyBlockIsQuiet(t *testing.T) {
 	assert.NotContains(t, logs.String(), "contentStorage")
 }
 
-// A scalar value of another YAML type is still a string to a reader that wants
-// one: an unquoted number is a bucket name, not an unusable block.
-func TestWorkspaceContentStorage_ANumericScalarIsAString(t *testing.T) {
+// Custom buckets are incompatible with the unchanged native storage.
+func TestWorkspaceContentStorage_AnotherBucketIsRejected(t *testing.T) {
 	cfg := parseTestWorkspace(t, `
 contentStorage:
   s3:
@@ -118,8 +115,7 @@ contentStorage:
     accessKey: citeck
     secretKey: s
 `)
-	require.NotNil(t, cfg.ContentStorageS3())
-	assert.Equal(t, "2026", cfg.ContentStorageS3().Bucket)
+	assert.Nil(t, cfg.ContentStorageS3())
 }
 
 func TestWorkspaceContentStorage_NilSafe(t *testing.T) {
@@ -146,4 +142,16 @@ func TestWorkspaceAdditionalApp(t *testing.T) {
 	assert.False(t, ok)
 	_, ok = ws.AdditionalApp("missing")
 	assert.False(t, ok)
+}
+
+func TestWorkspaceContentStorage_DefaultBucket(t *testing.T) {
+	cfg := parseTestWorkspace(t, `contentStorage:
+  s3:
+    app: provider
+    url: http://provider:8333
+    accessKey: key
+    secretKey: secret
+`)
+	require.NotNil(t, cfg.ContentStorageS3())
+	assert.Equal(t, "ecos-content", cfg.ContentStorageS3().Bucket)
 }

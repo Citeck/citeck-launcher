@@ -3,6 +3,7 @@ package setup
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -482,4 +483,67 @@ func TestPerformUndo_AnUnrelatedEntryOnAnS3NamespaceStillWorks(t *testing.T) {
 	data, err := os.ReadFile(cfgPath)
 	require.NoError(t, err)
 	assert.Contains(t, string(data), "contentStorage:")
+}
+
+func TestPerformUndo_AnS3BundleChangeRequiresTheDaemonGate(t *testing.T) {
+	t.Setenv("CITECK_RUN", t.TempDir())
+	t.Setenv("CITECK_HOST", "")
+	cfgPath := filepath.Join(t.TempDir(), "namespace.yml")
+	current := "id: default\nbundleRef: enterprise:2026.3\ncontentStorage:\n  type: S3\n"
+	require.NoError(t, os.WriteFile(cfgPath, []byte(current), 0o600))
+	rec := &PatchRecord{Setting: "bridge",
+		Forward: []PatchOp{{Op: "replace", Path: "/bundleRef/key", Value: "2026.3"}},
+		Reverse: []PatchOp{{Op: "replace", Path: "/bundleRef/key", Value: "2026.2"}},
+	}
+	_, err := performUndo(NamespaceFile, cfgPath, historyDir(cfgPath), "entry-bundle", rec)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "daemon")
+	after, readErr := os.ReadFile(cfgPath)
+	require.NoError(t, readErr)
+	assert.Equal(t, current, string(after))
+}
+
+func TestPerformUndo_S3BundleUsesDaemonWriter(t *testing.T) {
+	original := namespaceWriteThroughDaemon
+	t.Cleanup(func() { namespaceWriteThroughDaemon = original })
+	for _, available := range []bool{false, true} {
+		t.Run(fmt.Sprintf("available=%v", available), func(t *testing.T) {
+			cfgPath := filepath.Join(t.TempDir(), "namespace.yml")
+			current := "id: default\nbundleRef: enterprise:2026.3\ncontentStorage:\n  type: S3\n"
+			require.NoError(t, os.WriteFile(cfgPath, []byte(current), 0o600))
+			written := false
+			namespaceWriteThroughDaemon = func(before, next *namespace.Config, data []byte) (bool, error) {
+				written = true
+				assert.Equal(t, "2026.3", before.BundleRef.Key)
+				assert.Equal(t, "2026.2", next.BundleRef.Key)
+				if !available {
+					return true, errors.New("seaweedfs unavailable")
+				}
+				return true, os.WriteFile(cfgPath, data, 0o600)
+			}
+			rec := &PatchRecord{Setting: "bridge",
+				Forward: []PatchOp{{Op: "replace", Path: "/bundleRef/key", Value: "2026.3"}},
+				Reverse: []PatchOp{{Op: "replace", Path: "/bundleRef/key", Value: "2026.2"}},
+			}
+			_, err := performUndo(NamespaceFile, cfgPath, historyDir(cfgPath), "entry-bundle", rec)
+			assert.True(t, written)
+			if available {
+				require.NoError(t, err)
+				cfg, loadErr := namespace.LoadNamespaceConfig(cfgPath)
+				require.NoError(t, loadErr)
+				assert.Equal(t, "2026.2", cfg.BundleRef.Key)
+			} else {
+				require.ErrorContains(t, err, "seaweedfs")
+				after, readErr := os.ReadFile(cfgPath)
+				require.NoError(t, readErr)
+				assert.Equal(t, current, string(after))
+			}
+		})
+	}
+}
+
+func TestContentStorageSettingExternalCurrentValue(t *testing.T) {
+	s := &contentStorageSetting{}
+	cfg := &namespace.Config{S3: &namespace.S3Config{Endpoint: "https://external.example"}}
+	assert.Equal(t, s.CurrentValue(csNamespace(namespace.ContentStorageS3), nil), s.CurrentValue(cfg, nil))
 }

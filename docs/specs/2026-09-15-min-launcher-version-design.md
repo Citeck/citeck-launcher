@@ -1,6 +1,8 @@
 # `minLauncherVersion` — a bundle declares the launcher it needs
 
-Status: DRAFT, awaiting the owner's review. Nothing implemented.
+Status: IMPLEMENTED in Go Launcher; historical design. Current behavior is
+documented in [configuration layers](../config-layers.md) and `AGENTS.md`.
+The branch names and implementation steps below describe the original design phase.
 
 Branch: `feat/min-launcher-version`, cut from `fix/bundle-numeric-tag` (the tip of the
 ladder stack) rather than from `master`. Not to mix the work — the ladder is untouched here —

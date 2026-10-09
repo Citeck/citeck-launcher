@@ -59,8 +59,7 @@ func (s *s3Setting) Run(ctx *setupContext, cfg *namespace.Config, _ *config.Daem
 			return prompt.ErrCanceled
 		}
 		if action == "remove" {
-			cfg.S3 = nil
-			return nil
+			return errors.New(i18n.T("contentStorage.msg.downgrade"))
 		}
 	}
 

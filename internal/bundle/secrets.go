@@ -30,13 +30,14 @@ const (
 )
 
 // SecretDefault is one entry of the workspace `secrets:` section, in one of
-// two spellings:
+// two kinds:
 //
 //	secrets:
 //	  - id: billing-db          # a CONSTANT default
 //	    value: billing
-//	  - generated: s3-key       # a value the launcher GENERATES
-//	    length: 40              # optional, 16..128, default 40
+//	  - id: s3-key              # a value the launcher GENERATES
+//	    generated:
+//	      length: 40            # optional, 16..128, default 40
 //
 // Either way the workspace only says how a namespace gets its FIRST value: a
 // namespace stores its own copy the first time it needs one, and from then on
@@ -46,12 +47,10 @@ const (
 // first initialized, and a service handed a changed one would simply fail to
 // connect. A generated entry therefore gives every namespace its OWN value.
 //
-// The generated kind is spelled with its own key rather than as a flag under
-// `id:` on purpose: a launcher that predates it reads `generated:` as an entry
-// with no id and skips it, so `${secret:<id>}` stays unresolved there and the
-// app referencing it is left out of the namespace — it fails closed. Spelled
-// as `id:` plus a flag, an older launcher would store the empty `value` as the
-// namespace's key and run the service with no authentication at all.
+// The old `generated: <id>` / top-level length spelling remains readable for
+// existing workspace configs. YAML output always uses id + generated options.
+// Launchers without generated-secret support do not understand either kind;
+// the nested kind looks like a constant with an empty value to them.
 type SecretDefault struct {
 	ID    string `yaml:"id" json:"id"`
 	Value string `yaml:"value" json:"value"`
@@ -84,43 +83,94 @@ func (s SecretDefault) GeneratedLength() int {
 // ContentStorageConfig follow for the same reason). An unusable entry is
 // remembered as a problem; the caller logs it once and drops it.
 //
-// An entry that does not say plainly which kind it is, is refused rather than
-// guessed at: both `id:` and `generated:`, a generated entry with a `value:`,
-// a constant one with a `length:`. Guessing wrong is not recoverable — the
-// first value a namespace stores is the one it keeps — while a refused entry
-// only leaves the apps referencing it out until the workspace is fixed.
+// An entry must declare a constant value or generation options, never both.
+// The legacy scalar generated id is accepted only without a separate id.
 func (s *SecretDefault) UnmarshalYAML(node *yaml.Node) error {
 	*s = SecretDefault{}
 	var raw struct {
 		ID        *string   `yaml:"id"`
-		Value     *string   `yaml:"value"`
-		Generated *string   `yaml:"generated"`
-		Length    yaml.Node `yaml:"length"` // Kind 0 when absent
+		Value     yaml.Node `yaml:"value"`
+		Generated yaml.Node `yaml:"generated"`
+		Length    yaml.Node `yaml:"length"`
 	}
 	if err := node.Decode(&raw); err != nil {
-		// Swallowed on purpose, not overlooked: see the doc comment.
 		s.problem = "unreadable: " + err.Error()
 		return nil
 	}
+	generated := followAlias(&raw.Generated)
 	switch {
-	case raw.ID != nil && raw.Generated != nil:
-		s.problem = "names both id and generated; an entry is one or the other"
-	case raw.Generated != nil:
-		s.unmarshalGenerated(*raw.Generated, raw.Value != nil, &raw.Length)
+	case generated.Kind == yaml.MappingNode:
+		s.unmarshalGeneratedOptions(raw.ID, raw.Value.Kind != 0, generated, &raw.Length)
+	case generated.Kind != 0:
+		if raw.ID != nil {
+			s.problem = "names both id and generated; a separate id requires generated options"
+			return nil
+		}
+		var id string
+		if err := generated.Decode(&id); err != nil {
+			s.problem = "generated must be an options mapping or a legacy secret id"
+			return nil
+		}
+		s.unmarshalGenerated(id, raw.Value.Kind != 0, &raw.Length)
 	case raw.ID != nil:
 		s.ID = *raw.ID
 		switch {
 		case !ValidSecretID(s.ID):
 			s.problem = invalidSecretIDProblem(s.ID)
 		case raw.Length.Kind != 0:
-			s.problem = "length applies only to a generated secret; write `generated: " + s.ID + "` instead of `id:`"
-		case raw.Value != nil:
-			s.Value = *raw.Value
+			s.problem = "length applies only to a generated secret; put it under generated"
+		case raw.Value.Kind != 0:
+			if err := raw.Value.Decode(&s.Value); err != nil {
+				s.problem = "unreadable: " + err.Error()
+			}
 		}
 	default:
 		s.problem = "names neither id nor generated"
 	}
 	return nil
+}
+
+func (s *SecretDefault) unmarshalGeneratedOptions(id *string, hasValue bool, generated, topLength *yaml.Node) {
+	if id == nil {
+		s.problem = "generated options require an id"
+		return
+	}
+	if topLength.Kind != 0 {
+		s.problem = "length belongs under generated"
+		return
+	}
+	var options struct {
+		Length yaml.Node `yaml:"length"`
+	}
+	if err := generated.Decode(&options); err != nil {
+		s.problem = "unreadable generated options: " + err.Error()
+		return
+	}
+	for _, entry := range mappingEntries(generated) {
+		if entry.key != "length" {
+			s.problem = "unknown generated option: " + entry.key
+			return
+		}
+	}
+	s.unmarshalGenerated(*id, hasValue, &options.Length)
+}
+
+// MarshalYAML emits the canonical form for both kinds, including legacy input.
+func (s SecretDefault) MarshalYAML() (any, error) {
+	if !s.Generated {
+		return struct {
+			ID    string `yaml:"id"`
+			Value string `yaml:"value"`
+		}{s.ID, s.Value}, nil
+	}
+	return struct {
+		ID        string `yaml:"id"`
+		Generated struct {
+			Length int `yaml:"length"`
+		} `yaml:"generated"`
+	}{ID: s.ID, Generated: struct {
+		Length int `yaml:"length"`
+	}{s.GeneratedLength()}}, nil
 }
 
 func (s *SecretDefault) unmarshalGenerated(id string, hasValue bool, length *yaml.Node) {

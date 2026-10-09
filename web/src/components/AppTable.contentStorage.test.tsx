@@ -1,3 +1,4 @@
+import { useDaemonStatusStore } from '../lib/daemonStatus'
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { MemoryRouter } from 'react-router'
@@ -86,4 +87,16 @@ describe('AppTable: stopping the S3 storage provider', () => {
     await waitFor(() => expect(postAppStop).toHaveBeenCalledWith('seaweedfs'))
     expect(screen.queryByRole('dialog')).toBeNull()
   })
+})
+
+// Namespace ids are workspace-local; an activation must invalidate an old stop.
+it('does not stop another workspace namespace with the same id on an old confirmation', async () => {
+  useDaemonStatusStore.setState({ status: { workspace: 'a' } as never })
+  setNamespace(s3, 'default')
+  render(<MemoryRouter><AppTable apps={apps} /></MemoryRouter>)
+  fireEvent.click(stopButton('seaweedfs'))
+  await screen.findByRole('dialog')
+  act(() => { useDaemonStatusStore.setState({ status: { workspace: 'b' } as never }) })
+  expect(screen.queryByRole('dialog')).toBeNull()
+  expect(postAppStop).not.toHaveBeenCalled()
 })

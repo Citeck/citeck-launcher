@@ -644,7 +644,9 @@ func (d *Daemon) createNamespace(req api.NamespaceCreateDto) (*namespace.Config,
 	}
 
 	if nsCfg.Snapshot != "" {
-		d.importCreateSnapshot(wsID, nsCfg)
+		if err := d.importCreateSnapshot(wsID, nsCfg); err != nil {
+			return nil, err
+		}
 	}
 	d.autoActivateAfterCreate(wsID, nsCfg.ID)
 	return nsCfg, nil
@@ -928,7 +930,7 @@ func (d *Daemon) persistNewNamespace(wsID string, nsCfg *namespace.Config) error
 // ONLY place a snapshot is imported on namespace creation; there is no
 // boot-time auto-import (a `snapshot:` config field is just a record of which
 // snapshot the namespace was created from, not a trigger).
-func (d *Daemon) importCreateSnapshot(wsID string, nsCfg *namespace.Config) {
+func (d *Daemon) importCreateSnapshot(wsID string, nsCfg *namespace.Config) error {
 	// The import creates volumes scoped to the NEW namespace, so it needs a
 	// client scoped to (wsID, nsCfg.ID) — NOT the active dockerClient, which is scoped
 	// to whatever namespace was last active. Server mode has a single
@@ -937,14 +939,14 @@ func (d *Daemon) importCreateSnapshot(wsID string, nsCfg *namespace.Config) {
 	// auto-activate step).
 	importClient := d.activeDockerClient()
 	if config.IsDesktopMode() {
-		if fc, fcErr := docker.NewClient(wsID, nsCfg.ID); fcErr != nil {
-			slog.Warn("Create: failed to build docker client for snapshot import", "nsID", nsCfg.ID, "err", fcErr)
-		} else {
-			defer fc.Close()
-			importClient = fc
+		fc, fcErr := docker.NewClient(wsID, nsCfg.ID)
+		if fcErr != nil {
+			return fmt.Errorf("create snapshot docker client: %w", fcErr)
 		}
+		defer fc.Close()
+		importClient = fc
 	}
-	d.downloadAndImportSnapshot(importClient, nsCfg.Snapshot, wsID, nsCfg.ID)
+	return d.downloadAndImportSnapshot(importClient, nsCfg.Snapshot, wsID, nsCfg.ID)
 }
 
 // autoActivateAfterCreate activates the newly-created namespace in desktop

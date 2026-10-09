@@ -8,6 +8,7 @@ import { useContextMenu } from '../hooks/useContextMenu'
 import { useTranslation, type LocaleKey } from '../lib/i18n'
 import { toast } from '../lib/toast'
 import { useDashboardStore } from '../lib/store'
+import { useActiveWorkspaceId } from '../lib/daemonStatus'
 import { isEditableFile } from '../lib/files'
 import { initProgressOf } from '../lib/initProgress'
 import { waitingForDepsText } from '../lib/waitingForDeps'
@@ -70,10 +71,11 @@ export function AppTable({ apps, highlightedApp }: AppTableProps) {
   // namespace). Stopping it is the one stop that is asked about first.
   const providerApp = useDashboardStore((s) => guardedProviderApp(s.namespace?.contentStorage))
   const nsId = useDashboardStore((s) => s.namespace?.id ?? '')
+  const workspaceId = useActiveWorkspaceId()
   // Scoped to the namespace it was asked in, so a question left open across a
   // namespace switch can never pop up — or be answered — on another one.
-  const [confirmStop, setConfirmStop] = useState<{ nsId: string; app: string } | null>(null)
-  const stopToConfirm = confirmStop && confirmStop.nsId === nsId && confirmStop.app === providerApp
+  const [confirmStop, setConfirmStop] = useState<{ workspaceId: string; nsId: string; app: string } | null>(null)
+  const stopToConfirm = confirmStop && confirmStop.workspaceId === workspaceId && confirmStop.nsId === nsId && confirmStop.app === providerApp
     ? confirmStop.app
     : ''
 
@@ -96,7 +98,7 @@ export function AppTable({ apps, highlightedApp }: AppTableProps) {
   // never refused (owner ruling) — the CLI prints the same warning on stderr.
   const runAction = (a: NonNullable<AppAction>) => {
     if (a.type === 'stop' && providerApp && a.appName === providerApp) {
-      setConfirmStop({ nsId, app: a.appName })
+      setConfirmStop({ workspaceId, nsId, app: a.appName })
       return
     }
     void doAction(a)

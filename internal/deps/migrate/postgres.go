@@ -795,3 +795,6 @@ func tail(s string) string {
 	}
 	return strings.Join(lines, " | ")
 }
+
+// StepIDs is the single-hop preview vocabulary; a running plan publishes its full route.
+func (PostgresMigrator) StepIDs() []string { return PostgresStepIDs() }

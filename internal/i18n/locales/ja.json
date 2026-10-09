@@ -81,6 +81,7 @@
   "snapshot.stopped": "namespace を停止しました",
   "snapshot.stopTimeout": "namespace の停止待ちがタイムアウトしました（{status} で停止）",
   "snapshot.notFound": "スナップショット \"{name}\" が見つかりません。利用可能なスナップショットを確認するには 'citeck snapshot list' を実行してください",
+  "snapshot.import.pending": "スナップショットのインポートが未完了です。namespace を起動する前にインポートを再実行してください。",
   "snapshot.import.detach": "スナップショットをインポートし、namespace の起動を開始しました（`citeck status` で状態を確認できます）。",
   "snapshot.import.background": "namespace はバックグラウンドで起動を継続します。`citeck status` で状態を確認できます。",
   "snapshot.waitingCompletion": "完了を待機中...",
@@ -564,14 +565,9 @@
   "contentStorage.msg.unavailable.externalS3": "この名前空間はコンテンツを外部 S3（設定の s3 ブロック）に保存しており、S3 でのコンテンツ保存と併用することはできません。",
   "contentStorage.msg.unavailable.bundleUnresolved": "バンドル {bundle} は同期済みのバンドルリポジトリにないため、S3 でのコンテンツ保存を確認できません。リポジトリを同期（強制更新）してから再試行してください。",
   "contentStorage.msg.notS3": "この名前空間はコンテンツをデータベースに保存しています。接続する S3 ストレージはありません。",
-  "contentStorage.msg.provision.secretsLocked": "名前空間のシークレットがロックされているため、{app} の S3 認証情報を読み取れず、ecos-content を接続できません。シークレットのロックを解除してから再試行してください。",
-  "contentStorage.msg.provision.secretsUnreadable": "名前空間のシークレットを読み取れなかったため、ecos-content を S3 ストレージに接続できません: {error}",
-  "contentStorage.msg.provision.secretMissing": "{app} の S3 認証情報が、この名前空間に値のないシークレットを参照しています: {secrets}。ワークスペース設定の secrets に追加してから再試行してください。",
-  "contentStorage.msg.provision.secretNotGenerated": "{app} の S3 認証情報が、この名前空間にまだ値のない生成シークレットを参照しています: {secrets}。名前空間を再読み込みして生成してください（citeck reload または「更新して開始」）。{app} が新しいキーで再起動すると、ecos-content は新しいキーで接続されます。",
   "contentStorage.msg.provision.notReady": "ECOS は {minutes} 分以内に S3 コンテンツストレージの接続準備が整いませんでした。最後の応答: {error}",
   "contentStorage.msg.provision.readFailed": "ECOS からコンテンツストレージの設定を読み取れませんでした: {error}",
   "contentStorage.msg.provision.createFailed": "ECOS で {record} を作成できませんでした: {error}",
-  "contentStorage.msg.provision.updateFailed": "ECOS で {record} を更新できませんでした: {error}",
   "contentStorage.msg.provision.setDefaultFailed": "ECOS で {storage} をデフォルトのコンテンツストレージに設定できませんでした: {error}",
   "contentStorage.msg.provision.verifyFailed": "{storage} をデフォルトのコンテンツストレージに設定しましたが、ECOS は現在 {actual} と報告しています。",
   "deps.msg.busy.rollback": "依存関係のロールバック中です — 完了するまでお待ちください",
@@ -595,5 +591,8 @@
   "deps.msg.event.rolledBackWithWarning": "{id} を {image} へロールバックしました。{error}",
   "deps.msg.action.migrationStarted": "{id} の {image} への移行を開始しました",
   "deps.msg.action.rollbackStarted": "{id} の {image} へのロールバックを開始しました",
-  "apps.msg.namespaceNotRunning": "名前空間が起動していません。先に名前空間を起動してから、個々のアプリケーションを起動してください。"
+  "apps.msg.namespaceNotRunning": "名前空間が起動していません。先に名前空間を起動してから、個々のアプリケーションを起動してください。",
+  "contentStorage.msg.local.desktopOnly": "ローカルS3環境のエクスポートはデスクトップでのみ利用できます。",
+  "contentStorage.msg.local.notConfigured": "この名前空間にはエクスポートできるネイティブS3環境がありません。",
+  "contentStorage.msg.local.providerNotReady": "S3プロバイダーはデスクトップのポートを公開して稼働する必要があります。"
 }

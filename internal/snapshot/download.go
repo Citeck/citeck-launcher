@@ -189,9 +189,14 @@ func download(ctx context.Context, client *http.Client, rawURL, destPath, expect
 		flags |= os.O_TRUNC
 		offset = 0
 	}
-	f, err := os.OpenFile(partPath, flags, 0o644) //nolint:gosec // G302: snapshot files need 0o644 for readability
+	f, err := os.OpenFile(partPath, flags, 0o600) //nolint:gosec // G304: internal snapshot path
 	if err != nil {
 		return fmt.Errorf("open %s: %w", partPath, err)
+	}
+
+	if err := f.Chmod(0o600); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("restrict snapshot permissions: %w", err)
 	}
 
 	received := offset

@@ -97,6 +97,7 @@ func isConfigGateRefusal(err error) bool {
 // a stored config that fails some unrelated validation (a raw PUT is how such a
 // config gets fixed), or the one-way rule would have a hole exactly there.
 type storedContentStorage struct {
+	external  bool
 	typ       namespace.ContentStorageType
 	bundleRef bundle.Ref
 }
@@ -122,8 +123,10 @@ func (d *Daemon) loadStoredContentStorage(wsID, nsID string) (storedContentStora
 	}
 	var cs struct {
 		ContentStorage *namespace.ContentStorageProps `yaml:"contentStorage"`
+		S3             *namespace.S3Config            `yaml:"s3"`
 	}
 	if yaml.Unmarshal([]byte(raw), &cs) == nil {
+		out.external = cs.S3 != nil
 		if cs.ContentStorage != nil {
 			// An unknown type is not S3; it cannot be stored past the
 			// validation anyway.
@@ -133,6 +136,7 @@ func (d *Daemon) loadStoredContentStorage(wsID, nsID string) (storedContentStora
 		}
 	} else {
 		out.typ = scanContentStorageType(raw)
+		out.external = scanExternalS3Config(raw)
 	}
 	var ref struct {
 		BundleRef bundle.Ref `yaml:"bundleRef"`
@@ -141,6 +145,17 @@ func (d *Daemon) loadStoredContentStorage(wsID, nsID string) (storedContentStora
 		out.bundleRef = ref.BundleRef
 	}
 	return out, nil
+}
+
+// scanExternalS3Config is conservative only for unreadable YAML: a top-level
+// external block still protects its files while an unrelated syntax error is repaired.
+func scanExternalS3Config(raw string) bool {
+	for line := range strings.Lines(raw) {
+		if strings.HasPrefix(stripYAMLComment(line), "s3:") {
+			return true
+		}
+	}
+	return false
 }
 
 // s3Word matches S3 as a word of its own, in any case.
@@ -211,17 +226,14 @@ func (d *Daemon) contentStorageRefusal(wsID string, stored storedContentStorage,
 	if next == nil {
 		return nil
 	}
-	nextType := next.ContentStorageType()
-	if stored.typ == namespace.ContentStorageS3 && nextType != namespace.ContentStorageS3 {
+	transition := namespace.CheckContentStorageTransition(stored.typ, stored.bundleRef, next)
+	if transition.Downgrade || namespace.ExternalS3Downgrade(stored.external, next) {
 		return &errContentStorageRefused{
 			code:    api.ErrCodeContentStorageDowngrade,
 			message: msg.New("contentStorage.msg.downgrade"),
 		}
 	}
-	if nextType != namespace.ContentStorageS3 {
-		return nil
-	}
-	if stored.typ == namespace.ContentStorageS3 && stored.bundleRef == next.BundleRef {
+	if !transition.RequiresAvailability {
 		return nil
 	}
 	avail, ok := d.contentStorageAvailability(wsID, next.BundleRef)
@@ -229,35 +241,17 @@ func (d *Daemon) contentStorageRefusal(wsID string, stored storedContentStorage,
 		return &errContentStorageRefused{
 			code:    api.ErrCodeContentStorageUnavailable,
 			reason:  api.ContentStorageBundleUnresolved,
-			message: contentStorageUnavailableMessage(api.ContentStorageBundleUnresolved, next.BundleRef, ""),
+			message: namespace.ContentStorageUnavailableMessage(api.ContentStorageBundleUnresolved, next.BundleRef, ""),
 		}
 	}
 	if !avail.Available {
 		return &errContentStorageRefused{
 			code:    api.ErrCodeContentStorageUnavailable,
 			reason:  avail.Reason,
-			message: contentStorageUnavailableMessage(avail.Reason, next.BundleRef, avail.ProviderApp),
+			message: namespace.ContentStorageUnavailableMessage(avail.Reason, next.BundleRef, avail.ProviderApp),
 		}
 	}
 	return nil
-}
-
-// contentStorageUnavailableMessage is the operator's sentence for one reason.
-func contentStorageUnavailableMessage(reason string, ref bundle.Ref, provider string) msg.Message {
-	switch reason {
-	case namespace.ContentStorageNoContentApp:
-		return msg.New("contentStorage.msg.unavailable.noContentApp", "bundle", ref.String())
-	case namespace.ContentStorageNoProviderConfig:
-		return msg.New("contentStorage.msg.unavailable.noProviderConfig")
-	case namespace.ContentStorageNoProviderApp:
-		return msg.New("contentStorage.msg.unavailable.noProviderApp", "app", provider)
-	case namespace.ContentStorageNoProviderImage:
-		return msg.New("contentStorage.msg.unavailable.noProviderImage", "app", provider, "bundle", ref.String())
-	case namespace.ContentStorageProviderConflict:
-		return msg.New("contentStorage.msg.unavailable.providerConflict", "app", provider)
-	default:
-		return msg.New("contentStorage.msg.unavailable.bundleUnresolved", "bundle", ref.String())
-	}
 }
 
 // contentStorageAvailability resolves the bundle OFFLINE and answers the S3
@@ -329,7 +323,7 @@ func (d *Daemon) handleContentStorageProvision(w http.ResponseWriter, r *http.Re
 		writeErrorCode(w, http.StatusNotFound, api.ErrCodeNotConfigured, "no namespace configured")
 		return
 	}
-	if act.nsConfig.ContentStorageType() != namespace.ContentStorageS3 {
+	if !act.nsConfig.UsesS3ContentStorage() {
 		writeErrorCode(w, http.StatusConflict, api.ErrCodeContentStorageNotS3,
 			d.translatorFor(r).T("contentStorage.msg.notS3"))
 		return
@@ -344,11 +338,11 @@ func (d *Daemon) handleContentStorageProvision(w http.ResponseWriter, r *http.Re
 // otherwise the provider, the generation's problem and the provisioner's
 // state, rendered for this reader.
 func (d *Daemon) contentStorageDto(t *i18n.Translator, act activeNamespace) *api.ContentStorageDto {
-	if act.nsConfig == nil || act.nsConfig.ContentStorageType() != namespace.ContentStorageS3 {
+	if act.nsConfig == nil || !act.nsConfig.UsesS3ContentStorage() {
 		return nil
 	}
 	dto := &api.ContentStorageDto{Type: string(namespace.ContentStorageS3)}
-	if s3 := act.workspaceConfig.ContentStorageS3(); s3 != nil {
+	if s3 := act.workspaceConfig.ContentStorageS3(); act.nsConfig.S3 == nil && s3 != nil {
 		dto.ProviderApp = s3.App
 		dto.ProviderTitle = s3.DisplayName()
 	}

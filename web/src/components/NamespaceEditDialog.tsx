@@ -298,10 +298,6 @@ export function NamespaceEditDialog({
   const showMongoToggle = mode === 'edit'
     && configVersion > 0
     && configVersion < MONGO_DROPPED_IN_CONFIG_VERSION
-  // The tab strip appears only when Advanced has something in it; an empty
-  // second tab is worse than no tabs.
-  const hasAdvanced = showMongoToggle
-
   // Content storage, derived. The option is offered only once the daemon has
   // answered for THIS bundle: a bundle without ecos-content (every Community
   // bundle) never has the question, so the form stays exactly as it was —
@@ -318,6 +314,9 @@ export function NamespaceEditDialog({
     ? CONTENT_STORAGE_S3
     : CONTENT_STORAGE_DB
   const showStorageField = storedS3 || (!!s3Opt && s3Opt.reason !== REASON_NO_CONTENT_APP)
+  // Hide the tab strip when neither advanced setting applies.
+  const hasAdvanced = showMongoToggle || showStorageField
+  const activeTab = hasAdvanced ? tab : 'general'
   // An S3 namespace moved to a bundle that cannot have S3 is refused on save
   // (CONTENT_STORAGE_UNAVAILABLE). Say so before the click; the daemon still
   // decides.
@@ -455,9 +454,9 @@ export function NamespaceEditDialog({
               key={id}
               type="button"
               role="tab"
-              aria-selected={tab === id}
+              aria-selected={activeTab === id}
               className={`px-3 py-1.5 text-xs border-b-2 -mb-px ${
-                tab === id
+                activeTab === id
                   ? 'border-primary text-foreground font-medium'
                   : 'border-transparent text-muted-foreground hover:text-foreground'
               }`}
@@ -469,8 +468,72 @@ export function NamespaceEditDialog({
         </div>
       )}
 
-      {tab === 'advanced' ? (
+      {activeTab === 'advanced' ? (
         <>
+          {showStorageField && (
+            <fieldset className="min-w-0">
+              <legend className="block text-xs font-medium mb-1">{t('contentStorage.label')}</legend>
+              {storedS3 ? (
+                <>
+                  <div className="rounded border border-border bg-muted/40 px-2.5 py-1.5 text-sm">
+                    {s3Label}
+                  </div>
+                  <p className="mt-1 text-[11px] text-muted-foreground">{t('contentStorage.s3.oneWay')}</p>
+                  {storedS3Refused && (
+                    <p className="mt-1 text-[11px] text-destructive">
+                      {t('contentStorage.bundleChange.refused', {
+                        reason: s3UnavailableText(s3Opt?.reason, providerApp, t),
+                      })}
+                    </p>
+                  )}
+                </>
+              ) : (
+                <div className="flex flex-col gap-1.5">
+                  <label className="flex items-start gap-2 text-sm">
+                    <input
+                      type="radio"
+                      name="contentStorage"
+                      className="m-0 mt-0.5 shrink-0"
+                      checked={effectiveStorage === CONTENT_STORAGE_DB}
+                      onChange={() => setStorageChoice(CONTENT_STORAGE_DB)}
+                    />
+                    <span className="flex flex-col gap-0.5">
+                      <span className="text-xs font-medium">{t('contentStorage.option.db')}</span>
+                      <span className="text-[11px] text-muted-foreground">{t('contentStorage.option.db.hint')}</span>
+                    </span>
+                  </label>
+                  <label className={`flex items-start gap-2 text-sm ${s3Selectable ? '' : 'cursor-not-allowed'}`}>
+                    <input
+                      type="radio"
+                      name="contentStorage"
+                      className="m-0 mt-0.5 shrink-0"
+                      disabled={!s3Selectable}
+                      checked={effectiveStorage === CONTENT_STORAGE_S3}
+                      onChange={() => setStorageChoice(CONTENT_STORAGE_S3)}
+                    />
+                    <span className="flex flex-col gap-0.5">
+                      <span className={`text-xs font-medium ${s3Selectable ? '' : 'text-muted-foreground'}`}>
+                        {s3Label}
+                      </span>
+                      <span className="text-[11px] text-muted-foreground">
+                        {s3Selectable
+                          ? t('contentStorage.option.s3.hint', { app: providerApp })
+                          : externalS3
+                            ? t('contentStorage.reason.externalS3')
+                            : s3UnavailableText(s3Opt?.reason, providerApp, t)}
+                      </span>
+                    </span>
+                  </label>
+                  {effectiveStorage === CONTENT_STORAGE_S3 && (
+                    <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-[11px] text-amber-700 dark:text-amber-300">
+                      {t(mode === 'create' ? 'contentStorage.s3.note.create' : 'contentStorage.s3.note.switch', { app: providerApp })}
+                    </p>
+                  )}
+                </div>
+              )}
+            </fieldset>
+          )}
+
           {showMongoToggle && (
             <label className="flex items-start gap-2 text-sm">
               <input
@@ -550,70 +613,6 @@ export function NamespaceEditDialog({
           </button>
         </div>
       </ModalField>
-
-      {showStorageField && (
-        <fieldset className="min-w-0">
-          <legend className="block text-xs font-medium mb-1">{t('contentStorage.label')}</legend>
-          {storedS3 ? (
-            <>
-              <div className="rounded border border-border bg-muted/40 px-2.5 py-1.5 text-sm">
-                {s3Label}
-              </div>
-              <p className="mt-1 text-[11px] text-muted-foreground">{t('contentStorage.s3.oneWay')}</p>
-              {storedS3Refused && (
-                <p className="mt-1 text-[11px] text-destructive">
-                  {t('contentStorage.bundleChange.refused', {
-                    reason: s3UnavailableText(s3Opt?.reason, providerApp, t),
-                  })}
-                </p>
-              )}
-            </>
-          ) : (
-            <div className="flex flex-col gap-1.5">
-              <label className="flex items-start gap-2 text-sm">
-                <input
-                  type="radio"
-                  name="contentStorage"
-                  className="m-0 mt-0.5 shrink-0"
-                  checked={effectiveStorage === CONTENT_STORAGE_DB}
-                  onChange={() => setStorageChoice(CONTENT_STORAGE_DB)}
-                />
-                <span className="flex flex-col gap-0.5">
-                  <span className="text-xs font-medium">{t('contentStorage.option.db')}</span>
-                  <span className="text-[11px] text-muted-foreground">{t('contentStorage.option.db.hint')}</span>
-                </span>
-              </label>
-              <label className={`flex items-start gap-2 text-sm ${s3Selectable ? '' : 'cursor-not-allowed'}`}>
-                <input
-                  type="radio"
-                  name="contentStorage"
-                  className="m-0 mt-0.5 shrink-0"
-                  disabled={!s3Selectable}
-                  checked={effectiveStorage === CONTENT_STORAGE_S3}
-                  onChange={() => setStorageChoice(CONTENT_STORAGE_S3)}
-                />
-                <span className="flex flex-col gap-0.5">
-                  <span className={`text-xs font-medium ${s3Selectable ? '' : 'text-muted-foreground'}`}>
-                    {s3Label}
-                  </span>
-                  <span className="text-[11px] text-muted-foreground">
-                    {s3Selectable
-                      ? t('contentStorage.option.s3.hint', { app: providerApp })
-                      : externalS3
-                        ? t('contentStorage.reason.externalS3')
-                        : s3UnavailableText(s3Opt?.reason, providerApp, t)}
-                  </span>
-                </span>
-              </label>
-              {effectiveStorage === CONTENT_STORAGE_S3 && (
-                <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-[11px] text-amber-700 dark:text-amber-300">
-                  {t(mode === 'create' ? 'contentStorage.s3.note.create' : 'contentStorage.s3.note.switch', { app: providerApp })}
-                </p>
-              )}
-            </div>
-          )}
-        </fieldset>
-      )}
 
       {mode === 'create' && (
         <ModalField label={t('namespace.form.snapshot')}>

@@ -37,10 +37,8 @@ type ContentStorageConfig struct {
 	problem string
 }
 
-// ContentStorageS3Config is one S3 provider. Every field but Title is
-// required: the provider is useless to ecos-content without the endpoint, the
-// bucket and the credentials, so a block missing any of them is treated as
-// absent.
+// ContentStorageS3Config names the native S3 provider and its connection.
+// Title is optional; Bucket defaults to ecos-content and must match it.
 type ContentStorageS3Config struct {
 	// App is the provider app id — a workspace `additionalApps:` entry. A
 	// namespace that chose S3 depends on it and starts it with the namespace.
@@ -51,7 +49,8 @@ type ContentStorageS3Config struct {
 	Title string
 	// URL is the S3 endpoint as ecos-content reaches it on the namespace
 	// network (http://<app>:<port>).
-	URL    string
+	URL string
+	// Bucket is the native storage bucket; another value is rejected.
 	Bucket string
 	// AccessKey / SecretKey are the S3 identity. SecretKey is meant to be a
 	// `${secret:<id>}` reference to the namespace's own value — the same one
@@ -95,6 +94,13 @@ func (c *ContentStorageConfig) UnmarshalYAML(node *yaml.Node) error {
 		SecretKey: strings.TrimSpace(raw.S3.SecretKey),
 	}
 	var missing []string
+	if s3.Bucket == "" {
+		s3.Bucket = "ecos-content"
+	}
+	if s3.Bucket != "ecos-content" {
+		c.problem = "native S3 storage requires bucket ecos-content"
+		return nil
+	}
 	for _, f := range []struct{ name, value string }{
 		{"app", s3.App}, {"url", s3.URL}, {"bucket", s3.Bucket},
 		{"accessKey", s3.AccessKey}, {"secretKey", s3.SecretKey},
@@ -142,7 +148,7 @@ func (w *WorkspaceConfig) ContentStorageS3() *ContentStorageS3Config {
 }
 
 // AdditionalApp answers the ENABLED raw additionalApps entry with this name.
-// Typed entries (POSTGRES, QDRANT) and disabled ones answer false: neither
+// Database/vector-store typed entries (POSTGRES, QDRANT) and disabled ones answer false: neither
 // becomes a container the way a raw entry does.
 func (w *WorkspaceConfig) AdditionalApp(name string) (AdditionalAppProps, bool) {
 	if w == nil {
@@ -150,7 +156,7 @@ func (w *WorkspaceConfig) AdditionalApp(name string) (AdditionalAppProps, bool) 
 	}
 	name = strings.TrimSpace(name)
 	for _, a := range w.AdditionalApps {
-		if strings.TrimSpace(a.Name) == name && a.IsEnabled() && !a.IsTyped() {
+		if strings.TrimSpace(a.Name) == name && a.IsEnabled() && (!a.IsTyped() || a.Type == AppTypeSeaweedFS) {
 			return a, true
 		}
 	}

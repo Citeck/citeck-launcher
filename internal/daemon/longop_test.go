@@ -591,3 +591,38 @@ func TestLongOpToleranceAllows(t *testing.T) {
 	// like any non-member: the free-lock case belongs to the plain TryLock.
 	assert.False(t, tolerateLifecycleWork.allows(longOpNone))
 }
+
+func TestLongOpDataMutationBarrier(t *testing.T) {
+	for _, kind := range []longOpKind{longOpSnapshot, longOpMigration, longOpDepsRollback} {
+		t.Run(string(kind), func(t *testing.T) {
+			var l longOpLock
+			release, ok := l.tryDataMutation()
+			require.True(t, ok)
+			assert.False(t, l.TryLock(kind), "mutation already in flight")
+			release()
+			require.True(t, l.TryLock(kind))
+			_, ok = l.tryDataMutation()
+			assert.False(t, ok, "destructive operation already in flight")
+			l.Unlock()
+			release, ok = l.tryDataMutation()
+			require.True(t, ok, "destructive operation released the barrier")
+			release()
+		})
+	}
+	for _, kind := range []longOpKind{longOpRequest, longOpUpdatePass} {
+		t.Run(string(kind), func(t *testing.T) {
+			var l longOpLock
+			require.True(t, l.TryLock(kind))
+			release, ok := l.tryDataMutation()
+			require.True(t, ok, "ordinary handlers can coexist with provisioning")
+			release()
+			assert.False(t, l.TryLock(longOpSnapshot), "primary lock is still owned")
+			release, ok = l.tryDataMutation()
+			require.True(t, ok, "failed acquisition does not leak the data barrier")
+			release()
+			l.Unlock()
+			require.True(t, l.TryLock(longOpSnapshot))
+			l.Unlock()
+		})
+	}
+}

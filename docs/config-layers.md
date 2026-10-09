@@ -73,7 +73,7 @@ namespace с этим бандлом на данном лаунчере. Кро�
 
 ## Защита данных зависимостей
 
-Для PostgreSQL, RabbitMQ, ZooKeeper, Qdrant, Keycloak, MongoDB и кластеров,
+Для PostgreSQL, RabbitMQ, ZooKeeper, Qdrant, Keycloak, MongoDB, SeaweedFS и кластеров,
 объявленных workspace в `additionalApps` (`type: POSTGRES` / `type: QDRANT`,
 например `observer-postgres`), после выбора образа отдельно проверяется
 совместимость с сохранённой версией данных. При несовместимом обновлении бандл
@@ -96,3 +96,6 @@ citeck deps upgrade postgres
 Реализация: [общий выбор образа](../internal/namespace/generator_util.go),
 [генерация веб-приложений](../internal/namespace/generator_webapp.go),
 [генерация инфраструктуры](../internal/namespace/generator_infra.go).
+
+Типизированный SeaweedFS использует ту же защиту версии/поколений; его обновление
+и откат описаны в [отдельной инструкции](seaweedfs-upgrade.md).

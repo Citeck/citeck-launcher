@@ -37,7 +37,8 @@ const (
 	// a bundle may choose (GET ?bundleRepo=&bundleKey=[&workspaceId=]),
 	// resolved offline from the synced bundle repo — the create and edit
 	// dialogs ask it whenever the bundle selection changes.
-	ContentStorageOptions = APIV1 + "/content-storage/options"
+	ContentStorageLocalEnv = APIV1 + "/content-storage/local-env"
+	ContentStorageOptions  = APIV1 + "/content-storage/options"
 
 	// Dependencies lists the ACTIVE namespace's infrastructure dependencies
 	// (internal/deps: postgres, rabbitmq, zookeeper, keycloak, mongodb) with

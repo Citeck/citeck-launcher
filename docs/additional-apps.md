@@ -39,7 +39,7 @@ the config. In **server mode** the container is internal to the Docker network
 | `shmSize` | no | `/dev/shm` size. |
 | `stopTimeout` | no | Per-app graceful-stop budget in seconds (SIGTERM→SIGKILL); `0` = daemon default. |
 | `cloudConfig` | no | Keys the desktop CloudConfigServer hands this service when it is stopped in the launcher and run from an IDE. Strings take the same `${VAR}` substitution as env; numbers, booleans, lists and maps pass through. |
-| `type` | no | Empty for a container (this table). `POSTGRES` / `QDRANT` make the entry a dependency the launcher knows, with its own settings — see [Additional databases and stores](databases.md). |
+| `type` | no | Empty for a container (this table). `POSTGRES` / `QDRANT` make the entry a dependency the launcher knows, with its own settings — see [Additional databases and stores](databases.md). `SEAWEEDFS` supplies a managed mini profile: volume generations, command, standard probes and desktop ports; optional `settings` is a scalar YAML map, not a command array; see [SeaweedFS updates](seaweedfs-upgrade.md). |
 
 These cover **every container-level knob** the launcher's own app generators set, so
 any app — not just the EDI sim — is expressible by config alone.

@@ -81,6 +81,7 @@
   "snapshot.stopped": "Namespace arrêté",
   "snapshot.stopTimeout": "délai d'attente dépassé pour l'arrêt du namespace (bloqué à {status})",
   "snapshot.notFound": "snapshot « {name} » introuvable. Exécutez « citeck snapshot list » pour voir les snapshots disponibles",
+  "snapshot.import.pending": "L’importation du snapshot est incomplète. Répétez l’importation avant de démarrer le namespace.",
   "snapshot.import.detach": "Snapshot importé, démarrage du namespace lancé (utilisez `citeck status` pour suivre).",
   "snapshot.import.background": "Le namespace continue à démarrer en arrière-plan. Exécutez `citeck status` pour suivre.",
   "snapshot.waitingCompletion": "Attente de la fin...",
@@ -564,14 +565,9 @@
   "contentStorage.msg.unavailable.externalS3": "Ce namespace stocke son contenu dans un S3 externe (le bloc s3 de sa configuration), qui ne peut pas être combiné avec le stockage du contenu dans S3.",
   "contentStorage.msg.unavailable.bundleUnresolved": "Le bundle {bundle} n'est pas dans le dépôt de bundles synchronisé, il est donc impossible de vérifier le stockage S3 pour lui. Synchronisez le dépôt (mise à jour forcée) et réessayez.",
   "contentStorage.msg.notS3": "Ce namespace stocke son contenu dans la base de données ; il n'y a aucun stockage S3 à connecter.",
-  "contentStorage.msg.provision.secretsLocked": "Les secrets du namespace sont verrouillés : les identifiants S3 de {app} ne peuvent pas être lus et ecos-content ne peut pas y être connecté. Déverrouillez les secrets, puis réessayez.",
-  "contentStorage.msg.provision.secretsUnreadable": "Les secrets du namespace n'ont pas pu être lus, ecos-content ne peut donc pas être connecté à son stockage S3 : {error}",
-  "contentStorage.msg.provision.secretMissing": "Les identifiants S3 de {app} font référence à des secrets pour lesquels ce namespace n'a pas de valeur : {secrets}. Ajoutez-les aux secrets de la configuration de l'espace de travail, puis réessayez.",
-  "contentStorage.msg.provision.secretNotGenerated": "Les identifiants S3 de {app} font référence à des secrets générés pour lesquels ce namespace n'a pas encore de valeur : {secrets}. Rechargez le namespace pour les générer (citeck reload, ou « Mettre à jour et démarrer ») ; ecos-content sera connecté avec la nouvelle clé une fois {app} redémarré avec elle.",
   "contentStorage.msg.provision.notReady": "ECOS n'a pas été prêt pour la connexion du stockage de contenu S3 dans les {minutes} minutes. Dernière réponse : {error}",
   "contentStorage.msg.provision.readFailed": "Impossible de lire les paramètres du stockage de contenu depuis ECOS : {error}",
   "contentStorage.msg.provision.createFailed": "Impossible de créer {record} dans ECOS : {error}",
-  "contentStorage.msg.provision.updateFailed": "Impossible de mettre à jour {record} dans ECOS : {error}",
   "contentStorage.msg.provision.setDefaultFailed": "Impossible de définir {storage} comme stockage de contenu par défaut dans ECOS : {error}",
   "contentStorage.msg.provision.verifyFailed": "{storage} a été défini comme stockage de contenu par défaut, mais ECOS indique maintenant {actual}.",
   "deps.msg.busy.rollback": "un retour arrière de dépendance est en cours — attendez qu'il se termine",
@@ -595,5 +591,8 @@
   "deps.msg.event.rolledBackWithWarning": "{id} ramené à {image} ; {error}",
   "deps.msg.action.migrationStarted": "Migration de {id} vers {image} démarrée",
   "deps.msg.action.rollbackStarted": "Retour arrière de {id} vers {image} démarré",
-  "apps.msg.namespaceNotRunning": "Le namespace n'est pas démarré — démarrez-le d'abord, puis lancez cette application seule."
+  "apps.msg.namespaceNotRunning": "Le namespace n'est pas démarré — démarrez-le d'abord, puis lancez cette application seule.",
+  "contentStorage.msg.local.desktopOnly": "L’export de l’environnement S3 local est disponible uniquement sur desktop.",
+  "contentStorage.msg.local.notConfigured": "Ce namespace n’a pas d’environnement S3 natif à exporter.",
+  "contentStorage.msg.local.providerNotReady": "Le fournisseur S3 doit fonctionner avec son port desktop publié."
 }

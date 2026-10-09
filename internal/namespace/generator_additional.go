@@ -5,6 +5,9 @@ import (
 	"strings"
 
 	"github.com/citeck/citeck-launcher/internal/appdef"
+	"github.com/citeck/citeck-launcher/internal/bundle"
+	"github.com/citeck/citeck-launcher/internal/config"
+	"github.com/citeck/citeck-launcher/internal/deps"
 )
 
 // generateAdditionalApps materializes the workspace config's AdditionalApps into
@@ -30,9 +33,10 @@ func generateAdditionalApps(ctx *NsGenContext) {
 		// raw container. Skipped explicitly: with the image no longer required,
 		// it would otherwise reach the collision guard below and be refused as a
 		// clash with the very cluster its own generator emitted.
-		if !def.IsEnabled() || def.IsTyped() {
+		if !def.IsEnabled() || (def.IsTyped() && def.Type != bundle.AppTypeSeaweedFS) {
 			continue
 		}
+		def = def.WithSeaweedDefaults()
 		name := strings.TrimSpace(def.Name)
 		if name == "" {
 			// Defensive: validation rejects these at workspace-config load; skip
@@ -44,7 +48,15 @@ func generateAdditionalApps(ctx *NsGenContext) {
 		// built-in service take. An entry without an image runs only where the
 		// bundle names one: the release decides that the service exists, the
 		// workspace how it is configured.
-		image := resolveAppImage(ctx, name, "", ctx.WorkspaceConfig.ResolveImageRef(def.Image))
+		chain := resolveAppImageChain(ctx, name, "", ctx.WorkspaceConfig.ResolveImageRef(def.Image))
+		image := ""
+		if len(chain) > 0 {
+			image = chain[len(chain)-1]
+		}
+		managed := SeaweedDescriptor(def)
+		if managed != nil {
+			image = resolveDependencyImageFor(ctx, managed, chain)
+		}
 		if image == "" {
 			slog.Debug("additionalApps entry names no image and the bundle names none; not generated", "name", name)
 			continue
@@ -94,8 +106,18 @@ func generateAdditionalApps(ctx *NsGenContext) {
 		for _, p := range def.Ports {
 			app.AddPort(p)
 		}
-		for _, v := range def.Volumes {
-			app.AddVolume(v)
+		if managed != nil {
+			if config.IsDesktopMode() {
+				addSeaweedPort(app, "8333", "8333:8333")
+				if def.SeaweedAdminEnabled() {
+					addSeaweedPort(app, "23646", "23646:23646")
+				}
+			}
+			app.AddVolume(deps.VolumeName(managed, ctx.DependencyStates[managed.ID()].Gen()) + ":/data")
+		} else {
+			for _, v := range def.Volumes {
+				app.AddVolume(v)
+			}
 		}
 		for _, d := range def.DependsOn {
 			app.AddDependsOn(d)

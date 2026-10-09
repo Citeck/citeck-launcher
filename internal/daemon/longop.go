@@ -125,8 +125,11 @@ func (k longOpKind) busyEnglish() string {
 // taken and cleared before it is dropped, so a reader can only ever see the
 // real holder or longOpNone — never a stale different kind.
 type longOpLock struct {
-	mu    sync.Mutex
-	owner atomic.Value // longOpKind
+	mu sync.Mutex
+	// dataBarrier excludes a content-storage mutation from a destructive
+	// operation without holding the long-operation lock during readiness polls.
+	dataBarrier sync.RWMutex
+	owner       atomic.Value // longOpKind
 }
 
 // TryLock claims the lock for kind, or reports false without blocking. Never
@@ -143,7 +146,14 @@ type longOpLock struct {
 // right side to fail on; the alternative — storing the owner before the lock —
 // would let a reader attribute the lock to a kind that never held it.
 func (l *longOpLock) TryLock(kind longOpKind) bool {
+	ownsData := longOpOwnsNamespaceData(kind)
+	if ownsData && !l.dataBarrier.TryLock() {
+		return false
+	}
 	if !l.mu.TryLock() {
+		if ownsData {
+			l.dataBarrier.Unlock()
+		}
 		return false
 	}
 	l.owner.Store(kind)
@@ -153,8 +163,12 @@ func (l *longOpLock) TryLock(kind longOpKind) bool {
 // Unlock releases the lock. Clearing the owner FIRST keeps the invariant that a
 // lock-free reader never attributes the lock to a holder that has let go.
 func (l *longOpLock) Unlock() {
+	ownsData := longOpOwnsNamespaceData(l.Holder())
 	l.owner.Store(longOpNone)
 	l.mu.Unlock()
+	if ownsData {
+		l.dataBarrier.Unlock()
+	}
 }
 
 // Holder reports the current owner, or longOpNone when the lock is free (or was
@@ -250,4 +264,21 @@ func (d *Daemon) tryLongOp(w http.ResponseWriter, r *http.Request, tolerate long
 	writeErrorCode(w, http.StatusConflict, api.ErrCodeLongOpInProgress,
 		d.translatorFor(r).Render(holder.busyMessage()))
 	return nil, false
+}
+
+// tryDataMutation excludes snapshots and migrations for one bounded remote
+// mutation. Ordinary handlers and update passes may coexist as before.
+func (l *longOpLock) tryDataMutation() (release func(), ok bool) {
+	if !l.dataBarrier.TryRLock() {
+		return nil, false
+	}
+	return l.dataBarrier.RUnlock, true
+}
+
+// longOpOwnsNamespaceData reports whether the long-operation holder takes the
+// namespace's data away from under everyone: a snapshot restoring volumes, a
+// dependency migration or rollback stopping the namespace. An update pass or
+// an ordinary request does not, and the connection does not wait for them.
+func longOpOwnsNamespaceData(k longOpKind) bool {
+	return k == longOpSnapshot || k == longOpMigration || k == longOpDepsRollback
 }

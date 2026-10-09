@@ -75,6 +75,7 @@ func providerEntryValues(t *testing.T, ws *bundle.WorkspaceConfig) []string {
 	t.Helper()
 	entry, ok := ws.AdditionalApp(ws.ContentStorageS3().App)
 	require.True(t, ok)
+	entry = entry.WithSeaweedDefaults()
 	values := slices.Clone(entry.Cmd)
 	for _, v := range entry.Environments {
 		values = append(values, v)
@@ -252,9 +253,8 @@ func TestContentStorageProvider_TheDefaultTemplateHoldsItBackAndS3RequiresIt(t *
 
 // The store's keys are GENERATED, one value per namespace. A constant default
 // lives in a workspace repository every stand reads, so it would be every
-// stand's key; and a launcher that predates generated secrets skips a
-// `generated:` entry, so there the store is left out of a namespace that has
-// no values yet instead of running with an empty key (authentication off).
+// stand's key. Both the nested options form and the legacy scalar form create
+// exactly the same namespace-local values.
 func TestContentStorageProvider_KeysAreGeneratedPerNamespace(t *testing.T) {
 	ws := contentStorageWorkspace(t)
 	ids := referencedSecretIDs(append(providerEntryValues(t, ws), ws.ContentStorageS3().SecretKey)...)
@@ -309,7 +309,7 @@ func TestContentStorageProvider_EveryHTTPPortAsksForACredential(t *testing.T) {
 		// client on the namespace network could ask it for the very token the
 		// volume server's JWT check wants, and the JWT keys would protect
 		// nothing.
-		assert.Contains(t, provider.Cmd, "-disableHttp")
+		assert.Contains(t, provider.Cmd, "-disableHttp=true")
 	})
 
 	t.Run("file tokens are signed with a generated key of their own", func(t *testing.T) {

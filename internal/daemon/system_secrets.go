@@ -110,3 +110,56 @@ func resolveSystemSecrets(store storage.Store, svc *storage.SecretService, deskt
 
 	return secrets, nil
 }
+
+func snapshotSystemValues(secrets namespace.SystemSecrets) map[string]string {
+	return map[string]string{
+		systemsecrets.NamespaceName(systemsecrets.IDJWT):           secrets.JWT,
+		systemsecrets.NamespaceName(systemsecrets.IDOIDC):          secrets.OIDC,
+		systemsecrets.NamespaceName(systemsecrets.IDAdminPassword): secrets.AdminPasswordOrDefault(),
+		systemsecrets.NamespaceName(systemsecrets.IDCiteckSA):      secrets.CiteckSA,
+	}
+}
+
+func applyNamespaceSystemSecrets(svc *storage.SecretService, wsID, nsID string, secrets namespace.SystemSecrets) (namespace.SystemSecrets, error) {
+	fields := map[string]*string{
+		systemsecrets.IDJWT: &secrets.JWT, systemsecrets.IDOIDC: &secrets.OIDC,
+		systemsecrets.IDAdminPassword: &secrets.AdminPassword, systemsecrets.IDCiteckSA: &secrets.CiteckSA,
+	}
+	for _, id := range systemsecrets.KnownIDs() {
+		value, exists, err := systemsecrets.NamespaceOverride(svc, wsID, nsID, id)
+		if err != nil {
+			return secrets, fmt.Errorf("read namespace system credential %s: %w", id, err)
+		}
+		if exists {
+			*fields[id] = value
+		}
+	}
+	return secrets, nil
+}
+
+// Preserve a concurrent rotation that completed while reload generated its files.
+func preserveSystemSecretRotation(current, captured, generated namespace.SystemSecrets) namespace.SystemSecrets {
+	if current != captured {
+		return current
+	}
+	return generated
+}
+
+// Refresh the captured namespace's cached credentials after a successful restore.
+// A namespace switch must never install the imported values in another stand.
+func (d *Daemon) refreshSnapshotSystemSecrets(captured activeNamespace) error {
+	if captured.nsConfig == nil {
+		return nil
+	}
+	secrets, err := applyNamespaceSystemSecrets(d.secretService, captured.workspaceID, captured.nsConfig.ID, captured.systemSecrets)
+	if err != nil {
+		return err
+	}
+	d.configMu.Lock()
+	defer d.configMu.Unlock()
+	current := d.activeLocked()
+	if current.nsConfig != nil && current.workspaceID == captured.workspaceID && current.nsConfig.ID == captured.nsConfig.ID && current.runtime == captured.runtime {
+		current.systemSecrets = preserveSystemSecretRotation(current.systemSecrets, captured.systemSecrets, secrets)
+	}
+	return nil
+}

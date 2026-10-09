@@ -21,9 +21,10 @@ import (
 // not read — an entry is a declaration, not a script, and refusing a workspace
 // config over a stray key would break stands for a typo.
 const (
-	AppTypeContainer = ""         // raw container (historical shape)
-	AppTypePostgres  = "POSTGRES" // a PostgreSQL cluster beside the stand's own
-	AppTypeQdrant    = "QDRANT"   // a Qdrant vector store
+	AppTypeContainer = ""          // raw container (historical shape)
+	AppTypePostgres  = "POSTGRES"  // a PostgreSQL cluster beside the stand's own
+	AppTypeSeaweedFS = "SEAWEEDFS" // a managed local mini store
+	AppTypeQdrant    = "QDRANT"    // a Qdrant vector store
 )
 
 // PostgresAppProps is the DTO behind `type: POSTGRES` — ONE PostgreSQL cluster
@@ -108,14 +109,16 @@ type QdrantAppProps struct {
 // live on each generation, exactly like `webapps:`.
 type AdditionalAppProps struct {
 	// Name is the container/app name (unique; must not collide with a built-in app).
-	Name string `yaml:"name" json:"name"`
+	Name       string `yaml:"name" json:"name"`
+	VolumeBase string `yaml:"volumeBase,omitempty" json:"volumeBase,omitempty"`
 	// Type selects which DTO the entry is read as: empty for the raw container
-	// described below, POSTGRES or QDRANT for a dependency the launcher knows.
+	// described below, POSTGRES, QDRANT or SEAWEEDFS for a dependency the launcher knows.
 	// See the AppType constants.
 	Type string `yaml:"type,omitempty" json:"type,omitempty"`
 	// Postgres and Qdrant hold the typed entry's settings. Exactly one is set,
 	// and only when Type says so; the raw container fields below are then
-	// unused. A typed entry never reaches generateAdditionalApps.
+	// unused. SEAWEEDFS uses settings plus container overrides, with its command,
+	// volume generation and standard probes supplied by Launcher.
 	Postgres *PostgresAppProps `yaml:"-" json:"postgres,omitempty"`
 	Qdrant   *QdrantAppProps   `yaml:"-" json:"qdrant,omitempty"`
 	// Enabled defaults to true; set false to keep the definition but not deploy it.
@@ -132,9 +135,11 @@ type AdditionalAppProps struct {
 	Image string `yaml:"image,omitempty" json:"image,omitempty"`
 	// Kind classifies the app (CITECK_CORE / CITECK_CORE_EXTENSION / CITECK_ADDITIONAL
 	// / THIRD_PARTY); empty defaults to THIRD_PARTY.
-	Kind              string                    `yaml:"kind,omitempty" json:"kind,omitempty"`
-	NetworkAliases    []string                  `yaml:"networkAliases,omitempty" json:"networkAliases,omitempty"`
-	Environments      map[string]string         `yaml:"environments,omitempty" json:"environments,omitempty"`
+	Kind           string            `yaml:"kind,omitempty" json:"kind,omitempty"`
+	NetworkAliases []string          `yaml:"networkAliases,omitempty" json:"networkAliases,omitempty"`
+	Environments   map[string]string `yaml:"environments,omitempty" json:"environments,omitempty"`
+	// Settings are optional SEAWEEDFS mini flags as a scalar YAML map.
+	Settings          map[string]string         `yaml:"settings,omitempty" json:"settings,omitempty"`
 	Cmd               []string                  `yaml:"cmd,omitempty" json:"cmd,omitempty"`
 	Ports             []string                  `yaml:"ports,omitempty" json:"ports,omitempty"`
 	Volumes           []string                  `yaml:"volumes,omitempty" json:"volumes,omitempty"`
@@ -218,6 +223,9 @@ func ValidateAdditionalApps(apps []AdditionalAppProps) error {
 			return fmt.Errorf("additionalApps[%q]: duplicate name", name)
 		}
 		seen[name] = true
+		if err := a.validateSeaweedDependency(); err != nil {
+			return err
+		}
 		for j, ic := range a.InitContainers {
 			if strings.TrimSpace(ic.Image) == "" {
 				return fmt.Errorf("additionalApps[%q].initContainers[%d]: image is required", name, j)
@@ -268,6 +276,9 @@ func (a *AdditionalAppProps) UnmarshalYAML(value *yaml.Node) error {
 		}
 		*a = AdditionalAppProps(raw)
 		a.Type = AppTypeContainer
+		if strings.EqualFold(strings.TrimSpace(head.Type), AppTypeSeaweedFS) {
+			a.Type = AppTypeSeaweedFS
+		}
 		return nil
 	}
 }

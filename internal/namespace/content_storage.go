@@ -37,8 +37,8 @@ const (
 	ContentStorageProviderConflict = "PROVIDER_CONFLICT"
 	// ContentStorageProviderNotGenerated is a GENERATION problem, never an
 	// availability answer: the configuration offers a provider, but this
-	// generation left it out — a `${secret:}` it references has no value in
-	// the namespace, or something it depends on is missing.
+	// generation cannot wire it — a provider or connection `${secret:}` has
+	// no namespace value, or something the provider depends on is missing.
 	ContentStorageProviderNotGenerated = "PROVIDER_NOT_GENERATED"
 )
 
@@ -183,8 +183,8 @@ type ContentStorageProblem struct {
 }
 
 // wireContentStorage makes ecos-content of an S3 namespace wait for the S3
-// provider, and nothing else — no env, no gating: ecos-content is connected to
-// the provider through its own records, by the daemon, once the platform is up.
+// provider and supplies native endpoint/credential env. The daemon selects
+// the built-in S3 default once the platform is up. No gating app is added.
 //
 // It must run AFTER excludeAppsMissingSecrets and BEFORE
 // pruneAppsWithMissingDeps. The provider references the namespace's S3 secret,
@@ -246,6 +246,18 @@ func wireContentStorage(ctx *NsGenContext) {
 		slog.Warn("The S3 content storage provider is not part of this generation; ecos-content is not wired to it",
 			"provider", avail.ProviderApp)
 	default:
+		s3 := ctx.WorkspaceConfig.ContentStorageS3()
+		access, missingAccess := ResolveSecretRefs(s3.AccessKey, ctx.NamespaceSecrets)
+		secret, missingSecret := ResolveSecretRefs(s3.SecretKey, ctx.NamespaceSecrets)
+		if len(missingAccess)+len(missingSecret) > 0 {
+			ctx.ContentStorageProblem = &ContentStorageProblem{Reason: ContentStorageProviderNotGenerated, ProviderApp: avail.ProviderApp}
+			return
+		}
+		content.AddEnv("ECOS_ENDPOINT_CONTENT_STORAGE_S3_ENDPOINT_URL", s3.URL)
+		content.AddEnv("ECOS_ENDPOINT_CONTENT_STORAGE_S3_ENDPOINT_CREDENTIALS", "content-storage-s3-credentials")
+		content.AddEnv("ECOS_SECRET_CONTENT_STORAGE_S3_CREDENTIALS_TYPE", "BASIC")
+		content.AddEnv("ECOS_SECRET_CONTENT_STORAGE_S3_CREDENTIALS_USERNAME", access)
+		content.AddEnv("ECOS_SECRET_CONTENT_STORAGE_S3_CREDENTIALS_PASSWORD", secret)
 		content.AddDependsOn(avail.ProviderApp)
 	}
 }

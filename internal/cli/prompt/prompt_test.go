@@ -6,9 +6,36 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // ----- Select model -----
+
+func TestSelect_DescriptionFitsTerminalAfterResize(t *testing.T) {
+	desc := "Переключение на S3 запускает seaweedfs и подключает ecos-content после запуска платформы. Переключение необратимо: вернуть хранение из S3 в базу данных нельзя."
+	m := selectModel[string]{desc: desc}
+	for _, width := range []int{120, 80, 40} {
+		updated, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: 40})
+		m = updated.(selectModel[string])
+		lines := strings.Split(strings.TrimRight(m.View(), "\n"), "\n")
+		var text []string
+		for _, line := range lines {
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
+			if lipgloss.Width(line) > width {
+				t.Fatalf("description exceeds %d cells: %q", width, line)
+			}
+			if !strings.HasPrefix(line, StepIndent) {
+				t.Fatalf("description lost indentation: %q", line)
+			}
+			text = append(text, strings.Fields(line)...)
+		}
+		if strings.Join(text, " ") != desc {
+			t.Fatalf("description text lost at width %d: %v", width, text)
+		}
+	}
+}
 
 func keyMsg(s string) tea.KeyMsg {
 	switch s {

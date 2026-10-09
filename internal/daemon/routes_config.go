@@ -326,6 +326,11 @@ func (d *Daemon) handleStartNamespace(w http.ResponseWriter, r *http.Request) {
 		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeNotConfigured, "no namespace configured")
 		return
 	}
+	if runtime.SnapshotImportPending() {
+		writeErrorCode(w, http.StatusConflict, api.ErrCodeSnapshotImportIncomplete, d.translatorFor(r).T("snapshot.import.pending"))
+		return
+	}
+
 	// A migration whose ROLLBACK failed leaves its temp containers on the host,
 	// and depsmig-src mounts the namespace's own data volume read-write. The
 	// long-op lock is already gone by then — the failed migration's goroutine

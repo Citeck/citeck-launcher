@@ -304,6 +304,9 @@ func dockerClientScoped(dc *docker.Client, workspace, ns string) bool {
 //
 //nolint:gocyclo,nestif // mirrors the original Start() block: bundle resolve fallback, secret resolve, generator, state restore — splitting further would scatter state
 func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
+	if err := storage.RecoverSnapshotMetadata(in.Store); err != nil {
+		return nil, fmt.Errorf("recover namespace snapshot metadata: %w", err)
+	}
 	wsID := in.WorkspaceID
 	nsID := in.NamespaceID
 	volumesBase := config.ResolveVolumesBase(wsID, nsID)
@@ -423,6 +426,11 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 	systemSecrets, sysErr := resolveSystemSecrets(in.Store, in.SecretService, in.Desktop)
 	if sysErr != nil {
 		return nil, fmt.Errorf("resolve system secrets: %w", sysErr)
+	}
+
+	systemSecrets, sysErr = applyNamespaceSystemSecrets(in.SecretService, wsID, nsID, systemSecrets)
+	if sysErr != nil {
+		return nil, sysErr
 	}
 
 	// Load persisted state for detached apps and status recovery.
@@ -676,14 +684,9 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 		}
 		runtime.RestoreEditedState(appPatches, fEdits)
 		runtime.RestoreRestartState(persistedState.RestartEvents, persistedState.RestartCounts)
-		// The S3 content-storage switch the launcher started and did not see
-		// confirmed (a failure or a daemon death between creating the storage
-		// and switching the default): without it the next connection run would
-		// read "our storage, default LOCAL" as an administrator's choice.
+		// Restore unfinished switch and confirmation history without a load-time write.
 		runtime.RestoreContentStorageSwitch(persistedState.ContentStorageSwitchPending)
-		// What the launcher last wrote into its ECOS secret: without it every
-		// daemon start would rewrite a secret that is already current.
-		runtime.RestoreContentStorageSecretWrite(persistedState.ContentStorageSecretWrite)
+		runtime.RestoreContentStorageDefaultSet(persistedState.ContentStorageDefaultSet)
 	} else if len(genOpts.DetachedApps) > 0 {
 		// First start with template detached apps — apply to runtime
 		runtime.SetManualStoppedApps(genOpts.DetachedApps)
@@ -714,6 +717,9 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 		lastMigration = persistedState.LastDependencyMigration
 	}
 	runtime.RestoreDependencyState(pins, journal, lastMigration)
+	if persistedState != nil {
+		runtime.RestoreSnapshotImportPending(persistedState.SnapshotImportPending)
+	}
 
 	// Wire DependsOnDetachedApps so RestartApp can trigger regen for dependency apps
 	runtime.SetDependsOnDetachedApps(genResp.DependsOnDetachedApps)
@@ -730,6 +736,9 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 	//   auto-started; user had to click Start each time).
 	shouldStart := true
 	if persistedState != nil {
+		if persistedState.SnapshotImportPending {
+			shouldStart = false
+		}
 		switch persistedState.Status {
 		case namespace.NsStatusStopping, namespace.NsStatusStopped:
 			slog.Info("Previous namespace status was stopped — not auto-starting", "status", persistedState.Status)

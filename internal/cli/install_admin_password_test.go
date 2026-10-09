@@ -106,3 +106,20 @@ func TestReadAdminPasswordFromOpenStore_CustomMasterPasswordLocked(t *testing.T)
 
 	require.Empty(t, readAdminPasswordFromOpenStore(store))
 }
+
+func TestInstallReadsImportedNamespaceAdminPassword(t *testing.T) {
+	store := newAdminPwTestStore(t)
+	svc, err := storage.NewSecretService(store)
+	require.NoError(t, err)
+	require.NoError(t, svc.SetMasterPassword(storage.DefaultMasterPassword, true))
+	require.NoError(t, systemsecrets.Set(store, svc, systemsecrets.IDAdminPassword, "profile-fixture"))
+	name := systemsecrets.NamespaceName(systemsecrets.IDAdminPassword)
+	require.NoError(t, svc.SaveSecret(storage.Secret{SecretMeta: storage.SecretMeta{
+		ID: storage.NamespaceSecretID("ws", "ns", name), Name: name,
+		Type: storage.SecretNamespace, Scope: storage.NamespaceSecretScope("ws", "ns"),
+	}, Value: "imported-fixture"}))
+	require.NoError(t, store.SetState(storage.LauncherState{WorkspaceID: "ws", SelectedNs: map[string]string{"ws": "ns"}}))
+	require.Equal(t, "imported-fixture", readAdminPasswordFromOpenStore(store))
+	require.NoError(t, store.SetState(storage.LauncherState{WorkspaceID: "ws", SelectedNs: map[string]string{"ws": "other"}}))
+	require.Equal(t, "profile-fixture", readAdminPasswordFromOpenStore(store))
+}

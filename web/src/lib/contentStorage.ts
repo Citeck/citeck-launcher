@@ -126,7 +126,7 @@ export function guardedProviderApp(cs: ContentStorageDto | undefined | null): st
 }
 
 interface ContentStorageBannerState {
-  /** Namespace whose IN-PROGRESS banner the user hid for this session. The
+  /** Workspace/namespace pair (JSON-encoded) whose IN-PROGRESS banner the user hid for this session. The
    *  error and problem variants are never hidden — they describe something
    *  broken right now (the BundleErrorBanner rule). */
   dismissedNs: string | null

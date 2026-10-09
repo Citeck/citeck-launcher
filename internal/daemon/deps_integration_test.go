@@ -374,6 +374,14 @@ func newITEnvFor(t *testing.T, dep deps.ID, fromImage string) *itEnv {
 		wsCfg.Webapps = []bundle.WebappConfig{{ID: "rag", Aliases: []string{"EcosRagApp"}}}
 	}
 
+	if descriptor, ok := deps.Lookup(dep); ok && deps.IsSeaweedFamily(descriptor) {
+		bundleDef.Dependencies = map[string]bundle.AppDef{descriptor.AppName(): {Image: fromImage}}
+		wsCfg.AdditionalApps = []bundle.AdditionalAppProps{{
+			Name: descriptor.AppName(), Type: bundle.AppTypeSeaweedFS, VolumeBase: descriptor.VolumeBase(),
+			Environments: map[string]string{"AWS_ACCESS_KEY_ID": "integration-key", "AWS_SECRET_ACCESS_KEY": "integration-secret", "S3_BUCKET": "ecos-content"},
+		}}
+	}
+
 	act := activeNamespace{
 		runtime:         rt,
 		nsConfig:        nsCfg,

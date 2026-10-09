@@ -223,6 +223,7 @@ func namespaceDependencies(cfg *namespace.Config, bun *bundle.Def,
 	for id, ok := range namespace.WillGenerateDatabases(cfg, bun, wsCfg) {
 		present[deps.ID(id)] = ok
 	}
+	maps.Copy(present, namespace.WillGenerateSeaweed(bun, wsCfg))
 	if cfg == nil {
 		return present
 	}
@@ -552,7 +553,7 @@ func postgresPinFromData(ctx context.Context, probe dependencyProbe, d deps.Desc
 	return dataEvidence{verdict: seedNoData}
 }
 
-// reseedAfterSnapshotImport re-derives the pins — image AND volume generation —
+// snapshotDependencyPins re-derives the pins — image AND volume generation —
 // of every dependency whose data a snapshot just replaced. Without it a
 // namespace already on 18 that imports a 17 snapshot keeps a pin of 18 over 17
 // data, and a namespace at generation 2 that imports a generation-1 snapshot
@@ -562,9 +563,9 @@ func postgresPinFromData(ctx context.Context, probe dependencyProbe, d deps.Desc
 // (deps.ParseVolumeName) rather than of a table here: the volume names are a
 // function of the generation now, so a hard-coded list would have gone stale
 // the first time anybody migrated anything.
-func reseedAfterSnapshotImport(ctx context.Context, rt *namespace.Runtime, probe dependencyProbe,
+func snapshotDependencyPins(ctx context.Context, current map[deps.ID]deps.DependencyState, probe dependencyProbe,
 	importedVolumes []string, present map[deps.ID]bool,
-) {
+) map[deps.ID]deps.DependencyState {
 	imported := make(map[string]bool, len(importedVolumes))
 	touched := make(map[deps.ID]bool, len(importedVolumes))
 	for _, v := range importedVolumes {
@@ -578,15 +579,15 @@ func reseedAfterSnapshotImport(ctx context.Context, rt *namespace.Runtime, probe
 	if touched[deps.Postgres] {
 		touched[deps.Keycloak] = true
 	}
-	existing := rt.DependencyStates()
+	existing := maps.Clone(current)
+	if existing == nil {
+		existing = make(map[deps.ID]deps.DependencyState)
+	}
 	for id := range touched {
 		delete(existing, id)
 	}
 	seedCtx, cancel := context.WithTimeout(ctx, dependencySeedTimeout)
 	defer cancel()
-	for id, st := range seedDependencyPins(seedCtx, existing, probe, imported, present) {
-		slog.Info("Dependency pin re-seeded after snapshot import",
-			"dependency", id, "image", st.Image, "volumeGen", st.Gen())
-		rt.SetDependencyState(id, st)
-	}
+	maps.Copy(existing, seedDependencyPins(seedCtx, existing, probe, imported, present))
+	return existing
 }

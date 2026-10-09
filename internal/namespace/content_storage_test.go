@@ -266,12 +266,17 @@ func TestWireContentStorage_ContentWaitsForTheProvider(t *testing.T) {
 	assert.Contains(t, content.DependsOn, seaweedfsApp)
 	assert.Nil(t, resp.ContentStorageProblem)
 
-	// Nothing else: the connection is made through ecos-content's records,
-	// not its environment.
-	db := generateContentStorage(t, basicCfg(), enterpriseBundle(), contentStorageWorkspace(t), contentStorageSecrets())
-	dbContent := findGeneratedApp(db, appdef.AppContent)
-	require.NotNil(t, dbContent)
-	assert.Equal(t, dbContent.Environments, content.Environments, "no env is added for S3")
+	for key, want := range map[string]string{
+		"ECOS_ENDPOINT_CONTENT_STORAGE_S3_ENDPOINT_URL":         "http://seaweedfs:8333",
+		"ECOS_ENDPOINT_CONTENT_STORAGE_S3_ENDPOINT_CREDENTIALS": "content-storage-s3-credentials",
+		"ECOS_SECRET_CONTENT_STORAGE_S3_CREDENTIALS_TYPE":       "BASIC",
+		"ECOS_SECRET_CONTENT_STORAGE_S3_CREDENTIALS_USERNAME":   "citeck",
+		"ECOS_SECRET_CONTENT_STORAGE_S3_CREDENTIALS_PASSWORD":   "S3keyS3keyS3keyS3keyS3keyS3keyS3keyS3key",
+	} {
+		got, ok := content.Environments.Get(key)
+		assert.True(t, ok, key)
+		assert.Equal(t, want, got, key)
+	}
 	assert.Empty(t, resp.GatingApps[seaweedfsApp], "the provider is not a gating app")
 }
 
@@ -448,4 +453,84 @@ func TestAdditionalAppImageIsTheGeneratorsRule(t *testing.T) {
 		assert.Equal(t, image, generated.Image)
 		assert.True(t, strings.HasPrefix(image, "chrislusf/seaweedfs:"))
 	}
+}
+
+func TestWireContentStorage_KeyRotationRecreatesContentAndProvider(t *testing.T) {
+	ws := contentStorageWorkspace(t)
+	old := generateContentStorage(t, s3Cfg(), enterpriseBundle(), ws, contentStorageSecrets())
+	opts := contentStorageSecrets()
+	opts.NamespaceSecrets["seaweedfs-s3-key"] = "rotated-namespace-key"
+	updated := generateContentStorage(t, s3Cfg(), enterpriseBundle(), ws, opts)
+	for _, app := range []string{appdef.AppContent, seaweedfsApp} {
+		before := findGeneratedApp(old, app)
+		after := findGeneratedApp(updated, app)
+		require.NotNil(t, before)
+		require.NotNil(t, after)
+		assert.NotEqual(t, before.GetHash(), after.GetHash(), "key change must recreate %s", app)
+	}
+	content := findGeneratedApp(updated, appdef.AppContent)
+	provider := findGeneratedApp(updated, seaweedfsApp)
+	contentKey, _ := content.Environments.Get("ECOS_SECRET_CONTENT_STORAGE_S3_CREDENTIALS_PASSWORD")
+	providerKey, _ := provider.Environments.Get("AWS_SECRET_ACCESS_KEY")
+	assert.Equal(t, "rotated-namespace-key", contentKey)
+	assert.Equal(t, contentKey, providerKey)
+}
+
+func TestWireContentStorage_MissingConnectionSecretDoesNotWireContent(t *testing.T) {
+	ws := contentStorageWorkspace(t)
+	ws.ContentStorage.S3.SecretKey = "${secret:undeclared-connection-key}"
+	resp := generateContentStorage(t, s3Cfg(), enterpriseBundle(), ws, contentStorageSecrets())
+	require.NotNil(t, findGeneratedApp(resp, seaweedfsApp), "provider itself still generates")
+	require.NotNil(t, resp.ContentStorageProblem)
+	assert.Equal(t, ContentStorageProviderNotGenerated, resp.ContentStorageProblem.Reason)
+	content := findGeneratedApp(resp, appdef.AppContent)
+	require.NotNil(t, content)
+	_, set := content.Environments.Get("ECOS_SECRET_CONTENT_STORAGE_S3_CREDENTIALS_PASSWORD")
+	assert.False(t, set, "an unresolved reference must never become a credential")
+	assert.NotContains(t, content.DependsOn, seaweedfsApp)
+}
+
+func TestExternalS3NativeArtifactAndBucketRecreate(t *testing.T) {
+	cfg := basicCfg()
+	cfg.S3 = &S3Config{Endpoint: "https://external.example", Bucket: "custom-bucket", AccessKey: "access", SecretKey: "secret:s3.secretKey"}
+	opts := GenerateOpts{SecretReader: &mockSecretReader{secrets: map[string]string{"s3.secretKey": "private-fixture-key"}}}
+	first := generateContentStorage(t, cfg, enterpriseBundle(), contentStorageWorkspace(t), opts)
+	content := findGeneratedApp(first, appdef.AppContent)
+	require.NotNil(t, content)
+	assert.NotContains(t, content.DependsOn, seaweedfsApp)
+	assert.Contains(t, content.Volumes, "./app/content/s3/content-storage-s3.yml:/app/resources/eapps/artifacts/content/storage/content-storage-s3.yml:ro")
+	var artifact struct {
+		ID     string            `yaml:"id"`
+		Type   string            `yaml:"type"`
+		Config map[string]string `yaml:"config"`
+	}
+	require.NoError(t, yaml.Unmarshal(first.Files["app/content/s3/content-storage-s3.yml"], &artifact))
+	assert.Equal(t, "content-storage-s3", artifact.ID)
+	assert.Equal(t, "S3", artifact.Type)
+	assert.Equal(t, "custom-bucket", artifact.Config["bucketName"])
+	assert.NotContains(t, artifact.Config, "region", "omitted region retains SDK auto-detection")
+	assert.Equal(t, "emodel/endpoint@content-storage-s3-endpoint", artifact.Config["endpoint"])
+	assert.NotContains(t, string(first.Files["app/content/s3/content-storage-s3.yml"]), "private-fixture-key")
+	cfg.S3.Bucket = "another-bucket"
+	second := generateContentStorage(t, cfg, enterpriseBundle(), contentStorageWorkspace(t), opts)
+	assert.NotEqual(t, content.VolumesContentHash, findGeneratedApp(second, appdef.AppContent).VolumesContentHash, "bucket changes recreate content to deploy the native artifact")
+}
+
+func TestExternalS3RegionInNativeArtifact(t *testing.T) {
+	cfg := basicCfg()
+	cfg.S3 = &S3Config{Endpoint: "https://external.example", Bucket: "custom-bucket", AccessKey: "access", SecretKey: "secret:s3.secretKey", Region: " eu-central-1 "}
+	opts := GenerateOpts{SecretReader: &mockSecretReader{secrets: map[string]string{"s3.secretKey": "private-fixture-key"}}}
+	first := generateContentStorage(t, cfg, enterpriseBundle(), contentStorageWorkspace(t), opts)
+	var artifact struct {
+		Config map[string]string `yaml:"config"`
+	}
+	require.NoError(t, yaml.Unmarshal(first.Files["app/content/s3/content-storage-s3.yml"], &artifact))
+	assert.Equal(t, "eu-central-1", artifact.Config["region"])
+	cfg.S3.Region = " 	 "
+	second := generateContentStorage(t, cfg, enterpriseBundle(), contentStorageWorkspace(t), opts)
+	// Decode into a fresh map: YAML merge into an existing map retains absent keys.
+	artifact.Config = nil
+	require.NoError(t, yaml.Unmarshal(second.Files["app/content/s3/content-storage-s3.yml"], &artifact))
+	assert.NotContains(t, artifact.Config, "region")
+	assert.NotEqual(t, findGeneratedApp(first, appdef.AppContent).VolumesContentHash, findGeneratedApp(second, appdef.AppContent).VolumesContentHash)
 }

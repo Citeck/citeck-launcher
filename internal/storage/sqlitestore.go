@@ -825,3 +825,36 @@ func (s *SQLiteStore) Close() error {
 	}
 	return nil
 }
+
+// CommitSnapshotState saves encrypted namespace rows and their dependency state
+// in one SQL transaction, preserving config and unrelated secrets.
+func (s *SQLiteStore) CommitSnapshotState(state SnapshotState, rows []Secret) error {
+	if err := validateSnapshotCommit(state, rows); err != nil {
+		return err
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin snapshot metadata transaction: %w", err)
+	}
+	defer tx.Rollback()
+	for _, row := range rows {
+		if row.CreatedAt.IsZero() {
+			row.CreatedAt = time.Now()
+		}
+		_, err = tx.Exec(`INSERT INTO secrets (id,name,type,value,username,scope,host,created_at) VALUES (?,?,?,?,?,?,?,?)
+   ON CONFLICT(id) DO UPDATE SET name=excluded.name,type=excluded.type,value=excluded.value,username=excluded.username,scope=excluded.scope,host=excluded.host`,
+			row.ID, row.Name, row.Type, row.Value, row.Username, row.Scope, row.Host, row.CreatedAt.Format(time.RFC3339))
+		if err != nil {
+			return fmt.Errorf("write snapshot credential: %w", err)
+		}
+	}
+	_, err = tx.Exec(`INSERT INTO namespaces (ws_id,ns_id,status,state_json) VALUES (?,?,?,?)
+  ON CONFLICT(ws_id,ns_id) DO UPDATE SET status=excluded.status,state_json=excluded.state_json`, state.WorkspaceID, state.NamespaceID, state.Status, state.JSON)
+	if err != nil {
+		return fmt.Errorf("write snapshot namespace state: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit snapshot metadata transaction: %w", err)
+	}
+	return nil
+}

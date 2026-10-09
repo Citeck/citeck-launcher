@@ -13,9 +13,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The reference copy of the S3 content storage blocks the public workspace
-// config carries (internal/namespace/testdata/content-storage-workspace.yml,
-// held byte-identical to it). The generator tests read it with a plain
+// The reference S3 workspace fixture uses the current secret-options format
+// (internal/namespace/testdata/content-storage-workspace.yml). The generator tests read it with a plain
 // yaml.Unmarshal, which keeps every entry; production reads it through
 // parseWorkspaceConfig, which DROPS a secrets entry it cannot use (a length out
 // of range, a value under `generated:`, an id declared twice), a contentStorage

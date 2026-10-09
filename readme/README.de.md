@@ -82,7 +82,7 @@ Login:            admin / <generated password>
 
 Zwei Dinge, die Sie zu diesem Bildschirm wissen sollten:
 
-- **Das Admin-Passwort wird nur einmal angezeigt.** Kopieren Sie es — später lässt es sich nicht wiederherstellen. Falls Sie es verlieren, setzen Sie es mit `citeck setup admin-password` zurück.
+- **Das Admin-Passwort wird nur einmal angezeigt.** Kopieren Sie es und bewahren Sie es sicher auf. Falls Sie es verlieren, setzen Sie es mit `citeck setup admin-password` zurück.
 - **Bei einem selbstsignierten Zertifikat warnt Ihr Browser.** Das ist zu erwarten — klicken Sie auf *Erweitert* → *Fortfahren*.
 
 Wenn nach etwa 20 Minuten immer noch etwas festzuhängen scheint, beginnen Sie mit `citeck diagnose` (mit `--fix` behebt der Befehl, was er beheben kann) und `citeck logs <app>`.
@@ -109,12 +109,14 @@ citeck logs <app> -f             # Logs streamen (ohne App = das Log des Daemons
 citeck stop <app>                # App stoppen — und über Neustarts hinweg gestoppt lassen
 citeck start <app>               # sie wieder starten (erneut anbinden)
 citeck reload                    # Konfigurationsänderungen anwenden, nur Geändertes neu erstellen
-citeck snapshot export <name>    # alle Volumes sichern (stoppt die Plattform und startet sie danach neu)
+citeck snapshot export           # alle Volumes sichern (stoppt die Plattform und startet sie danach neu)
 citeck upgrade <bundle:version>  # auf eine andere Plattformversion wechseln
 citeck diagnose --fix            # Health-Checks mit optionaler automatischer Reparatur
 citeck setup                     # Einstellungen ändern (Admin-Passwort, TLS, E-Mail, Ressourcen …)
 citeck edit <app>                # die Definition einer App bearbeiten, im Stil von kubectl edit
 ```
+
+Snapshots enthalten standardmäßig keine Geheimnisse und sind für die Wiederherstellung auf demselben Server mit denselben Zugangsdaten gedacht. Für einen Transfer mit Zugangsdaten: `citeck snapshot export --include-secrets`. Namespace-Schlüssel und JWT/OIDC/Admin/SA werden im Klartext in `secrets.json` gespeichert; importierte Systemschlüssel gelten nur für den Ziel-Namespace. Namespace-Konfiguration und externe S3-Objekte fehlen im Archiv. [Format und Grenzen](../docs/snapshots.md) (Russisch).
 
 Beachten Sie: `citeck stop <app>` **löst die App ab** (detach): Sie bleibt über Neustarts und Reloads hinweg gestoppt, bis Sie `citeck start <app>` ausführen. Genau so geben Sie auch auf einem kleinen Host Arbeitsspeicher frei — ein paar optionale Apps abzulösen spart mehrere GB.
 

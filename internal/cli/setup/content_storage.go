@@ -45,7 +45,7 @@ func (s *contentStorageSetting) Available(_ *namespace.Config, apps []string) bo
 }
 
 func (s *contentStorageSetting) CurrentValue(cfg *namespace.Config, _ *config.DaemonConfig) string {
-	if cfg.ContentStorageType() == namespace.ContentStorageS3 {
+	if cfg.UsesS3ContentStorage() {
 		return i18n.T("setup.content_storage.value.s3")
 	}
 	return i18n.T("setup.content_storage.value.db")
@@ -116,23 +116,10 @@ func contentStorageSwitchCheck(ctx *setupContext, cfg *namespace.Config) (avail 
 	return avail, ""
 }
 
-// contentStorageUnavailableSentence words an availability refusal with the
-// write gate's keys (internal/daemon contentStorageUnavailableMessage).
+// contentStorageUnavailableSentence renders the shared refusal at the CLI boundary.
 func contentStorageUnavailableSentence(avail namespace.ContentStorageAvailability, ref bundle.Ref) string {
-	switch avail.Reason {
-	case namespace.ContentStorageNoContentApp:
-		return i18n.T("contentStorage.msg.unavailable.noContentApp", "bundle", ref.String())
-	case namespace.ContentStorageNoProviderConfig:
-		return i18n.T("contentStorage.msg.unavailable.noProviderConfig")
-	case namespace.ContentStorageNoProviderApp:
-		return i18n.T("contentStorage.msg.unavailable.noProviderApp", "app", avail.ProviderApp)
-	case namespace.ContentStorageNoProviderImage:
-		return i18n.T("contentStorage.msg.unavailable.noProviderImage", "app", avail.ProviderApp, "bundle", ref.String())
-	case namespace.ContentStorageProviderConflict:
-		return i18n.T("contentStorage.msg.unavailable.providerConflict", "app", avail.ProviderApp)
-	default:
-		return i18n.T("setup.content_storage.bundle_unresolved", "bundle", ref.String())
-	}
+	m := namespace.ContentStorageUnavailableMessage(avail.Reason, ref, avail.ProviderApp)
+	return i18n.T(m.Key, m.Args...)
 }
 
 // namespaceConfigWriter is the daemon surface the switch needs: its single

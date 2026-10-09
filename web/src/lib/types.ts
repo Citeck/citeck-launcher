@@ -192,6 +192,7 @@ export interface ContentStorageOptionDto {
 
 /** One infrastructure dependency of the active namespace. */
 export interface DependencyDto {
+  migrationStepIds?: string[]
   id: string
   app: string
   /** What the DATA runs on (the pin), or the last generated image when unpinned. */

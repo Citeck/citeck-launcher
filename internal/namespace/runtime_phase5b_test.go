@@ -27,6 +27,8 @@ func TestStopGroupTimeoutProceedsToNextGroup(t *testing.T) {
 	md := newMockDocker()
 
 	r := NewRuntime(testConfig(), md, t.TempDir())
+	fc := NewFakeClock(time.Unix(1_700_000_000, 0))
+	r.nowFunc = fc.Now
 	// Short budgets so T23 trips promptly. defaultStopTimeout=1 ensures
 	// per-app budget = 1s + groupTimeout = 1.3s (not 10s Docker default).
 	r.groupTimeout = 300 * time.Millisecond
@@ -74,14 +76,24 @@ func TestStopGroupTimeoutProceedsToNextGroup(t *testing.T) {
 	// Trigger shutdown.
 	r.Stop()
 
-	// proxy should hit STOPPING_FAILED via T23 (budget exhausted).
-	require.True(t, waitForAppStatus(r, appdef.AppProxy, AppStatusStoppingFailed, 5*time.Second),
-		"proxy did not reach STOPPING_FAILED under short groupTimeout")
-
-	// postgres should also be STOPPING (or STOPPING_FAILED after T23); the
-	// chain must advance regardless.
-	require.True(t, waitForAppStatus(r, appdef.AppPostgres, AppStatusStoppingFailed, 5*time.Second),
-		"postgres did not reach STOPPING_FAILED (chain should advance)")
+	// Advance each stop phase explicitly. Wall-clock scheduling must not decide
+	// whether the second group fits inside a five-second observation window.
+	expireStop := func(name string) {
+		require.True(t, waitForAppStatus(r, name, AppStatusStopping, 5*time.Second),
+			"shutdown chain did not start stopping %s", name)
+		fc.Advance(2 * time.Second)
+		require.Eventually(t, func() bool {
+			r.mu.RLock()
+			defer r.mu.RUnlock()
+			app := r.apps[name]
+			return app != nil && app.stopForced
+		}, 5*time.Second, 10*time.Millisecond, "stop watchdog did not force removal of %s", name)
+		fc.Advance(time.Second)
+		require.True(t, waitForAppStatus(r, name, AppStatusStoppingFailed, 5*time.Second),
+			"forced removal of %s did not reach STOPPING_FAILED", name)
+	}
+	expireStop(appdef.AppProxy)
+	expireStop(appdef.AppPostgres)
 
 	// Namespace must still reach STOPPED even though all apps failed their
 	// stop — RemoveNetwork is best-effort and runs regardless.

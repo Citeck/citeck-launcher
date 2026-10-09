@@ -195,6 +195,12 @@ func (c *Config) ContentStorageType() ContentStorageType {
 	return t
 }
 
+// UsesS3ContentStorage includes an external namespace.s3 connection without
+// treating it as a workspace-managed provider.
+func (c *Config) UsesS3ContentStorage() bool {
+	return c != nil && (c.S3 != nil || c.ContentStorageType() == ContentStorageS3)
+}
+
 // DefaultNamespaceConfig returns a namespace config with sensible defaults.
 func DefaultNamespaceConfig() Config {
 	return Config{

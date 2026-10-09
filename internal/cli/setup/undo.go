@@ -12,7 +12,6 @@ import (
 	"github.com/citeck/citeck-launcher/internal/cli/prompt"
 	"github.com/citeck/citeck-launcher/internal/client"
 	"github.com/citeck/citeck-launcher/internal/config"
-	"github.com/citeck/citeck-launcher/internal/fsutil"
 	"github.com/citeck/citeck-launcher/internal/i18n"
 	"github.com/citeck/citeck-launcher/internal/namespace"
 	"github.com/citeck/citeck-launcher/internal/output"
@@ -159,11 +158,15 @@ func performUndo(target TargetFile, cfgPath, histDir, undoneID string, rec *Patc
 		return "", fmt.Errorf("%s: %w", i18n.T("setup.history.undo.stale", "id", undoneID), cErr)
 	}
 	storageBefore := contentStorageTypeOf(target, curMap)
+	beforeCopy, copyErr := deepCopy(&curMap)
+	if copyErr != nil {
+		return "", copyErr
+	}
+	beforeMap := *beforeCopy
 	if aErr := applyPatch(curMap, rec.Reverse); aErr != nil {
 		return "", fmt.Errorf("%s: %w", i18n.T("setup.history.undo.stale", "id", undoneID), aErr)
 	}
-	// Undo writes namespace.yml itself, past the daemon's write gate, so the
-	// content-storage rules have to hold here: S3 never goes back to DB (the
+	// Undo must not reverse a content-storage decision: S3 never goes back to DB (the
 	// reverse of a `setup content-storage` entry, or of a bridge entry that
 	// recorded the block appearing), and DB → S3 is not a file edit either —
 	// it goes through the daemon, which re-attaches the provider and reloads.
@@ -171,7 +174,7 @@ func performUndo(target TargetFile, cfgPath, histDir, undoneID string, rec *Patc
 		return "", errors.New(i18n.T("setup.history.undo.content_storage", "id", undoneID))
 	}
 
-	snapObj, wErr := validateAndWriteConfig(target, cfgPath, curMap)
+	snapObj, wErr := validateAndWriteUndoConfig(target, cfgPath, beforeMap, curMap)
 	if wErr != nil {
 		return "", wErr
 	}
@@ -217,7 +220,10 @@ func contentStorageTypeOf(target TargetFile, m map[string]any) namespace.Content
 	if mapToStruct(m, &cfg) != nil {
 		return namespace.ContentStorageDB
 	}
-	return cfg.ContentStorageType()
+	if cfg.UsesS3ContentStorage() {
+		return namespace.ContentStorageS3
+	}
+	return namespace.ContentStorageDB
 }
 
 // loadConfigAsMap loads the target config and converts it to a JSON map —
@@ -237,10 +243,10 @@ func loadConfigAsMap(target TargetFile, cfgPath string) (map[string]any, error) 
 	return structToJSONMap(cfg)
 }
 
-// validateAndWriteConfig converts the patched JSON map back into the typed
+// validateAndWriteUndoConfig converts the patched JSON map back into the typed
 // config, validates it (namespace only — mirroring the setup flow), and
 // writes it atomically. Returns the typed config for snapshot serialization.
-func validateAndWriteConfig(target TargetFile, cfgPath string, curMap map[string]any) (any, error) {
+func validateAndWriteUndoConfig(target TargetFile, cfgPath string, beforeMap, curMap map[string]any) (any, error) {
 	if target == DaemonFile {
 		var cfg config.DaemonConfig
 		if err := mapToStruct(curMap, &cfg); err != nil {
@@ -259,14 +265,12 @@ func validateAndWriteConfig(target TargetFile, cfgPath string, curMap map[string
 	if vErr := namespace.ValidateNamespaceConfig(&cfg); vErr != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("setup.validation_error"), vErr)
 	}
-	data, mErr := namespace.MarshalNamespaceConfig(&cfg)
-	if mErr != nil {
-		return nil, fmt.Errorf("marshal namespace config: %w", mErr)
+	var before namespace.Config
+	if err := mapToStruct(beforeMap, &before); err != nil {
+		return nil, fmt.Errorf("convert undo input: %w", err)
 	}
-	// 0o600: namespace.yml can carry plaintext secrets — keep it owner-only,
-	// matching the setup flow's write.
-	if wErr := fsutil.AtomicWriteFile(cfgPath, data, 0o600); wErr != nil {
-		return nil, fmt.Errorf("write namespace config: %w", wErr)
+	if err := writeNamespaceConfig(cfgPath, &before, &cfg); err != nil {
+		return nil, err
 	}
 	return &cfg, nil
 }

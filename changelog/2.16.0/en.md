@@ -7,5 +7,10 @@
 - Server mode: `citeck install` asks where to store content once the release is chosen (if that release supports S3), `citeck setup content-storage` switches an existing namespace to S3 (the daemon must be running), and `citeck status` shows a `Content storage:` line for a namespace that keeps its content in S3.
 - On the desktop, namespaces whose bundle includes SeaweedFS get a **SeaweedFS** link in the sidebar under **Apps** that opens the SeaweedFS admin UI (login `admin`, password `admin`). The link stays greyed out while SeaweedFS is not running, for example on a namespace that keeps its content in the database.
 - `citeck setup admin-password` now lists the apps that keep accepting the old password until they are recreated (SeaweedFS, for example); `citeck reload` recreates them.
-- For workspace authors: `secrets:` accepts generated entries. `- generated: <id>` (optional `length:`, 16–128, default 40) gives each namespace its own random value, created once and then kept. Launchers before 2.16 skip these entries: there, an app that references one is not generated until the namespace has a stored value.
+- For workspace authors: `secrets:` accepts generated entries. `id: <id>` + `generated: {length: 40}` (optional `length:`, 16–128, default 40) gives each namespace its own random value, created once and then kept. Requires Launcher 2.16 or newer.
 - For workspace authors: a `links:` entry with `category: Apps` or `Resources` now joins that built-in sidebar group instead of getting its own header at the bottom.
+
+## Snapshots
+- Export with `--include-secrets` to carry namespace credentials, including authentication keys and admin/service-account passwords, into another profile. Secrets are omitted by default; opt-in archives contain them in plaintext and must be protected.
+- Imports restore dependency versions and volume generations together with credentials. An interrupted import blocks startup until a successful retry; the CLI no longer restarts a namespace after a failed import. Volume contents are outside the metadata transaction.
+- Snapshot archives are checked before existing data is changed. External S3 objects and namespace configuration are not included.

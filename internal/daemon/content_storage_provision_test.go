@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -19,71 +18,33 @@ import (
 
 	"github.com/citeck/citeck-launcher/internal/api"
 	"github.com/citeck/citeck-launcher/internal/appdef"
-	"github.com/citeck/citeck-launcher/internal/bundle"
 	"github.com/citeck/citeck-launcher/internal/namespace"
-	"github.com/citeck/citeck-launcher/internal/storage"
 )
 
 // The S3 provider's resolved secret in these tests. Long and distinctive on
 // purpose: the redaction test greps for it.
 const csSecretValue = "s3cret-value-7f1c"
 
-// fakeECOS plays the three ECOS apps behind the gateway: the default storage
-// config, and the records the connection creates. It answers `_notExists` the
-// way the records API does: TRUE for a record that is not there, and nothing
-// (null) for one that is — no ECOS value ever says false.
+// fakeECOS exposes only the default config and an already-deployed native
+// storage. Tests can pause requests and edit the config between reads.
 type fakeECOS struct {
-	mu sync.Mutex
-
-	defaultRef string // the ref inside the config's value
-	valueNull  bool   // the config answers a null value
-	// rawValue, when set, is the config's `_value?json` answer verbatim.
-	rawValue json.RawMessage
-	// notDeployedQueries answers this many CONFIG queries with a null value —
-	// the artifact not deployed yet is an empty record.
+	mu                 sync.Mutex
+	defaultRef         string
+	valueNull          bool
+	rawValue           json.RawMessage
 	notDeployedQueries int
-	exists             map[string]bool // full ref -> exists
-	// unregistered are record sources (the part of a ref before '@', with
-	// it) that are not registered yet: every ref there reads `_notExists:
-	// true` whether it exists or not, and a mutation there is refused with a
-	// RecordsSourceNotFoundException — until the count runs out.
-	unregistered map[string]int
-
-	// failQueries answers this many queries with failWith first.
-	failQueries int
-	failWith    error
-	// queryErr answers every query (after failQueries) with this error.
-	queryErr error
-	// blockQuery, when set, holds every query until it is closed or the
-	// caller's context ends — or, with blockIgnoresCtx, until it is closed:
-	// an answer that was already on its way when the run was canceled.
-	blockQuery      chan struct{}
-	blockIgnoresCtx bool
-
-	mutateErr     map[string]error // keyed by the id mutated
-	ignoreDefault bool             // accept the default mutation, change nothing
-	// onMutate, when set, is called with the id before a mutation is applied
-	// (outside the lock), so a test can act at an exact step; onQuery the
-	// same for a query.
-	onMutate func(id string)
-	onQuery  func(refs []string, atts map[string]string)
-
-	// What the records hold, by full ref. passwords is the secret's data —
-	// which the real ECOS never answers; kept so a test can see what the
-	// secret holds now. modified is the secret's `modified`: every save moves
-	// it, and an existing secret nobody stamped answers a fixed time, as a
-	// real one always answers some. noModified answers it as null: an ECOS
-	// that does not say. urls and credentials are the endpoint's `url` and
-	// the local id of its `credentials`.
-	passwords   map[string]string
-	modified    map[string]string
-	noModified  bool
-	urls        map[string]string
-	credentials map[string]string
-	clock       int
-
-	queries   int
-	mutations []fakeMutation
+	exists             map[string]bool
+	failQueries        int
+	failWith           error
+	queryErr           error
+	blockQuery         chan struct{}
+	blockIgnoresCtx    bool
+	mutateErr          map[string]error
+	ignoreDefault      bool
+	onMutate           func(string)
+	onQuery            func([]string, map[string]string)
+	queries            int
+	mutations          []fakeMutation
 }
 
 type fakeMutation struct {
@@ -91,78 +52,11 @@ type fakeMutation struct {
 	atts map[string]any
 }
 
+const csTestStorageRef = "content/storage@content-storage-s3"
+
 func newFakeECOS() *fakeECOS {
-	return &fakeECOS{defaultRef: csLocalStorageRef, exists: map[string]bool{}, mutateErr: map[string]error{},
-		unregistered: map[string]int{}, passwords: map[string]string{}, modified: map[string]string{},
-		urls: map[string]string{}, credentials: map[string]string{}}
-}
-
-// The launcher's records in the tests, as full refs.
-const (
-	csTestSecretRef   = "emodel/secret@seaweedfs-s3-credentials"
-	csTestEndpointRef = "emodel/endpoint@seaweedfs-s3"
-	csTestStorageRef  = "content/storage@seaweedfs-s3"
-)
-
-// putRecords makes ECOS hold all three of the launcher's records, as a
-// database restored from another stand or written by an earlier launcher
-// does: the secret with the given password, the endpoint naming the provider
-// and the secret.
-func (f *fakeECOS) putRecords(password string) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	for _, ref := range []string{csTestSecretRef, csTestEndpointRef, csTestStorageRef} {
-		f.exists[ref] = true
-	}
-	f.passwords[csTestSecretRef] = password
-	f.modified[csTestSecretRef] = "2026-01-01T00:00:00.000001Z"
-	f.urls[csTestEndpointRef] = "http://seaweedfs:8333"
-	f.credentials[csTestEndpointRef] = "seaweedfs-s3-credentials"
-}
-
-// password is what the launcher's secret holds now.
-func (f *fakeECOS) password() string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.passwords[csTestSecretRef]
-}
-
-// stamp records what a mutation wrote into one of the launcher's records.
-// Caller holds f.mu.
-func (f *fakeECOS) stamp(ref string, atts map[string]any) {
-	switch {
-	case strings.HasPrefix(ref, "emodel/secret@"):
-		data, _ := atts["data?json"].(map[string]any)
-		if password, _ := data["password"].(string); password != "" {
-			f.passwords[ref] = password
-		}
-		f.clock++
-		f.modified[ref] = fmt.Sprintf("2026-10-05T10:00:%02d.000001Z", f.clock)
-	case strings.HasPrefix(ref, "emodel/endpoint@"):
-		if url, ok := atts["url"].(string); ok {
-			f.urls[ref] = url
-		}
-		if cred, ok := atts["credentials"].(string); ok {
-			f.credentials[ref] = cred[strings.IndexByte(cred, '@')+1:]
-		}
-	}
-}
-
-// jsonOrNull is a JSON string, or null for "".
-func jsonOrNull(s string) json.RawMessage {
-	if s == "" {
-		return json.RawMessage("null")
-	}
-	b, _ := json.Marshal(s)
-	return b
-}
-
-// sourceOf is the record source part of a ref, '@' included.
-func sourceOf(ref string) string {
-	if i := strings.IndexByte(ref, '@'); i >= 0 {
-		return ref[:i+1]
-	}
-	return ref
+	return &fakeECOS{defaultRef: csLocalStorageRef,
+		exists: map[string]bool{csTestStorageRef: true}, mutateErr: map[string]error{}}
 }
 
 func (f *fakeECOS) Query(ctx context.Context, refs []string, atts map[string]string) ([]map[string]json.RawMessage, error) {
@@ -214,26 +108,10 @@ func (f *fakeECOS) Query(ctx context.Context, refs []string, atts map[string]str
 			out[i] = m
 			continue
 		}
-		there := f.unregistered[sourceOf(ref)] == 0 && f.exists[ref]
 		for alias := range atts {
-			switch {
-			case alias == "notExists" && !there:
+			if alias == "notExists" && !f.exists[ref] {
 				m[alias] = json.RawMessage("true")
-			case !there:
-				m[alias] = json.RawMessage("null")
-			case alias == "modified" && strings.HasPrefix(ref, "emodel/secret@") && !f.noModified:
-				stamp := f.modified[ref]
-				if stamp == "" {
-					stamp = "2026-01-01T00:00:00.000001Z"
-				}
-				m[alias] = jsonOrNull(stamp)
-			case alias == "url":
-				m[alias] = jsonOrNull(f.urls[ref])
-			case alias == "credentials":
-				m[alias] = jsonOrNull(f.credentials[ref])
-			default:
-				// Unanswered: what ECOS does for an existing record's
-				// `_notExists`, and for an attribute the record does not have.
+			} else {
 				m[alias] = json.RawMessage("null")
 			}
 		}
@@ -256,12 +134,6 @@ func (f *fakeECOS) Mutate(ctx context.Context, id string, atts map[string]any) (
 		return "", &ecosRecordsError{Err: ctx.Err()}
 	}
 	f.mutations = append(f.mutations, fakeMutation{id: id, atts: atts})
-	if n := f.unregistered[sourceOf(id)]; n > 0 {
-		f.unregistered[sourceOf(id)] = n - 1
-		return "", &ecosRecordsError{Status: http.StatusInternalServerError, Messages: []string{
-			"RecordsSourceNotFoundException: Source is not found with id '" + strings.TrimSuffix(sourceOf(id), "@") + "' and type 'null'",
-		}}
-	}
 	if err := f.mutateErr[id]; err != nil {
 		return "", err
 	}
@@ -272,19 +144,7 @@ func (f *fakeECOS) Mutate(ctx context.Context, id string, atts map[string]any) (
 		}
 		return id, nil
 	}
-	if !strings.HasSuffix(id, "@") {
-		// An update of a full ref: ECOS refuses one that is not there.
-		if !f.exists[id] {
-			return "", &ecosRecordsError{Status: http.StatusInternalServerError,
-				Messages: []string{"Record with id '" + id + "' is not found"}}
-		}
-		f.stamp(id, atts)
-		return id, nil
-	}
-	localID, _ := atts["id"].(string)
-	f.exists[id+localID] = true
-	f.stamp(id+localID, atts)
-	return id + localID, nil
+	return "", fmt.Errorf("unexpected mutation %s: only default config may be changed", id)
 }
 
 func (f *fakeECOS) snapshot() (queries int, mutations []fakeMutation) {
@@ -309,12 +169,6 @@ type csHarness struct {
 	p    *contentStorageProvisioner
 	rt   *namespace.Runtime
 	ecos *fakeECOS
-
-	secretValues map[string]string
-	secretErr    error
-	// providerKey, when set, is the key the provider's container runs with
-	// instead of the namespace's: an operator's `citeck edit`.
-	providerKey string
 }
 
 func newCSHarness(t *testing.T) *csHarness {
@@ -322,9 +176,8 @@ func newCSHarness(t *testing.T) *csHarness {
 	rt := namespace.NewRuntime(&namespace.Config{ID: "ns1"}, planStubDocker{}, t.TempDir())
 	t.Cleanup(rt.Shutdown)
 	h := &csHarness{
-		rt:           rt,
-		ecos:         newFakeECOS(),
-		secretValues: map[string]string{"seaweedfs-s3": csSecretValue},
+		rt:   rt,
+		ecos: newFakeECOS(),
 	}
 	h.setApps(nil)
 	h.d = &Daemon{activeNs: &activeNamespace{
@@ -334,11 +187,9 @@ func newCSHarness(t *testing.T) *csHarness {
 		runtime:         rt,
 	}}
 	h.p = h.d.contentStorageProv()
+	t.Cleanup(h.p.Reset)
 	h.p.records = func(string) ecosRecords { return h.ecos }
 	h.p.gatewayAddr = func(context.Context, *namespace.Runtime) (string, error) { return "gateway:8094", nil }
-	h.p.secrets = func(string, string, *bundle.WorkspaceConfig) (map[string]string, error) {
-		return h.secretValues, h.secretErr
-	}
 	h.p.pollInterval = time.Millisecond
 	h.p.readyTimeout = 10 * time.Second
 	return h
@@ -358,38 +209,12 @@ func (h *csHarness) setApps(override map[string]namespace.AppRuntimeStatus) {
 			st = s
 		}
 		app := &namespace.AppRuntime{Name: name, Status: st, ContainerID: "c-" + name}
-		if name == csProvider {
-			// The provider runs with the key the generation handed it — the
-			// namespace's own, unless a test says otherwise.
-			key := h.providerKey
-			if key == "" {
-				key = h.secretValues["seaweedfs-s3"]
-			}
-			app.Def.Environments.Set("AWS_ACCESS_KEY_ID", "citeck")
-			app.Def.Environments.Set("AWS_SECRET_ACCESS_KEY", key)
+		if name == appdef.AppContent {
+			app.Def.Environments.Set("ECOS_SECRET_CONTENT_STORAGE_S3_CREDENTIALS_PASSWORD", csSecretValue)
 		}
 		apps = append(apps, app)
 	}
 	h.rt.InjectAppsForTest(apps...)
-}
-
-// newKey gives the namespace a new S3 key the way a desktop secrets reset or
-// a restore into a new namespace does: the provider is recreated with it, and
-// the platform comes up again.
-func (h *csHarness) newKey(t *testing.T, key string) {
-	t.Helper()
-	h.secretValues = map[string]string{"seaweedfs-s3": key}
-	h.setApps(map[string]namespace.AppRuntimeStatus{csProvider: namespace.AppStatusStopped})
-	h.event(t)
-	h.setApps(nil)
-}
-
-// restartPlatform stops and starts the platform, re-arming the latch.
-func (h *csHarness) restartPlatform(t *testing.T) {
-	t.Helper()
-	h.setApps(map[string]namespace.AppRuntimeStatus{appdef.AppGateway: namespace.AppStatusStopped})
-	h.event(t)
-	h.setApps(nil)
 }
 
 // wait blocks until no run is in flight: the one in flight, if any, and the
@@ -451,50 +276,25 @@ func drainStates(ch chan api.EventDto) []string {
 
 // --- the decision ---
 
-// The ordinary first run: ECOS on its built-in LOCAL storage, none of our
-// records there. All three are created, in dependency order, with exactly the
-// attributes ECOS's own forms write, the default switched, and read back.
-func TestContentStorageProvision_CreatesTheRecordsAndSwitchesTheDefault(t *testing.T) {
+// First setup changes only the default config, with native storage already deployed.
+func TestContentStorageProvision_OnlySwitchesNativeDefault(t *testing.T) {
 	h := newCSHarness(t)
 	events := h.subscribe(t)
-
 	st := h.retry(t)
 	assert.Equal(t, api.ContentStorageStateConnected, st.State)
 	assert.True(t, st.ErrorMsg.Empty())
 	assert.False(t, st.At.IsZero())
-
 	_, muts := h.ecos.snapshot()
-	require.Len(t, muts, 4)
-	assert.Equal(t, fakeMutation{id: "emodel/secret@", atts: map[string]any{
-		"id":        "seaweedfs-s3-credentials",
-		"name":      "seaweedfs S3 credentials",
-		"type":      "BASIC",
-		"data?json": map[string]any{"username": "citeck", "password": csSecretValue},
-	}}, muts[0])
-	assert.Equal(t, fakeMutation{id: "emodel/endpoint@", atts: map[string]any{
-		"id":          "seaweedfs-s3",
-		"name":        "seaweedfs S3",
-		"url":         "http://seaweedfs:8333",
-		"credentials": "emodel/secret@seaweedfs-s3-credentials",
-	}}, muts[1])
-	assert.Equal(t, fakeMutation{id: "content/storage@", atts: map[string]any{
-		"id":   "seaweedfs-s3",
-		"name": "seaweedfs S3",
-		"type": "S3",
-		"config?json": map[string]any{
-			"endpoint":   "emodel/endpoint@seaweedfs-s3",
-			"bucketName": "ecos-content",
-		},
-	}}, muts[2])
+	require.Len(t, muts, 1)
 	assert.Equal(t, fakeMutation{id: csConfigRef, atts: map[string]any{
-		"_value?json": map[string]any{"ref": "content/storage@seaweedfs-s3", "config": map[string]any{}},
-	}}, muts[3])
-
+		"_value?json": map[string]any{"ref": csTestStorageRef, "config": map[string]any{}},
+	}}, muts[0])
+	assert.True(t, h.rt.ContentStorageDefaultSet())
 	assert.Equal(t, []string{
 		api.ContentStorageStatePending + ">" + api.ContentStorageStateWaiting,
 		api.ContentStorageStateWaiting + ">" + api.ContentStorageStateProvisioning,
 		api.ContentStorageStateProvisioning + ">" + api.ContentStorageStateConnected,
-	}, drainTransitions(events, "ns1"), "every state change reaches the SSE stream")
+	}, drainTransitions(events, "ns1"))
 }
 
 // drainTransitions is every content-storage event so far as "before>after",
@@ -518,14 +318,14 @@ func TestContentStorageProvision_AnEmptyDefaultIsNotAChoice(t *testing.T) {
 	h := newCSHarness(t)
 	h.ecos.defaultRef = ""
 	assert.Equal(t, api.ContentStorageStateConnected, h.retry(t).State)
-	assert.Len(t, h.ecos.mutatedIDs(), 4)
+	assert.Len(t, h.ecos.mutatedIDs(), 1)
 }
 
 // Already connected (a second start, a daemon restart): the answer is read,
 // nothing is written.
 func TestContentStorageProvision_OurDefaultIsConnectedWithNoWrites(t *testing.T) {
 	h := newCSHarness(t)
-	h.ecos.defaultRef = "content/storage@seaweedfs-s3"
+	h.ecos.defaultRef = "content/storage@content-storage-s3"
 	assert.Equal(t, api.ContentStorageStateConnected, h.retry(t).State)
 	assert.Empty(t, h.ecos.mutatedIDs())
 }
@@ -534,7 +334,7 @@ func TestContentStorageProvision_OurDefaultIsConnectedWithNoWrites(t *testing.T)
 // example S3 storage. Never overwritten.
 func TestContentStorageProvision_AnotherDefaultIsAdminManagedWithNoWrites(t *testing.T) {
 	h := newCSHarness(t)
-	h.ecos.defaultRef = "content/storage@content-storage-s3"
+	h.ecos.defaultRef = "content/storage@custom"
 	assert.Equal(t, api.ContentStorageStateAdminManaged, h.retry(t).State)
 	assert.Empty(t, h.ecos.mutatedIDs())
 }
@@ -543,34 +343,9 @@ func TestContentStorageProvision_AnotherDefaultIsAdminManagedWithNoWrites(t *tes
 // back on purpose. Not undone.
 func TestContentStorageProvision_OurStorageBackOnLocalIsAdminManagedWithNoWrites(t *testing.T) {
 	h := newCSHarness(t)
-	h.ecos.exists["content/storage@seaweedfs-s3"] = true
+	h.rt.RestoreContentStorageDefaultSet(true)
 	assert.Equal(t, api.ContentStorageStateAdminManaged, h.retry(t).State)
 	assert.Empty(t, h.ecos.mutatedIDs())
-}
-
-// A run interrupted half-way leaves some records: only the missing ones are
-// created, and the secret it wrote — still holding the current key — is not
-// written again.
-func TestContentStorageProvision_CreatesOnlyWhatIsMissing(t *testing.T) {
-	h := newCSHarness(t)
-	h.ecos.mutateErr["emodel/endpoint@"] = &ecosRecordsError{Status: http.StatusInternalServerError, Messages: []string{"boom"}}
-	require.Equal(t, api.ContentStorageStateError, h.retry(t).State)
-	delete(h.ecos.mutateErr, "emodel/endpoint@")
-	assert.Equal(t, api.ContentStorageStateConnected, h.retry(t).State)
-	assert.Equal(t, []string{"emodel/secret@", "emodel/endpoint@", "emodel/endpoint@", "content/storage@", csConfigRef},
-		h.ecos.mutatedIDs(), "the secret is created once; the endpoint refused the first time is created the second")
-
-	// Records the launcher has no record of writing — made by hand, or left
-	// by a database from another stand — are its own all the same: the
-	// secret is brought to the namespace's key and the endpoint to the
-	// provider's URL before the missing storage is created and switched to.
-	h2 := newCSHarness(t)
-	h2.ecos.putRecords("typed-by-hand")
-	h2.ecos.exists[csTestStorageRef] = false
-	h2.ecos.urls[csTestEndpointRef] = "http://old-host:8333"
-	assert.Equal(t, api.ContentStorageStateConnected, h2.retry(t).State)
-	assert.Equal(t, []string{csTestSecretRef, csTestEndpointRef, "content/storage@", csConfigRef}, h2.ecos.mutatedIDs())
-	assert.Equal(t, csSecretValue, h2.ecos.password())
 }
 
 // The gateway answers a failed write with messages[] at level ERROR (and HTTP
@@ -578,26 +353,13 @@ func TestContentStorageProvision_CreatesOnlyWhatIsMissing(t *testing.T) {
 // never reaches the operator even if ECOS echoes it.
 func TestContentStorageProvision_AnERRORAnswerIsTheErrorState(t *testing.T) {
 	h := newCSHarness(t)
-	h.ecos.mutateErr["content/storage@"] = &ecosRecordsError{
-		Status:   http.StatusInternalServerError,
-		Messages: []string{"IllegalStateException: cannot reach bucket with key " + csSecretValue},
-	}
-	events := h.subscribe(t)
+	h.ecos.mutateErr[csConfigRef] = &ecosRecordsError{Status: 500, Messages: []string{"failure with key " + csSecretValue}}
 	st := h.retry(t)
 	assert.Equal(t, api.ContentStorageStateError, st.State)
-	assert.Equal(t, "contentStorage.msg.provision.createFailed", st.ErrorMsg.Key)
-	rendered := englishForLogs.Render(st.ErrorMsg)
-	assert.Contains(t, strings.Join(st.ErrorMsg.Args, " "), "content/storage@seaweedfs-s3")
-	assert.NotContains(t, strings.Join(st.ErrorMsg.Args, " "), csSecretValue, "the secret key is redacted")
-	assert.NotContains(t, rendered, csSecretValue)
-	assert.Equal(t, []string{"emodel/secret@", "emodel/endpoint@", "content/storage@"}, h.ecos.mutatedIDs(),
-		"the default is not switched to a storage that was not created")
-	assert.Equal(t, api.ContentStorageStateError, drainStates(events)[2])
-
-	// The default mutation failing is its own sentence.
-	h2 := newCSHarness(t)
-	h2.ecos.mutateErr[csConfigRef] = &ecosRecordsError{Status: 500, Messages: []string{"boom"}}
-	assert.Equal(t, "contentStorage.msg.provision.setDefaultFailed", h2.retry(t).ErrorMsg.Key)
+	assert.Equal(t, "contentStorage.msg.provision.setDefaultFailed", st.ErrorMsg.Key)
+	assert.NotContains(t, englishForLogs.Render(st.ErrorMsg), csSecretValue)
+	assert.Equal(t, []string{csConfigRef}, h.ecos.mutatedIDs())
+	assert.False(t, h.rt.ContentStorageDefaultSet())
 }
 
 // The default was written but reads back as something else: not connected.
@@ -624,11 +386,11 @@ func TestContentStorageProvision_AFailedSwitchIsFinishedByTheNextRun(t *testing.
 	st := h.retry(t)
 	require.Equal(t, api.ContentStorageStateError, st.State)
 	require.Equal(t, "contentStorage.msg.provision.setDefaultFailed", st.ErrorMsg.Key)
-	assert.Equal(t, "content/storage@seaweedfs-s3", h.rt.ContentStorageSwitch(), "the switch is still pending")
+	assert.Equal(t, "content/storage@content-storage-s3", h.rt.ContentStorageSwitch(), "the switch is still pending")
 
 	delete(h.ecos.mutateErr, csConfigRef)
 	assert.Equal(t, api.ContentStorageStateConnected, h.retry(t).State)
-	assert.Equal(t, []string{"emodel/secret@", "emodel/endpoint@", "content/storage@", csConfigRef, csConfigRef},
+	assert.Equal(t, []string{csConfigRef, csConfigRef},
 		h.ecos.mutatedIDs(), "nothing is created twice; only the switch is repeated")
 	assert.Empty(t, h.rt.ContentStorageSwitch(), "a confirmed switch clears the marker")
 }
@@ -643,15 +405,14 @@ func TestContentStorageProvision_APendingSwitchSurvivesARestart(t *testing.T) {
 	require.NotEmpty(t, pending)
 
 	// A new daemon: a fresh runtime with the persisted state restored — the
-	// pending switch and the record of the secret write — the same ECOS.
+	// pending switch — the same ECOS.
 	h2 := newCSHarness(t)
 	h2.ecos = h.ecos
 	delete(h2.ecos.mutateErr, csConfigRef)
 	h2.rt.RestoreContentStorageSwitch(pending)
-	h2.rt.RestoreContentStorageSecretWrite(h.rt.ContentStorageSecretWrite())
 	assert.Equal(t, api.ContentStorageStateConnected, h2.retry(t).State)
-	assert.Equal(t, "content/storage@seaweedfs-s3", h2.ecos.defaultRef)
-	assert.Equal(t, []string{"emodel/secret@", "emodel/endpoint@", "content/storage@", csConfigRef, csConfigRef},
+	assert.Equal(t, "content/storage@content-storage-s3", h2.ecos.defaultRef)
+	assert.Equal(t, []string{csConfigRef, csConfigRef},
 		h2.ecos.mutatedIDs(), "only the switch is repeated")
 }
 
@@ -680,13 +441,13 @@ func TestContentStorageProvision_ARunCanceledBeforeTheSwitchIsFinishedNextTime(t
 	case <-time.After(10 * time.Second):
 		t.Fatal("the run never reached the default switch")
 	}
-	assert.Equal(t, []string{"emodel/secret@", "emodel/endpoint@", "content/storage@"}, h.ecos.mutatedIDs(),
+	assert.Equal(t, []string{}, h.ecos.mutatedIDs(),
 		"the canceled switch never reached ECOS")
 	assert.Equal(t, csLocalStorageRef, h.ecos.defaultRef)
-	assert.Equal(t, "content/storage@seaweedfs-s3", h.rt.ContentStorageSwitch())
+	assert.Equal(t, "content/storage@content-storage-s3", h.rt.ContentStorageSwitch())
 
 	assert.Equal(t, api.ContentStorageStateConnected, h.event(t).State)
-	assert.Equal(t, []string{"emodel/secret@", "emodel/endpoint@", "content/storage@", csConfigRef}, h.ecos.mutatedIDs())
+	assert.Equal(t, []string{csConfigRef}, h.ecos.mutatedIDs())
 }
 
 // The marker only ever stands for THIS storage. Without it — or with one for
@@ -694,433 +455,31 @@ func TestContentStorageProvision_ARunCanceledBeforeTheSwitchIsFinishedNextTime(t
 // administrator's choice; and any verdict from ECOS ends a pending switch.
 func TestContentStorageProvision_TheMarkerIsNarrow(t *testing.T) {
 	h := newCSHarness(t)
-	h.ecos.exists["content/storage@seaweedfs-s3"] = true
-	require.NoError(t, h.rt.SetContentStorageSwitch("content/storage@minio-s3"))
+	h.rt.RestoreContentStorageDefaultSet(true)
+	require.NoError(t, h.rt.SetContentStorageSwitch("content/storage@another"))
 	assert.Equal(t, api.ContentStorageStateAdminManaged, h.retry(t).State)
 	assert.Empty(t, h.ecos.mutatedIDs())
-	assert.Empty(t, h.rt.ContentStorageSwitch(), "a verdict clears a stale marker")
-
+	assert.Empty(t, h.rt.ContentStorageSwitch())
 	h2 := newCSHarness(t)
-	require.NoError(t, h2.rt.SetContentStorageSwitch("content/storage@seaweedfs-s3"))
-	h2.ecos.defaultRef = "content/storage@content-storage-s3"
-	assert.Equal(t, api.ContentStorageStateAdminManaged, h2.retry(t).State,
-		"an administrator's own storage wins over a pending switch")
+	require.NoError(t, h2.rt.SetContentStorageSwitch(csTestStorageRef))
+	h2.ecos.defaultRef = "content/storage@custom"
+	assert.Equal(t, api.ContentStorageStateAdminManaged, h2.retry(t).State)
+	assert.False(t, h2.rt.ContentStorageDefaultSet())
 	assert.Empty(t, h2.ecos.mutatedIDs())
 	assert.Empty(t, h2.rt.ContentStorageSwitch())
 }
 
-// --- the launcher's own secret and endpoint ---
-
-// The connection is made once; every later start of the platform finds the
-// secret holding the key the launcher wrote — ECOS says it has not changed
-// since — and writes nothing, on this daemon and on the next one, which reads
-// the record of the write back from the namespace's state.
-func TestContentStorageProvision_ACurrentSecretIsNotWrittenAgain(t *testing.T) {
-	h := newCSHarness(t)
-	require.Equal(t, api.ContentStorageStateConnected, h.retry(t).State)
-	written := h.rt.ContentStorageSecretWrite()
-	require.NotNil(t, written, "the write is recorded")
-	assert.Equal(t, csTestSecretRef, written.Secret)
-	assert.NotEmpty(t, written.Modified)
-	assert.NotContains(t, written.KeyHash, csSecretValue, "the state file never holds the key")
-
-	h.restartPlatform(t)
-	assert.Equal(t, api.ContentStorageStateConnected, h.event(t).State)
-	assert.Len(t, h.ecos.mutatedIDs(), 4, "nothing written on the second start")
-
-	h2 := newCSHarness(t)
-	h2.ecos = h.ecos
-	h2.rt.RestoreContentStorageSecretWrite(written)
-	assert.Equal(t, api.ContentStorageStateConnected, h2.retry(t).State)
-	assert.Len(t, h2.ecos.mutatedIDs(), 4, "nor by the next daemon")
-}
-
-// A snapshot restored into a NEW namespace: ECOS's database comes with all
-// three records, ours as the default, and the secret holding the key of the
-// stand the snapshot was taken on, while the provider runs with the new
-// namespace's key. Every upload would be refused under a "connected" banner;
-// the secret is rewritten to the current key — and only the secret.
-func TestContentStorageProvision_ARestoredDatabaseGetsTheNamespaceKey(t *testing.T) {
-	h := newCSHarness(t)
-	h.ecos.putRecords("the-old-stands-key")
-	h.ecos.defaultRef = csTestStorageRef
-	events := h.subscribe(t)
-
-	st := h.event(t)
-	assert.Equal(t, api.ContentStorageStateConnected, st.State)
-	_, muts := h.ecos.snapshot()
-	require.Len(t, muts, 1)
-	assert.Equal(t, fakeMutation{id: csTestSecretRef, atts: map[string]any{
-		"type":      "BASIC",
-		"data?json": map[string]any{"username": "citeck", "password": csSecretValue},
-	}}, muts[0], "an update of the existing record; its name is left alone")
-	assert.Equal(t, csSecretValue, h.ecos.password())
-	assert.Equal(t, []string{api.ContentStorageStateWaiting, api.ContentStorageStateConnected}, drainStates(events))
-
-	h.restartPlatform(t)
-	h.event(t)
-	assert.Len(t, h.ecos.mutatedIDs(), 1, "repaired once")
-}
-
-// A desktop secrets reset gives the namespace a new key and recreates the
-// provider with it; ECOS keeps the old one. The next start writes the new key.
-func TestContentStorageProvision_ANewNamespaceKeyReachesECOS(t *testing.T) {
-	h := newCSHarness(t)
-	require.Equal(t, api.ContentStorageStateConnected, h.retry(t).State)
-
-	h.newKey(t, "the-new-key-after-a-reset")
-	assert.Equal(t, api.ContentStorageStateConnected, h.event(t).State)
-	assert.Equal(t, []string{"emodel/secret@", "emodel/endpoint@", "content/storage@", csConfigRef, csTestSecretRef},
-		h.ecos.mutatedIDs())
-	assert.Equal(t, "the-new-key-after-a-reset", h.ecos.password())
-
-	h.restartPlatform(t)
-	h.event(t)
-	assert.Len(t, h.ecos.mutatedIDs(), 5, "and then it is current")
-}
-
-// The secret and the endpoint are the launcher's: an administrator's edit of
-// either — seen as the secret's `modified` moving, and as the endpoint naming
-// another URL or other credentials — is overwritten. Nothing else is.
-func TestContentStorageProvision_AnEditOfTheLaunchersRecordsIsOverwritten(t *testing.T) {
-	h := newCSHarness(t)
-	require.Equal(t, api.ContentStorageStateConnected, h.retry(t).State)
-
-	h.ecos.mu.Lock()
-	h.ecos.passwords[csTestSecretRef] = "edited-in-ecos"
-	h.ecos.modified[csTestSecretRef] = "2026-10-05T11:11:11.000001Z"
-	h.ecos.credentials[csTestEndpointRef] = "somebody-elses-secret"
-	h.ecos.mu.Unlock()
-	h.restartPlatform(t)
-	assert.Equal(t, api.ContentStorageStateConnected, h.event(t).State)
-	_, muts := h.ecos.snapshot()
-	require.Len(t, muts, 6)
-	assert.Equal(t, csTestSecretRef, muts[4].id)
-	assert.Equal(t, fakeMutation{id: csTestEndpointRef, atts: map[string]any{
-		"url": "http://seaweedfs:8333", "credentials": csTestSecretRef,
-	}}, muts[5])
-	assert.Equal(t, csSecretValue, h.ecos.password())
-
-	h.ecos.mu.Lock()
-	h.ecos.urls[csTestEndpointRef] = "http://elsewhere:9000"
-	h.ecos.mu.Unlock()
-	h.restartPlatform(t)
-	h.event(t)
-	assert.Equal(t, csTestEndpointRef, h.ecos.mutatedIDs()[6], "a URL edit alone is enough")
-	assert.Len(t, h.ecos.mutatedIDs(), 7, "the secret, unchanged since, is not")
-}
-
-// An administrator who pointed the default at a storage of their own owns
-// ECOS: the launcher writes nothing — not even its own stale secret — and
-// does not even ask about it.
-func TestContentStorageProvision_AnAdministratorsStorageLeavesOurRecordsAlone(t *testing.T) {
-	h := newCSHarness(t)
-	h.ecos.putRecords("the-old-stands-key")
-	h.ecos.urls[csTestEndpointRef] = "http://elsewhere:9000"
-	h.ecos.defaultRef = "content/storage@content-storage-s3"
-	assert.Equal(t, api.ContentStorageStateAdminManaged, h.retry(t).State)
-	queries, muts := h.ecos.snapshot()
-	assert.Empty(t, muts)
-	assert.Equal(t, 2, queries, "the default and the existence of the records, nothing more")
-	assert.Equal(t, "the-old-stands-key", h.ecos.password())
-}
-
-// Switched back to the database on purpose, ours still holds every file
-// written to it while it was the default — and the key is the namespace's,
-// which nobody but the launcher can see. The secret is kept current; the
-// default stays where the administrator put it.
-func TestContentStorageProvision_SwitchedBackToTheDatabaseKeepsOurSecretCurrent(t *testing.T) {
-	h := newCSHarness(t)
-	h.ecos.putRecords("the-old-stands-key")
-	assert.Equal(t, api.ContentStorageStateAdminManaged, h.retry(t).State)
-	assert.Equal(t, []string{csTestSecretRef}, h.ecos.mutatedIDs())
-	assert.Equal(t, csSecretValue, h.ecos.password())
-	assert.Equal(t, csLocalStorageRef, h.ecos.defaultRef)
-}
-
-// The provider runs with another key than the namespace's: an operator
-// changed it on this stand (`citeck edit seaweedfs`) and, the documentation
-// says, put the new one into ECOS by hand. The launcher cannot know the key
-// the provider checks, and writing the namespace's would break the stand.
-func TestContentStorageProvision_AKeyChangedOnTheProviderIsNotOverwritten(t *testing.T) {
-	h := newCSHarness(t)
-	h.providerKey = "rotated-by-hand"
-	h.setApps(nil)
-	h.ecos.putRecords("rotated-by-hand")
-	h.ecos.defaultRef = csTestStorageRef
-	assert.Equal(t, api.ContentStorageStateConnected, h.retry(t).State)
-	assert.Empty(t, h.ecos.mutatedIDs())
-	assert.Equal(t, "rotated-by-hand", h.ecos.password())
-}
-
-// The operator who rotated the key by hand may also have put it into a secret
-// of their own and pointed the launcher's endpoint at that one. The launcher
-// no longer knows the key the provider checks, so pointing the endpoint back
-// at its own secret — which holds the namespace's key — would be the very 403
-// the secret guard above avoids: the credentials stay where the operator put
-// them. The endpoint's URL is still the launcher's, and a drifted one is put
-// right on its own.
-func TestContentStorageProvision_AnEndpointPointedAtAHandRotatedKeyKeepsItsCredentials(t *testing.T) {
-	h := newCSHarness(t)
-	h.providerKey = "rotated-by-hand"
-	h.setApps(nil)
-	h.ecos.putRecords(csSecretValue)
-	h.ecos.credentials[csTestEndpointRef] = "operators-s3-credentials"
-	h.ecos.defaultRef = csTestStorageRef
-	assert.Equal(t, api.ContentStorageStateConnected, h.retry(t).State)
-	assert.Empty(t, h.ecos.mutatedIDs(), "neither the secret nor the endpoint is written")
-
-	h.ecos.mu.Lock()
-	h.ecos.urls[csTestEndpointRef] = "http://elsewhere:9000"
-	h.ecos.mu.Unlock()
-	h.restartPlatform(t)
-	h.event(t)
-	_, muts := h.ecos.snapshot()
-	require.Len(t, muts, 1)
-	assert.Equal(t, fakeMutation{id: csTestEndpointRef, atts: map[string]any{"url": "http://seaweedfs:8333"}}, muts[0],
-		"the URL alone")
-	h.ecos.mu.Lock()
-	defer h.ecos.mu.Unlock()
-	assert.Equal(t, "operators-s3-credentials", h.ecos.credentials[csTestEndpointRef])
-	assert.Equal(t, "http://seaweedfs:8333", h.ecos.urls[csTestEndpointRef])
-}
-
-// The platform goes down and comes back while a run is in flight — the
-// provider recreated with a new key between two of the run's looks at it. The
-// event that brought it back found the slot taken and was spent; the run in
-// flight read the OLD key when it started and settles on it, writing nothing.
-// No other event follows, so the run that ends with the latch re-armed asks
-// once more by itself, and the new key reaches ECOS.
-func TestContentStorageProvision_APlatformRestartDuringARunIsNotLost(t *testing.T) {
-	h := newCSHarness(t)
-	require.Equal(t, api.ContentStorageStateConnected, h.retry(t).State)
-	require.Len(t, h.ecos.mutatedIDs(), 4)
-
-	// The next start of the platform: a run begins, reads the key, and waits
-	// for ECOS to answer.
-	block := make(chan struct{})
-	h.ecos.mu.Lock()
-	h.ecos.blockQuery = block
-	before := h.ecos.queries
-	h.ecos.mu.Unlock()
-	h.setApps(map[string]namespace.AppRuntimeStatus{appdef.AppGateway: namespace.AppStatusStopped})
-	h.p.evaluate(false, "")
-	h.setApps(nil)
-	h.p.evaluate(false, "")
-	require.Eventually(t, func() bool { q, _ := h.ecos.snapshot(); return q > before }, 5*time.Second, time.Millisecond,
-		"the run read the key and is waiting on ECOS")
-
-	// Meanwhile the namespace gets a new key and the provider is recreated
-	// with it. Both of its events land while the run is in flight.
-	h.secretValues = map[string]string{"seaweedfs-s3": "the-new-key-mid-run"}
-	h.setApps(map[string]namespace.AppRuntimeStatus{csProvider: namespace.AppStatusStopped})
-	h.p.evaluate(false, "")
-	h.setApps(nil)
-	h.p.evaluate(false, "")
-
-	close(block)
-	h.wait(t)
-	assert.Equal(t, api.ContentStorageStateConnected, h.p.Status("ns1").State)
-	assert.Equal(t, "the-new-key-mid-run", h.ecos.password(), "the restart seen during the run was not lost")
-	assert.Equal(t, []string{"emodel/secret@", "emodel/endpoint@", "content/storage@", csConfigRef, csTestSecretRef},
-		h.ecos.mutatedIDs())
-
-	h.restartPlatform(t)
-	h.event(t)
-	assert.Len(t, h.ecos.mutatedIDs(), 5, "and then it is current")
-}
-
-// An ECOS that does not say when the secret last changed leaves nothing to
-// compare: the secret is written on every start, which is harmless — an
-// upsert of the same key.
-func TestContentStorageProvision_WithoutModifiedTheSecretIsWrittenEveryStart(t *testing.T) {
-	h := newCSHarness(t)
-	h.ecos.noModified = true
-	h.ecos.putRecords(csSecretValue)
-	h.ecos.defaultRef = csTestStorageRef
-	h.rt.RestoreContentStorageSecretWrite(&namespace.ContentStorageSecretWrite{
-		Secret: csTestSecretRef, KeyHash: mustKeyHash(t, csCredentials{accessKey: "citeck", secretKey: csSecretValue}),
-	})
-	h.event(t)
-	h.restartPlatform(t)
-	h.event(t)
-	assert.Equal(t, []string{csTestSecretRef, csTestSecretRef}, h.ecos.mutatedIDs())
-}
-
-// A key that cannot be read stops the run before ECOS is asked anything — a
-// locked vault, or a generated key nobody stored (READ answers nothing for
-// it): nothing is written, the stale secret included.
-func TestContentStorageProvision_AnUnreadableKeyWritesNothing(t *testing.T) {
-	for name, set := range map[string]func(h *csHarness){
-		"locked":  func(h *csHarness) { h.secretErr = storage.ErrSecretsLocked },
-		"missing": func(h *csHarness) { h.secretValues = map[string]string{} },
-	} {
-		t.Run(name, func(t *testing.T) {
-			h := newCSHarness(t)
-			h.ecos.putRecords("the-old-stands-key")
-			h.ecos.defaultRef = csTestStorageRef
-			set(h)
-			assert.Equal(t, api.ContentStorageStateError, h.retry(t).State)
-			queries, muts := h.ecos.snapshot()
-			assert.Zero(t, queries)
-			assert.Empty(t, muts)
-		})
-	}
-}
-
-// A refused update is the error state — "connected" over a key the provider
-// rejects is what the update is for — with the key redacted.
-func TestContentStorageProvision_ARefusedSecretUpdateIsTheErrorState(t *testing.T) {
-	h := newCSHarness(t)
-	h.ecos.putRecords("the-old-stands-key")
-	h.ecos.defaultRef = csTestStorageRef
-	h.ecos.mutateErr[csTestSecretRef] = &ecosRecordsError{Status: http.StatusInternalServerError,
-		Messages: []string{"IllegalAccessException: Access denied for " + csSecretValue}}
-	st := h.retry(t)
-	assert.Equal(t, api.ContentStorageStateError, st.State)
-	assert.Equal(t, "contentStorage.msg.provision.updateFailed", st.ErrorMsg.Key)
-	assert.Contains(t, st.ErrorMsg.Args, csTestSecretRef)
-	assert.NotContains(t, englishForLogs.Render(st.ErrorMsg), csSecretValue)
-	assert.Nil(t, h.rt.ContentStorageSecretWrite(), "a refused write is not recorded")
-
-	delete(h.ecos.mutateErr, csTestSecretRef)
-	assert.Equal(t, api.ContentStorageStateConnected, h.retry(t).State)
-	assert.Equal(t, csSecretValue, h.ecos.password())
-}
-
-// A run that stops being THE run between writing the secret and recording
-// it — a namespace switch, a delete — records nothing: the record of a write
-// must never land in another namespace's state, or bring a deleted one's back.
-func TestContentStorageProvision_ACanceledRunRecordsNoSecretWrite(t *testing.T) {
-	h := newCSHarness(t)
-	h.ecos.putRecords("the-old-stands-key")
-	h.ecos.defaultRef = csTestStorageRef
-	canceled := make(chan *csJob, 1)
-	h.ecos.onQuery = func(refs []string, atts map[string]string) {
-		// The read-back of `modified`, right after the secret was written.
-		if len(atts) == 1 && atts["modified"] != "" {
-			h.p.mu.Lock()
-			j := h.p.job
-			h.p.mu.Unlock()
-			canceled <- j
-			h.p.Reset()
-		}
-	}
-	h.p.Retry("ns1")
-	select {
-	case j := <-canceled:
-		awaitJob(t, j)
-	case <-time.After(10 * time.Second):
-		t.Fatal("the run never wrote the secret")
-	}
-	require.Equal(t, []string{csTestSecretRef}, h.ecos.mutatedIDs(), "the write itself went through")
-	assert.Nil(t, h.rt.ContentStorageSecretWrite())
-	h.p.mu.Lock()
-	assert.Empty(t, h.p.status.State, "and the canceled run left no verdict")
-	h.p.mu.Unlock()
-}
-
-// A snapshot that takes the namespace's data between the read of the
-// launcher's records and the write: nothing is written into the platform it
-// is about to replace, and the run is postponed, not failed.
-func TestContentStorageProvision_TheSecretIsNotWrittenUnderASnapshot(t *testing.T) {
-	h := newCSHarness(t)
-	h.ecos.putRecords("the-old-stands-key")
-	h.ecos.defaultRef = csTestStorageRef
-	h.ecos.onQuery = func(_ []string, atts map[string]string) {
-		if _, owned := atts["url"]; owned {
-			h.ecos.mu.Lock()
-			h.ecos.onQuery = nil
-			h.ecos.mu.Unlock()
-			assert.True(t, h.d.longOp.TryLock(longOpSnapshot)) // the run's goroutine: no FailNow
-		}
-	}
-	assert.Equal(t, api.ContentStorageStatePending, h.retry(t).State)
-	assert.Empty(t, h.ecos.mutatedIDs())
-
-	h.d.longOp.Unlock()
-	assert.Equal(t, api.ContentStorageStateConnected, h.event(t).State, "the latch was re-armed")
-	assert.Equal(t, []string{csTestSecretRef}, h.ecos.mutatedIDs())
-}
-
-func mustKeyHash(t *testing.T, c csCredentials) string {
-	t.Helper()
-	hash, err := csKeyHash(c)
-	require.NoError(t, err)
-	return hash
-}
-
-func TestCSSecretStale(t *testing.T) {
-	creds := csCredentials{accessKey: "citeck", secretKey: "k1"}
-	written := &namespace.ContentStorageSecretWrite{Secret: csTestSecretRef, KeyHash: mustKeyHash(t, creds), Modified: "T1"}
-	cases := []struct {
-		name     string
-		last     *namespace.ContentStorageSecretWrite
-		creds    csCredentials
-		modified string
-		stale    bool
-	}{
-		{"current", written, creds, "T1", false},
-		{"never written", nil, creds, "T1", true},
-		{"another provider's secret", &namespace.ContentStorageSecretWrite{
-			Secret: "emodel/secret@minio-s3-credentials", KeyHash: written.KeyHash, Modified: "T1"}, creds, "T1", true},
-		{"a new secret key", written, csCredentials{accessKey: "citeck", secretKey: "k2"}, "T1", true},
-		{"a new access key", written, csCredentials{accessKey: "admin", secretKey: "k1"}, "T1", true},
-		{"saved since", written, creds, "T2", true},
-		{"ECOS does not say", written, creds, "", true},
-		{"an unreadable hash", &namespace.ContentStorageSecretWrite{Secret: csTestSecretRef, KeyHash: "md5:x", Modified: "T1"}, creds, "T1", true},
-	}
-	for _, tc := range cases {
-		assert.Equal(t, tc.stale, csSecretStale(tc.last, csTestSecretRef, tc.creds, tc.modified) != "", tc.name)
-	}
-}
-
-// The digest is salted per write — two of the same key differ — and still
-// recognizes the key it was made of, and nothing else. NUL separates the two
-// keys, so moving a character from one to the other is another identity.
-func TestCSKeyHash(t *testing.T) {
-	creds := csCredentials{accessKey: "citeck", secretKey: "s3cret"}
-	a, b := mustKeyHash(t, creds), mustKeyHash(t, creds)
-	assert.NotEqual(t, a, b)
-	assert.True(t, csKeyHashMatches(a, creds))
-	assert.True(t, csKeyHashMatches(b, creds))
-	assert.False(t, csKeyHashMatches(a, csCredentials{accessKey: "citecks", secretKey: "3cret"}))
-	assert.True(t, strings.HasPrefix(a, "sha256:"))
-	assert.NotContains(t, a, "s3cret")
-	for _, bad := range []string{"", "sha256", "sha256:", "sha256::", "sha256:zz:00", "md5:00:00", a + "x"} {
-		assert.False(t, csKeyHashMatches(bad, creds), bad)
-	}
-}
-
-func TestCSEndpointStale(t *testing.T) {
-	assert.Empty(t, csEndpointStale("http://seaweedfs:8333", "seaweedfs-s3-credentials", "http://seaweedfs:8333", "seaweedfs-s3-credentials"))
-	assert.NotEmpty(t, csEndpointStale("http://seaweedfs:8333/", "seaweedfs-s3-credentials", "http://seaweedfs:8333", "seaweedfs-s3-credentials"))
-	assert.NotEmpty(t, csEndpointStale("http://seaweedfs:8333", "", "http://seaweedfs:8333", "seaweedfs-s3-credentials"))
-	assert.NotEmpty(t, csEndpointStale("", "seaweedfs-s3-credentials", "http://seaweedfs:8333", "seaweedfs-s3-credentials"))
-}
-
-// A record source that is not registered yet answers every ref as missing and
-// refuses a create with RecordsSourceNotFoundException. That is the platform
-// still starting, not a verdict: the run asks ECOS again and finishes, and a
-// record the source then reports as present is not created twice.
 func TestContentStorageProvision_ASourceNotRegisteredYetIsWaitedOut(t *testing.T) {
 	h := newCSHarness(t)
-	h.ecos.unregistered["content/storage@"] = 2
+	h.ecos.onQuery = func(refs []string, _ map[string]string) {
+		if refs[0] == csTestStorageRef {
+			h.ecos.mu.Lock()
+			defer h.ecos.mu.Unlock()
+			h.ecos.exists[csTestStorageRef] = h.ecos.queries > 3
+		}
+	}
 	assert.Equal(t, api.ContentStorageStateConnected, h.retry(t).State)
-	assert.Equal(t, []string{
-		"emodel/secret@", "emodel/endpoint@", "content/storage@", // refused: the source is not there
-		"content/storage@", // refused again
-		"content/storage@", csConfigRef,
-	}, h.ecos.mutatedIDs(), "the secret and the endpoint, created on the first pass, are not created again")
-
-	// An ordinary ERROR on a create is still said at once.
-	h2 := newCSHarness(t)
-	h2.ecos.mutateErr["emodel/endpoint@"] = &ecosRecordsError{Status: http.StatusInternalServerError,
-		Messages: []string{"IllegalArgumentException: url is invalid"}}
-	st := h2.retry(t)
-	assert.Equal(t, api.ContentStorageStateError, st.State)
-	assert.Equal(t, "contentStorage.msg.provision.createFailed", st.ErrorMsg.Key)
-	assert.Equal(t, []string{"emodel/secret@", "emodel/endpoint@"}, h2.ecos.mutatedIDs())
+	assert.Equal(t, []string{csConfigRef}, h.ecos.mutatedIDs(), "native storage is awaited, never created")
 }
 
 // A write that got no answer at all (the gateway being recreated) is retried
@@ -1182,7 +541,7 @@ func TestContentStorageProvision_WaitsUntilECOSIsReady(t *testing.T) {
 	assert.Equal(t, api.ContentStorageStateConnected, h.retry(t).State)
 	queries, muts := h.ecos.snapshot()
 	assert.GreaterOrEqual(t, queries, 2+2+2, "two refusals, two undeployed configs, then the real read")
-	assert.Len(t, muts, 4)
+	assert.Len(t, muts, 1)
 	assert.Equal(t, []string{
 		api.ContentStorageStateWaiting, api.ContentStorageStateProvisioning, api.ContentStorageStateConnected,
 	}, drainStates(events))
@@ -1200,35 +559,25 @@ func TestContentStorageProvision_WaitsUntilECOSIsReady(t *testing.T) {
 // absent attribute — as "not ready" kept every real stand waiting until the
 // budget ran out, with nothing ever written.
 func TestContentStorageSnapshot_OnlyTrueIsMissing(t *testing.T) {
-	recs := func(answers ...json.RawMessage) queryFunc {
-		return func(refs []string) ([]map[string]json.RawMessage, error) {
-			if refs[0] == csConfigRef {
-				return []map[string]json.RawMessage{{"value": json.RawMessage(`{"ref":"emodel/content-storage@LOCAL","config":{}}`)}}, nil
-			}
-			out := make([]map[string]json.RawMessage, len(answers))
-			for i, a := range answers {
-				out[i] = map[string]json.RawMessage{}
-				if a != nil {
-					out[i]["notExists"] = a
+	for _, raw := range []string{"null", "", "false", "true"} {
+		t.Run(raw, func(t *testing.T) {
+			client := queryFunc(func(refs []string) ([]map[string]json.RawMessage, error) {
+				if refs[0] == csConfigRef {
+					return []map[string]json.RawMessage{{"value": json.RawMessage(`{"ref":"emodel/content-storage@LOCAL"}`)}}, nil
 				}
+				assert.Equal(t, []string{csTestStorageRef}, refs)
+				return []map[string]json.RawMessage{{"notExists": json.RawMessage(raw)}}, nil
+			})
+			snap, err := csReadSnapshot(context.Background(), client, csNativeRecordIDs())
+			if raw == "true" {
+				var notReady *csNotReadyError
+				require.ErrorAs(t, err, &notReady)
+			} else {
+				require.NoError(t, err)
+				assert.True(t, snap.storageExists)
 			}
-			return out, nil
-		}
+		})
 	}
-	snap, err := csReadSnapshot(context.Background(),
-		recs(json.RawMessage("null"), nil, json.RawMessage("true")), csRecordIDsFor(csProvider))
-	require.NoError(t, err, "an unanswered existence is an answer: the record is there")
-	assert.True(t, snap.secretExists, "null")
-	assert.True(t, snap.endpointExists, "absent")
-	assert.False(t, snap.storageExists, "true")
-	assert.Equal(t, csLocalStorageRef, snap.defaultRef)
-
-	snap, err = csReadSnapshot(context.Background(),
-		recs(json.RawMessage("false"), json.RawMessage("true"), json.RawMessage("null")), csRecordIDsFor(csProvider))
-	require.NoError(t, err)
-	assert.True(t, snap.secretExists, "false")
-	assert.False(t, snap.endpointExists)
-	assert.True(t, snap.storageExists)
 }
 
 // The config's value is the readiness signal: a config that is not deployed
@@ -1250,21 +599,21 @@ func TestContentStorageSnapshot_TheDefaultValue(t *testing.T) {
 	}
 	var notReady *csNotReadyError
 	for _, raw := range []string{"null", ""} {
-		_, err := csReadSnapshot(context.Background(), value(raw), csRecordIDsFor(csProvider))
+		_, err := csReadSnapshot(context.Background(), value(raw), csNativeRecordIDs())
 		require.ErrorAs(t, err, &notReady, "%q", raw)
 		assert.True(t, csRetryable(err))
 	}
 
-	snap, err := csReadSnapshot(context.Background(), value(`{"ref":"","config":{}}`), csRecordIDsFor(csProvider))
+	snap, err := csReadSnapshot(context.Background(), value(`{"ref":"","config":{}}`), csNativeRecordIDs())
 	require.NoError(t, err, "an explicitly empty ref is nothing chosen")
 	assert.Empty(t, snap.defaultRef)
-	snap, err = csReadSnapshot(context.Background(), value(`{"ref":" content/storage@x "}`), csRecordIDsFor(csProvider))
+	snap, err = csReadSnapshot(context.Background(), value(`{"ref":" content/storage@x "}`), csNativeRecordIDs())
 	require.NoError(t, err)
 	assert.Equal(t, "content/storage@x", snap.defaultRef)
 
 	for _, raw := range []string{`["x"]`, `"emodel/content-storage@LOCAL"`, `{}`, `{"storage":"content/storage@x"}`,
 		`{"ref":null}`, `{"ref":{"id":"x"}}`, `{"ref":7}`} {
-		_, err := csReadSnapshot(context.Background(), value(raw), csRecordIDsFor(csProvider))
+		_, err := csReadSnapshot(context.Background(), value(raw), csNativeRecordIDs())
 		require.Error(t, err, raw)
 		require.NotErrorAs(t, err, &notReady, raw)
 		assert.False(t, csRetryable(err), raw)
@@ -1413,7 +762,8 @@ func TestContentStorageProvision_ReDerivesAfterASnapshotRestore(t *testing.T) {
 	// The snapshot held a wiped content database: ECOS is back on LOCAL.
 	h.ecos.mu.Lock()
 	h.ecos.defaultRef = csLocalStorageRef
-	h.ecos.exists = map[string]bool{}
+	h.ecos.exists = map[string]bool{csTestStorageRef: true}
+	h.rt.RestoreContentStorageDefaultSet(false)
 	h.ecos.mu.Unlock()
 	h.setApps(nil)
 	h.event(t)
@@ -1422,7 +772,7 @@ func TestContentStorageProvision_ReDerivesAfterASnapshotRestore(t *testing.T) {
 
 	h.d.longOp.Unlock()
 	assert.Equal(t, api.ContentStorageStateConnected, h.event(t).State)
-	assert.Len(t, h.ecos.mutatedIDs(), 8, "the restored platform was connected again")
+	assert.Len(t, h.ecos.mutatedIDs(), 2, "the restored platform was connected again")
 }
 
 // Once per time the platform comes up: events while it stays up do not run it
@@ -1446,7 +796,7 @@ func TestContentStorageProvision_RunsOncePerPlatformStart(t *testing.T) {
 	q3, _ := h.ecos.snapshot()
 	assert.Greater(t, q3, q2, "a platform restart re-derives the answer")
 	assert.Empty(t, drainStates(events), "a verdict that did not change is not re-announced")
-	assert.Len(t, h.ecos.mutatedIDs(), 4, "and re-deriving it wrote nothing")
+	assert.Len(t, h.ecos.mutatedIDs(), 1, "and re-deriving it wrote nothing")
 }
 
 // After an error a qualifying event retries, but at most every five minutes;
@@ -1513,7 +863,7 @@ func TestContentStorageProvision_ResetCancelsTheRun(t *testing.T) {
 // either: a run writes state only while it is still THE run.
 func TestContentStorageProvision_ACanceledRunWritesNoVerdict(t *testing.T) {
 	h := newCSHarness(t)
-	h.ecos.defaultRef = "content/storage@seaweedfs-s3"
+	h.ecos.defaultRef = "content/storage@content-storage-s3"
 	h.ecos.blockQuery = make(chan struct{})
 	h.ecos.blockIgnoresCtx = true
 	events := h.subscribe(t)
@@ -1574,61 +924,6 @@ func TestContentStorageProvision_RetryIsForTheActiveNamespaceOnly(t *testing.T) 
 	h.wait(t)
 	queries, _ := h.ecos.snapshot()
 	assert.Zero(t, queries)
-}
-
-// The secret is resolved through the namespace's own values before ECOS is
-// asked anything: a locked vault or a reference with no value is the error
-// state, and nothing is read or written.
-func TestContentStorageProvision_AnUnresolvableSecretIsAnErrorWithNoWrites(t *testing.T) {
-	h := newCSHarness(t)
-	h.secretErr = storage.ErrSecretsLocked
-	st := h.retry(t)
-	assert.Equal(t, api.ContentStorageStateError, st.State)
-	assert.Equal(t, "contentStorage.msg.provision.secretsLocked", st.ErrorMsg.Key)
-	queries, muts := h.ecos.snapshot()
-	assert.Zero(t, queries)
-	assert.Empty(t, muts)
-
-	h2 := newCSHarness(t)
-	h2.secretValues = map[string]string{}
-	st = h2.retry(t)
-	assert.Equal(t, "contentStorage.msg.provision.secretMissing", st.ErrorMsg.Key)
-	assert.Contains(t, st.ErrorMsg.Args, "seaweedfs-s3")
-	assert.Empty(t, h2.ecos.mutatedIDs())
-
-	h3 := newCSHarness(t)
-	h3.secretErr = errors.New("disk on fire")
-	assert.Equal(t, "contentStorage.msg.provision.secretsUnreadable", h3.retry(t).ErrorMsg.Key)
-}
-
-// A GENERATED secret with no value is not missing from the workspace — the
-// entry is there — and adding it again, which is what the "missing" sentence
-// asks, fixes nothing: the next generation makes the value (a desktop secrets
-// reset while the namespace runs is how this happens; the read never invents
-// one). The sentence says to reload. A reference the workspace declares
-// nothing for still asks for the entry, and wins when both are missing.
-func TestContentStorageProvision_AGeneratedSecretWithNoValueAsksForAReload(t *testing.T) {
-	h := newCSHarness(t)
-	h.d.activeNs.workspaceConfig.Secrets = []bundle.SecretDefault{{ID: "seaweedfs-s3", Generated: true}}
-	h.secretValues = map[string]string{}
-	st := h.retry(t)
-	assert.Equal(t, api.ContentStorageStateError, st.State)
-	assert.Equal(t, "contentStorage.msg.provision.secretNotGenerated", st.ErrorMsg.Key)
-	assert.Contains(t, st.ErrorMsg.Args, "seaweedfs-s3")
-	queries, muts := h.ecos.snapshot()
-	assert.Zero(t, queries)
-	assert.Empty(t, muts)
-
-	h2 := newCSHarness(t)
-	ws := h2.d.activeNs.workspaceConfig
-	ws.Secrets = []bundle.SecretDefault{{ID: "seaweedfs-s3", Generated: true}}
-	ws.ContentStorage.S3.AccessKey = "${secret:s3-access}"
-	h2.secretValues = map[string]string{}
-	st = h2.retry(t)
-	assert.Equal(t, "contentStorage.msg.provision.secretMissing", st.ErrorMsg.Key)
-	assert.Contains(t, st.ErrorMsg.Args, "s3-access")
-	assert.NotContains(t, strings.Join(st.ErrorMsg.Args, " "), "seaweedfs-s3",
-		"the undeclared one is what the operator has to fix first")
 }
 
 // The runtime hook ignores what cannot change the gate and never blocks.
@@ -1702,11 +997,11 @@ func TestHTTPEcosRecords_Query(t *testing.T) {
 	stub, addr := newECOSStub(t, func(string, []byte) (int, string) {
 		return http.StatusOK, `{"records":[` +
 			`{"id":"eapps/config@app/emodel$default-content-storage","attributes":{"value":{"ref":"emodel/content-storage@LOCAL","config":{}},"notExists":null}},` +
-			`{"id":"content/storage@seaweedfs-s3","attributes":{"notExists":true}}` +
+			`{"id":"content/storage@content-storage-s3","attributes":{"notExists":true}}` +
 			`],"messages":[],"hasMore":false,"totalCount":0,"version":1}`
 	})
 	got, err := newHTTPEcosRecords(addr).Query(context.Background(),
-		[]string{csConfigRef, "content/storage@seaweedfs-s3"},
+		[]string{csConfigRef, "content/storage@content-storage-s3"},
 		map[string]string{"value": "_value?json", "notExists": "_notExists?bool"})
 	require.NoError(t, err)
 	require.Len(t, got, 2)
@@ -1721,7 +1016,7 @@ func TestHTTPEcosRecords_Query(t *testing.T) {
 	assert.Equal(t, "application/json", reqs[0].contentType)
 	// No "version": the gateway reads an attributes query as v2 by default.
 	assert.JSONEq(t, `{
-		"records": ["eapps/config@app/emodel$default-content-storage", "content/storage@seaweedfs-s3"],
+		"records": ["eapps/config@app/emodel$default-content-storage", "content/storage@content-storage-s3"],
 		"attributes": {"value": "_value?json", "notExists": "_notExists?bool"}
 	}`, reqs[0].body)
 }
@@ -1852,7 +1147,7 @@ func TestContentStorageProvision_OverHTTP(t *testing.T) {
 			// The records API's own shape: true for a record that is not
 			// there, null for one that is.
 			var notExists any
-			if !created[ref] {
+			if ref != csTestStorageRef && !created[ref] {
 				notExists = true
 			}
 			out = append(out, map[string]any{"id": ref, "attributes": map[string]any{"notExists": notExists}})
@@ -1875,105 +1170,267 @@ func TestContentStorageProvision_OverHTTP(t *testing.T) {
 			mutations = append(mutations, r.body)
 		}
 	}
-	require.Len(t, mutations, 4)
-	// The config is asked for its value only: an eapps config never answers
-	// `_notExists`, whether it is deployed or not.
-	assert.JSONEq(t, `{"records":["eapps/config@app/emodel$default-content-storage"],
-		"attributes":{"value":"_value?json"}}`, reqs[0].body)
-	assert.JSONEq(t, `{"records":["emodel/secret@seaweedfs-s3-credentials","emodel/endpoint@seaweedfs-s3","content/storage@seaweedfs-s3"],
-		"attributes":{"notExists":"_notExists?bool"}}`, reqs[1].body)
-	assert.JSONEq(t, `{"records":[{"id":"emodel/secret@","attributes":{
-		"id":"seaweedfs-s3-credentials","name":"seaweedfs S3 credentials","type":"BASIC",
-		"data?json":{"username":"citeck","password":"`+csSecretValue+`"}}}]}`, mutations[0])
-	assert.JSONEq(t, `{"records":[{"id":"emodel/endpoint@","attributes":{
-		"id":"seaweedfs-s3","name":"seaweedfs S3","url":"http://seaweedfs:8333",
-		"credentials":"emodel/secret@seaweedfs-s3-credentials"}}]}`, mutations[1])
-	assert.JSONEq(t, `{"records":[{"id":"content/storage@","attributes":{
-		"id":"seaweedfs-s3","name":"seaweedfs S3","type":"S3",
-		"config?json":{"endpoint":"emodel/endpoint@seaweedfs-s3","bucketName":"ecos-content"}}}]}`, mutations[2])
-	assert.JSONEq(t, `{"records":[{"id":"eapps/config@app/emodel$default-content-storage","attributes":{
-		"_value?json":{"ref":"content/storage@seaweedfs-s3","config":{}}}}]}`, mutations[3])
-
+	require.Len(t, mutations, 1)
+	assert.JSONEq(t, `{"records":["eapps/config@app/emodel$default-content-storage"],"attributes":{"value":"_value?json"}}`, reqs[0].body)
+	assert.JSONEq(t, `{"records":["content/storage@content-storage-s3"],"attributes":{"notExists":"_notExists?bool"}}`, reqs[1].body)
+	assert.JSONEq(t, `{"records":[{"id":"eapps/config@app/emodel$default-content-storage","attributes":{"_value?json":{"ref":"content/storage@content-storage-s3","config":{}}}}]}`, mutations[0])
 	mu.Lock()
-	assert.Equal(t, "content/storage@seaweedfs-s3", defaultRef)
-	assert.Equal(t, map[string]bool{
-		"emodel/secret@seaweedfs-s3-credentials": true,
-		"emodel/endpoint@seaweedfs-s3":           true,
-		"content/storage@seaweedfs-s3":           true,
-	}, maps.Clone(created))
+	assert.Equal(t, csTestStorageRef, defaultRef)
+	assert.Empty(t, created, "no records are created")
 	mu.Unlock()
-}
-
-// Bringing the secret up to date, over the real client: a restored database
-// (ours is the default, the endpoint is right, the secret holds another
-// stand's key and the launcher has no record of writing it). Pins the read of
-// the launcher's own records — `modified` as text, the endpoint's credentials
-// by local id — the update by full ref with the type and the data only, and
-// the read-back of `modified` that the record of the write keeps.
-func TestContentStorageProvision_SecretUpdateOverHTTP(t *testing.T) {
-	const modified = "2026-10-05T10:23:45.844528Z"
-	stub, addr := newECOSStub(t, func(path string, body []byte) (int, string) {
-		if path == ecosRecordsMutatePath {
-			return http.StatusOK, `{"records":[{"id":"` + csTestSecretRef + `","attributes":{}}]}`
-		}
-		var req struct {
-			Records    []string          `json:"records"`
-			Attributes map[string]string `json:"attributes"`
-		}
-		_ = json.Unmarshal(body, &req)
-		out := make([]map[string]any, 0, len(req.Records))
-		for _, ref := range req.Records {
-			atts := map[string]any{}
-			for alias := range req.Attributes {
-				switch {
-				case alias == "value":
-					atts[alias] = map[string]any{"ref": csTestStorageRef, "config": map[string]any{}}
-				case ref == csTestSecretRef && alias == "modified":
-					atts[alias] = modified
-				case ref == csTestEndpointRef && alias == "url":
-					atts[alias] = "http://seaweedfs:8333"
-				case ref == csTestEndpointRef && alias == "credentials":
-					atts[alias] = "seaweedfs-s3-credentials"
-				default:
-					atts[alias] = nil
-				}
-			}
-			out = append(out, map[string]any{"id": ref, "attributes": atts})
-		}
-		b, _ := json.Marshal(map[string]any{"records": out, "messages": []any{}})
-		return http.StatusOK, string(b)
-	})
-
-	h := newCSHarness(t)
-	h.p.records = newHTTPEcosRecords
-	h.p.gatewayAddr = func(context.Context, *namespace.Runtime) (string, error) { return addr, nil }
-	assert.Equal(t, api.ContentStorageStateConnected, h.retry(t).State)
-
-	reqs := stub.all()
-	require.Len(t, reqs, 5)
-	assert.JSONEq(t, `{"records":["`+csTestSecretRef+`","`+csTestEndpointRef+`"],
-		"attributes":{"modified":"modified?str","url":"url?str","credentials":"credentials?localId"}}`, reqs[2].body)
-	assert.Equal(t, ecosRecordsMutatePath, reqs[3].path)
-	assert.JSONEq(t, `{"records":[{"id":"`+csTestSecretRef+`","attributes":{
-		"type":"BASIC","data?json":{"username":"citeck","password":"`+csSecretValue+`"}}}]}`, reqs[3].body)
-	assert.JSONEq(t, `{"records":["`+csTestSecretRef+`"],"attributes":{"modified":"modified?str"}}`, reqs[4].body)
-	for _, r := range reqs {
-		assert.Equal(t, "admin", r.user)
-	}
-	written := h.rt.ContentStorageSecretWrite()
-	require.NotNil(t, written)
-	assert.Equal(t, modified, written.Modified)
-	assert.True(t, csKeyHashMatches(written.KeyHash, csCredentials{accessKey: "citeck", secretKey: csSecretValue}))
 }
 
 // The state reaches the namespace DTO, rendered for the reader.
 func TestContentStorageProvision_StateReachesTheNamespaceDto(t *testing.T) {
 	h := newCSHarness(t)
-	h.secretErr = storage.ErrSecretsLocked
+	h.ecos.mutateErr[csConfigRef] = &ecosRecordsError{Status: 500, Messages: []string{"refused"}}
 	h.retry(t)
 	dto := h.d.contentStorageDto(englishForLogs, h.d.active())
 	require.NotNil(t, dto)
 	assert.Equal(t, api.ContentStorageStateError, dto.State)
 	assert.NotEmpty(t, dto.Error)
 	assert.NotEmpty(t, dto.At)
+}
+
+func TestContentStorageProvision_RequiresADurablePendingSwitch(t *testing.T) {
+	h := newCSHarness(t)
+	h.rt.SetStatePersister(failPersister{})
+	st := h.retry(t)
+	assert.Equal(t, api.ContentStorageStateError, st.State)
+	assert.Empty(t, h.ecos.mutatedIDs(), "no remote write before the pending marker reaches disk")
+}
+
+func TestContentStorageProvision_RechecksAfterPlanningDuringProvisioning(t *testing.T) {
+	h := newCSHarness(t)
+	h.ecos.onQuery = func(refs []string, _ map[string]string) {
+		if refs[0] == csTestStorageRef {
+			h.ecos.mu.Lock()
+			h.ecos.onQuery = nil
+			h.ecos.mu.Unlock()
+			assert.True(t, h.d.longOp.TryLock(longOpSnapshot))
+		}
+	}
+	assert.Equal(t, api.ContentStorageStatePending, h.retry(t).State)
+	assert.Empty(t, h.ecos.mutatedIDs())
+	h.d.longOp.Unlock()
+	assert.Equal(t, api.ContentStorageStateConnected, h.event(t).State)
+}
+
+// A snapshot cannot acquire its lock while a remote write is in flight, even
+// when the provider and all ECOS apps still report RUNNING.
+func TestContentStorageProvision_ExcludesDestructiveOperationsWhileWriting(t *testing.T) {
+	h := newCSHarness(t)
+	h.ecos.onMutate = func(string) {
+		for _, kind := range []longOpKind{longOpSnapshot, longOpMigration, longOpDepsRollback} {
+			acquired := h.d.longOp.TryLock(kind)
+			assert.False(t, acquired, "remote write excludes %s", kind)
+			if acquired {
+				h.d.longOp.Unlock()
+			}
+		}
+	}
+	assert.Equal(t, api.ContentStorageStateConnected, h.retry(t).State)
+	assert.Len(t, h.ecos.mutatedIDs(), 1)
+	require.True(t, h.d.longOp.TryLock(longOpSnapshot), "the barrier is released after the write")
+	h.d.longOp.Unlock()
+}
+
+func TestContentStorageProvision_RechecksPlatformAfterPlanning(t *testing.T) {
+	h := newCSHarness(t)
+	h.ecos.onQuery = func(refs []string, _ map[string]string) {
+		if refs[0] == csTestStorageRef {
+			h.ecos.mu.Lock()
+			h.ecos.onQuery = nil
+			h.ecos.mu.Unlock()
+			h.setApps(map[string]namespace.AppRuntimeStatus{csProvider: namespace.AppStatusStopped})
+		}
+	}
+	assert.Equal(t, api.ContentStorageStatePending, h.retry(t).State)
+	assert.Empty(t, h.ecos.mutatedIDs())
+	h.setApps(nil)
+	assert.Equal(t, api.ContentStorageStateConnected, h.event(t).State)
+}
+
+func TestContentStorageProvision_StaleEvaluationCannotReplaceTheCurrentJob(t *testing.T) {
+	for _, down := range []bool{false, true} {
+		name := "open"
+		if down {
+			name = "down"
+		}
+		t.Run(name, func(t *testing.T) {
+			h := newCSHarness(t)
+			stale := h.d.active()
+			epoch := h.p.epoch.Load()
+			if down {
+				h.setApps(map[string]namespace.AppRuntimeStatus{csProvider: namespace.AppStatusStopped})
+			}
+			next := newCSHarness(t)
+			h.d.activeNs = next.d.activeNs
+			h.d.activeNs.workspaceID = "ws2" // the same namespace id in another workspace
+			h.p.Reset()
+			h.ecos.blockQuery = make(chan struct{})
+			h.p.Retry("ns1")
+			current := h.currentJob(t)
+			require.Eventually(t, func() bool { q, _ := h.ecos.snapshot(); return q > 0 }, time.Second, time.Millisecond)
+			// A previously queued evaluation arrives after the switch and after B
+			// has started. It must neither adopt A nor cancel B, for either gate.
+			h.p.evaluateSnapshot(true, "ns1", stale, epoch)
+			h.p.mu.Lock()
+			assert.Same(t, current, h.p.job)
+			assert.Equal(t, "ws2", h.p.wsID)
+			h.p.mu.Unlock()
+			select {
+			case <-current.done:
+				t.Error("the delayed evaluation canceled the new job")
+			default:
+			}
+			close(h.ecos.blockQuery)
+			h.wait(t)
+			assert.Equal(t, api.ContentStorageStateConnected, h.p.Status("ns1").State)
+		})
+	}
+}
+
+func TestContentStorageProvision_ReReadsAdminChoiceBeforeMutation(t *testing.T) {
+	for _, choice := range []string{"content/storage@custom", csTestStorageRef} {
+		t.Run(choice, func(t *testing.T) {
+			h := newCSHarness(t)
+			h.ecos.onQuery = func(refs []string, _ map[string]string) {
+				if refs[0] == csTestStorageRef {
+					h.ecos.mu.Lock()
+					h.ecos.defaultRef = choice
+					h.ecos.mu.Unlock()
+				}
+			}
+			want := api.ContentStorageStateAdminManaged
+			if choice == csTestStorageRef {
+				want = api.ContentStorageStateConnected
+			}
+			assert.Equal(t, want, h.retry(t).State)
+			assert.Empty(t, h.ecos.mutatedIDs(), "fresh administrator choice wins")
+		})
+	}
+}
+
+func TestContentStorageProvision_ReReadsAfterMutationAndPreservesChangedDefault(t *testing.T) {
+	h := newCSHarness(t)
+	h.ecos.onQuery = func(refs []string, _ map[string]string) {
+		if refs[0] == csConfigRef {
+			h.ecos.mu.Lock()
+			if len(h.ecos.mutations) > 0 {
+				h.ecos.defaultRef = "content/storage@custom"
+			}
+			h.ecos.mu.Unlock()
+		}
+	}
+	st := h.retry(t)
+	assert.Equal(t, api.ContentStorageStateError, st.State)
+	assert.Equal(t, "contentStorage.msg.provision.verifyFailed", st.ErrorMsg.Key)
+	assert.False(t, h.rt.ContentStorageDefaultSet())
+	assert.Equal(t, api.ContentStorageStateAdminManaged, h.retry(t).State)
+	assert.Equal(t, []string{csConfigRef}, h.ecos.mutatedIDs(), "the administrator value is not overwritten on retry")
+}
+
+func TestContentStorageProvision_AutomaticallyRetriesWithoutEvents(t *testing.T) {
+	h := newCSHarness(t)
+	h.p.retryAfter = 20 * time.Millisecond
+	h.ecos.mutateErr[csConfigRef] = &ecosRecordsError{Status: 500, Messages: []string{"temporary refusal"}}
+	require.Equal(t, api.ContentStorageStateError, h.retry(t).State)
+	h.ecos.mu.Lock()
+	delete(h.ecos.mutateErr, csConfigRef)
+	h.ecos.mu.Unlock()
+	require.Eventually(t, func() bool { return h.p.Status("ns1").State == api.ContentStorageStateConnected }, time.Second, time.Millisecond)
+	h.wait(t)
+	assert.Equal(t, []string{csConfigRef, csConfigRef}, h.ecos.mutatedIDs())
+}
+
+func TestContentStorageProvision_ResetCancelsAutomaticRetry(t *testing.T) {
+	h := newCSHarness(t)
+	h.p.retryAfter = 20 * time.Millisecond
+	h.ecos.mutateErr[csConfigRef] = &ecosRecordsError{Status: 500, Messages: []string{"refused"}}
+	require.Equal(t, api.ContentStorageStateError, h.retry(t).State)
+	h.p.Reset()
+	assert.Never(t, func() bool { _, mutations := h.ecos.snapshot(); return len(mutations) > 1 }, 80*time.Millisecond, time.Millisecond)
+}
+
+func TestContentStorageProvision_RechecksPlatformAfterFinalConfigRead(t *testing.T) {
+	h := newCSHarness(t)
+	reads := 0
+	h.ecos.onQuery = func(refs []string, _ map[string]string) {
+		if refs[0] == csConfigRef {
+			reads++
+			if reads == 2 {
+				h.setApps(map[string]namespace.AppRuntimeStatus{csProvider: namespace.AppStatusStopped})
+			}
+		}
+	}
+	assert.Equal(t, api.ContentStorageStatePending, h.retry(t).State)
+	assert.Empty(t, h.ecos.mutatedIDs())
+}
+
+func TestContentStorageProvision_AutomaticRetrySurvivesBusyPlatform(t *testing.T) {
+	h := newCSHarness(t)
+	h.p.retryAfter = 15 * time.Millisecond
+	h.ecos.mutateErr[csConfigRef] = &ecosRecordsError{Status: 500, Messages: []string{"refused"}}
+	require.Equal(t, api.ContentStorageStateError, h.retry(t).State)
+	require.True(t, h.d.longOp.TryLock(longOpSnapshot))
+	h.ecos.mu.Lock()
+	delete(h.ecos.mutateErr, csConfigRef)
+	h.ecos.mu.Unlock()
+	assert.Never(t, func() bool { return h.p.Status("ns1").State == api.ContentStorageStateConnected }, 60*time.Millisecond, time.Millisecond)
+	h.d.longOp.Unlock()
+	require.Eventually(t, func() bool { return h.p.Status("ns1").State == api.ContentStorageStateConnected }, time.Second, time.Millisecond)
+	h.wait(t)
+	assert.Equal(t, []string{csConfigRef, csConfigRef}, h.ecos.mutatedIDs())
+}
+
+func TestContentStorageProvision_ExternalWithoutManagedProvider(t *testing.T) {
+	h := newCSHarness(t)
+	h.d.activeNs.nsConfig = &namespace.Config{ID: "ns1", S3: &namespace.S3Config{Endpoint: "https://external.example", Bucket: "custom-bucket", AccessKey: "access", SecretKey: "secret:s3.secretKey"}}
+	h.d.activeNs.workspaceConfig = nil
+	h.setApps(map[string]namespace.AppRuntimeStatus{csProvider: namespace.AppStatusStopped})
+	assert.Equal(t, api.ContentStorageStateConnected, h.event(t).State)
+	_, mutations := h.ecos.snapshot()
+	require.Len(t, mutations, 1)
+	assert.Equal(t, csConfigRef, mutations[0].id)
+	assert.Equal(t, csTestStorageRef, h.ecos.defaultRef)
+}
+
+func TestContentStorageProvision_ExternalRespectsAdminDefault(t *testing.T) {
+	h := newCSHarness(t)
+	h.d.activeNs.nsConfig = &namespace.Config{ID: "ns1", S3: &namespace.S3Config{Endpoint: "https://external.example", Bucket: "custom-bucket", AccessKey: "access", SecretKey: "secret:s3.secretKey"}}
+	h.d.activeNs.workspaceConfig = nil
+	h.ecos.defaultRef = "content/storage@administrator-storage"
+	assert.Equal(t, api.ContentStorageStateAdminManaged, h.event(t).State)
+	_, mutations := h.ecos.snapshot()
+	assert.Empty(t, mutations)
+}
+
+func TestContentStorageProvision_ExternalWaitsForPlatform(t *testing.T) {
+	for _, app := range csPlatformApps {
+		t.Run(app, func(t *testing.T) {
+			h := newCSHarness(t)
+			h.d.activeNs.nsConfig = &namespace.Config{ID: "ns1", S3: &namespace.S3Config{Endpoint: "https://external.example", Bucket: "custom-bucket", AccessKey: "access", SecretKey: "secret:s3.secretKey"}}
+			h.d.activeNs.workspaceConfig = nil
+			h.setApps(map[string]namespace.AppRuntimeStatus{app: namespace.AppStatusStarting})
+			assert.Equal(t, api.ContentStorageStatePending, h.event(t).State)
+			queries, mutations := h.ecos.snapshot()
+			assert.Zero(t, queries)
+			assert.Empty(t, mutations)
+		})
+	}
+}
+
+func TestContentStorageProvision_ExternalMissingResolvedSecret(t *testing.T) {
+	h := newCSHarness(t)
+	h.d.activeNs.nsConfig = &namespace.Config{ID: "ns1", S3: &namespace.S3Config{Endpoint: "https://external.example", Bucket: "custom-bucket", AccessKey: "access", SecretKey: "secret:s3.secretKey"}}
+	apps := make([]*namespace.AppRuntime, 0, len(csPlatformApps))
+	for _, name := range csPlatformApps {
+		apps = append(apps, &namespace.AppRuntime{Name: name, Status: namespace.AppStatusRunning})
+	}
+	h.rt.InjectAppsForTest(apps...)
+	h.event(t)
+	queries, mutations := h.ecos.snapshot()
+	assert.Zero(t, queries)
+	assert.Empty(t, mutations)
 }

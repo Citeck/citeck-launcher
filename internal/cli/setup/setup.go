@@ -13,7 +13,6 @@ import (
 	"github.com/citeck/citeck-launcher/internal/bundle"
 	"github.com/citeck/citeck-launcher/internal/cli/prompt"
 	"github.com/citeck/citeck-launcher/internal/config"
-	"github.com/citeck/citeck-launcher/internal/fsutil"
 	"github.com/citeck/citeck-launcher/internal/i18n"
 	"github.com/citeck/citeck-launcher/internal/namespace"
 	"github.com/citeck/citeck-launcher/internal/output"
@@ -454,15 +453,8 @@ func writeSettingChanges(sctx *setupContext, target TargetFile, cfgPath, histDir
 			return nil, fmt.Errorf("save daemon config: %w", sErr)
 		}
 	} else {
-		data, mErr := namespace.MarshalNamespaceConfig(nsCfg)
-		if mErr != nil {
-			return nil, fmt.Errorf("marshal namespace config: %w", mErr)
-		}
-		// 0o600: namespace.yml can carry plaintext secrets (SMTP password, S3
-		// secret key) — keep it owner-only, matching `citeck install` and the
-		// daemon's FileStore write.
-		if wErr := fsutil.AtomicWriteFile(cfgPath, data, 0o600); wErr != nil {
-			return nil, fmt.Errorf("write namespace config: %w", wErr)
+		if err := writeNamespaceConfig(cfgPath, beforeNsCfg, nsCfg); err != nil {
+			return nil, err
 		}
 	}
 

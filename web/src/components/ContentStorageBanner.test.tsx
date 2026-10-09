@@ -1,3 +1,4 @@
+import { useDaemonStatusStore } from '../lib/daemonStatus'
 import { render, screen, act, waitFor } from '@testing-library/react'
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { ContentStorageBanner } from './ContentStorageBanner'
@@ -144,4 +145,14 @@ describe('ContentStorageBanner', () => {
     render(<ContentStorageBanner />)
     expect(screen.getByRole('alert').textContent).toContain('contentStorage.s3')
   })
+})
+
+it('does not hide another workspace namespace with the same id', () => {
+  useDaemonStatusStore.setState({ status: { workspace: 'a' } as never })
+  setNamespace(s3({ state: 'pending' }), 'RUNNING', 'default')
+  render(<ContentStorageBanner />)
+  act(() => { screen.getByRole('button', { name: 'Hide' }).click() })
+  expect(screen.queryByRole('status')).toBeNull()
+  act(() => { useDaemonStatusStore.setState({ status: { workspace: 'b' } as never }) })
+  expect(screen.getByRole('status')).toBeDefined()
 })

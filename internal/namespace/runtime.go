@@ -173,33 +173,33 @@ type Runtime struct {
 	// apps" set (NsPersistedState.KnownApps). It lives on the Runtime for one
 	// reason: persistState rebuilds the whole record from Runtime fields, so a
 	// set kept anywhere else would be erased by the next unrelated write.
-	knownApps             map[string]bool
-	editedAppPatches      map[string]json.RawMessage       // user-edit deltas over generated app defs (JSON merge patch)
-	editedFileEdits       map[string]FileEdit              // user-edit deltas for mounted files (key: "<app>/<rel-path>", no leading "./")
-	lastGenFiles          map[string][]byte                // last generated (pre-merge) file set; baseline source for the editor + WriteEditedFile template
-	generatedDefs         map[string]appdef.ApplicationDef // last generated (pre-patch) app defs; baseline for config view/edit when the ns is stopped/never-started
-	dependsOnDetachedApps map[string]bool                  // detached apps that trigger regen on restart
-	gatingApps            map[string]bool                  // apps whose attach/detach changes which other apps exist (GenResp.GatingApps)
-	lastApps              []appdef.ApplicationDef          // last app defs passed to doStart
-	cachedBundle          *bundle.Def                      // last successfully resolved bundle (persisted)
-	customLinks           []bundle.WorkspaceLink           // workspace-config custom quick links (dependsOn-gated in generateLinks)
-	retryState            map[string]retryInfo             // retry tracking for failed apps
-	pullAuthBlockedApps   map[string]bool                  // PULL_FAILED apps awaiting registry credentials — T24 backoff retry is paused for them until creds change (RetryPullFailedApps clears it)
-	lastLoggedPullErr     map[string]string                // app → last pull error already WARN-logged; dedups the per-app pull-fail log so 24 apps × T24 retries don't flood daemon.log with the same cause (cleared on pull success)
-	livenessFailures      map[string]int                   // consecutive liveness probe failure counts
-	restartCounts         map[string]int                   // total restart counts per app
-	restartEvents         []RestartEvent                   // ring buffer of restart events
-	dependencyPins        map[deps.ID]deps.DependencyState // see NsPersistedState.Dependencies
-	migrationJournal      *deps.MigrationJournal           // see NsPersistedState.DependencyMigration
-	lastMigration         *deps.MigrationResult            // see NsPersistedState.LastDependencyMigration
-	contentStorageSwitch  string                           // see NsPersistedState.ContentStorageSwitchPending
-	contentStorageSecret  *ContentStorageSecretWrite       // see NsPersistedState.ContentStorageSecretWrite
-	reconcilerCfg         *ReconcilerConfig                // optional override from daemon.yml
-	reconcilerEnabled     bool                             // gate for reconcile-diff dispatch from tickUnderLock; default true, flipped by SetReconcilerConfig when daemon.yml sets reconciler.enabled: false.
-	livenessEnabled       bool                             // gate for per-app liveness probe dispatch from tickUnderLock; default true, flipped by SetReconcilerConfig when daemon.yml sets reconciler.livenessEnabled: false.
-	defaultStopTimeout    int                              // from daemon.yml docker.stopTimeout; 0 = docker.DefaultStopTimeoutSec (15s) SIGTERM→SIGKILL window applies (see tickUnderLock T23)
-	teardownOnce          sync.Once                        // guards shutdownAfter (full teardown path)
-	signalOnce            sync.Once                        // guards signalShutdown (close shutdownComplete)
+	knownApps                map[string]bool
+	editedAppPatches         map[string]json.RawMessage       // user-edit deltas over generated app defs (JSON merge patch)
+	editedFileEdits          map[string]FileEdit              // user-edit deltas for mounted files (key: "<app>/<rel-path>", no leading "./")
+	lastGenFiles             map[string][]byte                // last generated (pre-merge) file set; baseline source for the editor + WriteEditedFile template
+	generatedDefs            map[string]appdef.ApplicationDef // last generated (pre-patch) app defs; baseline for config view/edit when the ns is stopped/never-started
+	dependsOnDetachedApps    map[string]bool                  // detached apps that trigger regen on restart
+	gatingApps               map[string]bool                  // apps whose attach/detach changes which other apps exist (GenResp.GatingApps)
+	lastApps                 []appdef.ApplicationDef          // last app defs passed to doStart
+	cachedBundle             *bundle.Def                      // last successfully resolved bundle (persisted)
+	customLinks              []bundle.WorkspaceLink           // workspace-config custom quick links (dependsOn-gated in generateLinks)
+	retryState               map[string]retryInfo             // retry tracking for failed apps
+	pullAuthBlockedApps      map[string]bool                  // PULL_FAILED apps awaiting registry credentials — T24 backoff retry is paused for them until creds change (RetryPullFailedApps clears it)
+	lastLoggedPullErr        map[string]string                // app → last pull error already WARN-logged; dedups the per-app pull-fail log so 24 apps × T24 retries don't flood daemon.log with the same cause (cleared on pull success)
+	livenessFailures         map[string]int                   // consecutive liveness probe failure counts
+	restartCounts            map[string]int                   // total restart counts per app
+	restartEvents            []RestartEvent                   // ring buffer of restart events
+	dependencyPins           map[deps.ID]deps.DependencyState // see NsPersistedState.Dependencies
+	migrationJournal         *deps.MigrationJournal           // see NsPersistedState.DependencyMigration
+	lastMigration            *deps.MigrationResult            // see NsPersistedState.LastDependencyMigration
+	contentStorageSwitch     string                           // see NsPersistedState.ContentStorageSwitchPending
+	contentStorageDefaultSet bool                             // see NsPersistedState.ContentStorageDefaultSet
+	reconcilerCfg            *ReconcilerConfig                // optional override from daemon.yml
+	reconcilerEnabled        bool                             // gate for reconcile-diff dispatch from tickUnderLock; default true, flipped by SetReconcilerConfig when daemon.yml sets reconciler.enabled: false.
+	livenessEnabled          bool                             // gate for per-app liveness probe dispatch from tickUnderLock; default true, flipped by SetReconcilerConfig when daemon.yml sets reconciler.livenessEnabled: false.
+	defaultStopTimeout       int                              // from daemon.yml docker.stopTimeout; 0 = docker.DefaultStopTimeoutSec (15s) SIGTERM→SIGKILL window applies (see tickUnderLock T23)
+	teardownOnce             sync.Once                        // guards shutdownAfter (full teardown path)
+	signalOnce               sync.Once                        // guards signalShutdown (close shutdownComplete)
 	// detaching is set by doDetach BEFORE CancelAll(CancelDetach). It fences
 	// stepAllAppsUnderLock and tickUnderLock against dispatching new workers
 	// on the detaching runtime: the current runtimeLoop iteration still runs
@@ -233,8 +233,9 @@ type Runtime struct {
 	// retries it (there is no loop left) and nothing reads the DTO afterwards
 	// — its only reader is the shutdown path, which threads it to the caller
 	// that asked the daemon to detach. Guarded by r.mu.
-	detachStateErr error
-	nowFunc        func() time.Time // returns current time (test-injectable via WithTestClock).
+	detachStateErr        error
+	snapshotImportPending bool
+	nowFunc               func() time.Time // returns current time (test-injectable via WithTestClock).
 	// refreshSnapshotDigestsFn defaults to r.refreshSnapshotDigests (wired in
 	// NewRuntime, since a method value needs r to already exist). Test-injectable
 	// seam so orchestration tests can assert doStart/doRegenerate call it iff

@@ -81,6 +81,7 @@
   "snapshot.stopped": "Пространство остановлено",
   "snapshot.stopTimeout": "превышено время ожидания остановки пространства (остановилось в статусе {status})",
   "snapshot.notFound": "снимок \"{name}\" не найден. Выполните 'citeck snapshot list', чтобы увидеть доступные снимки",
+  "snapshot.import.pending": "Импорт снапшота не завершён. Повторите импорт перед запуском пространства.",
   "snapshot.import.detach": "Снимок импортирован, запуск пространства инициирован (выполните `citeck status` для наблюдения).",
   "snapshot.import.background": "Пространство продолжит запускаться в фоне. Выполните `citeck status` для наблюдения.",
   "snapshot.waitingCompletion": "Ожидание завершения...",
@@ -564,14 +565,9 @@
   "contentStorage.msg.unavailable.externalS3": "Это пространство имён хранит контент во внешнем S3 (блок s3 его конфигурации) — его нельзя совмещать со способом хранения контента S3.",
   "contentStorage.msg.unavailable.bundleUnresolved": "Бандла {bundle} нет в синхронизированном репозитории бандлов, поэтому проверить для него хранение контента в S3 нельзя. Синхронизируйте репозиторий (принудительное обновление) и повторите.",
   "contentStorage.msg.notS3": "Это пространство имён хранит контент в базе данных — подключать S3-хранилище нечего.",
-  "contentStorage.msg.provision.secretsLocked": "Секреты пространства имён заблокированы, поэтому учётные данные S3 для {app} прочитать нельзя и подключить к нему ecos-content не получится. Разблокируйте секреты и повторите.",
-  "contentStorage.msg.provision.secretsUnreadable": "Не удалось прочитать секреты пространства имён, поэтому подключить ecos-content к хранилищу S3 нельзя: {error}",
-  "contentStorage.msg.provision.secretMissing": "Учётные данные S3 для {app} ссылаются на секреты, для которых у этого пространства имён нет значения: {secrets}. Добавьте их в раздел secrets конфигурации рабочего пространства и повторите.",
-  "contentStorage.msg.provision.secretNotGenerated": "Учётные данные S3 для {app} ссылаются на генерируемые секреты, для которых у этого пространства имён ещё нет значения: {secrets}. Перезагрузите пространство имён, чтобы их сгенерировать (citeck reload или «Обновить и запустить»); ecos-content подключится с новым ключом, когда {app} перезапустится с ним.",
   "contentStorage.msg.provision.notReady": "ECOS не был готов к подключению хранилища контента S3 в течение {minutes} мин. Последний ответ: {error}",
   "contentStorage.msg.provision.readFailed": "Не удалось прочитать настройки хранилища контента из ECOS: {error}",
   "contentStorage.msg.provision.createFailed": "Не удалось создать {record} в ECOS: {error}",
-  "contentStorage.msg.provision.updateFailed": "Не удалось обновить {record} в ECOS: {error}",
   "contentStorage.msg.provision.setDefaultFailed": "Не удалось сделать {storage} хранилищем контента по умолчанию в ECOS: {error}",
   "contentStorage.msg.provision.verifyFailed": "{storage} назначено хранилищем контента по умолчанию, но ECOS теперь сообщает {actual}.",
   "deps.msg.busy.rollback": "выполняется откат зависимости — дождитесь его завершения",
@@ -595,5 +591,8 @@
   "deps.msg.event.rolledBackWithWarning": "выполнен откат {id} до {image}; {error}",
   "deps.msg.action.migrationStarted": "Миграция {id} на {image} запущена",
   "deps.msg.action.rollbackStarted": "Откат {id} на {image} запущен",
-  "apps.msg.namespaceNotRunning": "Неймспейс не запущен — сначала запустите его, а затем запускайте отдельное приложение."
+  "apps.msg.namespaceNotRunning": "Неймспейс не запущен — сначала запустите его, а затем запускайте отдельное приложение.",
+  "contentStorage.msg.local.desktopOnly": "Экспорт окружения S3 для локального запуска доступен только на desktop.",
+  "contentStorage.msg.local.notConfigured": "У namespace нет штатного окружения S3 для экспорта.",
+  "contentStorage.msg.local.providerNotReady": "Провайдер S3 должен работать с опубликованным desktop-портом."
 }

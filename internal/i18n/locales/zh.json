@@ -81,6 +81,7 @@
   "snapshot.stopped": "namespace 已停止",
   "snapshot.stopTimeout": "等待 namespace 停止超时（卡在 {status}）",
   "snapshot.notFound": "未找到快照 \"{name}\"。运行 'citeck snapshot list' 查看可用快照",
+  "snapshot.import.pending": "快照导入尚未完成。请在启动 namespace 前重新导入。",
   "snapshot.import.detach": "快照已导入，namespace 已启动（可使用 `citeck status` 查看状态）。",
   "snapshot.import.background": "namespace 将在后台继续启动。运行 `citeck status` 查看状态。",
   "snapshot.waitingCompletion": "等待完成...",
@@ -564,14 +565,9 @@
   "contentStorage.msg.unavailable.externalS3": "此命名空间将内容存储在外部 S3 中（其配置中的 s3 块），它不能与 S3 内容存储方式同时使用。",
   "contentStorage.msg.unavailable.bundleUnresolved": "捆绑包 {bundle} 不在已同步的捆绑包仓库中，因此无法检查它是否支持 S3 内容存储。请同步仓库（强制更新）后重试。",
   "contentStorage.msg.notS3": "此命名空间将内容存储在数据库中；没有需要连接的 S3 存储。",
-  "contentStorage.msg.provision.secretsLocked": "命名空间的密钥已锁定，因此无法读取 {app} 的 S3 凭据，也无法将 ecos-content 连接到它。请解锁密钥后重试。",
-  "contentStorage.msg.provision.secretsUnreadable": "无法读取命名空间的密钥，因此无法将 ecos-content 连接到其 S3 存储：{error}",
-  "contentStorage.msg.provision.secretMissing": "{app} 的 S3 凭据引用了此命名空间没有值的密钥：{secrets}。请将它们添加到工作区配置的 secrets 中，然后重试。",
-  "contentStorage.msg.provision.secretNotGenerated": "{app} 的 S3 凭据引用了此命名空间尚无值的生成型密钥：{secrets}。请重新加载命名空间以生成它们（citeck reload 或“更新并启动”）；{app} 使用新密钥重启后，ecos-content 将以新密钥连接。",
   "contentStorage.msg.provision.notReady": "ECOS 在 {minutes} 分钟内未准备好连接 S3 内容存储。最后的响应：{error}",
   "contentStorage.msg.provision.readFailed": "无法从 ECOS 读取内容存储设置：{error}",
   "contentStorage.msg.provision.createFailed": "无法在 ECOS 中创建 {record}：{error}",
-  "contentStorage.msg.provision.updateFailed": "无法在 ECOS 中更新 {record}：{error}",
   "contentStorage.msg.provision.setDefaultFailed": "无法在 ECOS 中将 {storage} 设为默认内容存储：{error}",
   "contentStorage.msg.provision.verifyFailed": "已将 {storage} 设为默认内容存储，但 ECOS 现在报告的是 {actual}。",
   "deps.msg.busy.rollback": "依赖回滚正在进行 — 请等待其完成",
@@ -595,5 +591,8 @@
   "deps.msg.event.rolledBackWithWarning": "{id} 已回滚到 {image}；{error}",
   "deps.msg.action.migrationStarted": "已开始将 {id} 迁移到 {image}",
   "deps.msg.action.rollbackStarted": "已开始将 {id} 回滚到 {image}",
-  "apps.msg.namespaceNotRunning": "命名空间未运行——请先启动命名空间，然后再单独启动该应用。"
+  "apps.msg.namespaceNotRunning": "命名空间未运行——请先启动命名空间，然后再单独启动该应用。",
+  "contentStorage.msg.local.desktopOnly": "本地 S3 环境导出仅在桌面模式下可用。",
+  "contentStorage.msg.local.notConfigured": "此命名空间没有可导出的原生 S3 环境。",
+  "contentStorage.msg.local.providerNotReady": "S3 提供程序必须运行并公开桌面端口。"
 }

@@ -269,10 +269,9 @@ func TestReseedAfterSnapshotImportReplacesThePinOfImportedVolumes(t *testing.T) 
 		"postgres2": {"PG_VERSION": "17\n"},
 		"postgres3": {"18/docker/PG_VERSION": "18\n"}, // left over on desktop
 	}}
-	reseedAfterSnapshotImport(context.Background(), rt, p, []string{"postgres2"}, nil)
-	pins := rt.DependencyPins()
-	assert.Equal(t, "postgres:17", pins[deps.Postgres], "the imported volume wins over the leftover 18 volume")
-	assert.Equal(t, "rabbitmq:4.2.9-management", pins[deps.RabbitMQ], "untouched dependency keeps its pin")
+	states := snapshotDependencyPins(context.Background(), rt.DependencyStates(), p, []string{"postgres2"}, nil)
+	assert.Equal(t, "postgres:17", states[deps.Postgres].Image, "the imported volume wins over the leftover 18 volume")
+	assert.Equal(t, "rabbitmq:4.2.9-management", states[deps.RabbitMQ].Image, "untouched dependency keeps its pin")
 }
 
 // The server-mode probe: the not-found arm must be distinguishable from a read
@@ -963,9 +962,7 @@ func TestReseedAfterSnapshotImportDerivesTheGenerationFromTheImportedVolume(t *t
 		"rabbitmq3": {},
 	}}
 
-	reseedAfterSnapshotImport(context.Background(), rt, p, []string{"postgres2"}, nil)
-
-	states := rt.DependencyStates()
+	states := snapshotDependencyPins(context.Background(), rt.DependencyStates(), p, []string{"postgres2"}, nil)
 	assert.Equal(t, deps.DependencyState{Image: "postgres:17", VolumeGen: 1}, states[deps.Postgres],
 		"the imported volume wins over the leftover generation-2 volume, image AND generation")
 	assert.Equal(t, deps.DependencyState{Image: "rabbitmq:4.2.9-management", VolumeGen: 2}, states[deps.RabbitMQ],
@@ -983,10 +980,10 @@ func TestReseedAfterSnapshotImportIgnoresAVolumeThatIsNotADependencys(t *testing
 	}, nil, nil)
 	p := fakeProbe{volumes: map[string]map[string]string{"postgres2": {"PG_VERSION": "17\n"}}}
 
-	reseedAfterSnapshotImport(context.Background(), rt, p, []string{"pgadmin2"}, nil)
+	states := snapshotDependencyPins(context.Background(), rt.DependencyStates(), p, []string{"pgadmin2"}, nil)
 
 	assert.Equal(t, deps.DependencyState{Image: "postgres:18", VolumeGen: 2},
-		rt.DependencyStates()[deps.Postgres], "nothing a dependency owns was imported")
+		states[deps.Postgres], "nothing a dependency owns was imported")
 }
 
 // keycloakLegacyImage is what the REGISTRY says a namespace with postgres data

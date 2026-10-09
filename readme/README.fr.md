@@ -82,7 +82,7 @@ Login:            admin / <generated password>
 
 Deux points importants à propos de cet écran :
 
-- **Le mot de passe administrateur n'est affiché qu'une seule fois.** Copiez-le — il est impossible de le récupérer ensuite. Si vous le perdez, réinitialisez-le avec `citeck setup admin-password`.
+- **Le mot de passe administrateur n'est affiché qu'une seule fois.** Copiez-le et conservez-le en lieu sûr. Si vous le perdez, réinitialisez-le avec `citeck setup admin-password`.
 - **Avec un certificat auto-signé, votre navigateur affichera un avertissement.** C'est attendu — cliquez sur *Avancé* → *Continuer*.
 
 Si quelque chose semble toujours bloqué après une vingtaine de minutes, commencez par `citeck diagnose` (ajoutez `--fix` pour le laisser réparer ce qu'il peut) et `citeck logs <app>`.
@@ -109,12 +109,14 @@ citeck logs <app> -f             # diffuser les logs (sans application = le log 
 citeck stop <app>                # arrêter une application — et la garder arrêtée après un redémarrage
 citeck start <app>               # la redémarrer (rattachement)
 citeck reload                    # appliquer les changements de config, recréer uniquement ce qui a changé
-citeck snapshot export <name>    # sauvegarder tous les volumes (arrête la plateforme, puis la relance)
+citeck snapshot export           # sauvegarder tous les volumes (arrête la plateforme, puis la relance)
 citeck upgrade <bundle:version>  # basculer vers une autre version de la plateforme
 citeck diagnose --fix            # contrôles de santé avec réparation automatique optionnelle
 citeck setup                     # modifier les paramètres (mot de passe admin, TLS, e-mail, ressources…)
 citeck edit <app>                # éditer la définition d'une application, à la manière de kubectl edit
 ```
+
+Par défaut, les snapshots excluent les secrets et sont destinés au même serveur avec les mêmes identifiants. Pour un transfert avec les identifiants : `citeck snapshot export --include-secrets`. Les clés du namespace et JWT/OIDC/admin/SA sont enregistrées en clair dans `secrets.json` ; les clés système importées ne concernent que le namespace cible. La configuration du namespace et les objets S3 externes sont exclus. [Format et limites](../docs/snapshots.md) (en russe).
 
 Notez que `citeck stop <app>` **détache** l'application : elle reste arrêtée malgré les redémarrages et les rechargements jusqu'à ce que vous exécutiez `citeck start <app>`. C'est aussi le moyen de libérer de la mémoire sur un hôte modeste — détacher quelques applications optionnelles économise plusieurs Go.
 

@@ -68,7 +68,7 @@ type secretWriter interface {
 // handleSetAdminPassword rotates systemSecrets.AdminPassword under configMu
 // WITHOUT holding reloadMu, so a rotation can interleave with a doReloadEx
 // that is between its Phase-1 snapshot and Phase-2 commit. The reload commit
-// does not write systemSecrets, so with in-place mutation the rotation always
+// preserves a concurrent rotation when refreshing imported overrides, so it always
 // lands on the live struct — an immutable swap rebuilt from the reload's
 // Phase-1 snapshot would silently revert the rotation.
 //
@@ -572,6 +572,7 @@ func (d *Daemon) doShutdownRuntime(leaveRunning bool) error {
 	if d.bgCancel != nil {
 		d.bgCancel()
 	}
+	d.contentStorageProv().Reset() // cancel connection jobs and automatic retry timers
 	bgDone := make(chan struct{})
 	go func() { d.bgWg.Wait(); close(bgDone) }()
 	select {
@@ -709,7 +710,10 @@ func (d *Daemon) doReloadEx(forceGitPull, startNotRegenerate, refreshImages bool
 	}
 	nsID := act.nsConfig.ID
 	fallbackWS := act.workspaceConfig
-	sysSecrets := act.systemSecrets
+	sysSecrets, sysErr := applyNamespaceSystemSecrets(d.secretService, act.workspaceID, nsID, act.systemSecrets)
+	if sysErr != nil {
+		return sysErr
+	}
 
 	// Phase 1: slow I/O outside lock (config read, git pull, bundle resolution)
 	nsCfg, err := d.loadNamespaceConfigFromStore(act.workspaceID, nsID)
@@ -854,6 +858,7 @@ func (d *Daemon) doReloadEx(forceGitPull, startNotRegenerate, refreshImages bool
 	// Phase 1 is preserved — see the activeNamespace doc.
 	d.configMu.Lock()
 	a := d.activeLocked()
+	a.systemSecrets = preserveSystemSecretRotation(a.systemSecrets, act.systemSecrets, sysSecrets)
 	a.nsConfig = nsCfg
 	a.bundleDef = resolveResult.Bundle
 	a.workspaceConfig = resolveResult.Workspace
@@ -1073,6 +1078,7 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 	// Content storage (DB | S3): the options a dialog may offer for a bundle,
 	// and the retry of the one-time S3 connection.
 	mux.HandleFunc("GET "+api.ContentStorageOptions, d.handleContentStorageOptions)
+	mux.HandleFunc("GET "+api.ContentStorageLocalEnv, d.handleContentStorageLocalEnv)
 	mux.HandleFunc("POST "+api.NamespaceContentStorageProvision, d.handleContentStorageProvision)
 
 	// Config

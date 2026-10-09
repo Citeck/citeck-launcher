@@ -253,7 +253,7 @@ func knownAppsOf(state *namespace.NsPersistedState) []string {
 func installWorkspaceDependencies(wsCfg *bundle.WorkspaceConfig) {
 	dbs := namespace.DatabaseSpecs(wsCfg)
 	stores := namespace.QdrantSpecs(wsCfg)
-	ds := make([]deps.Descriptor, 0, len(dbs)+len(stores))
+	ds := namespace.SeaweedDependencies(wsCfg)
 	for _, s := range dbs {
 		ds = append(ds, s.Descriptor())
 	}

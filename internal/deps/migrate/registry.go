@@ -90,6 +90,8 @@ func MigratorFor(id deps.ID) (Migrator, bool) {
 		return PostgresMigrator{ID: id}, true
 	case deps.IsQdrantFamily(d):
 		return QdrantMigrator{ID: id}, true
+	case deps.IsSeaweedFamily(d):
+		return SeaweedMigrator{ID: id}, true
 	}
 	return nil, false
 }
@@ -114,7 +116,7 @@ func RollbackFor(id deps.ID) (func(context.Context, Env, *deps.MigrationJournal)
 		return nil, false
 	case deps.IsPostgresFamily(d):
 		return RollbackPostgres, true
-	case deps.IsQdrantFamily(d):
+	case deps.IsQdrantFamily(d), deps.IsSeaweedFamily(d):
 		return RollbackCopyUpgrade, true
 	}
 	return nil, false

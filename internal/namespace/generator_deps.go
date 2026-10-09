@@ -84,6 +84,15 @@ func resolveDependencyImage(ctx *NsGenContext, id deps.ID, chain []string) strin
 	if !ok {
 		return candidate
 	}
+	return resolveDependencyImageFor(ctx, d, chain)
+}
+
+func resolveDependencyImageFor(ctx *NsGenContext, d deps.Descriptor, chain []string) string {
+	id := d.ID()
+	candidate := ""
+	if len(chain) > 0 {
+		candidate = chain[len(chain)-1]
+	}
 	// A malformed ladder (rungs out of order, a duplicate, one nobody can
 	// parse) is refused by deps.UpgradeRoute wherever a pin exists to route
 	// from — but on a FRESH stand nothing calls UpgradeRoute at all, so

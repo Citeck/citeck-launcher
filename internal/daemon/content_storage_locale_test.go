@@ -41,6 +41,7 @@ func contentStorageMessageCalls(t *testing.T) []csMessageCall {
 	t.Helper()
 	files, err := filepath.Glob("*.go")
 	require.NoError(t, err)
+	files = append(files, "../namespace/content_storage_policy.go")
 	fset := token.NewFileSet()
 	var calls []csMessageCall
 	for _, name := range files {
@@ -110,7 +111,7 @@ func TestContentStorageMessagesExistInEveryLocaleWithTheirPlaceholders(t *testin
 		"contentStorage.msg.downgrade",
 		"contentStorage.msg.unavailable.noProviderImage",
 		"contentStorage.msg.notS3",
-		"contentStorage.msg.provision.secretsLocked",
+		"contentStorage.msg.provision.setDefaultFailed",
 		"contentStorage.msg.provision.verifyFailed",
 	} {
 		require.Containsf(t, keys, want, "the source scan no longer finds %s", want)

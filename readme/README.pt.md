@@ -82,7 +82,7 @@ Login:            admin / <generated password>
 
 Duas coisas importantes sobre essa tela:
 
-- **A senha de administrador é exibida uma única vez.** Copie-a — ela não pode ser recuperada depois. Se você a perder, redefina-a com `citeck setup admin-password`.
+- **A senha de administrador é exibida uma única vez.** Copie-a e guarde-a em um local seguro. Se você a perder, redefina-a com `citeck setup admin-password`.
 - **Com um certificado autoassinado, seu navegador exibirá um aviso.** Isso é esperado — clique em *Avançado* → *Continuar*.
 
 Se algo continuar parecendo travado após uns 20 minutos, comece por `citeck diagnose` (adicione `--fix` para deixá-lo reparar o que for possível) e `citeck logs <app>`.
@@ -109,12 +109,14 @@ citeck logs <app> -f             # transmita os logs (sem app = o log do própri
 citeck stop <app>                # pare um aplicativo — e mantenha-o parado entre reinícios
 citeck start <app>               # inicie-o novamente (reanexar)
 citeck reload                    # aplique mudanças de configuração, recriando só o que mudou
-citeck snapshot export <name>    # faça backup de todos os volumes (para a plataforma e a reinicia)
+citeck snapshot export           # faça backup de todos os volumes (para a plataforma e a reinicia)
 citeck upgrade <bundle:version>  # mude para outra versão da plataforma
 citeck diagnose --fix            # verificações de saúde com reparo automático opcional
 citeck setup                     # altere configurações (senha de admin, TLS, e-mail, recursos…)
 citeck edit <app>                # edite a definição de um aplicativo, no estilo kubectl edit
 ```
+
+Por padrão, os snapshots não incluem segredos e destinam-se à restauração no mesmo servidor com as mesmas credenciais. Para transferir com credenciais: `citeck snapshot export --include-secrets`. As chaves do namespace e JWT/OIDC/admin/SA são salvas em texto simples em `secrets.json`; as chaves de sistema importadas valem apenas para o namespace de destino. A configuração do namespace e objetos S3 externos ficam fora do arquivo. [Formato e limites](../docs/snapshots.md) (em russo).
 
 Note que `citeck stop <app>` **desanexa** o aplicativo: ele permanece parado entre reinícios e recargas até que você execute `citeck start <app>`. Essa também é a maneira de liberar memória em um host pequeno — desanexar alguns aplicativos opcionais economiza vários GB.
 

@@ -20,16 +20,23 @@ import (
 type FileStore struct {
 	baseDir     string // conf dir: holds namespace.yml + secrets/ + *.json
 	runtimeBase string // server runtime root: {DataDir}/runtime ; per-NS state lives at {runtimeBase}/{nsID}/state-{nsID}.json
-	mu          sync.RWMutex
+	mu          *sync.RWMutex
 }
 
 // NewFileStore creates a FileStore rooted at baseDir with runtime state at runtimeBase.
 func NewFileStore(baseDir, runtimeBase string) (*FileStore, error) {
 	secretsDir := filepath.Join(baseDir, "secrets")
-	if err := os.MkdirAll(secretsDir, 0o700); err != nil {
+	if err := snapshotMkdirAll(secretsDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create secrets dir: %w", err)
 	}
-	return &FileStore{baseDir: baseDir, runtimeBase: runtimeBase}, nil
+	store := &FileStore{baseDir: baseDir, runtimeBase: runtimeBase, mu: sharedFileStoreLock(baseDir)}
+	store.mu.Lock()
+	err := store.recoverSnapshotTransaction()
+	store.mu.Unlock()
+	if err != nil {
+		return nil, fmt.Errorf("recover snapshot transaction: %w", err)
+	}
+	return store, nil
 }
 
 // --- Workspaces (server mode: single implicit workspace) ---
@@ -73,6 +80,9 @@ func (s *FileStore) secretPath(id string) string {
 func (s *FileStore) ListSecrets() ([]SecretMeta, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if readyErr := s.snapshotReadyUnderLock(); readyErr != nil {
+		return nil, readyErr
+	}
 
 	entries, err := os.ReadDir(s.secretsDir())
 	if err != nil {
@@ -101,6 +111,9 @@ func (s *FileStore) ListSecrets() ([]SecretMeta, error) {
 func (s *FileStore) GetSecret(id string) (*Secret, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if readyErr := s.snapshotReadyUnderLock(); readyErr != nil {
+		return nil, readyErr
+	}
 	return s.readSecret(s.secretPath(id))
 }
 
@@ -108,6 +121,9 @@ func (s *FileStore) GetSecret(id string) (*Secret, error) {
 func (s *FileStore) SaveSecret(secret Secret) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if readyErr := s.snapshotReadyUnderLock(); readyErr != nil {
+		return readyErr
+	}
 
 	if secret.Scope == "" {
 		secret.Scope = "global"
@@ -121,16 +137,7 @@ func (s *FileStore) SaveSecret(secret Secret) error {
 		secret.CreatedAt = time.Now()
 	}
 
-	data, err := json.MarshalIndent(secretFile{
-		ID:        secret.ID,
-		Name:      secret.Name,
-		Type:      secret.Type,
-		Username:  secret.Username,
-		Value:     secret.Value,
-		Scope:     secret.Scope,
-		Host:      secret.Host,
-		CreatedAt: secret.CreatedAt,
-	}, "", "  ")
+	data, err := json.MarshalIndent(storedSecretFile(secret), "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal secret: %w", err)
 	}
@@ -145,6 +152,9 @@ func (s *FileStore) SaveSecret(secret Secret) error {
 func (s *FileStore) DeleteSecret(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if readyErr := s.snapshotReadyUnderLock(); readyErr != nil {
+		return readyErr
+	}
 
 	path := s.secretPath(id)
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
@@ -517,6 +527,9 @@ func (s *FileStore) SaveNamespaceConfig(_, _, _, configYAML string) error {
 func (s *FileStore) LoadNamespaceState(_, nsID string) (stateJSON string, ok bool, err error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if readyErr := s.snapshotReadyUnderLock(); readyErr != nil {
+		return "", false, readyErr
+	}
 	data, err := os.ReadFile(s.nsStatePath(nsID)) //nolint:gosec // path from runtimeBase + nsID
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -531,9 +544,11 @@ func (s *FileStore) LoadNamespaceState(_, nsID string) (stateJSON string, ok boo
 func (s *FileStore) SaveNamespaceState(_, nsID, _, stateJSON string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if readyErr := s.snapshotReadyUnderLock(); readyErr != nil {
+		return readyErr
+	}
 	p := s.nsStatePath(nsID)
-	_ = os.MkdirAll(filepath.Dir(p), 0o750)
-	if err := fsutil.AtomicWriteFile(p, []byte(stateJSON), 0o644); err != nil {
+	if err := writeSnapshotFile(p, []byte(stateJSON), 0o644); err != nil {
 		return fmt.Errorf("write namespace state: %w", err)
 	}
 	return nil
@@ -543,6 +558,9 @@ func (s *FileStore) SaveNamespaceState(_, nsID, _, stateJSON string) error {
 func (s *FileStore) DeleteNamespace(_, nsID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if readyErr := s.snapshotReadyUnderLock(); readyErr != nil {
+		return readyErr
+	}
 	_ = os.Remove(s.nsConfigPath())
 	_ = os.Remove(s.nsStatePath(nsID))
 	return nil
@@ -563,6 +581,10 @@ type secretFile struct {
 	Scope     string     `json:"scope"`
 	Host      string     `json:"host,omitempty"`
 	CreatedAt time.Time  `json:"createdAt"`
+}
+
+func storedSecretFile(secret Secret) secretFile {
+	return secretFile{ID: secret.ID, Name: secret.Name, Type: secret.Type, Username: secret.Username, Value: secret.Value, Scope: secret.Scope, Host: secret.Host, CreatedAt: secret.CreatedAt}
 }
 
 func (s *FileStore) readSecret(path string) (*Secret, error) {

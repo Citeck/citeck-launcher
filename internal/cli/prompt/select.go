@@ -100,6 +100,7 @@ type selectModel[T any] struct {
 	hints   Hints
 	cursor  int
 	height  int  // 0 = all inline; >0 = capped scrolling viewport
+	width   int  // terminal cells, refreshed on resize
 	offset  int  // scroll offset, only used when height > 0
 	chosen  bool // Enter was pressed
 }
@@ -107,6 +108,10 @@ type selectModel[T any] struct {
 func (m selectModel[T]) Init() tea.Cmd { return nil }
 
 func (m selectModel[T]) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if size, ok := msg.(tea.WindowSizeMsg); ok {
+		m.width = size.Width
+		return m, nil
+	}
 	km, ok := msg.(tea.KeyMsg)
 	if !ok {
 		return m, nil
@@ -164,8 +169,12 @@ func (m selectModel[T]) View() string {
 		b.WriteString("\n")
 	}
 	if m.desc != "" {
+		style := StyleDesc
+		if m.width > len(StepIndent) {
+			style = style.Width(m.width - len(StepIndent))
+		}
 		b.WriteString(StepIndent)
-		b.WriteString(StyleDesc.Render(m.desc))
+		b.WriteString(strings.ReplaceAll(style.Render(m.desc), "\n", "\n"+StepIndent))
 		b.WriteString("\n")
 	}
 	if m.title != "" || m.desc != "" {

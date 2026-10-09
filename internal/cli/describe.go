@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/citeck/citeck-launcher/internal/api"
@@ -11,7 +12,8 @@ import (
 )
 
 func newDescribeCmd() *cobra.Command {
-	return &cobra.Command{
+	var localEnv bool
+	cmd := &cobra.Command{
 		Use:   "describe <app>",
 		Short: "Show detailed information about an app",
 		Args: func(_ *cobra.Command, args []string) error {
@@ -31,6 +33,27 @@ func newDescribeCmd() *cobra.Command {
 				return fmt.Errorf("connect to daemon: %w", err)
 			}
 			defer c.Close()
+
+			if localEnv {
+				if appName != "content" {
+					return fmt.Errorf("--local-env is supported for content")
+				}
+				env, envErr := c.GetContentStorageLocalEnv()
+				if envErr != nil {
+					return fmt.Errorf("describe local content environment: %w", envErr)
+				}
+				output.PrintResult(env, func() {
+					keys := make([]string, 0, len(env))
+					for key := range env {
+						keys = append(keys, key)
+					}
+					sort.Strings(keys)
+					for _, key := range keys {
+						output.PrintText("export %s=%s", key, "'"+strings.ReplaceAll(env[key], "'", "'\"'\"'")+"'")
+					}
+				})
+				return nil
+			}
 
 			inspect, err := c.InspectApp(appName)
 			if err != nil {
@@ -82,6 +105,9 @@ func newDescribeCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&localEnv, "local-env", false, "Export native S3 environment for local content (desktop only; includes credentials)")
+	return cmd
+
 }
 
 func formatUptime(ms int64) string {

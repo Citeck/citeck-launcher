@@ -81,6 +81,7 @@
   "snapshot.stopped": "Namespace stopped",
   "snapshot.stopTimeout": "timeout waiting for namespace to stop (stuck at {status})",
   "snapshot.notFound": "snapshot \"{name}\" not found. Run 'citeck snapshot list' to see available snapshots",
+  "snapshot.import.pending": "Snapshot import is incomplete. Repeat the import before starting the namespace.",
   "snapshot.import.detach": "Snapshot imported, namespace start initiated (use `citeck status` to monitor).",
   "snapshot.import.background": "Namespace continues to start in background. Run `citeck status` to monitor.",
   "snapshot.waitingCompletion": "Waiting for completion...",
@@ -564,14 +565,9 @@
   "contentStorage.msg.unavailable.externalS3": "This namespace stores its content in an external S3 (the s3 block of its configuration), which cannot be combined with S3 content storage.",
   "contentStorage.msg.unavailable.bundleUnresolved": "Bundle {bundle} is not in the synced bundle repository, so it cannot be checked for S3 content storage. Sync the repository (Force Update) and retry.",
   "contentStorage.msg.notS3": "This namespace stores its content in the database; there is no S3 storage to connect.",
-  "contentStorage.msg.provision.secretsLocked": "The namespace's secrets are locked, so the S3 credentials of {app} cannot be read and ecos-content cannot be connected to it. Unlock the secrets, then retry.",
-  "contentStorage.msg.provision.secretsUnreadable": "The namespace's secrets could not be read, so ecos-content cannot be connected to its S3 storage: {error}",
-  "contentStorage.msg.provision.secretMissing": "The S3 credentials of {app} refer to secrets this namespace has no value for: {secrets}. Add them to the secrets of the workspace configuration, then retry.",
-  "contentStorage.msg.provision.secretNotGenerated": "The S3 credentials of {app} refer to generated secrets this namespace has no value for yet: {secrets}. Reload the namespace to generate them (citeck reload, or Update & Start); ecos-content is connected with the new key once {app} has restarted with it.",
   "contentStorage.msg.provision.notReady": "ECOS did not become ready for the S3 content storage connection within {minutes} minutes. Last answer: {error}",
   "contentStorage.msg.provision.readFailed": "Could not read the content storage settings from ECOS: {error}",
   "contentStorage.msg.provision.createFailed": "Could not create {record} in ECOS: {error}",
-  "contentStorage.msg.provision.updateFailed": "Could not update {record} in ECOS: {error}",
   "contentStorage.msg.provision.setDefaultFailed": "Could not make {storage} the default content storage in ECOS: {error}",
   "contentStorage.msg.provision.verifyFailed": "{storage} was set as the default content storage, but ECOS now reports {actual}.",
   "deps.msg.busy.rollback": "a dependency rollback is running — wait for it to finish",
@@ -595,5 +591,8 @@
   "deps.msg.event.rolledBackWithWarning": "{id} rolled back to {image}; {error}",
   "deps.msg.action.migrationStarted": "Migration of {id} to {image} started",
   "deps.msg.action.rollbackStarted": "Rollback of {id} to {image} started",
-  "apps.msg.namespaceNotRunning": "The namespace is not running — start it first, then start this application on its own."
+  "apps.msg.namespaceNotRunning": "The namespace is not running — start it first, then start this application on its own.",
+  "contentStorage.msg.local.desktopOnly": "Local S3 environment export is available only on desktop.",
+  "contentStorage.msg.local.notConfigured": "This namespace has no native S3 environment to export.",
+  "contentStorage.msg.local.providerNotReady": "The S3 provider must be running with its desktop port published."
 }

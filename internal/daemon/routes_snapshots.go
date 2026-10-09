@@ -18,6 +18,7 @@ import (
 	"github.com/citeck/citeck-launcher/internal/api"
 	"github.com/citeck/citeck-launcher/internal/bundle"
 	"github.com/citeck/citeck-launcher/internal/config"
+	"github.com/citeck/citeck-launcher/internal/deps"
 	"github.com/citeck/citeck-launcher/internal/docker"
 	"github.com/citeck/citeck-launcher/internal/namespace"
 	"github.com/citeck/citeck-launcher/internal/snapshot"
@@ -124,6 +125,12 @@ func (d *Daemon) handleExportSnapshot(w http.ResponseWriter, r *http.Request) {
 		writeErrorCode(w, http.StatusConflict, api.ErrCodeNamespaceRunning, "namespace must be stopped before export")
 		return
 	}
+	if act.runtime != nil && act.runtime.SnapshotImportPending() {
+		d.longOp.Unlock()
+		writeErrorCode(w, http.StatusConflict, api.ErrCodeSnapshotImportIncomplete, d.translatorFor(r).T("snapshot.import.pending"))
+		return
+	}
+
 	dc := act.dockerClient
 	volumesBase := act.volumesBase
 	if dc == nil {
@@ -138,14 +145,19 @@ func (d *Daemon) handleExportSnapshot(w http.ResponseWriter, r *http.Request) {
 	// "all volumes" (nil include), preserving the original behavior and any
 	// older client that posts no body.
 	var includeVolumes map[string]bool
+	var includeSecrets bool
 	if r.Body != nil {
 		var body struct {
-			Volumes []string `json:"volumes"`
+			Volumes        []string `json:"volumes"`
+			IncludeSecrets bool     `json:"includeSecrets"`
 		}
-		if dec := json.NewDecoder(io.LimitReader(r.Body, 64<<10)); dec.Decode(&body) == nil && body.Volumes != nil {
-			includeVolumes = make(map[string]bool, len(body.Volumes))
-			for _, v := range body.Volumes {
-				includeVolumes[v] = true
+		if dec := json.NewDecoder(io.LimitReader(r.Body, 64<<10)); dec.Decode(&body) == nil {
+			includeSecrets = body.IncludeSecrets
+			if body.Volumes != nil {
+				includeVolumes = make(map[string]bool, len(body.Volumes))
+				for _, v := range body.Volumes {
+					includeVolumes[v] = true
+				}
 			}
 		}
 	}
@@ -185,7 +197,19 @@ func (d *Daemon) handleExportSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 	outputPath := filepath.Join(dir, fileName)
 
-	nsID := d.activeNsID()
+	nsID := ""
+	if act.nsConfig != nil {
+		nsID = act.nsConfig.ID
+	}
+	var dependencyStates map[deps.ID]deps.DependencyState
+	if act.runtime != nil {
+		dependencyStates = act.runtime.DependencyStates()
+		if act.runtime.MigrationJournal() != nil {
+			d.longOp.Unlock()
+			writeError(w, http.StatusConflict, "dependency recovery must finish before snapshot export")
+			return
+		}
+	}
 	// Lock ownership transferred to goroutine — unlocked when export completes
 	d.bgWg.Go(func() {
 		defer d.longOp.Unlock()
@@ -200,7 +224,11 @@ func (d *Daemon) handleExportSnapshot(w http.ResponseWriter, r *http.Request) {
 				Current: current, Total: total,
 			})
 		}
-		meta, err := snapshot.Export(d.bgCtx, dc, outputPath, volumesBase, includeVolumes, progress)
+		var secrets snapshot.SecretStore
+		if includeSecrets {
+			secrets = snapshot.WithSystemSecrets(snapshot.NamespaceSecrets(d.secretService, act.workspaceID, nsID), snapshotSystemValues(act.systemSecrets))
+		}
+		meta, err := snapshot.Export(d.bgCtx, dc, outputPath, volumesBase, includeVolumes, secrets, dependencyStates, progress)
 		if err != nil {
 			slog.Error("Snapshot export failed", "err", err)
 			d.broadcastEvent(api.EventDto{
@@ -323,7 +351,7 @@ func (d *Daemon) handleImportSnapshot(w http.ResponseWriter, r *http.Request) {
 		if tmpPath != "" {
 			defer os.Remove(tmpPath)
 		}
-		nsID := d.activeNsID()
+		nsID := act.nsConfig.ID
 		progress := func(current, total int, volumeName string) {
 			d.broadcastEvent(api.EventDto{
 				Type: "snapshot_progress", Timestamp: time.Now().UnixMilli(),
@@ -331,7 +359,7 @@ func (d *Daemon) handleImportSnapshot(w http.ResponseWriter, r *http.Request) {
 				Current: current, Total: total,
 			})
 		}
-		meta, err := snapshot.Import(d.bgCtx, dc, importPath, volumesBase, progress)
+		meta, err := snapshot.Import(d.bgCtx, dc, importPath, volumesBase, d.snapshotDestinationFor(d.bgCtx, act), progress)
 		if err != nil {
 			slog.Error("Snapshot import failed", "err", err)
 			d.broadcastEvent(api.EventDto{
@@ -340,19 +368,12 @@ func (d *Daemon) handleImportSnapshot(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		slog.Info("Snapshot import completed", "volumes", len(meta.Volumes)) //nolint:gosec // G706: meta.Volumes is internal count, not user-controlled
-		// The imported data may run on a different version than what this
-		// namespace was pinned to (a 17 snapshot over an 18 namespace). The
-		// pin describes the DATA, so it follows the data in.
-		if rt := act.runtime; rt != nil {
-			names := make([]string, 0, len(meta.Volumes))
-			for _, v := range meta.Volumes {
-				names = append(names, v.Name)
-			}
-			reseedAfterSnapshotImport(d.bgCtx, rt,
-				dockerDependencyProbe{dc: depsDockerOf(dc), volumesBase: volumesBase},
-				names, namespaceDependencies(act.nsConfig, act.bundleDef, act.workspaceConfig))
+		if refreshErr := d.refreshSnapshotSystemSecrets(act); refreshErr != nil {
+			d.broadcastEvent(api.EventDto{Type: "snapshot_error", Timestamp: time.Now().UnixMilli(), NamespaceID: nsID, After: refreshErr.Error()})
+			return
 		}
+		slog.Info("Snapshot import completed", "volumes", len(meta.Volumes)) //nolint:gosec // G706: meta.Volumes is internal count, not user-controlled
+
 		d.broadcastEvent(api.EventDto{
 			Type: "snapshot_complete", Timestamp: time.Now().UnixMilli(),
 			NamespaceID: nsID, After: fmt.Sprintf("imported %d volumes", len(meta.Volumes)),
@@ -472,7 +493,7 @@ func safeSnapshotFileName(rawURL string) string {
 // active namespace) would restore the snapshot into another namespace's volumes.
 //
 //nolint:nestif // download+import orchestration requires nested SHA256 verification and retry logic
-func (d *Daemon) downloadAndImportSnapshot(dc *docker.Client, snapshotID, wsID, nsID string) {
+func (d *Daemon) downloadAndImportSnapshot(dc *docker.Client, snapshotID, wsID, nsID string) error {
 	wsCfg := d.active().workspaceConfig
 
 	snapDef := bundle.FindSnapshot(wsCfg, snapshotID)
@@ -482,7 +503,7 @@ func (d *Daemon) downloadAndImportSnapshot(dc *docker.Client, snapshotID, wsID, 
 			Type: "snapshot_error", Timestamp: time.Now().UnixMilli(),
 			NamespaceID: nsID, After: fmt.Sprintf("snapshot %q not found", snapshotID),
 		})
-		return
+		return fmt.Errorf("snapshot %q not found in workspace config", snapshotID)
 	}
 
 	// Per Kotlin parity: workspace-scope cache at
@@ -493,7 +514,7 @@ func (d *Daemon) downloadAndImportSnapshot(dc *docker.Client, snapshotID, wsID, 
 	cacheDir := config.WorkspaceSnapshotsDir(wsID)
 	if err := os.MkdirAll(cacheDir, 0o755); err != nil { //nolint:gosec // snapshot dirs need 0o755 for container access
 		slog.Error("Create workspace snapshots cache dir", "err", err)
-		return
+		return fmt.Errorf("create snapshot cache: %w", err)
 	}
 	destPath := filepath.Join(cacheDir, snapshotID+".zip")
 
@@ -547,14 +568,14 @@ func (d *Daemon) downloadAndImportSnapshot(dc *docker.Client, snapshotID, wsID, 
 				Type: "snapshot_error", Timestamp: time.Now().UnixMilli(),
 				NamespaceID: nsID, After: downloadErr.Error(),
 			})
-			return
+			return fmt.Errorf("download snapshot: %w", downloadErr)
 		}
 	}
 
 	// Import the snapshot
 	if dc == nil {
 		slog.Error("Docker client not available for snapshot import")
-		return
+		return fmt.Errorf("docker client not available for snapshot import")
 	}
 
 	d.broadcastEvent(api.EventDto{
@@ -569,14 +590,14 @@ func (d *Daemon) downloadAndImportSnapshot(dc *docker.Client, snapshotID, wsID, 
 			Current: current, Total: total,
 		})
 	}
-	meta, err := snapshot.Import(d.bgCtx, dc, destPath, volumesBase, importProgress)
+	meta, err := snapshot.Import(d.bgCtx, dc, destPath, volumesBase, SnapshotDestination(d.store, d.secretService, wsID, nsID, nil), importProgress)
 	if err != nil {
 		slog.Error("Snapshot import failed", "err", err)
 		d.broadcastEvent(api.EventDto{
 			Type: "snapshot_error", Timestamp: time.Now().UnixMilli(),
 			NamespaceID: nsID, After: err.Error(),
 		})
-		return
+		return fmt.Errorf("import snapshot: %w", err)
 	}
 
 	slog.Info("Snapshot imported for new namespace", "ns", nsID, "volumes", len(meta.Volumes))
@@ -585,6 +606,7 @@ func (d *Daemon) downloadAndImportSnapshot(dc *docker.Client, snapshotID, wsID, 
 		Type: "snapshot_complete", Timestamp: time.Now().UnixMilli(),
 		NamespaceID: nsID, After: fmt.Sprintf("imported %d volumes", len(meta.Volumes)),
 	})
+	return nil
 }
 
 func (d *Daemon) handleWorkspaceSnapshots(w http.ResponseWriter, _ *http.Request) {

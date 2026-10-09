@@ -107,6 +107,18 @@ describe('DependenciesDialog', () => {
     expect(screen.getByTestId('dep-rabbitmq').textContent).toMatch(/citeck update/i)
   })
 
+  it('uses the daemon copy-plan preview for a named SeaweedFS store', async () => {
+    mockDeps({ items: [{ id: 'storage-lab', app: 'storage-lab', currentImage: 'chrislusf/seaweedfs:4.47',
+      targetImage: 'chrislusf/seaweedfs:4.48', status: 'upgrade-available', migratable: true,
+      migrationStepIds: ['stop-namespace', 'copy-volume', 'start-old', 'start-new', 'verify'],
+    }] })
+    render(<DependenciesDialog open onClose={() => {}} />)
+    const row = await screen.findByTestId('dep-storage-lab')
+    fireEvent.click(within(row).getByRole('button', { name: /^upgrade$/i }))
+    expect(await screen.findByTestId('deps-confirm')).toHaveTextContent(/copy/i)
+    expect(screen.getByTestId('deps-confirm')).not.toHaveTextContent(/dump and restore/i)
+  })
+
   // The Dependency and Current columns had no horizontal separation of any
   // kind: the header read "DependencyCurrent" and a long id ran straight into
   // its own version — "zookeeperzookeeper:3.9.5", "postgrespostgres:18.6".
