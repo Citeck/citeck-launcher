@@ -318,7 +318,7 @@ func (d *Daemon) resolveLatestBundleKey(wsID, repo string, offline bool) (string
 	if repo == "" {
 		return "", false
 	}
-	resolver := bundle.NewResolverWithAuth(config.BundlesDataDir(wsID), makeTokenLookup(d.secretService)).
+	resolver := authenticatedBundleResolver(config.BundlesDataDir(wsID), d.secretService).
 		WithWorkspaceRepo(lookupWorkspaceRepoOpts(d.store, d.secretService, wsID)).
 		WithWorkspaceOverlay(workspaceConfigOverlay(d.store, wsID)).
 		WithLauncherVersion(d.version)
@@ -874,7 +874,7 @@ func applyCreateContentStorage(nsCfg *namespace.Config, requested string) error 
 // resolveBundleForCreate returns the selected bundle or a create-time refusal
 // when it cannot be read. The caller also uses it for compatibility defaults.
 func (d *Daemon) resolveBundleForCreate(wsID string, ref bundle.Ref) (*bundle.ResolveResult, *createNamespaceError) {
-	resolver := bundle.NewResolverWithAuth(config.BundlesDataDir(wsID), makeTokenLookup(d.secretService)).
+	resolver := authenticatedBundleResolver(config.BundlesDataDir(wsID), d.secretService).
 		WithWorkspaceRepo(lookupWorkspaceRepoOpts(d.store, d.secretService, wsID)).
 		WithWorkspaceOverlay(workspaceConfigOverlay(d.store, wsID)).
 		WithLauncherVersion(d.version)
@@ -1306,15 +1306,21 @@ func (d *Daemon) handleBundleRepoPull(w http.ResponseWriter, r *http.Request) {
 	// pull (triggered on repo selection) honors the throttle — re-pull only
 	// after the period elapses, and clone unconditionally when nothing is on
 	// disk yet. No background pulling either way.
-	resolver := bundle.NewResolverWithAuth(config.BundlesDataDir(act.workspaceID), makeTokenLookup(d.secretReaderFunc())).
+	resolver := authenticatedBundleResolver(config.BundlesDataDir(act.workspaceID), d.secretReaderFunc()).
 		WithWorkspaceRepo(d.resolveActiveWorkspaceRepoOpts()).
 		WithWorkspaceOverlay(workspaceConfigOverlay(d.store, act.workspaceID)).
 		WithLauncherVersion(d.version)
 	if r.URL.Query().Get("force") == "true" {
 		resolver = resolver.WithForcePull()
 	}
+	cached, cachedErr := d.cachedRepoRequest(r, act.workspaceID)
+	if cachedErr != nil {
+		writeError(w, http.StatusBadRequest, cachedErr.Error())
+		return
+	}
+	resolver.WithCachedRepos(cached)
 	if _, err := resolver.SyncBundleRepo(act.workspaceConfig, repoID); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		d.writeGitError(w, http.StatusBadRequest, "", act.workspaceID, err, cached)
 		return
 	}
 

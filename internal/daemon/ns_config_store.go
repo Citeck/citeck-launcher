@@ -85,7 +85,7 @@ func (d *Daemon) launcherFloorRefusal(wsID string, cfg *namespace.Config) *errLa
 // no git — for the write gates, which run on every config write (a rename
 // included) and must never wait on a sync.
 func (d *Daemon) resolveBundleOffline(wsID string, ref bundle.Ref) (*bundle.ResolveResult, error) {
-	resolver := bundle.NewResolverWithAuth(config.BundlesDataDir(wsID), makeTokenLookup(d.secretReaderFunc())).
+	resolver := authenticatedBundleResolver(config.BundlesDataDir(wsID), d.secretReaderFunc()).
 		WithWorkspaceOverlay(workspaceConfigOverlay(d.store, wsID)).
 		WithLauncherVersion(d.version)
 	resolver.SetOffline(true)

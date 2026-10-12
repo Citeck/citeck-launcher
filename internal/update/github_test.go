@@ -2,11 +2,14 @@ package update
 
 import (
 	"context"
+	"errors"
+	"github.com/citeck/citeck-launcher/internal/downloadhttp"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestResolveLatestFromRedirect(t *testing.T) {
@@ -99,5 +102,60 @@ func TestFetchRawNon2xx(t *testing.T) {
 	c := &client{http: http.DefaultClient, rawBase: srv.URL, repo: "Citeck/citeck-launcher"}
 	if _, err := c.fetchRaw(context.Background(), "v2.6.0", "changelog/missing.json"); err == nil {
 		t.Fatal("fetchRaw must error on non-2xx")
+	}
+}
+
+func TestDownloadFileContinuesBeyondThirtySeconds(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for range 17 {
+			_, _ = w.Write([]byte("x"))
+			w.(http.Flusher).Flush()
+			select {
+			case <-r.Context().Done():
+				return
+			case <-time.After(2 * time.Second):
+			}
+		}
+	}))
+	defer srv.Close()
+	c := &client{http: NewService("2.16.2", t.TempDir()).http}
+	dst := filepath.Join(t.TempDir(), "payload")
+	if err := c.downloadFile(context.Background(), srv.URL, dst); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(dst)
+	if err != nil || string(data) != "xxxxxxxxxxxxxxxxx" {
+		t.Fatalf("data=%q err=%v", data, err)
+	}
+}
+
+func TestDownloadFileIdleTimeoutPreservesDestination(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "6")
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+	c := &client{http: NewService("2.16.2", t.TempDir()).http}
+	dst := filepath.Join(t.TempDir(), "payload")
+	if err := os.WriteFile(dst, []byte("original"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	policy := defaultDownloadPolicy()
+	policy.stalled = 1
+	err := c.downloadFileWithPolicy(context.Background(), srv.URL, dst, policy)
+	if !errors.Is(err, downloadhttp.ErrIdleTimeout) {
+		t.Fatalf("got %v", err)
+	}
+	data, readErr := os.ReadFile(dst)
+	if readErr != nil || string(data) != "original" {
+		t.Fatalf("data=%q err=%v", data, readErr)
+	}
+	entries, readErr := os.ReadDir(filepath.Dir(dst))
+	if readErr != nil || len(entries) != 1 {
+		t.Fatalf("temporary download leaked: %v, %v", entries, readErr)
 	}
 }

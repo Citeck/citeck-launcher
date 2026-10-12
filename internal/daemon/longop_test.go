@@ -76,6 +76,7 @@ func gatedRoutes() []gatedRoute {
 		{handler: "handleDeleteVolume", method: "DELETE", path: "/api/v1/volumes/postgres2"},
 		{handler: "handleUpgradeNamespace", method: "POST", path: api.NamespaceUpgrade, body: `{"bundleRef":"citeck:community-2.0.0"}`},
 		{handler: "handleWorkspaceUpdate", method: "POST", path: api.WorkspaceUpdate},
+		{handler: "handleLinkGitSecret", method: "PUT", path: "/api/v1/workspaces/ws/git-secret", body: "{}"},
 		// The raw config PUT is gated ONLY when it switches content storage
 		// DB → S3 — the one raw save that re-attaches an app and reloads — so
 		// its row carries exactly that switch.

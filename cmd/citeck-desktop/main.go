@@ -70,6 +70,14 @@ func main() {
 		cli.Execute(cli.BuildInfo{Version: version, Commit: gitCommit, BuildDate: buildDate})
 		return
 	}
+	// Discovery is a headless client operation, even in the GUI package.
+	// Dispatch before single-instance handling or Wails initialization so an
+	// agent cannot accidentally open a window or spawn a second daemon.
+	if len(os.Args) > 1 && os.Args[1] == "agent" {
+		config.SetDesktopMode(true)
+		cli.Execute(cli.BuildInfo{Version: version, Commit: gitCommit, BuildDate: buildDate})
+		return
+	}
 	if err := run(); err != nil {
 		log.Fatal(err)
 	}

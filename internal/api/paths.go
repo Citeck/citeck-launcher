@@ -10,6 +10,9 @@ const APIV1 = "/api/v1"
 
 // API route constants for daemon, namespace, and resource endpoints.
 const (
+	AgentCapabilities = APIV1 + "/agent"
+	AgentOperation    = AgentCapabilities + "/operations/{id}"
+
 	DaemonStatus   = APIV1 + "/daemon/status"
 	DaemonShutdown = APIV1 + "/daemon/shutdown"
 	DaemonLogs     = APIV1 + "/daemon/logs"

@@ -211,3 +211,26 @@ describe('api request core (rawRequest/request via public helpers)', () => {
     expect(lastUrl()).toBe('/api/v1/desktop/update/apply?retry=true')
   })
 })
+
+
+it('keeps update staging requests alive beyond the old 120-second deadline', async () => {
+  vi.useFakeTimers()
+  let finish!: () => void
+  let signal!: AbortSignal
+  vi.stubGlobal('fetch', vi.fn((_url: string, init: RequestInit) => {
+    signal = init.signal as AbortSignal
+    return new Promise<Response>((resolve) => { finish = () => resolve(jsonResponse({ applying: true, version: '2.16.3' })) })
+  }))
+  const pending = applyUpdate()
+  try {
+    await vi.advanceTimersByTimeAsync(180_000)
+    expect(signal.aborted).toBe(false)
+    finish()
+    await expect(pending).resolves.toEqual({ applying: true, version: '2.16.3' })
+  } finally {
+    finish()
+    await pending
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  }
+})

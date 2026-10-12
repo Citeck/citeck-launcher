@@ -2,6 +2,8 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { WorkspaceDto } from '../lib/types'
 import { WorkspaceSelector } from './WorkspaceSelector'
+import { showError } from '../lib/errorModal'
+import { toast } from '../lib/toast'
 
 // Hoisted so the vi.mock factory (itself hoisted to the top of the module) can
 // reference it. Real ApiError class so the component's `e instanceof ApiError`
@@ -46,6 +48,7 @@ const NEW_WS: WorkspaceDto = {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  api.postWorkspaceUpdate.mockReset()
   // jsdom has no native <dialog> modal behaviour. Reflect open/close into the
   // `open` property so the dialog's contents are accessible to role queries
   // (a closed <dialog> is treated as hidden, hiding its inputs).
@@ -141,4 +144,38 @@ describe('WorkspaceSelector discoverability', () => {
     expect(await screen.findByText('Repository URL')).toBeInTheDocument()
     expect(screen.queryByText('Workspace configuration')).not.toBeInTheDocument()
   })
+})
+
+describe('workspace update failures', () => {
+  it('shows an auth error and retries update rather than activation without switching the workspace', async () => {
+    const ws = { ...ACTIVE_WS, authType: 'TOKEN', secretId: 'linked' }
+    api.listWorkspaces.mockResolvedValue([ws])
+    api.getSecrets.mockResolvedValue([{ id: 'linked', name: 'GitLab', type: 'GIT_TOKEN' }])
+    api.postWorkspaceUpdate.mockRejectedValueOnce(new Error('git clone https://example.com/ws.git: authentication required'))
+    api.postWorkspaceUpdate.mockResolvedValueOnce({ success: true })
+    const changed = vi.fn()
+    render(<WorkspaceSelector activeId="ws-1" onChanged={changed} />)
+    await waitFor(() => expect(api.listWorkspaces).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('button', { name: 'Force Update' }))
+    expect(await screen.findByText('Secret in use: GitLab.', { exact: true })).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Try Again' })).toBeEnabled())
+    fireEvent.click(screen.getByRole('button', { name: 'Try Again' }))
+    await waitFor(() => expect(api.postWorkspaceUpdate).toHaveBeenCalledTimes(2))
+    expect(api.activateWorkspace).not.toHaveBeenCalled()
+    await waitFor(() => expect(changed).toHaveBeenCalled())
+  })
+})
+
+it('reports a failed workspace refresh without a success notification', async () => {
+  api.listWorkspaces.mockResolvedValue([ACTIVE_WS])
+  api.postWorkspaceUpdate.mockRejectedValueOnce(new Error('git pull: connection refused'))
+  const changed = vi.fn()
+  render(<WorkspaceSelector activeId="ws-1" onChanged={changed} />)
+  await waitFor(() => expect(api.listWorkspaces).toHaveBeenCalled())
+  fireEvent.click(screen.getByRole('button', { name: 'Force Update' }))
+  await waitFor(() => expect(showError).toHaveBeenCalledWith(expect.objectContaining({
+    message: expect.stringContaining('connection refused'),
+  })))
+  expect(changed).not.toHaveBeenCalled()
+  expect(toast).not.toHaveBeenCalled()
 })

@@ -432,6 +432,7 @@ func (d *Daemon) handleDownloadSnapshot(w http.ResponseWriter, r *http.Request) 
 
 	// Skip if already downloaded
 	if _, err := os.Stat(destPath); err == nil {
+		d.broadcastEvent(api.EventDto{Type: "snapshot_complete", Timestamp: time.Now().UnixMilli(), NamespaceID: d.activeNsID(), After: "snapshot already cached"})
 		writeJSON(w, api.ActionResultDto{Success: true, Message: fmt.Sprintf("Snapshot %s already exists", fileName)})
 		return
 	}
@@ -446,7 +447,7 @@ func (d *Daemon) handleDownloadSnapshot(w http.ResponseWriter, r *http.Request) 
 			Type: "snapshot_download", Timestamp: time.Now().UnixMilli(),
 			NamespaceID: nsID, After: fmt.Sprintf("downloading %s", fileName),
 		})
-		if err := snapshot.DownloadWithRetry(d.bgCtx, ssrfSafeClient, req.URL, destPath, req.SHA256, nil); err != nil {
+		if err := snapshot.DownloadWithRetry(d.bgCtx, ssrfSafeClient, req.URL, destPath, req.SHA256, d.snapshotDownloadProgress(nsID)); err != nil {
 			slog.Error("Snapshot download failed", "url", req.URL, "err", err)
 			d.broadcastEvent(api.EventDto{
 				Type: "snapshot_error", Timestamp: time.Now().UnixMilli(),
@@ -550,16 +551,7 @@ func (d *Daemon) downloadAndImportSnapshot(dc *docker.Client, snapshotID, wsID, 
 	}
 
 	if needsDownload {
-		progress := func(received, total int64) {
-			pct := int64(0)
-			if total > 0 {
-				pct = received * 100 / total
-			}
-			d.broadcastEvent(api.EventDto{
-				Type: "snapshot_progress", Timestamp: time.Now().UnixMilli(),
-				NamespaceID: nsID, After: fmt.Sprintf("%d%%", pct),
-			})
-		}
+		progress := d.snapshotDownloadProgress(nsID)
 
 		// Kotlin-parity retry: 100 total / 3 without progress / 3s delay.
 		if downloadErr := snapshot.DownloadWithRetry(d.bgCtx, ssrfSafeClient, snapDef.URL, destPath, snapDef.SHA256, progress); downloadErr != nil {
@@ -790,4 +782,17 @@ func isBlockedIP(ip net.IP) bool {
 		return true
 	}
 	return false
+}
+
+// snapshotDownloadProgress reports bytes at a bounded cadence, including unknown sizes.
+func (d *Daemon) snapshotDownloadProgress(nsID string) snapshot.ProgressFunc {
+	var last time.Time
+	return func(received, total int64) {
+		now := time.Now()
+		if !last.IsZero() && now.Sub(last) < 200*time.Millisecond && received != total {
+			return
+		}
+		last = now
+		d.broadcastEvent(api.EventDto{Type: "snapshot_progress", Timestamp: now.UnixMilli(), NamespaceID: nsID, Phase: "downloading", ReceivedBytes: received, TotalBytes: total})
+	}
 }

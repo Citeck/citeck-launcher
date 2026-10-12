@@ -21,7 +21,7 @@ import (
 // the tests as a thin wrapper around the unexported download(). Production
 // callers use DownloadWithRetry; the single-shot behavior is still covered here.
 func testDownload(ctx context.Context, rawURL, destPath, expectedSHA256 string, progress ProgressFunc) error {
-	return download(ctx, httpClient, rawURL, destPath, expectedSHA256, progress)
+	return download(ctx, httpClient, rawURL, destPath, expectedSHA256, progress, nil)
 }
 
 func TestDownload_Success(t *testing.T) {
@@ -362,5 +362,127 @@ func TestValidateURL(t *testing.T) {
 		if err := validateURL(u); err == nil {
 			t.Errorf("validateURL(%q) = nil, want error", u)
 		}
+	}
+}
+
+func TestDownloadWithRetryResumesAfterIdleTimeout(t *testing.T) {
+	t.Parallel()
+	var attempts atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if attempts.Add(1) == 1 {
+			w.Header().Set("Content-Length", "6")
+			_, _ = w.Write([]byte("abc"))
+			w.(http.Flusher).Flush()
+			<-r.Context().Done()
+			return
+		}
+		if r.Header.Get("Range") != "bytes=3-" {
+			t.Errorf("Range=%q", r.Header.Get("Range"))
+		}
+		w.Header().Set("Content-Length", "3")
+		w.Header().Set("Content-Range", "bytes 3-5/6")
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write([]byte("def"))
+	}))
+	defer srv.Close()
+	dest := filepath.Join(t.TempDir(), "snapshot.zip")
+	hash := sha256.Sum256([]byte("abcdef"))
+	if err := DownloadWithRetry(context.Background(), nil, srv.URL, dest, hex.EncodeToString(hash[:]), nil); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(dest)
+	if err != nil || string(data) != "abcdef" {
+		t.Fatalf("data=%q err=%v", data, err)
+	}
+	if attempts.Load() != 2 {
+		t.Fatalf("attempts=%d", attempts.Load())
+	}
+}
+
+func TestDownloadWithRetryProgressResetsAllCounters(t *testing.T) {
+	payload := strings.Repeat("x", 110)
+	var attempts atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		offset := int(attempts.Add(1)) - 1
+		if offset > 0 {
+			if r.Header.Get("Range") != fmt.Sprintf("bytes=%d-", offset) {
+				t.Errorf("Range=%q", r.Header.Get("Range"))
+			}
+			w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-109/110", offset))
+		}
+		w.Header().Set("Content-Length", fmt.Sprint(len(payload)-offset))
+		if offset > 0 {
+			w.WriteHeader(http.StatusPartialContent)
+		}
+		_, _ = w.Write([]byte(payload[offset : offset+1]))
+	}))
+	defer srv.Close()
+	dest := filepath.Join(t.TempDir(), "snapshot.zip")
+	hash := sha256.Sum256([]byte(payload))
+	if err := downloadWithRetry(context.Background(), nil, srv.URL, dest, hex.EncodeToString(hash[:]), nil, time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(dest)
+	if err != nil || string(data) != payload || attempts.Load() != 110 {
+		t.Fatalf("bytes=%d attempts=%d err=%v", len(data), attempts.Load(), err)
+	}
+}
+
+func TestDownloadIgnoredRangeDoesNotResetRetries(t *testing.T) {
+	for _, growing := range []bool{false, true} {
+		t.Run(fmt.Sprint(growing), func(t *testing.T) {
+			var attempts atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				attempt := int(attempts.Add(1))
+				if attempt > 1 && r.Header.Get("Range") == "" {
+					t.Error("missing resume request")
+				}
+				w.Header().Set("Content-Length", "10")
+				size := 1
+				if growing {
+					size = attempt
+				}
+				_, _ = w.Write([]byte(strings.Repeat("x", size)))
+			}))
+			defer srv.Close()
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			dest := filepath.Join(t.TempDir(), "snapshot.zip")
+			err := downloadWithRetry(ctx, nil, srv.URL, dest, "", nil, time.Millisecond)
+			if err == nil || errors.Is(err, context.DeadlineExceeded) || attempts.Load() != 3 {
+				t.Fatalf("attempts=%d err=%v", attempts.Load(), err)
+			}
+			if _, statErr := os.Stat(dest); !os.IsNotExist(statErr) {
+				t.Fatal("incomplete snapshot promoted")
+			}
+		})
+	}
+}
+
+func TestDownloadRejectsWrongRangeWithoutAppending(t *testing.T) {
+	var attempts atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempt := attempts.Add(1)
+		w.Header().Set("Content-Length", "10")
+		if attempt > 1 {
+			w.Header().Set("Content-Range", "bytes 0-9/10")
+			w.WriteHeader(http.StatusPartialContent)
+		}
+		_, _ = w.Write([]byte("x"))
+	}))
+	defer srv.Close()
+	dest := filepath.Join(t.TempDir(), "snapshot.zip")
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	err := downloadWithRetry(ctx, nil, srv.URL, dest, "", nil, time.Millisecond)
+	if err == nil || errors.Is(err, context.DeadlineExceeded) || attempts.Load() != 3 {
+		t.Fatalf("invalid resume was not bounded: attempts=%d", attempts.Load())
+	}
+	data, readErr := os.ReadFile(dest + ".part")
+	if readErr != nil || string(data) != "x" {
+		t.Fatalf("invalid resume altered partial file: bytes=%d err=%v", len(data), readErr)
+	}
+	if _, statErr := os.Stat(dest); !os.IsNotExist(statErr) {
+		t.Fatal("invalid resume promoted to complete snapshot")
 	}
 }

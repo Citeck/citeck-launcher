@@ -7,6 +7,7 @@ import { ConfirmModal } from '../components/ConfirmModal'
 import { NamespaceDialog } from '../components/NamespaceDialog'
 import { NamespaceEditDialog } from '../components/NamespaceEditDialog'
 import { LoadingHint } from '../components/LoadingHint'
+import { extractRepoUrl } from '../lib/giturl'
 import { GitPullErrorDialog, type GitPullDecision } from '../components/GitPullErrorDialog'
 import { useRegistryPreflight } from '../components/RegistryPreflight'
 import { ContextMenu } from '../components/ContextMenu'
@@ -565,11 +566,4 @@ function isGitPullError(msg: string | null): boolean {
     m.includes('authentication required') ||
     m.includes('repository not found')
   )
-}
-
-/** Best-effort extraction of the repo URL from an error message; returns '' if none. */
-function extractRepoUrl(msg: string | null): string {
-  if (!msg) return ''
-  const match = msg.match(/(https?:\/\/[^\s]+\.git)/i) || msg.match(/(git@[^\s]+)/i)
-  return match ? match[1] : ''
 }

@@ -114,6 +114,9 @@ func buildWorkspaceRepoOpts(ws storage.WorkspaceDto, secretSvc secretValueReader
 	if dur, err := storage.ParseISO8601Duration(ws.RepoPullPeriod); err == nil {
 		opts.PullPeriod = dur
 	}
+	if svc, ok := secretSvc.(*storage.SecretService); ok && svc == nil {
+		secretSvc = nil
+	}
 	if secretSvc == nil {
 		return opts
 	}
@@ -121,12 +124,22 @@ func buildWorkspaceRepoOpts(ws storage.WorkspaceDto, secretSvc secretValueReader
 	case ws.SecretID != "":
 		if sec, err := secretSvc.GetSecret(ws.SecretID); err == nil && sec != nil {
 			opts.Token = sec.Value
+		} else {
+			slog.Warn("Workspace Git credential unavailable", "workspace", ws.ID, "secret", ws.SecretID, "reason", gitCredentialReadState(err))
 		}
 	case ws.AuthType == "TOKEN":
 		if sec, err := secretSvc.GetSecret(workspaceRepoSecretKey(ws.ID)); err == nil && sec != nil {
 			opts.Token = sec.Value
+		} else {
+			slog.Warn("Legacy workspace Git credential unavailable", "workspace", ws.ID, "secret", workspaceRepoSecretKey(ws.ID), "reason", gitCredentialReadState(err))
 		}
 	}
+	selectedID := ws.SecretID
+	if selectedID == "" && ws.AuthType == "TOKEN" {
+		selectedID = workspaceRepoSecretKey(ws.ID)
+	}
+	opts.SecretID = selectedID
+	slog.Info("Workspace Git credential selected", "workspace", ws.ID, "authType", ws.AuthType, "secret", selectedID, "available", opts.Token != "")
 	return opts
 }
 
@@ -159,17 +172,24 @@ func (d *Daemon) handleWorkspaceUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer d.reloadMu.Unlock()
+	cached, err := d.cachedRepoRequest(r, d.activeWorkspaceID())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	d.cachedRepoURLs = cached
+	defer func() { d.cachedRepoURLs = nil }()
 
 	if err := d.reresolveActiveWorkspace(); err != nil {
 		slog.Warn("Force workspace update failed", "err", err)
-		writeError(w, http.StatusInternalServerError, err.Error())
+		d.writeGitError(w, http.StatusInternalServerError, "", d.activeWorkspaceID(), err, d.cachedRepoURLs)
 		return
 	}
 	// Apply pulled config changes to a running namespace (no-op on Welcome).
 	if act := d.active(); act.runtime != nil && act.nsConfig != nil {
-		if err := d.doReload(); err != nil {
+		if err := d.doReloadEx(false, false, false, true); err != nil {
 			slog.Warn("Force workspace update: reload failed", "err", err)
-			writeError(w, http.StatusInternalServerError, fmt.Sprintf("reload after pull failed: %v", err))
+			d.writeGitError(w, http.StatusInternalServerError, "", d.activeWorkspaceID(), fmt.Errorf("reload after pull failed: %w", err), d.cachedRepoURLs)
 			return
 		}
 	}
@@ -252,8 +272,9 @@ func (d *Daemon) resolveActiveWorkspaceConfig(ws storage.WorkspaceDto) (*bundle.
 		return d.wsCfgResolveFn(ws)
 	}
 	opts := buildWorkspaceRepoOpts(ws, d.secretService)
-	resolver := bundle.NewResolverWithAuth(config.BundlesDataDir(ws.ID), makeTokenLookup(d.secretReaderFunc())).
+	resolver := authenticatedBundleResolver(config.BundlesDataDir(ws.ID), d.secretReaderFunc()).
 		WithWorkspaceRepo(opts).
+		WithCachedRepos(d.cachedRepoURLs).
 		WithWorkspaceOverlay(workspaceConfigOverlay(d.store, ws.ID)).
 		WithLauncherVersion(d.version).
 		WithForcePull()
@@ -261,7 +282,7 @@ func (d *Daemon) resolveActiveWorkspaceConfig(ws storage.WorkspaceDto) (*bundle.
 		resolver.SetOffline(true)
 	}
 	wsCfg := resolver.ResolveWorkspaceOnly()
-	if err := resolver.WorkspaceSyncError(); err != nil {
+	if err := resolver.WorkspacePullError(); err != nil {
 		return nil, err //nolint:wrapcheck // caller formats the cached string / wraps
 	}
 	return wsCfg, nil

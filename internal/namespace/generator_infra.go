@@ -32,7 +32,7 @@ func generateMailpit(ctx *NsGenContext) {
 	// MAILHOG_TARGET=mailhog:8025. Mailpit is a drop-in replacement for mailhog
 	// on the same SMTP (1025) and web-UI (8025) ports.
 	app.NetworkAliases = []string{MailhogHost}
-	app.AddPort("1025:1025").AddPort("8025:8025")
+	app.AddPort(fmt.Sprintf("%d:1025", MailpitSMTPHostPort)).AddPort(fmt.Sprintf("%d:8025", MailpitHTTPHostPort))
 	app.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: "128m"}}
 }
 

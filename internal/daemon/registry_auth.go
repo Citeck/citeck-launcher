@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"log/slog"
 	"strings"
 
 	"github.com/citeck/citeck-launcher/internal/bundle"
@@ -20,29 +21,69 @@ func makeTokenLookup(reader secretReader) bundle.TokenLookupFunc {
 	if reader == nil {
 		return func(string) string { return "" }
 	}
-	// Pre-fetch all secrets into a lookup map
-	tokensByScope := make(map[string]string)
-	secrets, err := reader.ListSecrets()
-	if err == nil {
-		for _, s := range secrets {
-			if storage.IsNamespaceSecret(s) {
-				continue // never a git or registry credential
-			}
-			sec, err := reader.GetSecret(s.ID)
-			if err != nil {
-				continue // ErrSecretsLocked → skip gracefully
-			}
-			if string(s.Type) != "" {
-				tokensByScope[string(s.Type)] = sec.Value
-			}
-			if s.Scope != "" {
-				tokensByScope[s.Scope] = sec.Value
-			}
+	lookup, _ := makeGitCredentialLookup(reader)
+	return lookup
+
+}
+
+// makeGitCredentialLookup shares token and identifier selection, so recovery
+// dialogs describe the credential the resolver actually uses.
+func makeGitCredentialLookup(reader secretReader) (tokenLookup bundle.TokenLookupFunc, identifierLookup func(string) string) {
+	if svc, ok := reader.(*storage.SecretService); ok && svc == nil {
+		reader = nil
+	}
+	tokens := map[string]string{}
+	ids := map[string]string{}
+	directTokens := map[string]string{}
+	var secrets []storage.SecretMeta
+	if reader != nil {
+		listed, err := reader.ListSecrets()
+		if err == nil {
+			secrets = listed
 		}
 	}
-	return func(authType string) string {
-		return tokensByScope[authType]
+	for _, meta := range secrets {
+		if storage.IsNamespaceSecret(meta) {
+			continue
+		}
+		sec, err := reader.GetSecret(meta.ID)
+		if err != nil || sec == nil {
+			continue
+		}
+		directTokens[meta.ID] = sec.Value
+		for _, key := range []string{string(meta.Type), meta.Scope} {
+			if key == "" {
+				continue
+			}
+			if previous := ids[key]; previous != "" && previous != meta.ID && meta.Type == storage.SecretGitToken {
+				slog.Warn("Ambiguous Git credential lookup", "authKey", key, "previousSecret", previous, "selectedSecret", meta.ID)
+			}
+			tokens[key] = sec.Value
+			ids[key] = meta.ID
+		}
 	}
+	return func(key string) string {
+			selected := ids[key]
+			token := tokens[key]
+			if id, explicit := strings.CutPrefix(key, "secret:"); explicit {
+				selected = id
+				token = directTokens[selected]
+			}
+			slog.Info("Git credential lookup", "authKey", key, "secret", selected, "available", token != "")
+			return token
+
+		}, func(key string) string {
+			if id, explicit := strings.CutPrefix(key, "secret:"); explicit {
+				return id
+			}
+			return ids[key]
+		}
+}
+
+// authenticatedBundleResolver snapshots credential values and their references together.
+func authenticatedBundleResolver(dataDir string, reader secretReader) *bundle.Resolver {
+	token, identifier := makeGitCredentialLookup(reader)
+	return bundle.NewResolverWithAuth(dataDir, token).WithTokenIdentifiers(identifier)
 }
 
 // makeRegistryAuthFunc creates a function that returns Docker registry credentials

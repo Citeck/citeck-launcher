@@ -5,6 +5,7 @@
 
 ## Работа со стендом
 
+- [API для агентов: возможности и управление через Launcher](agent-api.md)
 - [Запуск приложений и detach](app-startup-and-detach.md)
 - [Приоритет конфигурации и образов](config-layers.md)
 - [Версии формата workspace](workspace-formats.md)

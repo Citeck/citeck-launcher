@@ -10,6 +10,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/citeck/citeck-launcher/internal/api"
+	"github.com/citeck/citeck-launcher/internal/appdef"
+	"github.com/citeck/citeck-launcher/internal/bundle"
+	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/namespace"
 )
 
@@ -202,4 +205,59 @@ func TestHandleRuntimeEventDrivesCloudConfigLifecycle(t *testing.T) {
 	d.handleRuntimeEvent(api.EventDto{Type: "app_status", After: "RUNNING"}, srv)
 	assert.False(t, srv.runningForTest())
 	d.handleRuntimeEvent(api.EventDto{Type: "namespace_status", After: string(namespace.NsStatusRunning)}, nil)
+}
+
+// Use generated configuration through the actual HTTP handler: container env
+// variables alone cannot configure a notifications process launched from an IDE.
+func TestMailpitSMTPCloudConfigForExternalNotifications(t *testing.T) {
+	config.SetDesktopMode(true)
+	t.Cleanup(config.ResetDesktopMode)
+	for _, tc := range []struct {
+		name  string
+		email *namespace.EmailConfig
+	}{
+		{name: "Mailpit"},
+		{name: "external SMTP", email: &namespace.EmailConfig{Host: "relay.example.com", Port: 25}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &namespace.Config{Authentication: namespace.AuthenticationProps{Type: namespace.AuthBasic}, Email: tc.email}
+			bun := &bundle.Def{Applications: map[string]bundle.AppDef{appdef.AppNotifications: {Image: "notifications:test"}}}
+			ws := &bundle.WorkspaceConfig{Webapps: []bundle.WebappConfig{{ID: appdef.AppNotifications, DefaultProps: bundle.WebappDefaultProps{Environments: map[string]string{"SPRING_MAIL_HOST": "${MAILHOG_HOST}"}}}}}
+			generated, err := namespace.Generate(cfg, bun, ws, namespace.SystemSecrets{JWT: "test-jwt", OIDC: "test-oidc"})
+			require.NoError(t, err)
+			s := NewCloudConfigServer()
+			s.UpdateConfig(generated.CloudConfig, "test-jwt")
+			req := httptest.NewRequest(http.MethodGet, "/config/notifications/default", http.NoBody)
+			req.SetPathValue("appName", "notifications")
+			req.SetPathValue("profiles", "default")
+			rec := httptest.NewRecorder()
+			s.handleConfig(rec, req)
+			require.Equal(t, http.StatusOK, rec.Code)
+			var got configResponse
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+			if tc.email != nil {
+				for _, src := range got.PropertySources {
+					assert.NotContains(t, src.Source, "spring.mail.port", "external SMTP must not receive Mailpit's port")
+					assert.NotContains(t, src.Source, "spring.mail.host")
+				}
+				return
+			}
+			require.Len(t, got.PropertySources, 2)
+			assert.Equal(t, "localhost", got.PropertySources[1].Source["spring.mail.host"])
+			assert.InDelta(t, 17011, got.PropertySources[1].Source["spring.mail.port"], 0)
+			found := false
+			for _, app := range generated.Applications {
+				if app.Name != appdef.AppNotifications {
+					continue
+				}
+				found = true
+				host, ok := app.Environments.Get("SPRING_MAIL_HOST")
+				require.True(t, ok)
+				assert.Equal(t, "mailhog", host, "Docker keeps its internal SMTP address")
+				port, _ := app.Environments.Get("SPRING_MAIL_PORT")
+				assert.NotEqual(t, "17011", port)
+			}
+			require.True(t, found, "notifications must be generated")
+		})
+	}
 }

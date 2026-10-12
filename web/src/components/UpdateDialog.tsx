@@ -5,6 +5,7 @@ import Markdown from 'react-markdown'
 import { useTranslation } from '../lib/i18n'
 import { useUpdateStore } from '../lib/updateStore'
 import { getUpdateChangelog, getUpdateStatus, applyUpdate, openExternal } from '../lib/api'
+import { DownloadProgress } from './DownloadProgress'
 import type { ReleaseNoteDto } from '../lib/types'
 
 interface UpdateDialogProps {
@@ -65,8 +66,10 @@ export function UpdateDialog({ open, onClose }: UpdateDialogProps) {
   const dialogRef = useModalDialog(open)
   const [notes, setNotes] = useState<ReleaseNoteDto[]>([])
   const [loading, setLoading] = useState(false)
+  const [staging, setStaging] = useState(false)
   const [applying, setApplying] = useState(false)
   const [swapStalled, setSwapStalled] = useState(false)
+  const [installError, setInstallError] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const swapTimers = useRef<ReturnType<typeof setTimeout>[]>([])
 
@@ -140,20 +143,35 @@ export function UpdateDialog({ open, onClose }: UpdateDialogProps) {
     }, SWAP_WATCHDOG_MS))
   }, [clearSwapTimers, refresh, setStatus])
 
+  // Observe staging while its POST is still waiting on the network transfer.
+  useEffect(() => {
+    if (!open || (!staging && !(status?.applying && !applying))) return
+    let cancelled = false
+    const poll = () => { void Promise.resolve(getUpdateStatus()).then((next) => { if (!cancelled && next) setStatus(next) }).catch(() => {}) }
+    const timer = setInterval(poll, 1_000)
+    return () => { cancelled = true; clearInterval(timer) }
+  }, [open, staging, applying, status?.applying, setStatus])
+
   const onInstall = async (retry = false) => {
     const versionBefore = status?.currentVersion ?? ''
+    const now = Date.now()
+    if (status) setStatus({ ...status, progress: { phase: 'checking', receivedBytes: 0, totalBytes: 0, startedAt: now, updatedAt: now } })
     setApplying(true)
+    setStaging(true)
+    setInstallError(null)
     setSwapStalled(false)
     setError(null)
     try {
       // `retry` is only ever true because the user pressed "Try again" on a
       // release the daemon has blacklisted; nothing schedules it.
       await applyUpdate(retry)
+      setStaging(false)
       // The payload is staged; the wrapper is now swapping the daemon under
       // us. Watch for the daemon that comes back rather than trusting the
       // wrapper to reload us — see SWAP_POLL_INTERVAL_MS above.
       watchForSwap(versionBefore)
     } catch (e) {
+      setStaging(false)
       setApplying(false)
       clearSwapTimers()
       // A failed staging may have raised the manual-update classification
@@ -161,7 +179,7 @@ export function UpdateDialog({ open, onClose }: UpdateDialogProps) {
       // don't also surface the raw error text.
       await refresh()
       if (!useUpdateStore.getState().status?.manualUpdateRequired) {
-        setError(String((e as Error)?.message ?? e))
+        setInstallError(String((e as Error)?.message ?? e))
       }
     }
   }
@@ -236,6 +254,14 @@ export function UpdateDialog({ open, onClose }: UpdateDialogProps) {
                 {t('update.openReleases')}
               </button>
             )}
+          </div>
+        )}
+
+        {installError && <p role="alert" className="mt-3 text-sm text-destructive">{installError}</p>}
+
+        {(applying || status?.applying) && (
+          <div className="mt-4 rounded-md border border-border p-3">
+            <DownloadProgress progress={status?.progress} fallbackPhase="checking" />
           </div>
         )}
 

@@ -273,7 +273,7 @@ func (r *Runtime) generateLinks() []api.LinkDto {
 		{Name: "Citeck UI", URL: proxyBase, Order: -100},
 		{Name: "Spring Boot Admin", URL: proxyBase + "/gateway/eapps/admin/wallboard", Icon: "spring-boot-admin", Order: -1, Category: catApps, DescriptionKey: "links.springBootAdmin.tooltip"},
 		{Name: "RabbitMQ", URL: fmt.Sprintf("http://%s:15672", rabbitHost), Icon: "rabbitmq", Order: 2, Category: catApps, DescriptionKey: "links.rabbitmq.tooltip"},
-		{Name: "Mailpit", URL: fmt.Sprintf("http://%s:8025", localHost), Icon: "mailpit", Order: 1, Category: catApps, DescriptionKey: "links.mailpit.tooltip"},
+		{Name: "Mailpit", URL: fmt.Sprintf("http://%s:%d", localHost, MailpitHTTPHostPort), Icon: "mailpit", Order: 1, Category: catApps, DescriptionKey: "links.mailpit.tooltip"},
 	}
 
 	// Keycloak link (only if auth is KEYCLOAK)

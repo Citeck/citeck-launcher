@@ -94,6 +94,7 @@ func (d *Daemon) handleCreateSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	slog.Info("Secret created", "secret", req.ID, "type", req.Type)
 	d.rebuildAuthCaches()
 
 	writeJSON(w, api.ActionResultDto{Success: true, Message: "secret saved"})
@@ -133,6 +134,7 @@ func (d *Daemon) handleUpdateSecret(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("secret %q not found", id))
 		return
 	}
+	valueChanged := req.Value != "" && req.Value != existing.Value
 	if req.Name != "" {
 		existing.Name = req.Name
 	}
@@ -163,6 +165,7 @@ func (d *Daemon) handleUpdateSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	slog.Info("Secret updated", "secret", id, "valueChanged", valueChanged) //nolint:gosec // G706: id validated by validateSecretID; value is deliberately never logged.
 	d.rebuildAuthCaches()
 
 	writeJSON(w, api.SecretMetaDto{

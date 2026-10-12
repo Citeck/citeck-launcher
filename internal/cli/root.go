@@ -65,6 +65,7 @@ func NewRootCmd(info BuildInfo) *cobra.Command {
 	root.AddCommand(
 		// Primary commands
 		newVersionCmd(info),
+		newAgentCmd(),
 		newInstallCmd(info),
 		newUninstallCmd(),
 		newStartCmd(info.Version),

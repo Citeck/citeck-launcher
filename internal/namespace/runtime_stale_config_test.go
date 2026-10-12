@@ -118,7 +118,7 @@ func TestInfrastructureLinksNameLocalhost(t *testing.T) {
 		urls[l.Name] = l.URL
 	}
 	assert.Equal(t, "http://127.0.0.1:15672", urls["RabbitMQ"], "a host name of its own: a separate cookie jar (1.x parity)")
-	assert.Equal(t, "http://localhost:8025", urls["Mailpit"])
+	assert.Equal(t, "http://localhost:17012", urls["Mailpit"])
 	assert.Equal(t, "http://localhost:5050", urls["PG Admin"])
 	assert.Contains(t, urls["Citeck UI"], "192.168.1.20", "the proxy link keeps the namespace host")
 }

@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { useUpdateStore } from '../lib/updateStore'
 import { UpdateDialog } from './UpdateDialog'
@@ -410,4 +410,25 @@ describe('UpdateDialog — the stalled-swap banner tells the two cases apart', (
       expect(screen.getByText('Update to 2.11.7 did not install')).toBeInTheDocument(),
     )
   })
+})
+
+describe('UpdateDialog download progress', () => {
+ it('polls while the install request is pending and surfaces a staging failure', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true })
+  HTMLDialogElement.prototype.showModal = vi.fn()
+  HTMLDialogElement.prototype.close = vi.fn()
+  useUpdateStore.setState({ status: { currentVersion: '2.4.0', latestVersion: '2.5.0', available: true, applying: false } })
+  let reject!: (error: Error) => void
+  vi.mocked(applyUpdate).mockImplementationOnce(() => new Promise((_resolve, fail) => { reject = fail }))
+  const now = Date.now()
+  vi.mocked(getUpdateStatus).mockResolvedValue({ currentVersion: '2.4.0', latestVersion: '2.5.0', available: true, applying: true, progress: { phase: 'downloading', receivedBytes: 1048576, totalBytes: 4194304, startedAt: now, updatedAt: now } })
+  const { unmount } = render(<UpdateDialog open onClose={() => {}} />)
+  fireEvent.click(await screen.findByText('Update & restart'))
+  await act(() => vi.advanceTimersByTimeAsync(1_000))
+  expect(screen.getByRole('progressbar', { hidden: true })).toHaveAttribute('aria-valuenow', '25')
+  await act(async () => { reject(new Error('download failed: connection reset')); await vi.advanceTimersByTimeAsync(1) })
+  expect(screen.getByRole('alert', { hidden: true })).toHaveTextContent('download failed: connection reset')
+  unmount()
+  vi.useRealTimers()
+ })
 })

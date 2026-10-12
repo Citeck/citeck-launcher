@@ -7,9 +7,9 @@ import {
   listWorkspaces,
   postWorkspaceUpdate,
 } from '../lib/api'
-import type { WorkspaceDto } from '../lib/types'
+import type { GitFailureDto, WorkspaceDto } from '../lib/types'
 import { GitPullErrorDialog } from './GitPullErrorDialog'
-import { isAuthShapedGitError } from '../lib/giturl'
+import { extractRepoUrl, gitRecoveryCache, isAuthShapedGitError } from '../lib/giturl'
 import { useTranslation } from '../lib/i18n'
 import { useIsDesktop } from '../lib/daemonStatus'
 import { toast } from '../lib/toast'
@@ -49,7 +49,7 @@ export function WorkspaceSelector({ activeId, onChanged }: WorkspaceSelectorProp
   // daemon stays on the previous workspace, so surface the actionable
   // GitPullErrorDialog targeting the FAILED workspace — its token section
   // lets the user fix/replace the secret and retry the switch in place.
-  const [gitError, setGitError] = useState<{ ws: WorkspaceDto; message: string } | null>(null)
+  const [gitError, setGitError] = useState<{ ws: WorkspaceDto; message: string; action: 'activate' | 'update'; failure?: GitFailureDto } | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
 
   const refresh = useCallback(async () => {
@@ -110,7 +110,7 @@ export function WorkspaceSelector({ activeId, onChanged }: WorkspaceSelectorProp
       // token and retry); anything else keeps the generic error modal.
       if (code === 'WS_REPO_SYNC_FAILED' || isAuthShapedGitError(err.message)) {
         setOpen(false)
-        setGitError({ ws, message: err.message })
+        setGitError({ ws, message: err.message, action: 'activate' })
       } else {
         showError({
           title: t('welcome.workspace.label'),
@@ -128,7 +128,7 @@ export function WorkspaceSelector({ activeId, onChanged }: WorkspaceSelectorProp
     }
   }
 
-  async function handleForceUpdate(ws: WorkspaceDto) {
+  async function handleForceUpdate(ws: WorkspaceDto, cachedRepo?: string | string[]) {
     // The /workspace/update endpoint operates on the active workspace only —
     // Kotlin parity (WelcomeScreen.kt "Force Update" was tied to the active
     // workspace TextButton). For inactive items the button is disabled.
@@ -136,16 +136,21 @@ export function WorkspaceSelector({ activeId, onChanged }: WorkspaceSelectorProp
     setForceUpdating(true)
     setOpen(false)
     try {
-      await postWorkspaceUpdate()
+      await (cachedRepo ? postWorkspaceUpdate(cachedRepo) : postWorkspaceUpdate())
       toast(t('welcome.workspace.updateSuccess'), 'success')
       onChanged()
     } catch (e) {
       const err = e instanceof Error ? e : new Error(String(e))
-      showError({
-        title: t('welcome.workspace.forceUpdate'),
-        message: t('welcome.workspace.updateFailed', { error: err.message }),
-        details: err.stack,
-      })
+      const failure = e instanceof ApiError ? e.git : undefined
+      if (failure || (isAuthShapedGitError(err.message) && extractRepoUrl(err.message) === ws.repoUrl)) {
+        setGitError({ ws, message: err.message, action: 'update', failure })
+      } else {
+        showError({
+          title: t('welcome.workspace.forceUpdate'),
+          message: t('welcome.workspace.updateFailed', { error: err.message }),
+          details: err.stack,
+        })
+      }
     } finally {
       setForceUpdating(false)
     }
@@ -344,15 +349,21 @@ export function WorkspaceSelector({ activeId, onChanged }: WorkspaceSelectorProp
       {gitError && (
         <GitPullErrorDialog
           open
-          repoUrl={gitError.ws.repoUrl}
+          repoUrl={gitError.failure?.repoUrl ?? gitError.ws.repoUrl}
           errorMessage={gitError.message}
           skipAvailable={false}
           cancelAvailable
           workspaceId={gitError.ws.id}
+          failure={gitError.failure}
           onDecide={(d) => {
             const target = gitError.ws
+            const action = gitError.action
+            const failure = gitError.failure
             setGitError(null)
-            if (d === 'retry') void handleActivate(target)
+            if (d === 'retry' || d === 'cache') {
+              if (action === 'update') void handleForceUpdate(target, failure ? gitRecoveryCache(failure, d === 'cache') : undefined)
+              else void handleActivate(target)
+            }
           }}
         />
       )}

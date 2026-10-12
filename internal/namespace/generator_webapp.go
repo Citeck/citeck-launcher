@@ -652,6 +652,14 @@ func processWebappDataSources(appName string, app *AppBuilder, ctx *NsGenContext
 	app.AddEnv("SPRING_CONFIG_ADDITIONALLOCATION", "/run/java.io/spring-props/")
 	app.AddVolume(fmt.Sprintf("./app/%s/props:/run/java.io/spring-props/", appName))
 
+	// IDE notifications connects through the published SMTP port, while
+	// container notifications keeps the workspace mailhog:1025 endpoint.
+	// External email configuration replaces Mailpit and must not receive this fallback.
+	if appName == appdef.AppNotifications && ctx.Config.Email == nil {
+		extCloudConfig["spring.mail.host"] = "localhost"
+		extCloudConfig["spring.mail.port"] = MailpitSMTPHostPort
+	}
+
 	// Store ext cloud config for CloudConfigServer
 	if len(extCloudConfig) > 0 {
 		ctx.CloudConfig[appName] = extCloudConfig

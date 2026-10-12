@@ -3,6 +3,7 @@ import type { NamespaceDto, HealthDto, EventDto } from './types'
 import { getNamespace, getHealth } from './api'
 import { connectEvents } from './websocket'
 import { connectDesktopEvents, isWailsDesktop } from './desktopEvents'
+import { showError } from './errorModal'
 import { toast } from './toast'
 import { t } from './i18n'
 import { useLongOpStore } from './longOp'
@@ -290,8 +291,18 @@ return ({
         // events (`snapshot_complete` / `snapshot_error`). Toasts are owned
         // by the dialog that initiated the op so they fire in the correct
         // localized phrasing.
+        if (event.type === 'snapshot_download' || event.type === 'snapshot_import') {
+          const ops = useLongOpStore.getState()
+          const downloading = event.type === 'snapshot_download'
+          if (!ops.current) ops.start(downloading ? 'snapshot.download' : 'snapshot.import', t(downloading ? 'longOp.snapshot.download' : 'longOp.snapshot.import'))
+          ops.update({ current: 0, total: 0, phase: downloading ? 'downloading' : 'importing' })
+          return
+        }
         if (event.type === 'snapshot_progress') {
           useLongOpStore.getState().update({
+            receivedBytes: event.receivedBytes,
+            totalBytes: event.totalBytes,
+            phase: event.phase,
             current: event.current ?? 0,
             total: event.total ?? 0,
             message: event.after || undefined,
@@ -300,14 +311,12 @@ return ({
         }
         if (event.type === 'snapshot_complete' || event.type === 'snapshot_error') {
           useLongOpStore.getState().end()
+          if (event.type === 'snapshot_error') showError({ title: t('snapshots.dialog.title'), message: event.after || t('errorModal.title') })
           // Async export/import returned 202 before the file existed; signal the
           // SnapshotsDialog (if open) to reload now that the backend is done.
           useLongOpStore.getState().markCompleted()
         }
-        // Any non-stats event counts as "activity" — keeps the watchdog
-        // quiet during quiet periods of a long-running op (e.g. between
-        // volumes during a large snapshot import).
-        useLongOpStore.getState().markProgress()
+        // Unrelated app events do not count as snapshot transfer progress.
 
         // Dependency migration lifecycle — owned by the Dependencies dialog
         // (progress list) and the namespace controls (disabled while running).

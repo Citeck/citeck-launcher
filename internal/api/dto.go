@@ -221,8 +221,9 @@ type NamespaceDto struct {
 	//
 	// UpdateErrorAt (epoch ms) identifies the occurrence so a client can show
 	// each failure exactly once and not re-show it on remount or reconnect.
-	UpdateError   string `json:"updateError,omitempty"`
-	UpdateErrorAt int64  `json:"updateErrorAt,omitempty"`
+	UpdateError    string         `json:"updateError,omitempty"`
+	UpdateErrorAt  int64          `json:"updateErrorAt,omitempty"`
+	UpdateGitError *GitFailureDto `json:"updateGitError,omitempty"`
 	// DependencyUpgrades lists the infrastructure images (see internal/deps)
 	// the generator held back because applying them to THIS namespace's
 	// existing data would be a breaking change. Recomputed by every load and
@@ -741,11 +742,13 @@ type EventDto struct {
 	// into After for the ONE subscriber it is writing to, because a broadcast
 	// fans out to a desktop UI in Russian and a CLI in German at the same
 	// moment and there is no single language the replay ring could hold.
-	AfterMsg msg.Message `json:"-"`
-	Percent  float64     `json:"percent,omitempty"`
-	Phase    string      `json:"phase,omitempty"`
-	Current  int         `json:"current,omitempty"`
-	Total    int         `json:"total,omitempty"`
+	AfterMsg      msg.Message `json:"-"`
+	Percent       float64     `json:"percent,omitempty"`
+	Phase         string      `json:"phase,omitempty"`
+	ReceivedBytes int64       `json:"receivedBytes,omitempty"`
+	TotalBytes    int64       `json:"totalBytes,omitempty"`
+	Current       int         `json:"current,omitempty"`
+	Total         int         `json:"total,omitempty"`
 	// Path / FreeBytes / ThresholdBytes are present on "disk_low" / "disk_ok"
 	// events only (omitempty keeps every other event unchanged on the wire).
 	Path           string `json:"path,omitempty"`
@@ -855,10 +858,11 @@ type AppImageDto struct {
 
 // ErrorDto is the standard error response format.
 type ErrorDto struct {
-	Error   string `json:"error"`
-	Code    string `json:"code,omitempty"`
-	Message string `json:"message"`
-	Details string `json:"details,omitempty"`
+	Error   string         `json:"error"`
+	Code    string         `json:"code,omitempty"`
+	Message string         `json:"message"`
+	Details string         `json:"details,omitempty"`
+	Git     *GitFailureDto `json:"git,omitempty"`
 }
 
 // Namespace lifecycle status values carried by NamespaceDto.Status.
@@ -1452,4 +1456,15 @@ type HeapDumpResponseDto struct {
 	App  string `json:"app"`
 	File string `json:"file"`
 	Size int64  `json:"size"`
+}
+
+// GitFailureDto contains non-secret recovery metadata for a failed Git refresh.
+type GitFailureDto struct {
+	RepoURL        string   `json:"repoUrl"`
+	WorkspaceID    string   `json:"workspaceId"`
+	SecretID       string   `json:"secretId,omitempty"`
+	CacheAvailable bool     `json:"cacheAvailable"`
+	CacheUpdatedAt int64    `json:"cacheUpdatedAt,omitempty"`
+	Force          bool     `json:"force,omitempty"`
+	CachedRepos    []string `json:"cachedRepos,omitempty"`
 }

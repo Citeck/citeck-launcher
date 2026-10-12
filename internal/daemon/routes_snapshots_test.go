@@ -693,3 +693,24 @@ func TestSnapshot_MutexSerializes(t *testing.T) {
 		assert.Equal(t, http.StatusConflict, code, "all should hit mutex 409 while held")
 	}
 }
+
+func TestSnapshotDownloadProgressReportsBytes(t *testing.T) {
+	d := &Daemon{eventRing: newEventRing(10)}
+	progress := d.snapshotDownloadProgress("ns-proof")
+	progress(0, 100)
+	progress(25, 100)  // bounded cadence: do not flood the event transport
+	progress(100, 100) // completion is always emitted, even within the throttle window
+	events, ok := d.eventRing.since(0)
+	require.True(t, ok)
+	require.Len(t, events, 2)
+	assert.Equal(t, "downloading", events[0].Phase)
+	assert.Equal(t, int64(100), events[1].ReceivedBytes)
+	assert.Equal(t, int64(100), events[1].TotalBytes)
+	assert.Equal(t, "ns-proof", events[1].NamespaceID)
+	unknown := d.snapshotDownloadProgress("ns-proof")
+	unknown(64, -1)
+	events, _ = d.eventRing.since(2)
+	require.Len(t, events, 1)
+	assert.Equal(t, int64(64), events[0].ReceivedBytes)
+	assert.Equal(t, int64(-1), events[0].TotalBytes)
+}

@@ -370,6 +370,7 @@ func (d *Daemon) handleUpdateWorkspace(w http.ResponseWriter, r *http.Request) {
 		writeInternalError(w, err)
 		return
 	}
+	slog.Info("Workspace repository settings saved", "workspace", existing.ID, "authType", existing.AuthType, "secret", existing.SecretID) //nolint:gosec // G706: workspace/secret ids and auth type validated before save; references only.
 	nsCount := 0
 	if rows, lerr := d.store.ListNamespaces(existing.ID); lerr == nil {
 		nsCount = len(rows)
@@ -657,7 +658,7 @@ func (d *Daemon) resolveWorkspaceConfigForSwitch(ws storage.WorkspaceDto) (*bund
 	if ws.RepoURL == "" {
 		return nil, nil
 	}
-	resolver := bundle.NewResolverWithAuth(config.BundlesDataDir(ws.ID), makeTokenLookup(d.secretReaderFunc())).
+	resolver := authenticatedBundleResolver(config.BundlesDataDir(ws.ID), d.secretReaderFunc()).
 		WithWorkspaceRepo(buildWorkspaceRepoOpts(ws, d.secretService)).
 		WithWorkspaceOverlay(workspaceConfigOverlay(d.store, ws.ID)).
 		WithLauncherVersion(d.version)
@@ -705,7 +706,7 @@ func (d *Daemon) handleActivateWorkspace(w http.ResponseWriter, r *http.Request)
 			// 502: the upstream workspace repo is unreachable/unauthorized.
 			// err.Error() carries the repo URL + git error text ("authentication
 			// required", …) so the Web UI's GitPullErrorDialog heuristic matches.
-			writeErrorCode(w, http.StatusBadGateway, api.ErrCodeWsRepoSyncFailed, err.Error())
+			d.writeGitError(w, http.StatusBadGateway, api.ErrCodeWsRepoSyncFailed, id, err)
 			return
 		}
 		writeInternalError(w, err)

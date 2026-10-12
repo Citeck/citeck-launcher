@@ -120,7 +120,7 @@ func freshTemplateDetachedApps(store storage.Store, secretSvc secretReader, wsID
 		// Nothing to ask and nothing to be stale about.
 		return nil, true
 	}
-	resolver := bundle.NewResolverWithAuth(config.BundlesDataDir(wsID), makeTokenLookup(secretSvc)).
+	resolver := authenticatedBundleResolver(config.BundlesDataDir(wsID), secretSvc).
 		WithWorkspaceRepo(lookupWorkspaceRepoOpts(store, secretSvc, wsID)).
 		WithWorkspaceOverlay(workspaceConfigOverlay(store, wsID)).
 		WithForcePull()

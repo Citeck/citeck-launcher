@@ -57,6 +57,9 @@ func (d *Daemon) handleUpdateChangelog(w http.ResponseWriter, r *http.Request) {
 // looping on a broken release (see update.UserRetry). It defaults to off, so
 // every other caller of this route keeps that loop guard.
 func (d *Daemon) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
+	// Downloads are bounded by byte inactivity, not staging duration. Keep the
+	// local HTTP response alive through active transfers and resumable retries.
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
 	retry := r.URL.Query().Get("retry") == "true"
 	var stageOpts []update.StageOption
 	if retry {

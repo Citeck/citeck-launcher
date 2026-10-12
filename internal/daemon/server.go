@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -196,6 +197,7 @@ type Daemon struct {
 	// it silently loses the :snapshot digest refresh that IS the action.
 	// At most one pass waits on reloadMu; further clicks fold into it, and the
 	// force flag is OR-ed so a Force click never degrades to a throttled pull.
+	updateQueueMu      sync.Mutex // captures target/force/cache before releasing the queue slot
 	updatePending      atomic.Bool
 	updatePendingForce atomic.Bool
 	// updatePendingNsID carries the namespace the LATEST click targeted. A
@@ -226,9 +228,12 @@ type Daemon struct {
 	// pinned to the namespace it was aimed at (same scoping rule as
 	// updateInFlightNsID). Surfaced as NamespaceDto.UpdateError; cleared when the
 	// next pass is accepted.
-	updateLastFailure atomic.Pointer[updateFailure]
-	licenses          *license.Service // user-added enterprise licenses
-	updateSvc         *update.Service  // desktop auto-update service (nil in server mode)
+	updateLastFailure       atomic.Pointer[updateFailure]
+	updatePendingCachedRepo atomic.Pointer[cachedRepoChoice]
+	// cachedRepoURLs is one-operation policy, read/written only under reloadMu.
+	cachedRepoURLs []string
+	licenses       *license.Service // user-added enterprise licenses
+	updateSvc      *update.Service  // desktop auto-update service (nil in server mode)
 	// execClient is a test seam for handlers that drive CLI tools inside
 	// containers (kcadm.sh / rabbitmqctl / setup.py). nil in production —
 	// dockerExec() falls back to dockerClient.
@@ -656,7 +661,7 @@ func (d *Daemon) doShutdownServer() {
 // git pull throttle) and reconciles the already-running runtime, recreating
 // only changed apps. Thin wrapper over doReloadEx. Caller must hold reloadMu.
 // Not the explicit Update & Start action, so refreshImages=false.
-func (d *Daemon) doReload() error { return d.doReloadEx(false, false, false) }
+func (d *Daemon) doReload() error { return d.doReloadEx(false, false, false, false) }
 
 // invokeReload is what def-edit handlers call to trigger a reload, instead of
 // d.doReload directly — the reloadFn seam lets handler tests assert routing
@@ -676,7 +681,7 @@ func (d *Daemon) invokeReloadEx(forceGitPull, startNotRegen, refreshImages bool)
 	if d.reloadExFn != nil {
 		return d.reloadExFn(forceGitPull, startNotRegen, refreshImages)
 	}
-	return d.doReloadEx(forceGitPull, startNotRegen, refreshImages)
+	return d.doReloadEx(forceGitPull, startNotRegen, refreshImages, refreshImages || forceGitPull)
 }
 
 // doReloadEx is the shared reload / force-update core. Caller must hold reloadMu.
@@ -696,7 +701,9 @@ func (d *Daemon) invokeReloadEx(forceGitPull, startNotRegen, refreshImages bool)
 //     explicit Update & Start action (updateAndStartAsync); every other
 //     reload/regenerate path (config-edit reload, invokeReload) passes false
 //     so a routine reload doesn't hidden-re-pull unrelated apps.
-func (d *Daemon) doReloadEx(forceGitPull, startNotRegenerate, refreshImages bool) error {
+//
+// requireGitSync is true for explicit update actions; config-only reloads keep cached resolution.
+func (d *Daemon) doReloadEx(forceGitPull, startNotRegenerate, refreshImages, requireGitSync bool) error {
 	// One consistent snapshot: nsConfig/runtime/workspaceConfig/systemSecrets/
 	// workspaceID/volumesBase all come from the same lock acquisition.
 	// (systemSecrets in particular: handleSetAdminPassword mutates it under
@@ -721,15 +728,18 @@ func (d *Daemon) doReloadEx(forceGitPull, startNotRegenerate, refreshImages bool
 		return fmt.Errorf("reload config: %w", err)
 	}
 
-	resolver := bundle.NewResolverWithAuth(config.BundlesDataDir(act.workspaceID), makeTokenLookup(d.secretReaderFunc())).
+	resolver := authenticatedBundleResolver(config.BundlesDataDir(act.workspaceID), d.secretReaderFunc()).
 		WithWorkspaceRepo(d.resolveActiveWorkspaceRepoOpts()).
+		WithCachedRepos(d.cachedRepoURLs).
 		WithWorkspaceOverlay(workspaceConfigOverlay(d.store, act.workspaceID)).
 		WithLauncherVersion(d.version)
 	if forceGitPull {
 		resolver = resolver.WithForcePull()
 	}
 	resolveResult, bundleFallback, resolveErr := resolveBundleWithCacheFallback(
-		resolver, nsCfg.BundleRef, d.store, act.workspaceID, nsID, fallbackWS, "on reload", true)
+		resolver, nsCfg.BundleRef, d.store, act.workspaceID, nsID, fallbackWS, "on reload", !requireGitSync)
+	// Explicit updates report failed refreshes even over a usable cache.
+	resolveErr = errors.Join(resolveErr, explicitGitRefreshError(resolver, requireGitSync))
 	if resolveErr != nil {
 		return fmt.Errorf("resolve bundle: %w", resolveErr)
 	}
@@ -1049,181 +1059,203 @@ func resolveServerCertHost(tcpAddr string, nsCfg *namespace.Config) string {
 // Both Unix socket and TCP listeners use the same mux — localhost TCP is trusted
 // (desktop thin client), non-localhost requires mTLS (which is also fully authenticated).
 func (d *Daemon) registerRoutes(mux *http.ServeMux) {
+	// Capture routes as they are registered, so discovery cannot advertise an
+	// endpoint that this daemon did not install. This local inventory becomes
+	// immutable before either listener starts; registering another mux is independent.
+	var routes []api.AgentRouteDto
+	register := func(pattern string, handler http.HandlerFunc) {
+		mux.HandleFunc(pattern, handler)
+		method, path, _ := strings.Cut(pattern, " ")
+		if strings.HasPrefix(path, api.APIV1+"/") {
+			routes = append(routes, api.AgentRouteDto{Method: method, Path: path})
+		}
+	}
+	// Keep unknown discovery paths and unsupported verbs out of the SPA fallback.
+	mux.HandleFunc(api.AgentCapabilities, rejectAgentDiscoveryRequest)
+	mux.HandleFunc(api.AgentCapabilities+"/", rejectAgentDiscoveryRequest)
+	register("GET "+api.AgentCapabilities, func(w http.ResponseWriter, r *http.Request) {
+		d.handleAgentCapabilities(w, r, routes)
+	})
+	register("GET "+api.AgentOperation, func(w http.ResponseWriter, r *http.Request) {
+		d.handleAgentOperation(w, r, routes)
+	})
+
 	// Daemon
-	mux.HandleFunc("GET "+api.DaemonStatus, d.handleDaemonStatus)
-	mux.HandleFunc("PUT "+api.UIPrefs, d.handlePutUIPrefs)
-	mux.HandleFunc("POST "+api.DaemonShutdown, d.handleDaemonShutdown)
-	mux.HandleFunc("PUT /api/v1/daemon/loglevel", d.handleSetLogLevel)
-	mux.HandleFunc("GET "+api.DaemonLogs, d.handleDaemonLogs)
+	register("GET "+api.DaemonStatus, d.handleDaemonStatus)
+	register("PUT "+api.UIPrefs, d.handlePutUIPrefs)
+	register("POST "+api.DaemonShutdown, d.handleDaemonShutdown)
+	register("PUT /api/v1/daemon/loglevel", d.handleSetLogLevel)
+	register("GET "+api.DaemonLogs, d.handleDaemonLogs)
 
 	// Namespace
-	mux.HandleFunc("GET "+api.Namespace, d.handleGetNamespace)
-	mux.HandleFunc("POST "+api.NamespaceStart, d.handleStartNamespace)
-	mux.HandleFunc("POST "+api.NamespaceStop, d.handleStopNamespace)
-	mux.HandleFunc("POST "+api.NamespaceReload, d.handleReloadNamespace)
-	mux.HandleFunc("GET "+api.NamespaceReloadPlan, d.handleReloadPlan)
-	mux.HandleFunc("POST "+api.NamespaceUpgrade, d.handleUpgradeNamespace)
-	mux.HandleFunc("GET "+api.NamespaceCreateDefaults, d.handleNamespaceCreateDefaults)
-	mux.HandleFunc("POST "+api.NamespaceAdminPassword, d.handleSetAdminPassword)
-	mux.HandleFunc("GET "+api.RestartEvents, d.handleRestartEvents)
+	register("GET "+api.Namespace, d.handleGetNamespace)
+	register("POST "+api.NamespaceStart, d.handleStartNamespace)
+	register("POST "+api.NamespaceStop, d.handleStopNamespace)
+	register("POST "+api.NamespaceReload, d.handleReloadNamespace)
+	register("GET "+api.NamespaceReloadPlan, d.handleReloadPlan)
+	register("POST "+api.NamespaceUpgrade, d.handleUpgradeNamespace)
+	register("GET "+api.NamespaceCreateDefaults, d.handleNamespaceCreateDefaults)
+	register("POST "+api.NamespaceAdminPassword, d.handleSetAdminPassword)
+	register("GET "+api.RestartEvents, d.handleRestartEvents)
 
 	// Dependencies (infra version pins + migrations)
-	mux.HandleFunc("GET "+api.Dependencies, d.handleListDependencies)
-	mux.HandleFunc("GET /api/v1/namespace/dependencies/{id}/preflight", d.handleDependencyPreflight)
-	mux.HandleFunc("POST /api/v1/namespace/dependencies/{id}/migrate", d.handleDependencyMigrate)
-	mux.HandleFunc("GET /api/v1/namespace/dependencies/{id}/rollback/preflight", d.handleDependencyRollbackPreflight)
-	mux.HandleFunc("POST /api/v1/namespace/dependencies/{id}/rollback", d.handleDependencyRollback)
-	mux.HandleFunc("GET /api/v1/diagnostics-file", d.handleDiagnosticsFile)
+	register("GET "+api.Dependencies, d.handleListDependencies)
+	register("GET /api/v1/namespace/dependencies/{id}/preflight", d.handleDependencyPreflight)
+	register("POST /api/v1/namespace/dependencies/{id}/migrate", d.handleDependencyMigrate)
+	register("GET /api/v1/namespace/dependencies/{id}/rollback/preflight", d.handleDependencyRollbackPreflight)
+	register("POST /api/v1/namespace/dependencies/{id}/rollback", d.handleDependencyRollback)
+	register("GET /api/v1/diagnostics-file", d.handleDiagnosticsFile)
 
 	// Content storage (DB | S3): the options a dialog may offer for a bundle,
 	// and the retry of the one-time S3 connection.
-	mux.HandleFunc("GET "+api.ContentStorageOptions, d.handleContentStorageOptions)
-	mux.HandleFunc("GET "+api.ContentStorageLocalEnv, d.handleContentStorageLocalEnv)
-	mux.HandleFunc("POST "+api.NamespaceContentStorageProvision, d.handleContentStorageProvision)
+	register("GET "+api.ContentStorageOptions, d.handleContentStorageOptions)
+	register("GET "+api.ContentStorageLocalEnv, d.handleContentStorageLocalEnv)
+	register("POST "+api.NamespaceContentStorageProvision, d.handleContentStorageProvision)
 
 	// Config
-	mux.HandleFunc("GET /api/v1/config", d.handleGetConfig)
-	mux.HandleFunc("GET /api/v1/config/applied", d.handleGetAppliedConfig)
-	mux.HandleFunc("PUT /api/v1/config", d.handlePutConfig)
+	register("GET /api/v1/config", d.handleGetConfig)
+	register("GET /api/v1/config/applied", d.handleGetAppliedConfig)
+	register("PUT /api/v1/config", d.handlePutConfig)
 
 	// App routes
 	// Collection-level retry endpoint is registered BEFORE the {name}-templated
 	// routes — Go's net/http mux matches more-specific paths first, but
 	// registering the static path up top documents that "retry-pull-failed"
 	// is not a per-app action.
-	mux.HandleFunc("POST "+api.AppsRetryPullFailed, d.handleAppsRetryPullFailed)
-	mux.HandleFunc("GET /api/v1/apps/{name}/logs", d.handleAppLogs)
-	mux.HandleFunc("GET /api/v1/apps/{name}/inspect", d.handleAppInspect)
-	mux.HandleFunc("GET /api/v1/apps/{name}/image", d.handleAppImageInspect)
-	mux.HandleFunc("POST /api/v1/apps/{name}/image/pull", d.handleAppImagePull)
-	mux.HandleFunc("POST /api/v1/apps/{name}/restart", d.handleAppRestart)
-	mux.HandleFunc("POST /api/v1/apps/{name}/stop", d.handleAppStop)
-	mux.HandleFunc("POST /api/v1/apps/{name}/start", d.handleAppStart)
-	mux.HandleFunc("POST /api/v1/apps/{name}/exec", d.handleAppExec)
-	mux.HandleFunc("GET /api/v1/apps/{name}/config", d.handleGetAppConfig)
-	mux.HandleFunc("PUT /api/v1/apps/{name}/config", d.handlePutAppConfig)
-	mux.HandleFunc("POST /api/v1/apps/{name}/config/reset", d.handleResetAppConfig)
-	mux.HandleFunc("DELETE /api/v1/apps/{name}/restart-events", d.handleClearAppRestartEvents)
-	mux.HandleFunc("POST /api/v1/apps/{name}/jcmd", d.handleAppJVMCommand)
-	mux.HandleFunc("POST /api/v1/apps/{name}/heap-dump", d.handleAppHeapDump)
-	mux.HandleFunc("GET /api/v1/apps/{name}/export", d.handleListAppExports)
-	mux.HandleFunc("GET /api/v1/apps/{name}/export/{file}", d.handleGetAppExport)
-	mux.HandleFunc("DELETE /api/v1/apps/{name}/export/{file}", d.handleDeleteAppExport)
-	mux.HandleFunc("GET /api/v1/apps/{name}/files", d.handleListAppFiles)
-	mux.HandleFunc("POST /api/v1/apps/{name}/files/reset", d.handleResetAppFile)
-	mux.HandleFunc("GET /api/v1/apps/{name}/files/{path...}", d.handleGetAppFile)
-	mux.HandleFunc("PUT /api/v1/apps/{name}/files/{path...}", d.handlePutAppFile)
+	register("POST "+api.AppsRetryPullFailed, d.handleAppsRetryPullFailed)
+	register("GET /api/v1/apps/{name}/logs", d.handleAppLogs)
+	register("GET /api/v1/apps/{name}/inspect", d.handleAppInspect)
+	register("GET /api/v1/apps/{name}/image", d.handleAppImageInspect)
+	register("POST /api/v1/apps/{name}/image/pull", d.handleAppImagePull)
+	register("POST /api/v1/apps/{name}/restart", d.handleAppRestart)
+	register("POST /api/v1/apps/{name}/stop", d.handleAppStop)
+	register("POST /api/v1/apps/{name}/start", d.handleAppStart)
+	register("POST /api/v1/apps/{name}/exec", d.handleAppExec)
+	register("GET /api/v1/apps/{name}/config", d.handleGetAppConfig)
+	register("PUT /api/v1/apps/{name}/config", d.handlePutAppConfig)
+	register("POST /api/v1/apps/{name}/config/reset", d.handleResetAppConfig)
+	register("DELETE /api/v1/apps/{name}/restart-events", d.handleClearAppRestartEvents)
+	register("POST /api/v1/apps/{name}/jcmd", d.handleAppJVMCommand)
+	register("POST /api/v1/apps/{name}/heap-dump", d.handleAppHeapDump)
+	register("GET /api/v1/apps/{name}/export", d.handleListAppExports)
+	register("GET /api/v1/apps/{name}/export/{file}", d.handleGetAppExport)
+	register("DELETE /api/v1/apps/{name}/export/{file}", d.handleDeleteAppExport)
+	register("GET /api/v1/apps/{name}/files", d.handleListAppFiles)
+	register("POST /api/v1/apps/{name}/files/reset", d.handleResetAppFile)
+	register("GET /api/v1/apps/{name}/files/{path...}", d.handleGetAppFile)
+	register("PUT /api/v1/apps/{name}/files/{path...}", d.handlePutAppFile)
 
 	// Events (SSE)
-	mux.HandleFunc("GET "+api.Events, d.handleEvents)
+	register("GET "+api.Events, d.handleEvents)
 
 	// Volumes
-	mux.HandleFunc("GET /api/v1/volumes", d.handleListVolumes)
-	mux.HandleFunc("GET /api/v1/volumes/{name}/size", d.handleVolumeSize)
-	mux.HandleFunc("DELETE /api/v1/volumes/{name}", d.handleDeleteVolume)
+	register("GET /api/v1/volumes", d.handleListVolumes)
+	register("GET /api/v1/volumes/{name}/size", d.handleVolumeSize)
+	register("DELETE /api/v1/volumes/{name}", d.handleDeleteVolume)
 
 	// Health + Metrics
-	mux.HandleFunc("GET "+api.Health, d.handleHealth)
-	mux.HandleFunc("GET /api/v1/metrics", d.handleMetrics)
+	register("GET "+api.Health, d.handleHealth)
+	register("GET /api/v1/metrics", d.handleMetrics)
 
 	// System dump
-	mux.HandleFunc("GET /api/v1/system/dump", d.handleSystemDump)
-	mux.HandleFunc("POST "+api.SystemOpenDir, d.handleSystemOpenDir)
+	register("GET /api/v1/system/dump", d.handleSystemDump)
+	register("POST "+api.SystemOpenDir, d.handleSystemOpenDir)
 
 	// Desktop tray menu
-	mux.HandleFunc("GET "+api.DesktopTrayMenu, d.handleTrayMenu)
+	register("GET "+api.DesktopTrayMenu, d.handleTrayMenu)
 
 	// Workspace operations
-	mux.HandleFunc("POST "+api.WorkspaceUpdate, d.handleWorkspaceUpdate)
+	register("POST "+api.WorkspaceUpdate, d.handleWorkspaceUpdate)
 
 	// Multi-workspace CRUD + activate (desktop-only — handlers return 404 in server mode).
-	mux.HandleFunc("GET "+api.Workspaces, d.handleListWorkspaces)
-	mux.HandleFunc("POST "+api.Workspaces, d.handleCreateWorkspace)
-	mux.HandleFunc("GET /api/v1/workspaces/{id}", d.handleGetWorkspace)
-	mux.HandleFunc("PUT /api/v1/workspaces/{id}", d.handleUpdateWorkspace)
-	mux.HandleFunc("DELETE /api/v1/workspaces/{id}", d.handleDeleteWorkspace)
-	mux.HandleFunc("POST /api/v1/workspaces/{id}/activate", d.handleActivateWorkspace)
-	mux.HandleFunc("GET /api/v1/workspaces/{id}/config", d.handleGetWorkspaceConfig)
-	mux.HandleFunc("PUT /api/v1/workspaces/{id}/config", d.handlePutWorkspaceConfig)
-	mux.HandleFunc("POST /api/v1/workspaces/{id}/config/reset", d.handleResetWorkspaceConfig)
+	register("GET "+api.Workspaces, d.handleListWorkspaces)
+	register("POST "+api.Workspaces, d.handleCreateWorkspace)
+	register("GET /api/v1/workspaces/{id}", d.handleGetWorkspace)
+	register("PUT /api/v1/workspaces/{id}", d.handleUpdateWorkspace)
+	register("DELETE /api/v1/workspaces/{id}", d.handleDeleteWorkspace)
+	register("POST /api/v1/workspaces/{id}/activate", d.handleActivateWorkspace)
+	register("GET /api/v1/workspaces/{id}/config", d.handleGetWorkspaceConfig)
+	register("PUT /api/v1/workspaces/{id}/config", d.handlePutWorkspaceConfig)
+	register("POST /api/v1/workspaces/{id}/config/reset", d.handleResetWorkspaceConfig)
+	register("PUT /api/v1/workspaces/{id}/git-secret", d.handleLinkGitSecret)
 
 	// Git operations
-	mux.HandleFunc("POST "+api.GitSkipPull, d.handleGitSkipPull)
+	register("POST "+api.GitSkipPull, d.handleGitSkipPull)
 
 	// Namespaces
-	mux.HandleFunc("GET "+api.Namespaces, d.handleListNamespaces)
-	mux.HandleFunc("POST "+api.Namespaces, d.handleCreateNamespace)
-	mux.HandleFunc("DELETE /api/v1/namespaces/{id}", d.handleDeleteNamespace)
-	mux.HandleFunc("POST /api/v1/namespaces/{id}/activate", d.handleActivateNamespace)
-	mux.HandleFunc("POST /api/v1/namespaces/deactivate", d.handleDeactivateNamespace)
-	mux.HandleFunc("GET "+api.NamespaceEdit, d.handleGetNamespaceEdit)
-	mux.HandleFunc("PUT "+api.NamespaceEdit, d.handlePutNamespaceEdit)
-	mux.HandleFunc("GET "+api.QuickStarts, d.handleGetQuickStarts)
+	register("GET "+api.Namespaces, d.handleListNamespaces)
+	register("POST "+api.Namespaces, d.handleCreateNamespace)
+	register("DELETE /api/v1/namespaces/{id}", d.handleDeleteNamespace)
+	register("POST /api/v1/namespaces/{id}/activate", d.handleActivateNamespace)
+	register("POST /api/v1/namespaces/deactivate", d.handleDeactivateNamespace)
+	register("GET "+api.NamespaceEdit, d.handleGetNamespaceEdit)
+	register("PUT "+api.NamespaceEdit, d.handlePutNamespaceEdit)
+	register("GET "+api.QuickStarts, d.handleGetQuickStarts)
 
 	// Bundles
-	mux.HandleFunc("GET "+api.Bundles, d.handleListBundles)
-	mux.HandleFunc("POST /api/v1/bundles/{repoId}/pull", d.handleBundleRepoPull)
+	register("GET "+api.Bundles, d.handleListBundles)
+	register("POST /api/v1/bundles/{repoId}/pull", d.handleBundleRepoPull)
 
 	// Secrets
-	mux.HandleFunc("GET "+api.Secrets, d.handleListSecrets)
-	mux.HandleFunc("POST "+api.Secrets, d.handleCreateSecret)
-	mux.HandleFunc("PUT /api/v1/secrets/{id}", d.handleUpdateSecret)
-	mux.HandleFunc("DELETE /api/v1/secrets/{id}", d.handleDeleteSecret)
-	mux.HandleFunc("GET /api/v1/secrets/{id}/test", d.handleTestSecret)
+	register("GET "+api.Secrets, d.handleListSecrets)
+	register("POST "+api.Secrets, d.handleCreateSecret)
+	register("PUT /api/v1/secrets/{id}", d.handleUpdateSecret)
+	register("DELETE /api/v1/secrets/{id}", d.handleDeleteSecret)
+	register("GET /api/v1/secrets/{id}/test", d.handleTestSecret)
 
 	// Registry auth bindings (host → secret) for reusable registry credentials
-	mux.HandleFunc("GET "+api.RegistryBindingsMissing, d.handleMissingRegistryAuth)
-	mux.HandleFunc("GET "+api.RegistryBindings, d.handleListRegistryBindings)
-	mux.HandleFunc("POST "+api.RegistryBindings, d.handleSetRegistryBinding)
+	register("GET "+api.RegistryBindingsMissing, d.handleMissingRegistryAuth)
+	register("GET "+api.RegistryBindings, d.handleListRegistryBindings)
+	register("POST "+api.RegistryBindings, d.handleSetRegistryBinding)
 
 	// Secrets encryption management
-	mux.HandleFunc("POST "+api.SecretsUnlock, d.handleUnlockSecrets)
-	mux.HandleFunc("POST "+api.SecretsSetupPassword, d.handleSetupPassword)
-	mux.HandleFunc("POST "+api.SecretsReset, d.handleResetSecrets)
+	register("POST "+api.SecretsUnlock, d.handleUnlockSecrets)
+	register("POST "+api.SecretsSetupPassword, d.handleSetupPassword)
+	register("POST "+api.SecretsReset, d.handleResetSecrets)
 
 	// Licenses (enterprise license management)
-	mux.HandleFunc("GET /api/v1/licenses", d.handleListLicenses)
-	mux.HandleFunc("POST /api/v1/licenses", d.handleCreateLicense)
-	mux.HandleFunc("DELETE /api/v1/licenses/{id}", d.handleDeleteLicense)
-	mux.HandleFunc("GET "+api.LicensesStatus, d.handleLicenseStatus)
+	register("GET /api/v1/licenses", d.handleListLicenses)
+	register("POST /api/v1/licenses", d.handleCreateLicense)
+	register("DELETE /api/v1/licenses/{id}", d.handleDeleteLicense)
+	register("GET "+api.LicensesStatus, d.handleLicenseStatus)
 
 	// Migration (master password for Kotlin encrypted secrets)
-	mux.HandleFunc("GET "+api.MigrationStatus, d.handleGetMigrationStatus)
-	mux.HandleFunc("POST "+api.MigrationMasterPassword, d.handleSubmitMasterPassword)
+	register("GET "+api.MigrationStatus, d.handleGetMigrationStatus)
+	register("POST "+api.MigrationMasterPassword, d.handleSubmitMasterPassword)
 
 	// Diagnostics
-	mux.HandleFunc("GET "+api.Diagnostics, d.handleGetDiagnostics)
-	mux.HandleFunc("POST "+api.DiagnosticsFix, d.handleDiagnosticsFix)
+	register("GET "+api.Diagnostics, d.handleGetDiagnostics)
+	register("POST "+api.DiagnosticsFix, d.handleDiagnosticsFix)
 
 	// Snapshots
-	mux.HandleFunc("GET "+api.Snapshots, d.handleListSnapshots)
-	mux.HandleFunc("POST "+api.SnapshotsExport, d.handleExportSnapshot)
-	mux.HandleFunc("POST "+api.SnapshotsImport, d.handleImportSnapshot)
-	mux.HandleFunc("POST "+api.SnapshotsDownload, d.handleDownloadSnapshot)
-	mux.HandleFunc("GET "+api.WorkspaceSnapshots, d.handleWorkspaceSnapshots)
-	mux.HandleFunc("PUT /api/v1/snapshots/{name}", d.handleRenameSnapshot)
-	mux.HandleFunc("DELETE /api/v1/snapshots/{name}", d.handleDeleteSnapshot)
+	register("GET "+api.Snapshots, d.handleListSnapshots)
+	register("POST "+api.SnapshotsExport, d.handleExportSnapshot)
+	register("POST "+api.SnapshotsImport, d.handleImportSnapshot)
+	register("POST "+api.SnapshotsDownload, d.handleDownloadSnapshot)
+	register("GET "+api.WorkspaceSnapshots, d.handleWorkspaceSnapshots)
+	register("PUT /api/v1/snapshots/{name}", d.handleRenameSnapshot)
+	register("DELETE /api/v1/snapshots/{name}", d.handleDeleteSnapshot)
 
 	// Desktop-only: second-launch focus hand-off (Kotlin AppLocalSocket parity).
 	// Server mode has no native window to raise; route is not registered there.
 	if config.IsDesktopMode() {
-		mux.HandleFunc("POST /desktop/focus", d.handleDesktopFocus)
-		mux.HandleFunc("POST /desktop/save-download", d.handleDesktopSaveDownload)
-		mux.HandleFunc("POST /desktop/open-downloads", d.handleDesktopOpenDownloads)
+		register("POST /desktop/focus", d.handleDesktopFocus)
+		register("POST /desktop/save-download", d.handleDesktopSaveDownload)
+		register("POST /desktop/open-downloads", d.handleDesktopOpenDownloads)
 	}
 	// Update routes only when the service exists (desktop + linux); otherwise the
 	// paths are unregistered and the Web UI's update check 404s and stays quiet.
 	if d.updateSvc != nil {
-		mux.HandleFunc("GET "+api.DesktopUpdateStatus, d.handleUpdateStatus)
-		mux.HandleFunc("POST "+api.DesktopUpdateCheck, d.handleUpdateCheck)
-		mux.HandleFunc("GET "+api.DesktopUpdateChangelog, d.handleUpdateChangelog)
-		mux.HandleFunc("POST "+api.DesktopUpdateApply, d.handleUpdateApply)
+		register("GET "+api.DesktopUpdateStatus, d.handleUpdateStatus)
+		register("POST "+api.DesktopUpdateCheck, d.handleUpdateCheck)
+		register("GET "+api.DesktopUpdateChangelog, d.handleUpdateChangelog)
+		register("POST "+api.DesktopUpdateApply, d.handleUpdateApply)
 	}
 
 	// Browser auth handshake (token → session cookie) for the opt-in API
 	// token auth. Public by design — it is the door into the token-protected
 	// API; with api_auth disabled it just redirects to /. See apiauth.go.
-	mux.HandleFunc("GET "+api.AuthSession, d.handleAuthSession)
+	register("GET "+api.AuthSession, d.handleAuthSession)
 
 	// Web UI (fallback)
 	mux.Handle("/", WebUIHandler())

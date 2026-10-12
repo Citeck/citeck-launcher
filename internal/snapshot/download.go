@@ -15,6 +15,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/citeck/citeck-launcher/internal/downloadhttp"
 )
 
 // httpClient is a shared client with reasonable timeouts for large downloads.
@@ -28,11 +30,8 @@ var httpClient = &http.Client{
 	// Context cancellation is the proper way to abort.
 }
 
-// Kotlin parity retry policy:
-//
-//	REPEATS_LIMIT_TOTAL = 100 — absolute upper bound on retry attempts
-//	REPEATS_LIMIT_WITHOUT_PROGRESS = 3 — stall guard; resets on byte progress
-//	REPEAT_DELAY_MS = 3000 — constant sleep between retries
+// Retry counters measure consecutive failures without new response bytes.
+// Only bytes received by a resumed 206 response reset both counters.
 const (
 	retriesLimitTotal           = 100
 	retriesLimitWithoutProgress = 3
@@ -49,40 +48,25 @@ var ErrSHA256Mismatch = errors.New("sha256 mismatch")
 // Total may be -1 if the server does not send Content-Length.
 type ProgressFunc func(received, total int64)
 
-// DownloadWithRetry wraps a resumable download in the Kotlin-parity retry
-// loop. Two independent counters protect against runaway attempts:
-//
-//  1. retriesTotal — capped at retriesLimitTotal (100). Absolute ceiling.
-//  2. retriesWithoutProgress — capped at retriesLimitWithoutProgress (3).
-//     Resets to 0 whenever ANY byte is appended to the .part file, so a
-//     long but steadily-progressing download can survive many transient
-//     failures while a stalled-from-the-start connection fails fast.
-//
-// Sleep between retries is constant (retryDelay = 3s; matches Kotlin
-// REPEAT_DELAY_MS). The context is honored both during sleep and within
-// the underlying transfer. Hash-mismatch errors (errors.Is(err, ErrSHA256Mismatch))
-// are deterministic — never retried.
-//
-// progress is invoked from inside the transfer; the retry counter inspects
-// the .part file size to detect progress between attempts, so callers do
-// not need to wire up additional bookkeeping.
+// DownloadWithRetry resumes interrupted transfers and retries after three seconds.
+// Bytes from a resumed 206 response reset all counters; full-file restarts do not.
+// Three failures without resumed progress stop the download.
+// Hash mismatch is immediate; context cancellation interrupts transfer and delay.
 func DownloadWithRetry(ctx context.Context, client *http.Client, rawURL, destPath, expectedSHA256 string, progress ProgressFunc) error {
+	return downloadWithRetry(ctx, client, rawURL, destPath, expectedSHA256, progress, retryDelay)
+}
+
+func downloadWithRetry(ctx context.Context, client *http.Client, rawURL, destPath, expectedSHA256 string, progress ProgressFunc, delay time.Duration) error {
 	if client == nil {
 		client = httpClient
 	}
 
-	partPath := destPath + ".part"
-
+	state := &snapshotResumeState{total: -1}
 	var (
 		retriesTotal           int
 		retriesWithoutProgress int
 		lastErr                error
-		lastPartSize           int64
 	)
-
-	if info, err := os.Stat(partPath); err == nil {
-		lastPartSize = info.Size()
-	}
 
 	for {
 		if err := ctx.Err(); err != nil {
@@ -92,7 +76,8 @@ func DownloadWithRetry(ctx context.Context, client *http.Client, rawURL, destPat
 			return fmt.Errorf("download %s: %w", rawURL, err)
 		}
 
-		err := download(ctx, client, rawURL, destPath, expectedSHA256, progress)
+		state.resumedProgress = false
+		err := download(ctx, client, rawURL, destPath, expectedSHA256, progress, state)
 		if err == nil {
 			return nil
 		}
@@ -106,20 +91,11 @@ func DownloadWithRetry(ctx context.Context, client *http.Client, rawURL, destPat
 			return err
 		}
 
-		retriesTotal++
-
-		curPartSize := lastPartSize
-		if info, statErr := os.Stat(partPath); statErr == nil {
-			curPartSize = info.Size()
-		}
-		if curPartSize > lastPartSize {
-			// Any forward progress resets the stall counter — a long but
-			// steadily-progressing download can survive many transient
-			// failures, while a connection that fails before producing any
-			// bytes hits retriesLimitWithoutProgress fast.
+		if state.resumedProgress {
+			retriesTotal = 0
 			retriesWithoutProgress = 0
-			lastPartSize = curPartSize
 		} else {
+			retriesTotal++
 			retriesWithoutProgress++
 		}
 
@@ -131,7 +107,7 @@ func DownloadWithRetry(ctx context.Context, client *http.Client, rawURL, destPat
 		)
 
 		if retriesTotal >= retriesLimitTotal {
-			return fmt.Errorf("download %s: exceeded total retry limit (%d): %w", rawURL, retriesLimitTotal, err)
+			return fmt.Errorf("download %s: exceeded consecutive retry limit (%d): %w", rawURL, retriesLimitTotal, err)
 		}
 		if retriesWithoutProgress >= retriesLimitWithoutProgress {
 			return fmt.Errorf("download %s: exceeded retry-without-progress limit (%d): %w", rawURL, retriesLimitWithoutProgress, err)
@@ -141,12 +117,94 @@ func DownloadWithRetry(ctx context.Context, client *http.Client, rawURL, destPat
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("download %s: %w", rawURL, errors.Join(ctx.Err(), err))
-		case <-time.After(retryDelay):
+		case <-time.After(delay):
 		}
 	}
 }
 
-func download(ctx context.Context, client *http.Client, rawURL, destPath, expectedSHA256 string, progress ProgressFunc) error {
+type snapshotResumeState struct {
+	validator       string
+	total           int64
+	resumedProgress bool
+}
+
+type snapshotDownloadResponse struct {
+	offset, total, bodyBytes int64
+	resumed                  bool
+}
+
+func (state *snapshotResumeState) prepareResponse(resp *http.Response, offset int64) (snapshotDownloadResponse, error) {
+	response := snapshotDownloadResponse{offset: offset, total: resp.ContentLength, bodyBytes: resp.ContentLength, resumed: offset > 0 && resp.StatusCode == http.StatusPartialContent}
+	if encoding := resp.Header.Get("Content-Encoding"); encoding != "" && encoding != "identity" {
+		return response, errors.New("unexpected encoded download response")
+	}
+	validator := downloadhttp.ResumeValidator(resp.Header)
+	if resp.StatusCode != http.StatusPartialContent {
+		response.offset = 0
+		state.validator = validator
+		state.total = response.total
+		return response, nil
+	}
+	span, rangeErr := downloadhttp.ValidatePartialResponse(resp, offset)
+	if rangeErr != nil {
+		return response, fmt.Errorf("invalid snapshot resume: %w", rangeErr)
+	}
+	if state.total >= 0 && span.Total >= 0 && span.Total != state.total {
+		return response, errors.New("snapshot size changed during resume")
+	}
+	if state.validator != "" && validator != "" && state.validator != validator {
+		return response, errors.New("snapshot validator changed during resume")
+	}
+	response.total = span.Total
+	if response.total < 0 && state.total >= 0 {
+		response.total = state.total
+	}
+	response.bodyBytes = span.End - span.Start + 1
+	state.total = response.total
+	if validator != "" {
+		state.validator = validator
+	}
+	return response, nil
+}
+
+func copySnapshotBody(reader io.Reader, f *os.File, response snapshotDownloadResponse, state *snapshotResumeState, progress ProgressFunc) (int64, error) {
+	offset, total, responseBytes, resumed := response.offset, response.total, response.bodyBytes, response.resumed
+	received := offset
+	if progress != nil {
+		progress(received, total)
+	}
+	buf := make([]byte, 64*1024)
+	for {
+		n, readErr := reader.Read(buf)
+		if n > 0 {
+			if responseBytes >= 0 && int64(n) > responseBytes-(received-offset) {
+				return received, errors.New("snapshot body exceeds declared range")
+			}
+			if _, wErr := f.Write(buf[:n]); wErr != nil {
+				return received, fmt.Errorf("write snapshot body: %w", wErr)
+			}
+			received += int64(n)
+			if resumed {
+				state.resumedProgress = true
+			}
+			if progress != nil {
+				progress(received, total)
+			}
+		}
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			return received, fmt.Errorf("read body: %w", readErr)
+		}
+	}
+	return received, nil
+}
+
+func download(ctx context.Context, client *http.Client, rawURL, destPath, expectedSHA256 string, progress ProgressFunc, state *snapshotResumeState) error {
+	if state == nil {
+		state = &snapshotResumeState{total: -1}
+	}
 	if err := validateURL(rawURL); err != nil {
 		return err
 	}
@@ -164,22 +222,17 @@ func download(ctx context.Context, client *http.Client, rawURL, destPath, expect
 		offset = info.Size()
 	}
 
-	resp, err := doGet(ctx, client, rawURL, offset)
+	resp, err := doGet(ctx, client, rawURL, offset, state.validator)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
 
-	// If server returned 200 OK (not 206), we got the full file — reset offset
-	if resp.StatusCode == http.StatusOK {
-		offset = 0
+	response, responseErr := state.prepareResponse(resp, offset)
+	if responseErr != nil {
+		return responseErr
 	}
-
-	// Total size for progress
-	total := int64(-1)
-	if resp.ContentLength > 0 {
-		total = offset + resp.ContentLength
-	}
+	offset, total, responseBytes := response.offset, response.total, response.bodyBytes
 
 	// Open file for writing
 	flags := os.O_WRONLY | os.O_CREATE
@@ -199,30 +252,21 @@ func download(ctx context.Context, client *http.Client, rawURL, destPath, expect
 		return fmt.Errorf("restrict snapshot permissions: %w", err)
 	}
 
-	received := offset
-	buf := make([]byte, 64*1024)
-	for {
-		n, readErr := resp.Body.Read(buf)
-		if n > 0 {
-			if _, wErr := f.Write(buf[:n]); wErr != nil {
-				_ = f.Close()
-				return fmt.Errorf("write %s: %w", partPath, wErr)
-			}
-			received += int64(n)
-			if progress != nil {
-				progress(received, total)
-			}
-		}
-		if readErr == io.EOF {
-			break
-		}
-		if readErr != nil {
-			_ = f.Close()
-			return fmt.Errorf("read body: %w", readErr)
-		}
+	received, copyErr := copySnapshotBody(resp.Body, f, response, state, progress)
+	if copyErr != nil {
+		_ = f.Close()
+		return copyErr
 	}
+
 	if err := f.Close(); err != nil {
 		return fmt.Errorf("close %s: %w", partPath, err)
+	}
+
+	if responseBytes >= 0 && received-offset != responseBytes {
+		return fmt.Errorf("incomplete snapshot body: %w", io.ErrUnexpectedEOF)
+	}
+	if total >= 0 && received != total {
+		return fmt.Errorf("incomplete snapshot: received %d of %d bytes", received, total)
 	}
 
 	// Verify SHA256 if provided
@@ -287,16 +331,20 @@ func StashOutdatedFile(path string) error {
 
 // doGet performs an HTTP GET, handling Range requests and 416 retries.
 // Returns a single response that the caller must close.
-func doGet(ctx context.Context, client *http.Client, rawURL string, offset int64) (*http.Response, error) {
+func doGet(ctx context.Context, client *http.Client, rawURL string, offset int64, validator string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, http.NoBody)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
+	req.Header.Set("Accept-Encoding", "identity")
 	if offset > 0 {
+		if validator != "" {
+			req.Header.Set("If-Range", validator)
+		}
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", offset))
 	}
 
-	resp, err := client.Do(req)
+	resp, err := downloadhttp.Do(client, req, downloadhttp.IdleTimeout)
 	if err != nil {
 		return nil, fmt.Errorf("download %s: %w", rawURL, err)
 	}
@@ -311,7 +359,8 @@ func doGet(ctx context.Context, client *http.Client, rawURL string, offset int64
 		if err != nil {
 			return nil, fmt.Errorf("create retry request: %w", err)
 		}
-		resp, err = client.Do(retryReq)
+		retryReq.Header.Set("Accept-Encoding", "identity")
+		resp, err = downloadhttp.Do(client, retryReq, downloadhttp.IdleTimeout)
 		if err != nil {
 			return nil, fmt.Errorf("download %s: %w", rawURL, err)
 		}

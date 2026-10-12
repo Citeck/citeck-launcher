@@ -44,6 +44,12 @@ const (
 	KCManagementContainerPort = 9000
 )
 
+// Mailpit host ports are fixed desktop infrastructure slots; Docker keeps 1025/8025.
+const (
+	MailpitSMTPHostPort = 17011
+	MailpitHTTPHostPort = 17012
+)
+
 // CiteckSAUser is the canonical service-account username. The same name is
 // used for the Keycloak master-realm SA (admin role) and the RabbitMQ user
 // (monitoring tag, vhost "/" full perms). Webapps authenticate to both

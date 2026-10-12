@@ -3,7 +3,6 @@ import {
   contentStorageProblemText,
   contentStorageTypeOf,
   guardedProviderApp,
-  isContentStorageInProgress,
   s3OptionLabel,
   s3UnavailableText,
 } from './contentStorage'
@@ -59,7 +58,7 @@ describe('s3UnavailableText', () => {
     expect(s3UnavailableText('NO_PROVIDER_CONFIG', '', enT)).toContain('contentStorage.s3')
     expect(s3UnavailableText('NO_PROVIDER_APP', 'seaweedfs', enT)).toContain('seaweedfs')
     expect(s3UnavailableText('NO_PROVIDER_IMAGE', 'seaweedfs', enT)).toContain('image for seaweedfs')
-    expect(s3UnavailableText('NO_CONTENT_APP', 'seaweedfs', enT)).toContain('ecos-content')
+    expect(s3UnavailableText('NO_CONTENT_APP', 'seaweedfs', enT)).toContain('Citeck Enterprise')
     expect(s3UnavailableText('PROVIDER_CONFLICT', 'seaweedfs', enT)).toContain('seaweedfs cannot serve S3')
   })
 
@@ -87,13 +86,6 @@ describe('contentStorageProblemText', () => {
 
   it('keeps an unknown code visible rather than dropping it', () => {
     expect(contentStorageProblemText('SOMETHING_NEW', 'seaweedfs', enT)).toContain('SOMETHING_NEW')
-  })
-})
-
-describe('isContentStorageInProgress', () => {
-  it('is true for the three progress states only', () => {
-    expect(['pending', 'waiting', 'provisioning'].every(isContentStorageInProgress)).toBe(true)
-    expect(['connected', 'admin-managed', 'error', '', undefined].some(isContentStorageInProgress)).toBe(false)
   })
 })
 

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -13,7 +14,11 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // makeTarGz returns a gzipped tar containing one file "citeck-launcher".
@@ -168,5 +173,142 @@ func TestServiceStageRefusesFailedVersion(t *testing.T) {
 	// And the failed latest is not offered.
 	if svc.Status().Available {
 		t.Fatal("Status.Available must be false when latest is a failed version")
+	}
+}
+
+// Status must expose real bytes while Stage is still blocked on the response body.
+func TestStageReportsLiveDownloadProgress(t *testing.T) {
+	payload := makeTarGz(t, "verified-daemon")
+	sum := sha256.Sum256(payload)
+	releaseBody := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseBody) }) }
+	mux := http.NewServeMux()
+	mux.HandleFunc("/Citeck/citeck-launcher/releases/latest", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/Citeck/citeck-launcher/releases/tag/v2.6.0", http.StatusFound)
+	})
+	asset := PayloadAssetName("2.6.0", runtime.GOOS, runtime.GOARCH)
+	base := "/Citeck/citeck-launcher/releases/download/v2.6.0/" + asset
+	mux.HandleFunc(base, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", strconv.Itoa(len(payload)))
+		_, _ = w.Write(payload[:len(payload)/2])
+		w.(http.Flusher).Flush()
+		select {
+		case <-releaseBody:
+			_, _ = w.Write(payload[len(payload)/2:])
+		case <-r.Context().Done():
+		}
+	})
+	mux.HandleFunc(base+".sha256", func(w http.ResponseWriter, _ *http.Request) { _, _ = fmt.Fprintf(w, "%x", sum) })
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	defer release()
+	svc := NewService("2.4.0", t.TempDir(), WithBaseURLs(server.URL, server.URL))
+	svc.signingPubKeyHex = ""
+	done := make(chan error, 1)
+	go func() { _, err := svc.Stage(context.Background()); done <- err }()
+	deadline := time.Now().Add(3 * time.Second)
+	var st Status
+	for time.Now().Before(deadline) {
+		st = svc.Status()
+		if st.Progress.ReceivedBytes > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !st.Applying || st.Progress.Phase != "downloading" || st.Progress.ReceivedBytes != int64(len(payload)/2) || st.Progress.TotalBytes != int64(len(payload)) || st.Progress.UpdatedAt < st.Progress.StartedAt {
+		t.Fatalf("missing live progress: %+v", st)
+	}
+	release()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if final := svc.Status(); final.Applying || final.Progress.Phase != "ready" {
+		t.Fatalf("final status: %+v", final)
+	}
+}
+
+// Exercise actual staging, including integrity/authenticity verification after
+// an interrupted payload, rather than only the downloader helper.
+func TestStageResumesDownloadAndVerifiesSignature(t *testing.T) {
+	payload := makeTarGz(t, "resumed-signed-daemon")
+	hash := sha256.Sum256(payload)
+	pub, priv, keyErr := ed25519.GenerateKey(nil)
+	if keyErr != nil {
+		t.Fatal(keyErr)
+	}
+	signature := ed25519.Sign(priv, payload)
+	asset := PayloadAssetName("2.6.0", runtime.GOOS, runtime.GOARCH)
+	offset := len(payload) / 2
+	var attempts atomic.Int32
+	resumed := make(chan struct{})
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	defer unblock()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/Citeck/citeck-launcher/releases/latest", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/Citeck/citeck-launcher/releases/tag/v2.6.0", http.StatusFound)
+	})
+	base := "/Citeck/citeck-launcher/releases/download/v2.6.0/" + asset
+	mux.HandleFunc(base, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("ETag", `"payload"`)
+		if attempts.Add(1) == 1 {
+			w.Header().Set("Content-Length", fmt.Sprint(len(payload)))
+			_, _ = w.Write(payload[:offset])
+			return
+		}
+		if r.Header.Get("Range") != fmt.Sprintf("bytes=%d-", offset) {
+			t.Errorf("Range=%q", r.Header.Get("Range"))
+		}
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", offset, len(payload)-1, len(payload)))
+		w.Header().Set("Content-Length", fmt.Sprint(len(payload)-offset))
+		w.WriteHeader(http.StatusPartialContent)
+		w.(http.Flusher).Flush()
+		close(resumed)
+		select {
+		case <-release:
+		case <-r.Context().Done():
+			return
+		}
+		_, _ = w.Write(payload[offset:])
+	})
+	mux.HandleFunc(base+".sha256", func(w http.ResponseWriter, _ *http.Request) { _, _ = fmt.Fprintf(w, "%x  %s", hash, asset) })
+	mux.HandleFunc(base+".sig", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(signature) })
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	dir := t.TempDir()
+	svc := NewService("2.4.0", dir)
+	svc.githubBase = srv.URL
+	svc.rawBase = srv.URL
+	svc.signingPubKeyHex = hex.EncodeToString(pub)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	result := make(chan error, 1)
+	go func() { _, err := svc.Stage(ctx); result <- err }()
+	select {
+	case <-resumed:
+	case err := <-result:
+		t.Fatalf("stage ended before resume: %v", err)
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	st := svc.Status()
+	if !st.Applying || st.Progress.Phase != "downloading" || st.Progress.ReceivedBytes != int64(offset) {
+		t.Errorf("resume progress=%+v", st)
+	}
+	unblock()
+	if err := <-result; err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "2.6.0", DaemonBinaryName(runtime.GOOS)))
+	if err != nil || string(data) != "resumed-signed-daemon" {
+		t.Fatalf("binary=%q err=%v", data, err)
+	}
+	if st = svc.Status(); st.Applying || st.Progress.Phase != "ready" || st.ManualUpdateRequired {
+		t.Fatalf("final=%+v", st)
+	}
+	if _, ok := SelectBest(dir, "2.4.0"); !ok {
+		t.Fatal("verified resumed payload not selectable")
 	}
 }

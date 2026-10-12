@@ -47,3 +47,16 @@ export function isAuthShapedGitError(msg: string | null | undefined): boolean {
     m.includes('403')
   )
 }
+
+/** Best-effort extraction of the repo URL from an error message; returns '' if none. */
+export function extractRepoUrl(msg: string | null): string {
+  if (!msg) return ''
+  const match = msg.match(/(https?:\/\/[^\s]+\.git)/i) || msg.match(/(git@[^\s]+)/i)
+  return match ? match[1] : ''
+}
+
+/** Carry only explicit cache choices within this recovery attempt. */
+export function gitRecoveryCache(failure: { repoUrl: string; cachedRepos?: string[] }, useCache: boolean): string | string[] | undefined {
+  const repos = [...new Set([...(failure.cachedRepos ?? []), ...(useCache ? [failure.repoUrl] : [])])]
+  return repos.length === 1 ? repos[0] : repos.length ? repos : undefined
+}

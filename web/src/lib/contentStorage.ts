@@ -1,4 +1,3 @@
-import { create } from 'zustand'
 import type { LocaleKey } from './i18n'
 import type { ContentStorageDto } from './types'
 
@@ -16,7 +15,7 @@ export const CONTENT_STORAGE_DB = 'DB'
 export const CONTENT_STORAGE_S3 = 'S3'
 export type ContentStorageType = typeof CONTENT_STORAGE_DB | typeof CONTENT_STORAGE_S3
 
-/** The bundle has no ecos-content: S3 is not a question for it, so the option is HIDDEN. */
+/** The bundle has no ecos-content: show S3 disabled with the Enterprise hint. */
 export const REASON_NO_CONTENT_APP = 'NO_CONTENT_APP'
 export const REASON_NO_PROVIDER_CONFIG = 'NO_PROVIDER_CONFIG'
 export const REASON_NO_PROVIDER_APP = 'NO_PROVIDER_APP'
@@ -59,9 +58,8 @@ export function s3OptionLabel(providerTitle: string | undefined, providerApp: st
 
 /**
  * Why S3 cannot be chosen for the bundle the dialog has selected, as one
- * sentence for the hint under the disabled option. NO_CONTENT_APP has a
- * sentence too: the create dialog hides the option for it, but an S3
- * namespace being moved to such a bundle has to be told.
+ * sentence for the hint under the disabled option. NO_CONTENT_APP explains
+ * that S3 content storage requires Citeck Enterprise.
  */
 export function s3UnavailableText(reason: string | undefined, providerApp: string | undefined, t: Translate): string {
   const app = providerApp || 'S3'
@@ -110,11 +108,6 @@ export function contentStorageProblemText(problem: string, providerApp: string |
   }
 }
 
-/** The connection states that are progress, not a verdict: shown as information. */
-export function isContentStorageInProgress(state: string | undefined): boolean {
-  return state === STATE_PENDING || state === STATE_WAITING || state === STATE_PROVISIONING
-}
-
 /**
  * The provider app the operator should be asked about before stopping it, or
  * "" — only an S3 namespace has one. Stopping it is never refused (owner
@@ -124,17 +117,3 @@ export function guardedProviderApp(cs: ContentStorageDto | undefined | null): st
   if (!cs || contentStorageTypeOf(cs.type) !== CONTENT_STORAGE_S3) return ''
   return (cs.providerApp ?? '').trim()
 }
-
-interface ContentStorageBannerState {
-  /** Workspace/namespace pair (JSON-encoded) whose IN-PROGRESS banner the user hid for this session. The
-   *  error and problem variants are never hidden — they describe something
-   *  broken right now (the BundleErrorBanner rule). */
-  dismissedNs: string | null
-  dismissProgress: (nsId: string) => void
-}
-
-/** Session-scoped dismissal of the in-progress content storage banner. */
-export const useContentStorageBannerStore = create<ContentStorageBannerState>((set) => ({
-  dismissedNs: null,
-  dismissProgress: (nsId) => set({ dismissedNs: nsId }),
-}))

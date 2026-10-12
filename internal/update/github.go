@@ -7,9 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"path"
-	"path/filepath"
 	"time"
 )
 
@@ -103,51 +101,6 @@ func (c *client) fetchRaw(ctx context.Context, ref, repoPath string) ([]byte, er
 		return nil, fmt.Errorf("read %s: %w", repoPath, err)
 	}
 	return body, nil
-}
-
-// downloadFile streams srcURL to dst atomically (temp + rename).
-func (c *client) downloadFile(ctx context.Context, srcURL, dst string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srcURL, http.NoBody)
-	if err != nil {
-		return fmt.Errorf("build download request: %w", err)
-	}
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return fmt.Errorf("download %s: %w", srcURL, err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusNotFound {
-		// errNotFound lets callers distinguish a genuinely-absent asset (e.g. a
-		// release published without its ".sig" sidecar) from transport errors.
-		return fmt.Errorf("download %s: %w", srcURL, errNotFound)
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("download %s: status %d", srcURL, resp.StatusCode)
-	}
-	if err = os.MkdirAll(filepath.Dir(dst), 0o755); err != nil { //nolint:gosec // payload dir
-		return fmt.Errorf("mkdir for download: %w", err)
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(dst), ".dl-*")
-	if err != nil {
-		return fmt.Errorf("create temp: %w", err)
-	}
-	tmpName := tmp.Name()
-	// Cap the download well above the ~24 MB daemon so a hostile or compromised
-	// redirect cannot fill the disk before the extraction cap would apply.
-	if _, err := io.Copy(tmp, io.LimitReader(resp.Body, maxDownloadBytes)); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmpName)
-		return fmt.Errorf("write download: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpName)
-		return fmt.Errorf("close download: %w", err)
-	}
-	if err := os.Rename(tmpName, dst); err != nil {
-		_ = os.Remove(tmpName)
-		return fmt.Errorf("rename download: %w", err)
-	}
-	return nil
 }
 
 // assetURL builds the release-asset download URL for a given tag + filename.

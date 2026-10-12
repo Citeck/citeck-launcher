@@ -9,6 +9,39 @@ Citeck Launcher manages Citeck namespaces and Docker containers. It is a single 
 
 The repo also keeps the legacy Kotlin/JVM launcher under git tags `v1.1.8`–`v1.4.2` for reference and rollback (`git show v1.3.8:path/to/file`). The desktop migrator opens its H2 `storage.db` read-only on first start.
 
+## Managing a running Launcher
+
+Start capability discovery with `citeck agent` (JSON), the desktop package's
+headless `citeck-launcher agent`, or `GET /api/v1/agent`.
+Use `citeck agent application.stop` for an operation contract. Manage
+Launcher-owned applications/namespaces through the Launcher API or CLI:
+direct Docker lifecycle commands bypass persisted detach intent and the
+reconciler can reverse them. Discover the active namespace and short app
+ids via `citeck status --format json`, then observe actual state after a
+request. Discovery never starts a second daemon or grants task authorization.
+See [docs/agent-api.md](docs/agent-api.md) for transport and operation semantics.
+
+Git update recovery must report failed refreshes even when cached configuration
+is usable. Cache choices are explicit and scoped to the current operation/retry
+chain, never global host suppression. Show persisted successful sync time or
+unknown, and use the actual attempted secret reference. Repository recovery
+binds bundle credentials through the local workspace overlay (`authType:
+secret:<id>`) without changing the workspace repo token. Log references and
+availability only; never credential values. See [docs/workspace-formats.md](docs/workspace-formats.md).
+
+Download UI must observe backend bytes while the apply POST is pending, with
+unknown-size progress kept indeterminate. Snapshot byte counters are distinct
+from import volume counters. Show phase, elapsed time and progress silence;
+unrelated application events are not download activity. Keep hash/signature,
+retry/resume and update rollback gates unchanged. Payload downloads use a
+30-second byte inactivity timeout, never a total transfer duration limit.
+Updater assets retry transient failures with a 3-second delay and validated Range
+resume. Both snapshot and updater retry counters reset only on bytes from a
+requested 206 partial resume. Full 200 restarts never reset counters; three
+failed attempts without resumed progress stop the transfer. Integrity and health-gate
+failures are never transport retries. See [docs/snapshots.md](docs/snapshots.md)
+and [docs/agent-api.md](docs/agent-api.md).
+
 ## Build & Development Commands
 
 ### Go + Web UI (primary)
@@ -171,7 +204,7 @@ The lists below are **load-bearing highlights, not a full inventory** — `web/s
 - `StateWriteBanner.tsx` (non-dismissible: the daemon cannot save state), `FormDialog.tsx` (spec-driven forms), `JournalDialog.tsx` (data-table dialog), `ConfirmModal.tsx`, `Modal.tsx`, `Toast.tsx`, `ContextMenu.tsx`, `Select.tsx`, `StatusBadge.tsx`, `ErrorBoundary.tsx` — reusable primitives
 - Domain dialogs: `NamespaceDialog`/`NamespaceEditDialog`, `SecretsDialog` + `SecretsUnlockGuard` + `MasterPasswordDialog`, `SnapshotsDialog`, `VolumesDialog`, `RegistryCredentialsDialog`, `GitPullErrorDialog`, `UpdateDialog`/`UpdateNotification`, `WorkspaceFormDialog` (the typed workspace git form — extracted from `WorkspaceSelector` once the Settings page became a second caller), `MigrationDegradedBanner`
 - `DependenciesDialog` + `DependencyUpgradeBanner` — the infra-dependency version surface: what each dependency's DATA runs on, what the bundle offers, and the confirm → preparing → progress → result flow of a migration (fed by `depsStore`, which the SSE stream and the namespace DTO both write). Three rendering rules were each a defect found on a live stand: **`preparing` is never a step** (the daemon publishes it with `stepCount: 0` before a plan exists, so it lands in `done` and the append-unknown-ids path put a ticked "Preparing…" row *after* the last real step — `isPreparing` already renders that state as a spinner); the leftover-target-volume sentence must branch on **all three** states of `ExistingVolume.Version` — a version, the `"empty"` sentinel, and `""` for a dependency that writes no version marker at all, which rendered as `(244 KB, PostgreSQL )` on a RabbitMQ volume holding real data; and every table cell needs its own trailing padding, because Tailwind's preflight sets `border-collapse: collapse` and kills the default `border-spacing`, so the header read `DependencyCurrent` and `zookeeperzookeeper:3.9.5`
-- `ContentStorageBanner` + `lib/contentStorage.ts` — the S3 content-storage surface (see the content-storage bullet under Key Technical Decisions): a generation `problem` and a connection `error` are red and NOT dismissible (the error carries Retry → `POST /namespace/content-storage/provision`); `pending`/`waiting`/`provisioning` are an info line, dismissible per namespace for the session and **hidden while the namespace is STOPPED** — the daemon has no persisted "connected" flag, so every S3 namespace reads `pending` while stopped and after a daemon restart, connected or not. The reason/state codes are spelled out in `contentStorage.ts` because TS cannot import the Go constants — change both together. The option label is `S3 (<providerTitle>)` — the workspace's optional `contentStorage.s3.title`, else the app id — built the same way by the CLI (`namespace.S3OptionLabel`); there is no product-name table in TS any more. With no provider named at all the problem/error banners use their `titleNoApp` sentences rather than a stand-in "(S3)", and the progress banner shows nothing. The create dialog ALWAYS sends its choice (`"DB"` included), because the daemon now decides a new namespace's storage from the request alone; the edit dialog shows S3 disabled for a namespace with the external `s3:` block (`NamespaceEditDto.externalS3`), which the options endpoint — bundle-only — cannot know. `t()` replaces EVERY occurrence of a placeholder (`replaceAll`, as the Go renderer does): the pending banner names `{app}` twice. The namespace dialog's choice is two radio buttons, not `Select` (which cannot show one option disabled), and the S3 option stays hidden until the daemon has answered `GET /content-storage/options` for the SELECTED bundle (each answer is tagged with the bundle it was asked for), so Community bundles and older daemons see no change and the dialog never offers what saving refuses. `AppTable` asks for confirmation before stopping the provider of an S3 namespace — a warning, never a refusal.
+- `ContentStorageBanner` + `lib/contentStorage.ts` — the S3 content-storage surface (see the content-storage bullet under Key Technical Decisions): a generation `problem` and a connection `error` are red and NOT dismissible (the error carries Retry → `POST /namespace/content-storage/provision`); Normal `pending`/`waiting`/`provisioning` and settled states render nothing, including while STOPPED; only actionable configuration problems and connection errors appear. The reason/state codes are spelled out in `contentStorage.ts` because TS cannot import the Go constants — change both together. The option label is `S3 (<providerTitle>)` — the workspace's optional `contentStorage.s3.title`, else the app id — built the same way by the CLI (`namespace.S3OptionLabel`); there is no product-name table in TS any more. With no provider named at all the problem/error banners use their `titleNoApp` sentences rather than a stand-in "(S3)", and normal progress states render nothing. The create dialog ALWAYS sends its choice (`"DB"` included), because the daemon now decides a new namespace's storage from the request alone; the edit dialog shows S3 disabled for a namespace with the external `s3:` block (`NamespaceEditDto.externalS3`), which the options endpoint — bundle-only — cannot know. `t()` replaces EVERY occurrence of a placeholder (`replaceAll`, as the Go renderer does). The namespace dialog's choice is two radio buttons, not `Select` (which cannot show one option disabled), and the S3 option stays hidden until the daemon has answered `GET /content-storage/options` for the SELECTED bundle (each answer is tagged with the bundle it was asked for), once answered, Community shows disabled S3 with an Enterprise-only hint; older daemons without the endpoint still see no change, and the dialog never enables what saving refuses. `AppTable` asks for confirmation before stopping the provider of an S3 namespace — a warning, never a refusal.
 - `SecretPicker.tsx` — **`activeIdx` indexes the FILTERED (`visible`) list, never the raw `secrets` array.** The two diverged: the mouse-open path seeded the index from the unfiltered list while Enter committed from the filtered one, so click-then-Enter bound a secret belonging to a *different registry host* (and with the default `activeIdx = 0`, always the first visible row). Every seed goes through one helper and is clamped to the current row count; re-derive it whenever `visible` changes shape (host change, `showAllHosts` toggle, background reload). A selection filtered out by the host filter is kept in the list and flagged with its real host rather than silently rendering as valid on the closed trigger.
 - `RegistryCredentialsDialog.tsx` — takes a `manage` prop. The error flow ("Sign in to…" / "Save & Retry") implies a stuck pull to retry; opened from Settings there is none, so the wording switches. Unbinding is `POST /registry-bindings` with an empty `secretId` — the daemon always supported it, there was simply no UI.
 

@@ -6,9 +6,12 @@ import type { NamespaceDto } from '../lib/types'
 import { postNamespaceStart } from '../lib/api'
 import { showError } from '../lib/errorModal'
 
-vi.mock('../lib/api', () => ({
+vi.mock('../lib/api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../lib/api')>()),
   postNamespaceStart: vi.fn().mockResolvedValue({ success: true }),
   postNamespaceStop: vi.fn().mockResolvedValue({ success: true }),
+  listWorkspaces: vi.fn().mockResolvedValue([]),
+  getSecrets: vi.fn().mockResolvedValue([]),
 }))
 
 // The pre-start registry-credentials gate is orthogonal to which action the
@@ -264,4 +267,16 @@ describe('NamespaceControls during a dependency migration', () => {
     fireEvent.contextMenu(screen.getAllByRole('button')[0])
     expect(screen.getByText('Force Update And Start')).toBeInTheDocument()
   })
+})
+
+it('shows asynchronous Git recovery and uses cache only for the selected retry', async () => {
+  HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement) { this.open = true })
+  HTMLDialogElement.prototype.close = vi.fn(function (this: HTMLDialogElement) { this.open = false })
+  setNamespace({ updateError: 'authentication required', updateErrorAt: 900000,
+    updateGitError: { repoUrl: 'https://gitlab.example.invalid/ws.git', workspaceId: 'ws', cacheAvailable: true, force: true } })
+  render(<NamespaceControls status="STOPPED" />)
+  const cache = await screen.findByRole('button', { name: 'Use cached repository' })
+  await act(async () => { fireEvent.click(cache) })
+  expect(postNamespaceStart).toHaveBeenCalledWith(true, 'https://gitlab.example.invalid/ws.git')
+  expect(showError).not.toHaveBeenCalled()
 })

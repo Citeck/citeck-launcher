@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useModalDialog } from '../hooks/useModalDialog'
-import { getSecrets, listWorkspaces, postGitSkipPull, updateWorkspace } from '../lib/api'
+import { getSecrets, listWorkspaces, postGitSkipPull, updateWorkspace, linkGitRepoSecret } from '../lib/api'
 import { extractHost, isAuthShapedGitError } from '../lib/giturl'
 import { useTranslation } from '../lib/i18n'
-import type { SecretMetaDto, WorkspaceDto } from '../lib/types'
+import type { GitFailureDto, SecretMetaDto, WorkspaceDto } from '../lib/types'
 import { SecretPicker } from './SecretPicker'
 import { SecretEditDialog } from './SecretEditDialog'
 import { needsWorkspaceRelink, workspaceSecretInUse } from '../lib/secretPicker'
 
-export type GitPullDecision = 'retry' | 'skip' | 'cancel'
+export type GitPullDecision = 'retry' | 'skip' | 'cancel' | 'cache'
 
 interface GitPullErrorDialogProps {
   open: boolean
@@ -25,6 +25,7 @@ interface GitPullErrorDialogProps {
    * no workspace to bind to.
    */
   workspaceId?: string
+  failure?: GitFailureDto
   onDecide: (d: GitPullDecision) => void
 }
 
@@ -45,8 +46,8 @@ interface GitPullErrorDialogProps {
  * renders the actionable token section (Kotlin 1.x prompted for the token
  * modally at clone time) — see the `workspaceId` prop.
  */
-export function GitPullErrorDialog({ open, repoUrl, errorMessage, skipAvailable, cancelAvailable, workspaceId, onDecide }: GitPullErrorDialogProps) {
-  const { t } = useTranslation()
+export function GitPullErrorDialog({ open, repoUrl, errorMessage, skipAvailable, cancelAvailable, workspaceId, failure, onDecide }: GitPullErrorDialogProps) {
+  const { t, locale } = useTranslation()
   const dialogRef = useModalDialog(open)
   // Selected secret id in the picker ('' = nothing picked yet).
   const [selection, setSelection] = useState('')
@@ -79,7 +80,7 @@ export function GitPullErrorDialog({ open, repoUrl, errorMessage, skipAvailable,
     preselectedRef.current = false
   }, [open])
 
-  const showTokenSection = !!workspaceId && isAuthShapedGitError(errorMessage)
+  const showTokenSection = !!workspaceId && (!!failure || isAuthShapedGitError(errorMessage))
 
   // Resolve the workspace whose repo failed, so the section can SAY which
   // secret is in use. Best-effort: server mode / older daemons yield [].
@@ -111,7 +112,7 @@ export function GitPullErrorDialog({ open, repoUrl, errorMessage, skipAvailable,
   // Secret in use: the workspace's linked secretId, or the legacy
   // ws:<id>:repo secret when authType=TOKEN without a link.
   const ws = workspaces.find((w) => w.id === workspaceId)
-  const currentSecretId = workspaceSecretInUse(ws)
+  const currentSecretId = failure ? (failure.secretId ?? '') : workspaceSecretInUse(ws)
   const currentSecret = secrets.find((s) => s.id === currentSecretId)
 
   // Preselect the in-use secret once it resolves against the loaded list.
@@ -145,12 +146,15 @@ export function GitPullErrorDialog({ open, repoUrl, errorMessage, skipAvailable,
   // DIFFERENT secret; if only the secret's VALUE was edited (same id), the
   // daemon resolves the fresh value by id and a plain retry suffices.
   async function handleSaveAndRetry() {
-    if (!workspaceId || !selection) return
+    if (!workspaceId) return
+    if (!selection && failure) { onDecide('retry'); return }
+    if (!selection) return
     setSaving(true)
     setSaveError('')
     try {
       if (needsWorkspaceRelink(currentSecretId, selection)) {
-        await updateWorkspace(workspaceId, { secretId: selection })
+        if (failure) await linkGitRepoSecret(workspaceId, failure.repoUrl, selection)
+        else await updateWorkspace(workspaceId, { secretId: selection })
       }
       onDecide('retry')
     } catch (e) {
@@ -175,11 +179,18 @@ export function GitPullErrorDialog({ open, repoUrl, errorMessage, skipAvailable,
           <p className="text-xs text-destructive whitespace-pre-wrap mb-3">{errorMessage}</p>
         )}
         <p className="text-sm font-mono text-muted-foreground break-all mb-4">{repoUrl}</p>
+        {failure && (
+          <p className="text-xs text-muted-foreground mb-4">
+            {failure.cacheAvailable ? t('gitPullError.cacheUpdated', { time: failure.cacheUpdatedAt
+              ? new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' }).format(failure.cacheUpdatedAt)
+              : t('gitPullError.cacheTimeUnknown') }) : t('gitPullError.cacheUnavailable')}
+          </p>
+        )}
         {showTokenSection && (
           <div className="mb-4 rounded-md border border-border bg-background/40 p-3 space-y-3">
             {/* Plain-language explanation + WHICH secret is in use, so a
                 non-expert knows what to fix. */}
-            <p className="text-xs text-muted-foreground">{t('gitPullError.authExplain')}</p>
+            <p className="text-xs text-muted-foreground">{isAuthShapedGitError(errorMessage) ? t('gitPullError.authExplain') : errorMessage}</p>
             {!picking && currentSecret ? (
               // Compact default: name the secret in use and offer the two
               // actions that actually fix an auth failure — edit its token
@@ -249,6 +260,17 @@ export function GitPullErrorDialog({ open, repoUrl, errorMessage, skipAvailable,
           {/* Skip is always shown; when the repo was never cloned it can't be
               skipped, so the button is disabled and the reason moves into its
               tooltip (no separate explanatory line above). */}
+          {failure ? (
+            <button
+              type="button"
+              className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted disabled:opacity-50"
+              onClick={() => onDecide('cache')}
+              disabled={saving || !failure.cacheAvailable}
+              title={failure.cacheAvailable ? t('gitPullError.cacheMayBeOld') : t('gitPullError.cacheUnavailable')}
+            >
+              {t('gitPullError.useCache')}
+            </button>
+          ) : (
           <button
             type="button"
             className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
@@ -258,6 +280,7 @@ export function GitPullErrorDialog({ open, repoUrl, errorMessage, skipAvailable,
           >
             {t('gitPullError.skip')}
           </button>
+          )}
           {showTokenSection ? (
             // Single primary action for the auth flow: relink + retry when the
             // user switched secrets, otherwise a plain retry (e.g. after just
@@ -267,7 +290,7 @@ export function GitPullErrorDialog({ open, repoUrl, errorMessage, skipAvailable,
               type="button"
               className="rounded-md bg-primary text-primary-foreground px-3 py-1.5 text-sm font-medium hover:bg-primary/90 disabled:opacity-50"
               onClick={handleSaveAndRetry}
-              disabled={saving || !selection}
+              disabled={saving || (!failure && !selection)}
             >
               {needsWorkspaceRelink(currentSecretId, selection) ? t('gitPullError.saveAndRetry') : t('gitPullError.retry')}
             </button>

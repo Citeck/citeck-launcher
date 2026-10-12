@@ -8,7 +8,6 @@ import (
 	"net/http"
 
 	"github.com/citeck/citeck-launcher/internal/api"
-	"github.com/citeck/citeck-launcher/internal/bundle"
 	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/namespace"
 	"github.com/citeck/citeck-launcher/internal/storage"
@@ -63,7 +62,7 @@ func workspaceConfigOverlay(store storage.Store, wsID string) func(raw []byte) (
 // for a workspace (NO overlay) — the baseline the user's delta is computed
 // against and the editor diffs against. Returns nil when nothing resolved.
 func (d *Daemon) resolveWorkspaceBaselineRaw(ws storage.WorkspaceDto) []byte {
-	resolver := bundle.NewResolverWithAuth(config.BundlesDataDir(ws.ID), makeTokenLookup(d.secretReaderFunc())).
+	resolver := authenticatedBundleResolver(config.BundlesDataDir(ws.ID), d.secretReaderFunc()).
 		WithWorkspaceRepo(buildWorkspaceRepoOpts(ws, d.secretService)).
 		WithLauncherVersion(d.version)
 	if !config.IsDesktopMode() {
@@ -89,7 +88,7 @@ func (d *Daemon) refreshActiveWorkspaceConfigCache() {
 	if err != nil || ws == nil {
 		return
 	}
-	resolver := bundle.NewResolverWithAuth(config.BundlesDataDir(wsID), makeTokenLookup(d.secretReaderFunc())).
+	resolver := authenticatedBundleResolver(config.BundlesDataDir(wsID), d.secretReaderFunc()).
 		WithWorkspaceRepo(buildWorkspaceRepoOpts(*ws, d.secretService)).
 		WithWorkspaceOverlay(workspaceConfigOverlay(d.store, wsID)).
 		WithLauncherVersion(d.version)

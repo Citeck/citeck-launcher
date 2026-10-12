@@ -1,22 +1,17 @@
 import { useState } from 'react'
-import { AlertTriangle, HardDrive, Loader2, RotateCw, X } from 'lucide-react'
+import { AlertTriangle, Loader2, RotateCw } from 'lucide-react'
 import { useDashboardStore } from '../lib/store'
-import { useActiveWorkspaceId } from '../lib/daemonStatus'
 import { useTranslation } from '../lib/i18n'
 import { postContentStorageProvision } from '../lib/api'
 import { toast } from '../lib/toast'
 import {
   STATE_ERROR,
-  STATE_PENDING,
-  STATE_PROVISIONING,
   contentStorageProblemText,
-  isContentStorageInProgress,
-  useContentStorageBannerStore,
 } from '../lib/contentStorage'
 
 /**
  * Namespace-level banner for `NamespaceDto.contentStorage` — present only on a
- * namespace that keeps ecos-content's files in S3. Three variants, in order of
+ * namespace that keeps ecos-content's files in S3. Two alert variants, in order of
  * precedence:
  *
  *  - `problem`: this generation could not wire ecos-content to its provider at
@@ -25,15 +20,9 @@ import {
  *    broken right now, and no retry can fix configuration.
  *  - state `error`: the one-time connection inside ECOS failed. NOT
  *    dismissible either, and it carries the Retry button — the daemon also
- *    retries on its own on the next qualifying event.
- *  - pending / waiting / provisioning: progress, shown as information and
- *    dismissible for the session. Hidden on a STOPPED namespace, where nothing
- *    is going to happen: the daemon has no persisted "connected" flag and
- *    re-derives the connection from ECOS after every start, so every S3
- *    namespace reads "pending" while stopped, connected or not.
- *
- * connected and admin-managed render nothing: both are settled, and an
- * administrator's own choice of storage is not the launcher's business.
+ *    retries on its own on a five-minute timer and qualifying events.
+ * Normal pending / waiting / provisioning progress and settled states render
+ * nothing. Only configuration problems and failed connections need attention.
  *
  * The state changes arrive as `namespace_content_storage` SSE events, which
  * the store answers with a namespace refetch — so this banner follows the
@@ -41,11 +30,6 @@ import {
  */
 export function ContentStorageBanner() {
   const cs = useDashboardStore((s) => s.namespace?.contentStorage)
-  const nsId = useDashboardStore((s) => s.namespace?.id ?? '')
-  const workspaceId = useActiveWorkspaceId()
-  const nsStatus = useDashboardStore((s) => s.namespace?.status)
-  const dismissedNs = useContentStorageBannerStore((s) => s.dismissedNs)
-  const dismissProgress = useContentStorageBannerStore((s) => s.dismissProgress)
   const [retrying, setRetrying] = useState(false)
   const { t } = useTranslation()
 
@@ -115,35 +99,5 @@ export function ContentStorageBanner() {
     )
   }
 
-  if (!isContentStorageInProgress(cs.state)) return null
-  if (nsStatus === 'STOPPED' || dismissedNs === JSON.stringify([workspaceId, nsId])) return null
-  // No provider named, no generation problem: nothing is being connected (the
-  // daemon runs nothing without a provider), so there is no progress to show.
-  if (!app) return null
-
-  const key = cs.state === STATE_PENDING
-    ? 'contentStorage.banner.pending'
-    : cs.state === STATE_PROVISIONING
-      ? 'contentStorage.banner.provisioning'
-      : 'contentStorage.banner.waiting'
-  return (
-    <div
-      role="status"
-      className="flex shrink-0 items-center gap-2 border-b border-sky-500/40 bg-sky-500/10 px-3 py-1.5 text-xs text-sky-700 dark:text-sky-300"
-    >
-      {cs.state === STATE_PENDING
-        ? <HardDrive size={14} className="shrink-0" />
-        : <Loader2 size={14} className="shrink-0 animate-spin" />}
-      <span className="min-w-0 flex-1 truncate" title={t(key, { app })}>{t(key, { app })}</span>
-      <button
-        type="button"
-        aria-label={t('contentStorage.banner.dismiss')}
-        title={t('contentStorage.banner.dismiss')}
-        className="shrink-0 rounded p-0.5 hover:bg-sky-500/20"
-        onClick={() => dismissProgress(JSON.stringify([workspaceId, nsId]))}
-      >
-        <X size={14} />
-      </button>
-    </div>
-  )
+  return null
 }

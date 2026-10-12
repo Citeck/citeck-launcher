@@ -401,3 +401,24 @@ describe('useDashboardStore', () => {
     }
   })
 })
+
+describe('snapshot byte progress transport', () => {
+ it('starts on download events, keeps byte totals and clears on completion', async () => {
+  const { useLongOpStore } = await import('./longOp')
+  useDashboardStore.getState().stopEventStream()
+  useLongOpStore.getState().end()
+  vi.mocked(connectEvents).mockClear()
+  useDashboardStore.getState().startEventStream()
+  const onEvent = vi.mocked(connectEvents).mock.calls.at(-1)![0]
+  const event = { seq: 0, timestamp: Date.now(), namespaceId: 'ns1', appName: '', before: '', after: '' }
+  onEvent({ ...event, type: 'snapshot_download' })
+  expect(useLongOpStore.getState().current?.kind).toBe('snapshot.download')
+  onEvent({ ...event, type: 'snapshot_progress', phase: 'downloading', receivedBytes: 100000, totalBytes: 400000 })
+  expect(useLongOpStore.getState().current?.progress).toMatchObject({ receivedBytes: 100000, totalBytes: 400000, phase: 'downloading' })
+  onEvent({ ...event, type: 'snapshot_import' })
+  expect(useLongOpStore.getState().current?.progress?.receivedBytes).toBeUndefined()
+  onEvent({ ...event, type: 'snapshot_complete' })
+  expect(useLongOpStore.getState().current).toBeNull()
+  useDashboardStore.getState().stopEventStream()
+ })
+})

@@ -6,7 +6,6 @@ import (
 
 	"github.com/citeck/citeck-launcher/internal/api"
 	"github.com/citeck/citeck-launcher/internal/appdef"
-	"github.com/citeck/citeck-launcher/internal/bundle"
 	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/namespace"
 )
@@ -125,7 +124,7 @@ func (d *Daemon) resolveReloadPlanInputs(act activeNamespace) (*reloadPlanInputs
 	// claim a reload is about to turn HTTPS off.
 	resolveProxyTLSPathsForPlan(nsCfg)
 
-	resolver := bundle.NewResolverWithAuth(config.BundlesDataDir(act.workspaceID), makeTokenLookup(d.secretReaderFunc())).
+	resolver := authenticatedBundleResolver(config.BundlesDataDir(act.workspaceID), d.secretReaderFunc()).
 		WithWorkspaceRepo(d.resolveActiveWorkspaceRepoOpts()).
 		WithWorkspaceOverlay(workspaceConfigOverlay(d.store, act.workspaceID)).
 		WithLauncherVersion(d.version)

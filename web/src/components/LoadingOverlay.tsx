@@ -1,3 +1,4 @@
+import { DownloadProgress } from './DownloadProgress'
 import { Loader2 } from 'lucide-react'
 import { useTranslation } from '../lib/i18n'
 import { useLongOpStore, type LongOpProgress } from '../lib/longOp'
@@ -8,6 +9,8 @@ interface LoadingOverlayProps {
   title: string
   progress?: LongOpProgress
   stalled?: boolean
+  startedAt?: number
+  updatedAt?: number
   onDismiss?: () => void
 }
 
@@ -19,7 +22,7 @@ interface LoadingOverlayProps {
  * ~30s), in which case a Dismiss button appears so the user can recover
  * from a daemon crash mid-op.
  */
-export function LoadingOverlay({ open, title, progress, stalled, onDismiss }: LoadingOverlayProps) {
+export function LoadingOverlay({ open, title, progress, stalled, startedAt, updatedAt, onDismiss }: LoadingOverlayProps) {
   const { t } = useTranslation()
   const dialogRef = useModalDialog(open)
 
@@ -52,7 +55,9 @@ export function LoadingOverlay({ open, title, progress, stalled, onDismiss }: Lo
         <Loader2 className="animate-spin text-primary" size={40} />
         <h2 className="text-base font-semibold text-center">{title}</h2>
         <p className="text-xs text-muted-foreground text-center min-h-[1rem]">{detail}</p>
-        {pct !== null && (
+        {progress?.phase === 'downloading' ? (
+          <DownloadProgress progress={{ phase: 'downloading', receivedBytes: progress.receivedBytes ?? 0, totalBytes: progress.totalBytes ?? 0, startedAt: startedAt ?? 0, updatedAt: updatedAt ?? 0 }} />
+        ) : pct !== null ? (
           <div className="w-full">
             <div className="h-1.5 w-full overflow-hidden rounded bg-muted">
               <div
@@ -62,6 +67,8 @@ export function LoadingOverlay({ open, title, progress, stalled, onDismiss }: Lo
             </div>
             <p className="mt-1 text-[10px] text-muted-foreground text-right tabular-nums">{pct}%</p>
           </div>
+        ) : (
+          <DownloadProgress progress={{ phase: progress?.phase ?? 'importing', receivedBytes: 0, totalBytes: 0, startedAt: startedAt ?? 0, updatedAt: updatedAt ?? 0 }} />
         )}
         {stalled ? (
           <>
@@ -100,6 +107,8 @@ export function LoadingOverlayHost() {
       title={current?.title ?? ''}
       progress={current?.progress}
       stalled={current?.stalled ?? false}
+      startedAt={current?.startedAt}
+      updatedAt={current?.lastProgressAt}
       onDismiss={end}
     />
   )

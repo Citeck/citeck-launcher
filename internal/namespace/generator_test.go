@@ -67,6 +67,15 @@ func TestGenerateMailpit(t *testing.T) {
 	assert.Contains(t, mailpit.Image, "axllent/mailpit")
 	assert.Contains(t, mailpit.NetworkAliases, MailhogHost, "mailpit must keep the legacy mailhog alias")
 	assert.Nil(t, findGeneratedApp(resp, appdef.AppMailpit).LivenessProbe)
+	assert.Empty(t, mailpit.Ports, "server keeps Mailpit internal")
+
+	config.SetDesktopMode(true)
+	t.Cleanup(config.ResetDesktopMode)
+	resp, err = Generate(cfg, &bundle.Def{}, nil, SystemSecrets{JWT: "test-jwt", OIDC: "test-oidc"})
+	require.NoError(t, err)
+	mailpit = findGeneratedApp(resp, appdef.AppMailpit)
+	require.NotNil(t, mailpit)
+	assert.Equal(t, []string{"17011:1025", "17012:8025"}, mailpit.Ports)
 }
 
 func TestFlatMapToYAML_NestedKeys(t *testing.T) {

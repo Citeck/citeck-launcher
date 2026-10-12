@@ -198,6 +198,9 @@ func (d *Daemon) handleGetNamespace(w http.ResponseWriter, r *http.Request) {
 	// only for the namespace the pass is pinned to.
 	dto.Updating = d.updateInFlight.Load() && d.updatingAppliesTo(act.nsConfig)
 	dto.UpdateError, dto.UpdateErrorAt = d.updateFailureFor(act.nsConfig)
+	if f := d.updateLastFailure.Load(); f != nil && dto.UpdateError != "" {
+		dto.UpdateGitError = f.git
+	}
 	// Name and BundleRef come from the active config, which doReload updates
 	// SYNCHRONOUSLY on edit; the runtime's own copy (ToNamespaceDto reads
 	// r.config) is refreshed only by the ASYNC cmdRegenerate, so a name-only
@@ -371,6 +374,12 @@ func (d *Daemon) handleStartNamespace(w http.ResponseWriter, r *http.Request) {
 	if act.nsConfig != nil {
 		nsID = act.nsConfig.ID
 	}
+	cached, cachedErr := d.cachedRepoRequest(r, act.workspaceID)
+	if cachedErr != nil {
+		writeError(w, http.StatusBadRequest, cachedErr.Error())
+		return
+	}
+
 	// A fresh click supersedes whatever the previous pass reported, so the UI
 	// never shows a stale failure next to a running update.
 	d.updateLastFailure.Store(nil)
@@ -382,7 +391,7 @@ func (d *Daemon) handleStartNamespace(w http.ResponseWriter, r *http.Request) {
 	// holding the lock was the request that started it. release is idempotent,
 	// so the defer above stays correct for every path that returns earlier.
 	release()
-	d.updateAndStartAsync(force, nsID)
+	d.updateAndStartAsync(force, nsID, cachedRepoChoice{workspaceID: act.workspaceID, nsID: nsID, URLs: cached})
 	msg := "Namespace start requested"
 	if force {
 		msg = "Force update and start requested"
@@ -397,6 +406,7 @@ type updateFailure struct {
 	nsID string
 	msg  string
 	at   int64
+	git  *api.GitFailureDto
 }
 
 // recordUpdateFailure stores a failure/refusal for the namespace the pass was
@@ -520,18 +530,29 @@ func (d *Daemon) setUpdateInFlight(v bool, nsID string) {
 // they arrive and so satisfies them.
 //
 // nsID pins the namespace the click targeted; an empty string disables the check.
-func (d *Daemon) updateAndStartAsync(forceGitPull bool, nsID string) {
+func (d *Daemon) updateAndStartAsync(forceGitPull bool, nsID string, choices ...cachedRepoChoice) {
+
+	d.updateQueueMu.Lock()
+	var choice *cachedRepoChoice
+	if len(choices) > 0 && (choices[0].URL != "" || len(choices[0].URLs) > 0) {
+		selected := choices[0]
+		selected.URLs = append([]string(nil), selected.URLs...)
+		choice = &selected
+	}
+	// Latest click owns target and cache intent, including an explicit plain
+	// request. Force remains OR-ed across the requests folded into this slot.
+	d.updatePendingCachedRepo.Store(choice)
 	if forceGitPull {
 		d.updatePendingForce.Store(true)
 	}
-	// Record the target BEFORE the CAS, for exactly the reason the force flag is
-	// recorded there: a click that folds still has to hand its intent to the pass
-	// that will run on its behalf.
 	d.updatePendingNsID.Store(&nsID)
-	if !d.updatePending.CompareAndSwap(false, true) {
+	queued := d.updatePending.CompareAndSwap(false, true)
+	d.updateQueueMu.Unlock()
+	if !queued {
 		slog.Info("Update-and-start folded into an already-queued update")
 		return
 	}
+
 	go func() {
 		d.reloadMu.Lock()
 		defer d.reloadMu.Unlock()
@@ -545,34 +566,19 @@ func (d *Daemon) updateAndStartAsync(forceGitPull bool, nsID string) {
 				d.setUpdateInFlight(false, "")
 			}
 		}()
-		// Release the queue slot now that the lock is ours, so a click landing
-		// during our own run queues a fresh pass rather than being dropped.
-		//
-		// Order matters, and it is the opposite of what it looks like: clear
-		// updatePending FIRST, then consume the force flag. These are two
-		// separate atomics, so a click can land between them; only this order
-		// leaves no interleaving that strands a force.
-		//   - click before the Store: its CAS fails and it folds, but our Swap
-		//     below picks its force up and we run forced — and our doReloadEx
-		//     runs after the click, so it is honored, not swallowed.
-		//   - click between Store and Swap: its CAS succeeds (a fresh pass is
-		//     queued) AND our Swap still picks the force up, so it is honored
-		//     immediately; the queued pass just repeats throttled. Harmless.
-		//   - click after the Swap: its CAS succeeds and the pass it queues
-		//     consumes the force itself.
-		// The reverse order (Swap then Store) has a hole: a click in that gap
-		// both fails its CAS *and* misses our Swap, so updatePendingForce stays
-		// set with no pass left to consume it — leaking an unthrottled git pull
-		// into the next, unrelated plain click.
-		d.updatePending.Store(false)
-		force := d.updatePendingForce.Swap(false) || forceGitPull
-		// Same consume-after-clear ordering as the force flag, and for the same
-		// reason: a click landing in the gap either has its target picked up here
-		// or queues a pass carrying its own.
+
+		// Claim all queued intent atomically before opening the slot for another
+		// request. A later cached retry cannot be consumed by this running pass.
+		d.updateQueueMu.Lock()
+		force := d.updatePendingForce.Swap(false)
 		target := nsID
-		if p := d.updatePendingNsID.Swap(nil); p != nil {
-			target = *p
+		if pending := d.updatePendingNsID.Swap(nil); pending != nil {
+			target = *pending
 		}
+		choice := d.updatePendingCachedRepo.Swap(nil)
+		d.updatePending.Store(false)
+		d.updateQueueMu.Unlock()
+
 		// Re-assert the in-flight flag, now that we know which namespace this
 		// pass is actually for. The handler raised it, but a PREVIOUS pass may
 		// have lowered it in the gap between its own updatePending check and our
@@ -590,6 +596,17 @@ func (d *Daemon) updateAndStartAsync(forceGitPull bool, nsID string) {
 		// the runtime's actual state or Runtime.Start early-returns
 		// ("Runtime already running") and the command is silently lost.
 		act := d.active()
+		if choice != nil {
+			if choice.nsID != target || choice.workspaceID != act.workspaceID {
+				d.recordUpdateFailure(target, "workspace changed before cached update — retry in the intended workspace")
+				return
+			}
+			d.cachedRepoURLs = choice.URLs
+			if len(d.cachedRepoURLs) == 0 && choice.URL != "" {
+				d.cachedRepoURLs = []string{choice.URL}
+			}
+		}
+		defer func() { d.cachedRepoURLs = nil }()
 		if act.runtime == nil {
 			slog.Warn("Update and start skipped: no active namespace runtime")
 			d.recordUpdateFailure(target, "no active namespace runtime")
@@ -641,7 +658,7 @@ func (d *Daemon) updateAndStartAsync(forceGitPull bool, nsID string) {
 		defer d.longOp.Unlock()
 		if err := d.invokeReloadEx(force, action == updateStartStart, true); err != nil {
 			slog.Warn("Update and start failed", "err", err)
-			d.recordUpdateFailure(target, err.Error())
+			d.updateLastFailure.Store(&updateFailure{nsID: target, msg: err.Error(), at: time.Now().UnixMilli(), git: d.gitFailureDetails(act.workspaceID, err, force, d.cachedRepoURLs)})
 		}
 	}()
 }

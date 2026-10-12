@@ -8,17 +8,19 @@ import {
   getNamespaceEdit,
   getWorkspaceSnapshots,
   pullBundleRepo,
+  ApiError,
   putNamespaceEdit,
   type NamespaceEditDto,
 } from '../lib/api'
-import type { BundleInfoDto, ContentStorageOptionDto, NamespaceCreateDto } from '../lib/types'
+import { gitRecoveryCache } from '../lib/giturl'
+import { GitPullErrorDialog } from './GitPullErrorDialog'
+import type { BundleInfoDto, GitFailureDto, ContentStorageOptionDto, NamespaceCreateDto } from '../lib/types'
 import { useTranslation } from '../lib/i18n'
 import { toast } from '../lib/toast'
 import { primeDesktopModeCache } from '../lib/desktop'
 import {
   CONTENT_STORAGE_DB,
   CONTENT_STORAGE_S3,
-  REASON_NO_CONTENT_APP,
   contentStorageTypeOf,
   s3OptionLabel,
   s3UnavailableText,
@@ -108,6 +110,7 @@ export function NamespaceEditDialog({
 
   const [bundles, setBundles] = useState<BundleInfoDto[]>([])
   const [snapshots, setSnapshots] = useState<WsSnapshotOpt[]>([])
+  const [gitError, setGitError] = useState<{ repo: string; message: string; failure: GitFailureDto } | null>(null)
   const [bundlesLoading, setBundlesLoading] = useState(false)
   const [loading, setLoading] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
@@ -287,7 +290,10 @@ export function NamespaceEditDialog({
       pullBundleRepo(repo)
         .then(() => getBundles())
         .then((bs) => setBundles(bs))
-        .catch((e) => toast((e as Error).message, 'error'))
+        .catch((e) => {
+          if (e instanceof ApiError && e.git) setGitError({ repo, message: e.message, failure: e.git })
+          else toast((e as Error).message, 'error')
+        })
         .finally(() => setBundlesLoading(false))
     }
   }
@@ -299,10 +305,9 @@ export function NamespaceEditDialog({
     && configVersion > 0
     && configVersion < MONGO_DROPPED_IN_CONFIG_VERSION
   // Content storage, derived. The option is offered only once the daemon has
-  // answered for THIS bundle: a bundle without ecos-content (every Community
-  // bundle) never has the question, so the form stays exactly as it was —
-  // unless the namespace already keeps its content in S3, which is always
-  // shown (read-only), whatever the bundle says.
+  // answered for THIS bundle. A bundle without ecos-content shows S3 disabled
+  // with the Enterprise hint. An existing S3 namespace is always shown
+  // read-only, even while bundle availability is unknown.
   const s3Opt = s3Options && s3Options.bundle === `${bundleRepo}\n${bundleKey}` ? s3Options.option : null
   const providerApp = s3Opt?.providerApp ?? ''
   const s3Label = s3OptionLabel(s3Opt?.providerTitle, providerApp)
@@ -313,9 +318,9 @@ export function NamespaceEditDialog({
   const effectiveStorage: ContentStorageType = storedS3 || (storageChoice === CONTENT_STORAGE_S3 && s3Selectable)
     ? CONTENT_STORAGE_S3
     : CONTENT_STORAGE_DB
-  const showStorageField = storedS3 || (!!s3Opt && s3Opt.reason !== REASON_NO_CONTENT_APP)
-  // Hide the tab strip when neither advanced setting applies.
-  const hasAdvanced = showMongoToggle || showStorageField
+  const showStorageField = storedS3 || !!s3Opt
+  // Only legacy MongoDB belongs on Advanced; content storage is on General.
+  const hasAdvanced = showMongoToggle
   const activeTab = hasAdvanced ? tab : 'general'
   // An S3 namespace moved to a bundle that cannot have S3 is refused on save
   // (CONTENT_STORAGE_UNAVAILABLE). Say so before the click; the daemon still
@@ -420,6 +425,7 @@ export function NamespaceEditDialog({
   const inputCls = 'w-full rounded border border-border bg-background px-2.5 py-1.5 text-sm focus:outline-none focus:border-primary'
 
   return (
+    <>
     <Modal
       open={open}
       title={title}
@@ -470,70 +476,6 @@ export function NamespaceEditDialog({
 
       {activeTab === 'advanced' ? (
         <>
-          {showStorageField && (
-            <fieldset className="min-w-0">
-              <legend className="block text-xs font-medium mb-1">{t('contentStorage.label')}</legend>
-              {storedS3 ? (
-                <>
-                  <div className="rounded border border-border bg-muted/40 px-2.5 py-1.5 text-sm">
-                    {s3Label}
-                  </div>
-                  <p className="mt-1 text-[11px] text-muted-foreground">{t('contentStorage.s3.oneWay')}</p>
-                  {storedS3Refused && (
-                    <p className="mt-1 text-[11px] text-destructive">
-                      {t('contentStorage.bundleChange.refused', {
-                        reason: s3UnavailableText(s3Opt?.reason, providerApp, t),
-                      })}
-                    </p>
-                  )}
-                </>
-              ) : (
-                <div className="flex flex-col gap-1.5">
-                  <label className="flex items-start gap-2 text-sm">
-                    <input
-                      type="radio"
-                      name="contentStorage"
-                      className="m-0 mt-0.5 shrink-0"
-                      checked={effectiveStorage === CONTENT_STORAGE_DB}
-                      onChange={() => setStorageChoice(CONTENT_STORAGE_DB)}
-                    />
-                    <span className="flex flex-col gap-0.5">
-                      <span className="text-xs font-medium">{t('contentStorage.option.db')}</span>
-                      <span className="text-[11px] text-muted-foreground">{t('contentStorage.option.db.hint')}</span>
-                    </span>
-                  </label>
-                  <label className={`flex items-start gap-2 text-sm ${s3Selectable ? '' : 'cursor-not-allowed'}`}>
-                    <input
-                      type="radio"
-                      name="contentStorage"
-                      className="m-0 mt-0.5 shrink-0"
-                      disabled={!s3Selectable}
-                      checked={effectiveStorage === CONTENT_STORAGE_S3}
-                      onChange={() => setStorageChoice(CONTENT_STORAGE_S3)}
-                    />
-                    <span className="flex flex-col gap-0.5">
-                      <span className={`text-xs font-medium ${s3Selectable ? '' : 'text-muted-foreground'}`}>
-                        {s3Label}
-                      </span>
-                      <span className="text-[11px] text-muted-foreground">
-                        {s3Selectable
-                          ? t('contentStorage.option.s3.hint', { app: providerApp })
-                          : externalS3
-                            ? t('contentStorage.reason.externalS3')
-                            : s3UnavailableText(s3Opt?.reason, providerApp, t)}
-                      </span>
-                    </span>
-                  </label>
-                  {effectiveStorage === CONTENT_STORAGE_S3 && (
-                    <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-[11px] text-amber-700 dark:text-amber-300">
-                      {t(mode === 'create' ? 'contentStorage.s3.note.create' : 'contentStorage.s3.note.switch', { app: providerApp })}
-                    </p>
-                  )}
-                </div>
-              )}
-            </fieldset>
-          )}
-
           {showMongoToggle && (
             <label className="flex items-start gap-2 text-sm">
               <input
@@ -605,7 +547,10 @@ export function NamespaceEditDialog({
               pullBundleRepo(bundleRepo, true)
                 .then(() => getBundles())
                 .then((bs) => setBundles(bs))
-                .catch((e) => toast((e as Error).message, 'error'))
+                .catch((e) => {
+                  if (e instanceof ApiError && e.git) setGitError({ repo: bundleRepo, message: e.message, failure: e.git })
+                  else toast((e as Error).message, 'error')
+                })
                 .finally(() => setBundlesLoading(false))
             }}
           >
@@ -613,6 +558,70 @@ export function NamespaceEditDialog({
           </button>
         </div>
       </ModalField>
+
+      {showStorageField && (
+        <fieldset className="min-w-0">
+          <legend className="block text-xs font-medium mb-1">{t('contentStorage.label')}</legend>
+          {storedS3 ? (
+            <>
+              <div className="rounded border border-border bg-muted/40 px-2.5 py-1.5 text-sm">
+                {s3Label}
+              </div>
+              <p className="mt-1 text-[11px] text-muted-foreground">{t('contentStorage.s3.oneWay')}</p>
+              {storedS3Refused && (
+                <p className="mt-1 text-[11px] text-destructive">
+                  {t('contentStorage.bundleChange.refused', {
+                    reason: s3UnavailableText(s3Opt?.reason, providerApp, t),
+                  })}
+                </p>
+              )}
+            </>
+          ) : (
+            <div className="flex flex-col gap-1.5">
+              <label className="flex items-start gap-2 text-sm">
+                <input
+                  type="radio"
+                  name="contentStorage"
+                  className="m-0 mt-0.5 shrink-0"
+                  checked={effectiveStorage === CONTENT_STORAGE_DB}
+                  onChange={() => setStorageChoice(CONTENT_STORAGE_DB)}
+                />
+                <span className="flex flex-col gap-0.5">
+                  <span className="text-xs font-medium">{t('contentStorage.option.db')}</span>
+                  <span className="text-[11px] text-muted-foreground">{t('contentStorage.option.db.hint')}</span>
+                </span>
+              </label>
+              <label className={`flex items-start gap-2 text-sm ${s3Selectable ? '' : 'cursor-not-allowed'}`}>
+                <input
+                  type="radio"
+                  name="contentStorage"
+                  className="m-0 mt-0.5 shrink-0"
+                  disabled={!s3Selectable}
+                  checked={effectiveStorage === CONTENT_STORAGE_S3}
+                  onChange={() => setStorageChoice(CONTENT_STORAGE_S3)}
+                />
+                <span className="flex flex-col gap-0.5">
+                  <span className={`text-xs font-medium ${s3Selectable ? '' : 'text-muted-foreground'}`}>
+                    {s3Label}
+                  </span>
+                  <span className="text-[11px] text-muted-foreground">
+                    {s3Selectable
+                      ? t('contentStorage.option.s3.hint', { app: providerApp })
+                      : externalS3
+                        ? t('contentStorage.reason.externalS3')
+                        : s3UnavailableText(s3Opt?.reason, providerApp, t)}
+                  </span>
+                </span>
+              </label>
+              {effectiveStorage === CONTENT_STORAGE_S3 && (
+                <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-[11px] text-amber-700 dark:text-amber-300">
+                  {t(mode === 'create' ? 'contentStorage.s3.note.create' : 'contentStorage.s3.note.switch', { app: providerApp })}
+                </p>
+              )}
+            </div>
+          )}
+        </fieldset>
+      )}
 
       {mode === 'create' && (
         <ModalField label={t('namespace.form.snapshot')}>
@@ -675,6 +684,24 @@ export function NamespaceEditDialog({
         </div>
       )}
     </Modal>
+      {gitError && <GitPullErrorDialog
+        open repoUrl={gitError.failure.repoUrl} errorMessage={gitError.message}
+        workspaceId={gitError.failure.workspaceId} failure={gitError.failure}
+        skipAvailable={false} cancelAvailable
+        onDecide={(decision) => {
+          const failed = gitError
+          setGitError(null)
+          if (decision !== 'retry' && decision !== 'cache') return
+          setBundlesLoading(true)
+          pullBundleRepo(failed.repo, true, gitRecoveryCache(failed.failure, decision === 'cache'))
+            .then(() => getBundles()).then(setBundles)
+            .catch((e) => {
+              if (e instanceof ApiError && e.git) setGitError({ repo: failed.repo, message: e.message, failure: e.git })
+              else toast((e as Error).message, 'error')
+            }).finally(() => setBundlesLoading(false))
+        }}
+      />}
+    </>
   )
 }
 

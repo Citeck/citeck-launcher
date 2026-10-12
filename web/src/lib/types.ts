@@ -131,6 +131,7 @@ export interface NamespaceDto {
   // is shown once and not re-raised on remount or reconnect.
   updateError?: string
   updateErrorAt?: number
+  updateGitError?: GitFailureDto
   // Infrastructure images (postgres, rabbitmq, …) the generator held back
   // because applying them to this namespace's existing data would be a
   // breaking change. Recomputed on every load and reload.
@@ -399,6 +400,9 @@ export interface DaemonStatusDto {
 }
 
 export interface EventDto {
+  /** Download byte counters; total <= 0 means unknown. */
+  receivedBytes?: number
+  totalBytes?: number
   type: string
   seq: number
   timestamp: number
@@ -614,7 +618,16 @@ export interface WorkspaceUpdateDto {
   secretId?: string
 }
 
+export interface DownloadProgressDto {
+ phase: string
+ receivedBytes: number
+ totalBytes: number
+ startedAt: number
+ updatedAt: number
+}
+
 export interface UpdateStatusDto {
+ progress?: DownloadProgressDto
   currentVersion: string
   latestVersion?: string
   available: boolean
@@ -652,4 +665,14 @@ export interface AppFileContentDto {
 export interface WorkspaceConfigDto {
   content: string
   baseline: string
+}
+
+export interface GitFailureDto {
+  repoUrl: string
+  workspaceId: string
+  secretId?: string
+  cacheAvailable: boolean
+  cacheUpdatedAt?: number
+  cachedRepos?: string[]
+  force?: boolean
 }

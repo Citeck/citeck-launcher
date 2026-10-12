@@ -111,11 +111,11 @@ func recloneForRepair(ctx context.Context, opts RepoOpts, cause error) error {
 			"dir", opts.DestDir, "err", err)
 	case !SameRepoURL(origin, opts.URL):
 		slog.Error("Refusing to re-clone: on-disk origin does not match the configured URL",
-			"dir", opts.DestDir, "origin", origin, "configured", opts.URL, "cause", cause)
+			"dir", opts.DestDir, "origin", SafeURL(origin), "configured", SafeURL(opts.URL), "cause", SafeError(cause, opts.URL, opts.Token))
 		return fmt.Errorf(
 			"refusing to re-clone %s: on-disk origin %q does not match configured URL %q "+
 				"(workspace repo settings may be stale or lost); triggering failure: %w",
-			opts.DestDir, origin, opts.URL, cause)
+			opts.DestDir, SafeURL(origin), SafeURL(opts.URL), SafeError(cause, opts.URL, opts.Token))
 	}
 	return recloneReplace(ctx, opts, cause, "repairing existing clone")
 }
@@ -124,7 +124,7 @@ func recloneForRepair(ctx context.Context, opts RepoOpts, cause error) error {
 // directory is kept intact so the daemon can continue with stale data.
 func recloneReplace(ctx context.Context, opts RepoOpts, cause error, intent string) error {
 	slog.Warn("Re-cloning repository; existing directory contents will be replaced",
-		"dir", opts.DestDir, "url", opts.URL, "intent", intent, "cause", cause)
+		"dir", opts.DestDir, "url", SafeURL(opts.URL), "intent", intent, "cause", SafeError(cause, opts.URL, opts.Token))
 
 	tmpDir := opts.DestDir + ".tmp"
 	// Clean up any leftover temp dir from a previous failed attempt
@@ -137,9 +137,9 @@ func recloneReplace(ctx context.Context, opts RepoOpts, cause error, intent stri
 		if isAuthError(err) {
 			slog.Info("Reclone auth failed, keeping stale repo", "dir", opts.DestDir)
 		} else {
-			slog.Warn("Reclone failed, keeping stale repo", "dir", opts.DestDir, "err", err)
+			slog.Warn("Reclone failed, keeping stale repo", "dir", opts.DestDir, "err", SafeError(err, opts.URL, opts.Token))
 		}
-		return fmt.Errorf("reclone %s: %w", opts.URL, err)
+		return fmt.Errorf("reclone %s: %w", SafeURL(opts.URL), SafeError(err, opts.URL, opts.Token))
 	}
 
 	if err := os.RemoveAll(opts.DestDir); err != nil {

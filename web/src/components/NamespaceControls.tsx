@@ -1,4 +1,7 @@
-import { postNamespaceStart, postNamespaceStop } from '../lib/api'
+import { ApiError, postNamespaceStart, postNamespaceStop } from '../lib/api'
+import { gitRecoveryCache } from '../lib/giturl'
+import { GitPullErrorDialog } from './GitPullErrorDialog'
+import type { GitFailureDto } from '../lib/types'
 import { useDashboardStore } from '../lib/store'
 import { useTranslation } from '../lib/i18n'
 import { toast } from '../lib/toast'
@@ -18,9 +21,9 @@ interface NamespaceControlsProps {
 // would just leave a re-wireable path back to the bug it caused.
 type Action = 'start' | 'stop' | 'forceStart'
 
-const actionFns: Record<Action, () => Promise<unknown>> = {
-  start: () => postNamespaceStart(false),
-  forceStart: () => postNamespaceStart(true),
+const actionFns: Record<Action, (cachedRepo?: string | string[]) => Promise<unknown>> = {
+  start: (cachedRepo) => cachedRepo ? postNamespaceStart(false, cachedRepo) : postNamespaceStart(false),
+  forceStart: (cachedRepo) => cachedRepo ? postNamespaceStart(true, cachedRepo) : postNamespaceStart(true),
   stop: postNamespaceStop,
 }
 
@@ -79,6 +82,7 @@ export function NamespaceControls({ status }: NamespaceControlsProps) {
     if (refetchTimer.current) clearTimeout(refetchTimer.current)
   }, [])
 
+  const [gitError, setGitError] = useState<{ message: string; failure: GitFailureDto } | null>(null)
   const { t } = useTranslation()
   // A pass that fails leaves the UI byte-identical to one that succeeded — the
   // spinner stops and nothing changed — so surface it on the SAME modal the
@@ -86,11 +90,15 @@ export function NamespaceControls({ status }: NamespaceControlsProps) {
   // severity, same surface. Shown once per occurrence.
   const updateError = useDashboardStore((s) => s.namespace?.updateError ?? '')
   const updateErrorAt = useDashboardStore((s) => s.namespace?.updateErrorAt ?? 0)
+  const updateGitError = useDashboardStore((s) => s.namespace?.updateGitError)
+  // The external daemon verdict opens this recovery dialog once per occurrence.
   useEffect(() => {
     if (!updateError || updateErrorAt === lastShownUpdateErrorAt) return
     lastShownUpdateErrorAt = updateErrorAt
-    showError({ title: t('ns.error.updateFailed'), message: updateError })
-  }, [updateError, updateErrorAt, t])
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (updateGitError) setGitError({ message: updateError, failure: updateGitError })
+    else showError({ title: t('ns.error.updateFailed'), message: updateError })
+  }, [updateError, updateErrorAt, updateGitError, t])
   const { contextMenu, showContextMenu, hideContextMenu } = useContextMenu()
   // Pre-start registry-credentials gate (hard block) for pull-capable actions.
   const { preflight, dialog: registryPreflightDialog } = useRegistryPreflight()
@@ -125,7 +133,7 @@ export function NamespaceControls({ status }: NamespaceControlsProps) {
   // user is looking for a reaction.
   const busy = clickEcho || updating || migrating
 
-  async function exec(a: Action) {
+  async function exec(a: Action, cachedRepo?: string | string[]) {
     // Start the echo here rather than in run(): a click that is still sitting
     // behind the registry-credentials preflight dialog has not been sent
     // anywhere yet, and that dialog is its own feedback.
@@ -135,7 +143,7 @@ export function NamespaceControls({ status }: NamespaceControlsProps) {
       echoTimer.current = setTimeout(() => { setClickEcho(false); echoTimer.current = null }, CLICK_ECHO_TIMEOUT_MS)
     }
     try {
-      await actionFns[a]()
+      await actionFns[a](cachedRepo)
       const toastAction = a === 'forceStart' ? 'start' : a
       toast(t('ns.toast.success', { action: toastAction }), 'success')
       // The daemon raises `updating` synchronously before answering, so this
@@ -172,6 +180,7 @@ export function NamespaceControls({ status }: NamespaceControlsProps) {
       // echo immediately instead of leaving a button that looks busy.
       stopEcho()
       const e = err as Error
+      if (err instanceof ApiError && err.git) { setGitError({ message: err.message, failure: err.git }); return }
       showError({
         title: t(`ns.confirm.${a}.title`),
         message: e.message,
@@ -185,12 +194,12 @@ export function NamespaceControls({ status }: NamespaceControlsProps) {
   // explicitly clicked; errors go to the global error modal as before.
   // Pull-capable actions first clear the registry-credentials pre-flight gate
   // so they don't start only to stall mid-pull; stop never pulls.
-  async function run(a: Action) {
+  async function run(a: Action, cachedRepo?: string | string[]) {
     if (a === 'stop') {
       await exec(a)
       return
     }
-    await preflight(() => exec(a))
+    await preflight(() => exec(a, cachedRepo))
   }
 
   function primaryContextItems(): ContextMenuItem[] {
@@ -262,6 +271,20 @@ export function NamespaceControls({ status }: NamespaceControlsProps) {
 
       {contextMenu && (
         <ContextMenu items={contextMenu.items} position={contextMenu.position} onClose={hideContextMenu} />
+      )}
+      {gitError && (
+        <GitPullErrorDialog
+          open repoUrl={gitError.failure.repoUrl} errorMessage={gitError.message}
+          workspaceId={gitError.failure.workspaceId} failure={gitError.failure}
+          skipAvailable={false} cancelAvailable
+          onDecide={(decision) => {
+            const failure = gitError.failure
+            setGitError(null)
+            if (decision === 'retry' || decision === 'cache') {
+              void run(failure.force ? 'forceStart' : 'start', gitRecoveryCache(failure, decision === 'cache'))
+            }
+          }}
+        />
       )}
       {registryPreflightDialog}
     </>

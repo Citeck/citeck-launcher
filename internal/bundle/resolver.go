@@ -607,16 +607,20 @@ type WorkspaceRepoOpts struct {
 	Branch     string
 	PullPeriod time.Duration
 	Token      string
+	// SecretID is a non-secret reference captured with the token snapshot.
+	SecretID string
 }
 
 // Resolver resolves bundle references to full bundle definitions.
 type Resolver struct {
-	dataDir     string
-	tokenLookup TokenLookupFunc
-	wsRepoOpts  *WorkspaceRepoOpts
-	offline     bool         // skip all git operations, fail if local data missing
-	forcePull   bool         // bypass the per-repo PullPeriod throttle (PullPeriod=0) for "Force Update"
-	logger      *slog.Logger // nil → falls back to slog.Default()
+	dataDir       string
+	tokenLookup   TokenLookupFunc
+	tokenIDLookup func(string) string
+	lastAuthKey   string
+	wsRepoOpts    *WorkspaceRepoOpts
+	offline       bool         // skip all git operations, fail if local data missing
+	forcePull     bool         // bypass the per-repo PullPeriod throttle (PullPeriod=0) for "Force Update"
+	logger        *slog.Logger // nil → falls back to slog.Default()
 	// wsOverlay, when set, transforms the RAW selected workspace YAML bytes right
 	// after they are read from disk and BEFORE parsing — the seam the daemon
 	// uses to re-apply the user's manual workspace-config delta on top of the
@@ -639,6 +643,9 @@ type Resolver struct {
 	// is better than a 502 — and wrong for anything asking "is this config
 	// CURRENT". See WorkspacePullError.
 	wsPullErr error
+	// bundlePullErr records the last attempted bundle sync, even over a usable cache.
+	bundlePullErr  error
+	cachedRepoURLs map[string]bool
 	// launcherVersion selects runnable LATEST bundles and refreshes the
 	// workspace once when the launcher version changes. Empty preserves the
 	// historical newest-bundle selection and timer-only pull policy.
@@ -772,8 +779,8 @@ func (r *Resolver) resolveWorkspace() (cfg *WorkspaceConfig, repoDir string) {
 
 	// Priority 2: cloned workspace repo (git pull if online)
 	var syncErr error
-	if !r.offline || (r.refreshWorkspaceOnVersionChange && git.NeedsVersionRefresh(defaultRepoDir, r.launcherVersion)) {
-		repoURL, repoBranch, pullPeriod, token := r.workspaceRepoSettings()
+	repoURL, repoBranch, pullPeriod, token := r.workspaceRepoSettings()
+	if !r.usesCachedRepo(repoURL) && (!r.offline || (r.refreshWorkspaceOnVersionChange && git.NeedsVersionRefresh(defaultRepoDir, r.launcherVersion))) {
 		gitCtx, gitCancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		err := git.CloneOrPullWithAuth(gitCtx, git.RepoOpts{
 			URL: repoURL, Branch: repoBranch, Token: token,
@@ -781,11 +788,16 @@ func (r *Resolver) resolveWorkspace() (cfg *WorkspaceConfig, repoDir string) {
 		})
 		gitCancel()
 		if err != nil {
-			r.log().Warn("Failed to sync workspace repo", "err", err)
+			r.log().Warn("Failed to sync workspace repo", "err", git.SafeError(err, repoURL, token))
 			// Keep the underlying git error text intact (%w) — callers and the
 			// Web UI heuristic match on "authentication required" /
 			// "repository not found" wording from go-git.
-			syncErr = fmt.Errorf("sync workspace repo %s: %w", repoURL, err)
+			failure := repoSyncFailure(repoURL, defaultRepoDir, err)
+			if r.wsRepoOpts != nil {
+				id := r.wsRepoOpts.SecretID
+				failure.SecretID = &id
+			}
+			syncErr = failure
 		}
 	}
 	// Recorded HERE, before the priorities below can return: a caller asking
@@ -793,6 +805,10 @@ func (r *Resolver) resolveWorkspace() (cfg *WorkspaceConfig, repoDir string) {
 	// failed pull even — especially — when a cached clone answered anyway.
 	r.wsPullErr = syncErr
 	if wsCfg := r.loadWorkspaceConfigOverlaid(defaultRepoDir); wsCfg != nil {
+		var failure *RepoSyncError
+		if errors.As(syncErr, &failure) {
+			failure.CacheAvailable = CachedRepoMatches(defaultRepoDir, repoURL)
+		}
 		return wsCfg, defaultRepoDir
 	}
 
@@ -800,6 +816,10 @@ func (r *Resolver) resolveWorkspace() (cfg *WorkspaceConfig, repoDir string) {
 	// nothing else loaded (e.g. offline with no bundles/workspace clone yet).
 	if repoIsManagedClone {
 		if wsCfg := r.loadWorkspaceConfigOverlaid(localRepoDir); wsCfg != nil {
+			var failure *RepoSyncError
+			if errors.As(syncErr, &failure) {
+				failure.CacheAvailable = CachedRepoMatches(localRepoDir, repoURL)
+			}
 			return wsCfg, localRepoDir
 		}
 	}
@@ -873,6 +893,12 @@ func (r *Resolver) WorkspacePullError() error {
 	return r.wsPullErr
 }
 
+// GitSyncError reports attempted Git refresh failures without disabling cached
+// resolution for startup/offline use. Explicit update callers must check it.
+func (r *Resolver) GitSyncError() error {
+	return errors.Join(r.wsPullErr, r.bundlePullErr)
+}
+
 // workspaceRepoSettings resolves the URL/branch/pullPeriod/token to use for
 // the workspace repo clone, layering WithWorkspaceRepo overrides on top of
 // the hardcoded defaults. Empty override fields keep the corresponding
@@ -908,6 +934,7 @@ func (r *Resolver) ResolveWorkspaceOnly() *WorkspaceConfig {
 
 // Resolve fetches and parses a bundle definition along with workspace config.
 func (r *Resolver) Resolve(ref Ref) (*ResolveResult, error) {
+	r.bundlePullErr = nil
 	if ref.IsEmpty() {
 		// A namespace with no bundle ref is a broken config, not a reason to
 		// forget the workspace. Returning a blank WorkspaceConfig here was
@@ -973,6 +1000,10 @@ func (r *Resolver) Resolve(ref Ref) (*ResolveResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	var failure *RepoSyncError
+	if errors.As(r.bundlePullErr, &failure) {
+		failure.CacheAvailable = CachedRepoMatches(repoDir, failure.URL)
+	}
 	return &ResolveResult{Bundle: def, Workspace: wsCfg}, nil
 }
 
@@ -1022,11 +1053,12 @@ func bundleRepoGitSettings(bundleRepo BundlesRepo) (url, branch string) {
 // workspace the user never configured. Callers now reject an unknown id first
 // (Resolve / SyncBundleRepo → unknownBundleRepoError).
 func (r *Resolver) syncBundleRepo(repoID string, bundleRepo BundlesRepo) string {
+	r.bundlePullErr = nil
 	repoDir := filepath.Join(r.dataDir, "bundles", repoID)
 	repoURL, repoBranch := bundleRepoGitSettings(bundleRepo)
 	repoToken := r.lookupRepoToken(&bundleRepo)
 
-	if !r.offline {
+	if !r.offline && !r.usesCachedRepo(repoURL) {
 		gitCtx, gitCancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		err := git.CloneOrPullWithAuth(gitCtx, git.RepoOpts{
 			URL: repoURL, Branch: repoBranch, DestDir: repoDir,
@@ -1034,7 +1066,13 @@ func (r *Resolver) syncBundleRepo(repoID string, bundleRepo BundlesRepo) string 
 		})
 		gitCancel()
 		if err != nil {
-			r.log().Warn("Failed to sync bundle repo", "repo", repoID, "err", err)
+			r.log().Warn("Failed to sync bundle repo", "repo", repoID, "err", git.SafeError(err, repoURL, repoToken))
+			failure := repoSyncFailure(repoURL, repoDir, err)
+			if r.tokenIDLookup != nil {
+				id := r.tokenIDLookup(r.lastAuthKey)
+				failure.SecretID = &id
+			}
+			r.bundlePullErr = failure
 		}
 	}
 	return repoDir
@@ -1057,15 +1095,22 @@ func (r *Resolver) bundleRepoPullPeriod(bundleRepo *BundlesRepo) time.Duration {
 
 // lookupRepoToken returns an auth token for the given bundle repo using the token lookup func.
 func (r *Resolver) lookupRepoToken(bundleRepo *BundlesRepo) string {
+	r.lastAuthKey = ""
 	if r.tokenLookup == nil {
 		return ""
 	}
 	var token string
+	if strings.HasPrefix(bundleRepo.AuthType, "secret:") {
+		r.lastAuthKey = bundleRepo.AuthType
+		return r.tokenLookup(bundleRepo.AuthType)
+	}
 	if bundleRepo.AuthType != "" {
+		r.lastAuthKey = bundleRepo.AuthType
 		token = r.tokenLookup(bundleRepo.AuthType)
 	}
 	// Fallback: try GIT_TOKEN type (covers Kotlin-migrated secrets with scope ws:{wsId}:repo)
 	if token == "" {
+		r.lastAuthKey = "GIT_TOKEN"
 		token = r.tokenLookup("GIT_TOKEN")
 	}
 	return token
@@ -1221,12 +1266,21 @@ func (r *Resolver) SyncBundleRepo(cfg *WorkspaceConfig, repoID string) (string, 
 	// very directory Resolve will read. Asking it here rather than re-deriving
 	// the layout keeps ONE spelling of "where this repo's bundles live".
 	if _, wsRepoDir := r.resolveWorkspace(); shouldUseLocalBundles(wsRepoDir, repo) {
+		if r.wsPullErr != nil {
+			return "", r.wsPullErr
+		}
 		if repo.Path != "" {
 			return filepath.Join(wsRepoDir, repo.Path), nil
 		}
 		return wsRepoDir, nil
 	}
-	return r.syncBundleRepo(repoID, *repo), nil
+	dir := r.syncBundleRepo(repoID, *repo)
+	var failure *RepoSyncError
+	if errors.As(r.bundlePullErr, &failure) {
+		versions := ListBundleVersions(filepath.Join(dir, repo.Path))
+		failure.CacheAvailable = len(versions) > 0 && CachedRepoMatches(dir, failure.URL)
+	}
+	return dir, r.bundlePullErr
 }
 
 // unknownBundleRepoError builds the diagnostic for a bundle repo id that the
@@ -2001,7 +2055,7 @@ func (r *Resolver) warnOnLegacyRepoOriginMismatch(localRepoDir, effectiveURL str
 		r.log().Warn("Legacy workspace clone in repo/ points at a different git remote "+
 			"than the configured workspace repo — the workspace repo URL may have been lost "+
 			"(e.g. by a 1.x→2.x migration)",
-			"repoDir", localRepoDir, "originUrl", origin, "effectiveUrl", effectiveURL)
+			"repoDir", localRepoDir, "originUrl", git.SafeURL(origin), "effectiveUrl", git.SafeURL(effectiveURL))
 	})
 }
 

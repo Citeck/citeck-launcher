@@ -23,15 +23,25 @@ import (
 // periodicInterval is how often the service re-checks `latest` while the app runs.
 const periodicInterval = 4 * time.Hour
 
+// Progress describes the current staging phase; byte totals are unknown when <= 0.
+type Progress struct {
+	Phase         string `json:"phase"`
+	ReceivedBytes int64  `json:"receivedBytes"`
+	TotalBytes    int64  `json:"totalBytes"`
+	StartedAt     int64  `json:"startedAt"`
+	UpdatedAt     int64  `json:"updatedAt"`
+}
+
 // Status is the UI-facing snapshot of the updater.
 type Status struct {
-	CurrentVersion string `json:"currentVersion"`
-	LatestVersion  string `json:"latestVersion,omitempty"`
-	Available      bool   `json:"available"`
-	LastCheckAt    string `json:"lastCheckAt,omitempty"`
-	Error          string `json:"error,omitempty"`      // last check error (offline etc.)
-	ApplyError     string `json:"applyError,omitempty"` // last failed apply, rolled back
-	Applying       bool   `json:"applying"`
+	CurrentVersion string   `json:"currentVersion"`
+	LatestVersion  string   `json:"latestVersion,omitempty"`
+	Available      bool     `json:"available"`
+	LastCheckAt    string   `json:"lastCheckAt,omitempty"`
+	Error          string   `json:"error,omitempty"`      // last check error (offline etc.)
+	ApplyError     string   `json:"applyError,omitempty"` // last failed apply, rolled back
+	Applying       bool     `json:"applying"`
+	Progress       Progress `json:"progress"`
 	// ManualUpdateRequired is set when the last staging attempt hit a
 	// signature classification (missing .sig or a mismatch under the embedded
 	// key — e.g. after a signing-key rotation). Auto-install would keep
@@ -63,6 +73,7 @@ type Service struct {
 
 	applying atomic.Bool
 
+	progress  Progress
 	mu        sync.Mutex
 	latest    Latest
 	lastCheck time.Time
@@ -213,6 +224,7 @@ func (s *Service) Status() Status {
 	s.mu.Lock()
 	latest, lastCheck, lastErr := s.latest, s.lastCheck, s.lastErr
 	manualReason := s.manualReason
+	progress := s.progress
 	s.mu.Unlock()
 
 	// A release that already failed its health-gate is not offered again (until a
@@ -227,6 +239,7 @@ func (s *Service) Status() Status {
 		Available:            available,
 		Error:                lastErr,
 		Applying:             s.applying.Load(),
+		Progress:             progress,
 		ApplyError:           FailedNewerThan(s.updatesDir, s.current),
 		ManualUpdateRequired: manualReason != "",
 		ManualUpdateReason:   manualReason,
@@ -270,6 +283,7 @@ func (s *Service) Stage(ctx context.Context, opts ...StageOption) (string, error
 		return "", errors.New("update already in progress")
 	}
 	defer s.applying.Store(false)
+	s.setProgress("checking", 0, 0)
 
 	latest, checkErr := s.CheckLatest(ctx)
 	if checkErr != nil {
@@ -311,9 +325,11 @@ func (s *Service) Stage(ctx context.Context, opts ...StageOption) (string, error
 	targz := filepath.Join(verDir, asset)
 	binPath := filepath.Join(verDir, DaemonBinaryName(runtime.GOOS))
 
-	if err := c.downloadFile(ctx, c.assetURL(latest.Tag, asset), targz); err != nil {
+	s.setProgress("downloading", 0, 0)
+	if err := c.downloadFile(ctx, c.assetURL(latest.Tag, asset), targz, func(received, total int64) { s.setProgress("downloading", received, total) }); err != nil {
 		return "", err
 	}
+	s.setProgress("verifying", 0, 0)
 	sumHex, shaErr := fetchExpectedSHA(ctx, c, latest.Tag, asset)
 	if shaErr != nil {
 		_ = os.Remove(targz)
@@ -333,6 +349,7 @@ func (s *Service) Stage(ctx context.Context, opts ...StageOption) (string, error
 		return "", err
 	}
 	s.recordSignatureOutcome(nil, latest.Version)
+	s.setProgress("extracting", 0, 0)
 	if err := extractDaemonBinary(targz, binPath); err != nil {
 		_ = os.Remove(targz)
 		return "", err
@@ -345,6 +362,7 @@ func (s *Service) Stage(ctx context.Context, opts ...StageOption) (string, error
 	if err := MarkState(s.updatesDir, latest.Version, StatePending); err != nil {
 		return "", err
 	}
+	s.setProgress("ready", 0, 0)
 	slog.Info("Update staged", "version", latest.Version, "path", binPath)
 	return latest.Version, nil
 }
@@ -478,4 +496,15 @@ func DaemonBinaryName(goos string) string {
 		return "citeck.exe"
 	}
 	return "citeck"
+}
+
+func (s *Service) setProgress(phase string, received, total int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now().UnixMilli()
+	started := s.progress.StartedAt
+	if phase == "checking" {
+		started = now
+	}
+	s.progress = Progress{Phase: phase, ReceivedBytes: received, TotalBytes: total, StartedAt: started, UpdatedAt: now}
 }

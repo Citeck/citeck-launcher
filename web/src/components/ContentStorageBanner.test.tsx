@@ -1,9 +1,7 @@
-import { useDaemonStatusStore } from '../lib/daemonStatus'
 import { render, screen, act, waitFor } from '@testing-library/react'
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { ContentStorageBanner } from './ContentStorageBanner'
 import { useDashboardStore } from '../lib/store'
-import { useContentStorageBannerStore } from '../lib/contentStorage'
 import { postContentStorageProvision } from '../lib/api'
 import type { ContentStorageDto, NamespaceDto } from '../lib/types'
 
@@ -25,7 +23,6 @@ const s3 = (patch: Partial<ContentStorageDto>): ContentStorageDto =>
   ({ type: 'S3', providerApp: 'seaweedfs', state: 'pending', ...patch })
 
 beforeEach(() => {
-  useContentStorageBannerStore.setState({ dismissedNs: null })
   vi.mocked(postContentStorageProvision).mockClear()
   fetchData.mockClear()
 })
@@ -48,41 +45,24 @@ describe('ContentStorageBanner', () => {
     }
   })
 
-  it('shows progress as information while the platform comes up', () => {
-    setNamespace(s3({ state: 'waiting' }))
-    render(<ContentStorageBanner />)
-    const status = screen.getByRole('status')
-    expect(status.textContent).toContain('seaweedfs')
-    expect(status.textContent).toContain('waiting for the platform')
-    expect(screen.queryByRole('alert')).toBeNull()
-  })
-
-  // Every S3 namespace reads "pending" while stopped — the daemon re-derives
-  // the connection after each start — so on a stopped namespace the banner
-  // would claim progress that is not happening.
-  it('stays out of the way on a stopped namespace', () => {
-    setNamespace(s3({ state: 'pending' }), 'STOPPED')
-    const { container } = render(<ContentStorageBanner />)
-    expect(container.firstChild).toBeNull()
-  })
-
-  it('lets the user hide the progress banner for this namespace only', () => {
-    setNamespace(s3({ state: 'provisioning' }))
-    const { rerender } = render(<ContentStorageBanner />)
-    act(() => { screen.getByRole('button', { name: 'Hide' }).click() })
-    expect(screen.queryByRole('status')).toBeNull()
-
-    setNamespace(s3({ state: 'provisioning' }), 'RUNNING', 'other')
-    rerender(<ContentStorageBanner />)
-    expect(screen.getByRole('status')).toBeDefined()
-  })
+  it.each(['pending', 'waiting', 'provisioning', 'connected', 'admin-managed'])(
+    'keeps normal %s state quiet on running and stopped namespaces',
+    (state) => {
+      for (const status of ['RUNNING', 'STOPPED'] as const) {
+        setNamespace(s3({ state }), status)
+        const { container, unmount } = render(<ContentStorageBanner />)
+        expect(container.firstChild).toBeNull()
+        unmount()
+      }
+    },
+  )
 
   // A failed connection is broken right now: it is not dismissible, even when
-  // the user hid the progress banner that preceded it, and it carries Retry.
+  // normal progress that preceded it was silent, and it carries Retry.
   it('reports a failed connection with the daemon’s reason and a Retry that asks the daemon', async () => {
     setNamespace(s3({ state: 'provisioning' }))
     const { rerender } = render(<ContentStorageBanner />)
-    act(() => { screen.getByRole('button', { name: 'Hide' }).click() })
+    expect(screen.queryByRole('status')).toBeNull()
 
     setNamespace(s3({ state: 'error', error: 'gateway did not answer within 15 minutes' }))
     rerender(<ContentStorageBanner />)
@@ -104,15 +84,6 @@ describe('ContentStorageBanner', () => {
     expect(alert.textContent).toContain('seaweedfs was left out of the namespace')
     expect(alert.textContent).not.toContain('boom')
     expect(screen.queryByRole('button')).toBeNull()
-  })
-
-  // The gate is the four ECOS apps AND the provider: with the provider stopped
-  // (warned about, never refused) the other four are all running, and the
-  // banner must name what it is still waiting for.
-  it('names the provider among the apps the connection waits for', () => {
-    setNamespace(s3({ state: 'pending' }))
-    render(<ContentStorageBanner />)
-    expect(screen.getByRole('status').textContent).toContain('eapps, content and seaweedfs are running')
   })
 
   // A workspace that names no provider has no app id to quote: the title says
@@ -145,14 +116,4 @@ describe('ContentStorageBanner', () => {
     render(<ContentStorageBanner />)
     expect(screen.getByRole('alert').textContent).toContain('contentStorage.s3')
   })
-})
-
-it('does not hide another workspace namespace with the same id', () => {
-  useDaemonStatusStore.setState({ status: { workspace: 'a' } as never })
-  setNamespace(s3({ state: 'pending' }), 'RUNNING', 'default')
-  render(<ContentStorageBanner />)
-  act(() => { screen.getByRole('button', { name: 'Hide' }).click() })
-  expect(screen.queryByRole('status')).toBeNull()
-  act(() => { useDaemonStatusStore.setState({ status: { workspace: 'b' } as never }) })
-  expect(screen.getByRole('status')).toBeDefined()
 })

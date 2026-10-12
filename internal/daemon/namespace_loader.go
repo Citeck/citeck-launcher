@@ -312,7 +312,7 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 	volumesBase := config.ResolveVolumesBase(wsID, nsID)
 
 	// Resolve workspace config first — needed by wizard even without a namespace.
-	resolver := bundle.NewResolverWithAuth(config.BundlesDataDir(wsID), makeTokenLookup(in.SecretService)).
+	resolver := authenticatedBundleResolver(config.BundlesDataDir(wsID), in.SecretService).
 		WithWorkspaceRepo(lookupWorkspaceRepoOpts(in.Store, in.SecretService, wsID)).
 		WithWorkspaceOverlay(workspaceConfigOverlay(in.Store, wsID)).
 		WithLauncherVersion(in.LauncherVersion)

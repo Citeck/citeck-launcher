@@ -3,6 +3,9 @@ import { create } from 'zustand'
 export type LongOpKind = 'snapshot.export' | 'snapshot.import' | 'snapshot.rename' | 'snapshot.delete' | 'snapshot.download'
 
 export interface LongOpProgress {
+  receivedBytes?: number
+  totalBytes?: number
+  phase?: string
   current: number
   total: number
   message?: string

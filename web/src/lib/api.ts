@@ -1,4 +1,5 @@
 import type {
+  GitFailureDto,
   NamespaceDto,
   HealthDto,
   DaemonStatusDto,
@@ -69,33 +70,37 @@ const DEPS_LONG_TIMEOUT_MS = 10 * 60_000
 export class ApiError extends Error {
   readonly status: number
   readonly code: string
-  constructor(message: string, status: number, code: string) {
+  readonly git?: GitFailureDto
+  constructor(message: string, status: number, code: string, git?: GitFailureDto) {
     super(message)
     this.name = 'ApiError'
     this.status = status
     this.code = code
+    this.git = git
   }
 }
 
 async function extractApiError(res: Response): Promise<ApiError> {
   let message = res.statusText || `HTTP ${res.status}`
   let code = ''
+  let git: GitFailureDto | undefined
   try {
     const body = await res.json()
     if (typeof body.message === 'string') message = body.message
     if (typeof body.code === 'string') code = body.code
+    if (body.git && typeof body.git.repoUrl === 'string' && typeof body.git.workspaceId === 'string') git = body.git
   } catch { /* not JSON, fall through with statusText */ }
-  return new ApiError(message, res.status, code)
+  return new ApiError(message, res.status, code, git)
 }
 
 function fetchWithTimeout(url: string, opts?: RequestInit, timeoutMs = 30_000): Promise<Response> {
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  const timer = timeoutMs > 0 ? setTimeout(() => controller.abort(), timeoutMs) : null
   // If caller provided a signal, forward its abort to our controller
   if (opts?.signal) {
     opts.signal.addEventListener('abort', () => controller.abort(), { once: true })
   }
-  return fetch(url, { ...opts, signal: controller.signal }).finally(() => clearTimeout(timer))
+  return fetch(url, { ...opts, signal: controller.signal }).finally(() => { if (timer !== null) clearTimeout(timer) })
 }
 
 /** Shorthand for path-parameter encoding so endpoint one-liners stay legible. */
@@ -121,7 +126,7 @@ interface RequestOpts {
   body?: unknown
   /** Content-Type override for string bodies. */
   contentType?: string
-  /** Per-request timeout in ms (default 30s). */
+  /** Per-request timeout in ms (default 30s); 0 disables the total deadline. */
   timeout?: number
   signal?: AbortSignal
 }
@@ -207,8 +212,11 @@ export async function postAppStart(name: string): Promise<ActionResultDto> {
   return request('POST', `/apps/${enc(name)}/start`)
 }
 
-export async function postNamespaceStart(force = false): Promise<ActionResultDto> {
-  return request('POST', `/namespace/start${force ? '?force=true' : ''}`)
+export async function postNamespaceStart(force = false, cachedRepo?: string | string[]): Promise<ActionResultDto> {
+  const query = new URLSearchParams()
+  if (force) query.set('force', 'true')
+  for (const repo of typeof cachedRepo === 'string' ? [cachedRepo] : cachedRepo ?? []) query.append('cachedRepo', repo)
+  return request('POST', `/namespace/start${query.size ? '?'+query : ''}`)
 }
 
 export async function postNamespaceStop(): Promise<ActionResultDto> {
@@ -248,8 +256,10 @@ export async function postGitSkipPull(host: string, durationSeconds = 3600): Pro
  *
  * Uses a longer timeout because the git pull can be slow on cold network.
  */
-export async function postWorkspaceUpdate(): Promise<ActionResultDto> {
-  return request('POST', '/workspace/update', { timeout: 180_000 })
+export async function postWorkspaceUpdate(cachedRepo?: string | string[]): Promise<ActionResultDto> {
+  const query = new URLSearchParams()
+  for (const repo of typeof cachedRepo === 'string' ? [cachedRepo] : cachedRepo ?? []) query.append('cachedRepo', repo)
+  return request('POST', `/workspace/update${query.size ? '?'+query : ''}`, { timeout: 180_000 })
 }
 
 /**
@@ -531,8 +541,11 @@ export async function getBundles(): Promise<BundleInfoDto[]> {
  * (explicit refresh) bypasses the per-repo PullPeriod throttle; force=false
  * (on selection) respects it — re-pull only after the period, clone if absent.
  */
-export async function pullBundleRepo(repoId: string, force = false): Promise<ActionResultDto> {
-  return request('POST', `/bundles/${enc(repoId)}/pull${force ? '?force=true' : ''}`, { timeout: 180_000 })
+export async function pullBundleRepo(repoId: string, force = false, cachedRepo?: string | string[]): Promise<ActionResultDto> {
+  const query = new URLSearchParams()
+  if (force) query.set('force', 'true')
+  for (const repo of typeof cachedRepo === 'string' ? [cachedRepo] : cachedRepo ?? []) query.append('cachedRepo', repo)
+  return request('POST', `/bundles/${enc(repoId)}/pull${query.size ? '?'+query : ''}`, { timeout: 180_000 })
 }
 
 /**
@@ -972,5 +985,9 @@ export async function getUpdateChangelog(locale: string): Promise<ReleaseNoteDto
  * parameter is that asking. Never set it from a background refresh.
  */
 export async function applyUpdate(retry = false): Promise<{ applying: boolean; version: string }> {
-  return request('POST', `/desktop/update/apply${retry ? '?retry=true' : ''}`, { timeout: 120_000 })
+  return request('POST', `/desktop/update/apply${retry ? '?retry=true' : ''}`, { timeout: 0 })
+}
+
+export async function linkGitRepoSecret(workspaceId: string, repoUrl: string, secretId: string): Promise<ActionResultDto> {
+  return request('PUT', `/workspaces/${enc(workspaceId)}/git-secret`, { body: { repoUrl, secretId } })
 }

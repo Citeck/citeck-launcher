@@ -268,7 +268,7 @@ func CloneOrPullWithAuth(ctx context.Context, opts RepoOpts) error {
 	select {
 	case err := <-done:
 		if err != nil {
-			return fmt.Errorf("clone or pull %s: %w", opts.DestDir, err)
+			return fmt.Errorf("clone or pull %s: %w", opts.DestDir, SafeError(err, opts.URL, opts.Token))
 		}
 		return nil
 	case <-time.After(hard):
@@ -295,8 +295,8 @@ func cloneOrPullInner(ctx context.Context, opts RepoOpts) error {
 
 	// Check if URL or branch changed — re-clone if so
 	if repoConfigChanged(opts) {
-		slog.Info("Repo config changed, re-cloning", "dir", opts.DestDir, "url", opts.URL, "branch", opts.Branch)
-		err := reclone(ctx, opts, fmt.Errorf("config changed: url=%s branch=%s", opts.URL, opts.Branch))
+		slog.Info("Repo config changed, re-cloning", "dir", opts.DestDir, "url", SafeURL(opts.URL), "branch", opts.Branch)
+		err := reclone(ctx, opts, fmt.Errorf("config changed: url=%s branch=%s", SafeURL(opts.URL), opts.Branch))
 		if err == nil {
 			recordSync(opts)
 		}
@@ -330,6 +330,19 @@ func cloneOrPullInner(ctx context.Context, opts RepoOpts) error {
 		recordSync(opts)
 	}
 	return err
+}
+
+// LastSuccessfulSync returns the persisted successful refresh time, or zero
+// when no trustworthy timestamp is known. Failed or skipped pulls do not advance it.
+func LastSuccessfulSync(destDir string) int64 {
+	lastSyncMu.Lock()
+	defer lastSyncMu.Unlock()
+	loadPersistedSyncLocked(destDir)
+	stamp := lastSyncTimes[destDir]
+	if stamp.IsZero() {
+		return 0
+	}
+	return stamp.UnixMilli()
 }
 
 // repoMeta is stored alongside the clone to detect URL/branch changes.
@@ -467,7 +480,7 @@ func tokenAuth(token string) *http.BasicAuth {
 }
 
 func doClone(ctx context.Context, opts RepoOpts) error {
-	slog.Info("Cloning repository", "url", opts.URL, "branch", opts.Branch, "dir", opts.DestDir)
+	slog.Info("Cloning repository", "url", SafeURL(opts.URL), "branch", opts.Branch, "dir", opts.DestDir)
 	start := time.Now()
 
 	if err := os.MkdirAll(filepath.Dir(opts.DestDir), 0o750); err != nil {
@@ -485,7 +498,7 @@ func doClone(ctx context.Context, opts RepoOpts) error {
 	}
 
 	if _, err := gogit.PlainCloneContext(ctx, opts.DestDir, false, cloneOpts); err != nil {
-		return fmt.Errorf("git clone %s: %w", opts.URL, err)
+		return fmt.Errorf("git clone %s: %w", SafeURL(opts.URL), SafeError(err, opts.URL, opts.Token))
 	}
 
 	slog.Info("Repository cloned", "dir", opts.DestDir, "elapsed", time.Since(start))
@@ -507,7 +520,7 @@ func TestAuth(repoURL, token string) error {
 
 	_, err := remote.List(listOpts)
 	if err != nil {
-		return fmt.Errorf("ls-remote %s: %w", repoURL, err)
+		return fmt.Errorf("ls-remote %s: %w", SafeURL(repoURL), SafeError(err, repoURL, token))
 	}
 	return nil
 }
@@ -549,7 +562,7 @@ func doPull(ctx context.Context, opts RepoOpts) error {
 		// 8b-13: auth errors (401/403) should not trigger reclone — a fresh
 		// clone would hit the same credential problem and just waste bandwidth.
 		if isAuthError(err) {
-			return fmt.Errorf("git auth failed for %s: %w", opts.URL, err)
+			return fmt.Errorf("git auth failed for %s: %w", SafeURL(opts.URL), SafeError(err, opts.URL, opts.Token))
 		}
 		// A transient network failure (TLS handshake timeout, DNS blip, reset
 		// connection, 5xx from the git host) says NOTHING about the integrity
@@ -560,8 +573,8 @@ func doPull(ctx context.Context, opts RepoOpts) error {
 		// surface the error, let the caller retry later.
 		if isTransientNetworkError(err) {
 			slog.Warn("Pull failed with a transient network error; keeping existing clone",
-				"dir", opts.DestDir, "url", opts.URL, "err", err)
-			return fmt.Errorf("git pull %s: %w", opts.URL, err)
+				"dir", opts.DestDir, "url", SafeURL(opts.URL), "err", SafeError(err, opts.URL, opts.Token))
+			return fmt.Errorf("git pull %s: %w", SafeURL(opts.URL), SafeError(err, opts.URL, opts.Token))
 		}
 		return recloneForRepair(ctx, opts, fmt.Errorf("pull: %w", err))
 	}
