@@ -141,6 +141,10 @@ preflight results.
 ## Git refresh recovery
 
 Explicit Git updates report refresh failures even when a cached copy exists.
+An ordinary server-mode namespace start is a lifecycle operation: it retains
+the persisted namespace bundle fallback if the pinned bundle cannot be resolved.
+Explicit Git refreshes and desktop Update & Start still report synchronization
+failures instead of silently applying cached configuration.
 Synchronous failures include `git` metadata in the JSON error; asynchronous
 namespace updates expose `updateGitError` beside `updateError`. The metadata
 contains the failed `repoUrl`, owning `workspaceId`, selected `secretId`,

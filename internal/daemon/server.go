@@ -681,7 +681,11 @@ func (d *Daemon) invokeReloadEx(forceGitPull, startNotRegen, refreshImages bool)
 	if d.reloadExFn != nil {
 		return d.reloadExFn(forceGitPull, startNotRegen, refreshImages)
 	}
-	return d.doReloadEx(forceGitPull, startNotRegen, refreshImages, refreshImages || forceGitPull)
+	// A normal server start is a lifecycle action, not an explicit Git update.
+	// Keep its persisted-bundle fallback; desktop Update & Start and forced
+	// refreshes must still report a failed synchronization.
+	requireGitSync := forceGitPull || (refreshImages && config.IsDesktopMode())
+	return d.doReloadEx(forceGitPull, startNotRegen, refreshImages, requireGitSync)
 }
 
 // doReloadEx is the shared reload / force-update core. Caller must hold reloadMu.

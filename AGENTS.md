@@ -28,6 +28,9 @@ unknown, and use the actual attempted secret reference. Repository recovery
 binds bundle credentials through the local workspace overlay (`authType:
 secret:<id>`) without changing the workspace repo token. Log references and
 availability only; never credential values. See [docs/workspace-formats.md](docs/workspace-formats.md).
+Ordinary server-mode namespace starts retain persisted bundle fallback; do not
+treat their snapshot-image refresh flag as explicit Git synchronization intent.
+Forced Git refreshes and desktop Update & Start remain strict.
 
 Download UI must observe backend bytes while the apply POST is pending, with
 unknown-size progress kept indeterminate. Snapshot byte counters are distinct
