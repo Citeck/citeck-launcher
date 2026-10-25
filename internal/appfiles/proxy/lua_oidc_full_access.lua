@@ -61,7 +61,12 @@ local opts = {
     if (not uri or uri == "") then return false end
     if (uri:sub(1,1) ~= "/") then return false end
     if (uri:find("/gateway", 1, true)) then return false end
-    if (uri:find("/share/res/", 1, true)) then return false end
+    -- /share/* is session-scoped: webscripts under /share/service/ return
+    -- per-user JS (messages, constants/Default.js) and must carry the real user,
+    -- not guest. COREDEV-658: COREDEV-526 started stripping the query before this
+    -- check, which newly exposed their .js extension to the static heuristic
+    -- (admin-console resources then 403'd as guest and Alfresco Share failed).
+    if (uri:find("/share/", 1, true)) then return false end
     if (uri:find("/alfresco/", 1, true)) then return false end
 
     local dot = uri:match("^.+()%.")
