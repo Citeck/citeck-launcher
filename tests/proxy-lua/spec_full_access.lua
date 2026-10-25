@@ -85,8 +85,17 @@ end
 if hasFn("isStaticResUri") then
   check("/main.4f21.js -> guest", { uri = "/main.4f21.js" }, "guest")
   check("/main.js?v=1.2.3 -> guest (cache-busting query)", { uri = "/main.js?v=1.2.3" }, "guest")
+  -- Share webscripts end in a static extension but return per-user JS
+  -- (messages, constants). They must NOT be treated as static/guest, or the
+  -- backend 403s them as guest and Alfresco Share fails to load (COREDEV-658
+  -- regression after COREDEV-526 started stripping the query before the static
+  -- check, exposing their .js extension). /share/* is excluded from isStaticResUri.
+  check("/share/service/messages_x.js?locale=ru_RU -> no identity",
+    { uri = "/share/service/messages_x.js?locale=ru_RU" }, nil)
+  check("/share/service/constants/Default.js?4.26.1 -> no identity",
+    { uri = "/share/service/constants/Default.js?4.26.1" }, nil)
 else
-  skipped = skipped + 2
+  skipped = skipped + 4
 end
 if callsGatewayPublicUri() then
   check("/gateway/emodel/pub/x -> guest", { uri = "/gateway/emodel/pub/x" }, "guest")
