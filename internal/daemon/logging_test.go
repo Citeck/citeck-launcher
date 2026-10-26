@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -20,7 +21,8 @@ import (
 func TestSetupDaemonLogging_DesktopWritesToDesktopPath(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("CITECK_HOME", "") // force the desktop-home branch (no override)
+	t.Setenv("LOCALAPPDATA", home) // the desktop home on Windows is keyed off this one
+	t.Setenv("CITECK_HOME", "")    // force the desktop-home branch (no override)
 
 	// Isolate the process-global logging state and restore it afterwards.
 	prevLogger := slog.Default()
@@ -40,8 +42,16 @@ func TestSetupDaemonLogging_DesktopWritesToDesktopPath(t *testing.T) {
 	setupDaemonLogging(StartOptions{Desktop: true})
 	slog.Info("regression-marker-desktop-log")
 
-	logPath := filepath.Join(home, ".citeck", "launcher", "logs", "daemon.log")
-	require.Equal(t, logPath, config.DaemonLogPath(), "desktop mode must resolve the desktop log path")
+	// The desktop home is platform-specific (~/.citeck/launcher on Linux,
+	// ~/Library/Application Support/Citeck/launcher on macOS, %LOCALAPPDATA%
+	// on Windows), so the expectation is not a literal: the log must live under
+	// the test's HOME — never under the server's /opt/citeck, which is the bug —
+	// and at the launcher's own logs/daemon.log inside it.
+	logPath := config.DaemonLogPath()
+	require.True(t, strings.HasPrefix(logPath, home+string(filepath.Separator)),
+		"desktop mode must resolve the log path under the desktop home %q, got %q", home, logPath)
+	require.True(t, strings.HasSuffix(logPath, filepath.Join("launcher", "logs", "daemon.log")),
+		"desktop log path must be the launcher's logs/daemon.log, got %q", logPath)
 
 	data, err := os.ReadFile(logPath) //nolint:gosec // logPath is under t.TempDir()
 	require.NoError(t, err, "desktop daemon must write daemon.log under the desktop home")
