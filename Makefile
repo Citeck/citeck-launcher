@@ -22,6 +22,7 @@ WEBDIST  := internal/daemon/webdist
 # belong to the other tree. Steps [3/10] and [4/10] are separate shells, so the
 # path has to be a make variable rather than a shell one.
 COVERAGE_TXT := dist/coverage.txt
+CHECK_ARM64_BINARY ?= $(BUILDDIR)/citeck-check-arm64
 
 # Go tools path
 ifeq (,$(shell go env GOBIN))
@@ -69,7 +70,7 @@ check:
 	@echo "==> [8/10] build server binary (tsc + vite + go build via 'make build')"
 	$(MAKE) build
 	@echo "==> [9/10] cross-compile check (linux/arm64, windows/amd64)"
-	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o /tmp/citeck-check-arm64 ./cmd/citeck && rm -f /tmp/citeck-check-arm64
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o "$(CHECK_ARM64_BINARY)" ./cmd/citeck && rm -f "$(CHECK_ARM64_BINARY)"
 # Windows-tagged sources (supervisor_proc_windows.go and its test) are invisible
 # to every step above, and the release tag is otherwise the first thing that
 # compiles them. `vet` rather than `build` so the _test.go files are covered too.
