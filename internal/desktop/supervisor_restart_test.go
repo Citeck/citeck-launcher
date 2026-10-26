@@ -56,9 +56,22 @@ func TestSupervisorRestartReSelectsBinary(t *testing.T) {
 		t.Fatalf("Restart: %v", err)
 	}
 
-	data, _ := os.ReadFile(marker)
-	s := string(data)
-	if !strings.Contains(s, "daemonA") || !strings.Contains(s, "daemonB") {
-		t.Fatalf("marker = %q, want both daemonA and daemonB", s)
+	// Restart returns once the respawned child is READY — which this test fakes
+	// as instant — not once that child has RUN, so the new sh may not have
+	// appended its name yet. Reading the marker once raced that echo and lost
+	// often enough on macOS to fail outright; wait for it instead. A respawn of
+	// the wrong binary still fails: daemonB never appears.
+	deadline := time.Now().Add(5 * time.Second)
+	var s string
+	for {
+		data, _ := os.ReadFile(marker)
+		s = string(data)
+		if strings.Contains(s, "daemonA") && strings.Contains(s, "daemonB") {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("marker = %q, want both daemonA and daemonB", s)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
