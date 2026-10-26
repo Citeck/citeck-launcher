@@ -36,22 +36,25 @@ import (
 // Tune here.
 const UIZoom = 1.1
 
-// ApplyUIZoom applies [UIZoom] to a running window. Linux and Windows already
-// apply options.Zoom when they create the webview; macOS ignores it there.
-func ApplyUIZoom(win application.Window) {
+// PrepareWindow applies what Wails 3.0.0 leaves undone on macOS for a running
+// window: the UI zoom (macOS ignores options.Zoom at init; Linux and Windows
+// applied it already, so this is a harmless re-apply there) and the developer
+// extras the in-app inspector needs (see devtools_darwin.go).
+func PrepareWindow(win application.Window) {
 	win.SetZoom(UIZoom)
+	application.InvokeSync(func() { enableDevTools(win) })
 }
 
-// ApplyUIZoomOnFirstLoad zooms a window created before app.Run, which has no
-// native webview yet. The page never loads Wails' JS runtime, so
+// PrepareWindowOnFirstLoad prepares a window created before app.Run, which has
+// no native webview yet. The page never loads Wails' JS runtime, so
 // WindowRuntimeReady never fires; the native WebViewDidFinishNavigation always
-// does (macOS only — elsewhere options.Zoom has already been applied). Only the
-// first load: the zoom survives navigation, and re-applying it on every load
-// would undo the user's Cmd+/Cmd- on each reload.
-func ApplyUIZoomOnFirstLoad(win application.Window) {
+// does (macOS only — elsewhere there is nothing left to do). Only the first
+// load: the zoom survives navigation, and re-applying it on every load would
+// undo the user's Cmd+/Cmd- on each reload.
+func PrepareWindowOnFirstLoad(win application.Window) {
 	var once sync.Once
 	win.RegisterHook(events.Mac.WebViewDidFinishNavigation, func(_ *application.WindowEvent) {
-		once.Do(func() { ApplyUIZoom(win) })
+		once.Do(func() { PrepareWindow(win) })
 	})
 }
 
@@ -175,10 +178,9 @@ func (m *WindowManager) handleOpen(w http.ResponseWriter, r *http.Request) {
 				"F12": func(w application.Window) { w.OpenDevTools() },
 			},
 		})
-		// macOS ignores options.Zoom at init (the re-apply elsewhere is
-		// harmless). Runs on the UI thread inside InvokeAsync, and the window is
-		// already running, so its native handle exists.
-		ApplyUIZoom(win)
+		// Runs on the UI thread inside InvokeAsync, and the window is already
+		// running, so its native handle exists.
+		PrepareWindow(win)
 		win.RegisterHook(events.Common.WindowClosing, func(_ *application.WindowEvent) {
 			m.mu.Lock()
 			delete(m.windows, name)

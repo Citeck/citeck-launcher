@@ -10,7 +10,10 @@ VERSION="${VERSION:?VERSION env required}"; VERSION="${VERSION#v}"
 ARCH="${ARCH:?ARCH env required}"
 
 mkdir -p dist/bin
-CGO_ENABLED=1 GOARCH="$ARCH" go build -tags desktop \
+# private_mac_apis lets Wails open the in-app inspector (tray DevTools, F12);
+# without it OpenDevTools is a no-op on macOS. Same tags as the Makefile's
+# DESKTOP_TAGS minus gtk3, which only Linux reads.
+CGO_ENABLED=1 GOARCH="$ARCH" go build -tags desktop,private_mac_apis \
   -ldflags "-s -w -X main.version=${VERSION}" \
   -o dist/bin/citeck-launcher ./cmd/citeck-desktop
 

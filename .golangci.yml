@@ -3,6 +3,7 @@ run:
   build-tags:
     - desktop
     - gtk3
+    - private_mac_apis
 linters:
   default: none
   enable:

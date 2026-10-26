@@ -121,7 +121,10 @@ build-web: web-deps
 
 # Linux desktop build uses Wails GTK3 backend (GTK4 + WebKitGTK 6.0 path is
 # not yet shipping in mainstream distros). Other OSes ignore the gtk3 tag.
-DESKTOP_TAGS := desktop,gtk3
+# private_mac_apis (macOS only) is what lets Wails open the in-app inspector
+# (tray DevTools, F12); without it OpenDevTools is a no-op. Keep it in sync with
+# packaging/macos/release.sh.
+DESKTOP_TAGS := desktop,gtk3,private_mac_apis
 
 build-desktop: build-web
 	@mkdir -p $(BUILDDIR)
