@@ -272,6 +272,12 @@ func run() error {
 	// its first page load; Linux/Windows have nothing left to do.
 	wailswin.PrepareWindowOnFirstLoad(window)
 
+	// Without this nothing the wrapper sends the page — reloadWebview, the
+	// daemon event bridge — ever runs (see MarkRuntimeReadyOnFirstLoad). It
+	// also makes WindowRuntimeReady fire for the first time; window setup does
+	// not hang off it, it takes the native first-load event above.
+	wailswin.MarkRuntimeReadyOnFirstLoad(window)
+
 	// raiseToFront shows the window and brings it above other windows with
 	// focus. On Linux/GTK, Focus() maps to gtk_window_present, which is subject
 	// to the window manager's focus-stealing prevention and intermittently
@@ -528,8 +534,10 @@ func run() error {
 	// Bridge the daemon's SSE event stream to the webview as native Wails
 	// events. On Windows the WebView2 asset server buffers streaming HTTP
 	// responses, so an in-page EventSource never sees live frames; native Wails
-	// events are plain IPC and stream identically on every platform, so the web
-	// store uses this transport in desktop mode (with the HTTP poll as fallback).
+	// events reach the page as ExecJS (webview IPC, not HTTP) and stream
+	// identically on every platform — once the window is marked ready (see
+	// MarkRuntimeReadyOnFirstLoad above) — so the web store uses this transport
+	// in desktop mode (with the HTTP poll as fallback).
 	go streamDaemonEventsToWebview(ctx, app, socketClient, daemonReady)
 
 	// app.Run blocks until the GUI exits. As before, a run error is logged (not

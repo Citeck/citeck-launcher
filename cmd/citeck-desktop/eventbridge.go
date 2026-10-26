@@ -18,8 +18,15 @@ import (
 // subscribes to these instead of opening an EventSource: the Wails asset server
 // on Windows (WebView2) buffers streaming HTTP responses, so SSE never delivers
 // frames incrementally there. Native Wails events are plain webview IPC (not
-// HTTP), so they stream identically on WebView2 and WebKitGTK — real-time on
-// every platform.
+// HTTP), so they stream identically on WebView2, WKWebView and WebKitGTK.
+//
+// That IPC is ExecJS: Wails turns each Emit into a
+// window._wails.dispatchWailsEvent(...) call per window, and holds every ExecJS
+// in a queue until the window has been marked ready. The page never loads the
+// Wails JS runtime that would mark it, so before every window the wrapper
+// creates went through wailswin.MarkRuntimeReadyOnFirstLoad nothing emitted
+// here ever reached it: on every platform the desktop UI ran on the store's 3 s
+// HTTP poll fallback while the queue grew for the life of the wrapper.
 const (
 	wailsDaemonEvent      = "daemon:event"
 	wailsDaemonPing       = "daemon:ping"

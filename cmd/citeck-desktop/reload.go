@@ -26,6 +26,15 @@ import (
 // SPA on its current route, which matters for the desktop child windows
 // (/window/...). If the webview is gone or shutting down, ExecJS is a no-op,
 // which is the correct outcome for a window nobody is looking at.
+//
+// ExecJS only runs once the window has been marked ready; until then Wails
+// queues it. The page never loads the Wails JS runtime that would mark it, so
+// up to 2.17.3 this reload was queued forever and never happened on any
+// platform — the UpdateDialog's own version poll is what actually reloaded the
+// page after an update. wailswin.MarkRuntimeReadyOnFirstLoad (called on the
+// main window in run) marks it after the first page load; a reload requested
+// before that still waits for it, which keeps it from aborting the initial
+// navigation.
 func reloadWebview(window *application.WebviewWindow) {
 	if window == nil {
 		return

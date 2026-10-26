@@ -46,11 +46,12 @@ func PrepareWindow(win application.Window) {
 }
 
 // PrepareWindowOnFirstLoad prepares a window created before app.Run, which has
-// no native webview yet. The page never loads Wails' JS runtime, so
-// WindowRuntimeReady never fires; the native WebViewDidFinishNavigation always
-// does (macOS only — elsewhere there is nothing left to do). Only the first
-// load: the zoom survives navigation, and re-applying it on every load would
-// undo the user's Cmd+/Cmd- on each reload.
+// no native webview yet, on its first native WebViewDidFinishNavigation (macOS
+// only — elsewhere there is nothing left to do). Not on WindowRuntimeReady: the
+// page never loads Wails' JS runtime, so that event fires only because
+// MarkRuntimeReadyOnFirstLoad stands in for it. Only the first load: the zoom
+// survives navigation, and re-applying it on every load would undo the user's
+// Cmd+/Cmd- on each reload.
 func PrepareWindowOnFirstLoad(win application.Window) {
 	var once sync.Once
 	win.RegisterHook(events.Mac.WebViewDidFinishNavigation, func(_ *application.WindowEvent) {
@@ -181,6 +182,8 @@ func (m *WindowManager) handleOpen(w http.ResponseWriter, r *http.Request) {
 		// Runs on the UI thread inside InvokeAsync, and the window is already
 		// running, so its native handle exists.
 		PrepareWindow(win)
+		// The daemon event bridge emits to every window, this one included.
+		MarkRuntimeReadyOnFirstLoad(win)
 		win.RegisterHook(events.Common.WindowClosing, func(_ *application.WindowEvent) {
 			m.mu.Lock()
 			delete(m.windows, name)
