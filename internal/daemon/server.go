@@ -161,10 +161,13 @@ type Daemon struct {
 	// detachStateErr is what the detach's final namespace-state write did.
 	// Written inside shutdownOnce and read only after it has returned, which is
 	// what makes it safe without a lock — Once.Do returns only once f has.
-	detachStateErr error
-	bgCtx          context.Context // canceled on daemon shutdown
-	bgCancel       context.CancelFunc
-	bgWg           sync.WaitGroup // tracks background goroutines (snapshot, downloads)
+	detachStateErr    error
+	bgCtx             context.Context // canceled on daemon shutdown
+	bgCancel          context.CancelFunc
+	bgWg              sync.WaitGroup // tracks background goroutines (snapshot, downloads)
+	snapshotOpsMu     sync.Mutex
+	snapshotOps       map[string]snapshotOperationRecord
+	snapshotCompleted []string
 	// longOp is THE exclusive long-operation lock, and it records WHO holds it
 	// (longOpKind). Held for the whole of a snapshot export/import, of a
 	// dependency migration, and of an asynchronous update pass (ownership is
@@ -1236,6 +1239,7 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 	register("POST "+api.SnapshotsExport, d.handleExportSnapshot)
 	register("POST "+api.SnapshotsImport, d.handleImportSnapshot)
 	register("POST "+api.SnapshotsDownload, d.handleDownloadSnapshot)
+	register("GET "+api.SnapshotsOperation, d.handleSnapshotOperation)
 	register("GET "+api.WorkspaceSnapshots, d.handleWorkspaceSnapshots)
 	register("PUT /api/v1/snapshots/{name}", d.handleRenameSnapshot)
 	register("DELETE /api/v1/snapshots/{name}", d.handleDeleteSnapshot)

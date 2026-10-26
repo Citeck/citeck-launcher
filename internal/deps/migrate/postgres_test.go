@@ -1015,3 +1015,35 @@ func TestRealDumpStepReportsIndeterminateProgress(t *testing.T) {
 		assert.Zero(t, pct, "the dump step must report indeterminate progress, not a fraction of the cluster size")
 	}
 }
+
+// Old snapshots carry data but no local source image. The pull phase must
+// acquire it before start-source and must fail before touching any data.
+func TestPostgresMigrationAcquiresMissingSourceImage(t *testing.T) {
+	for _, local := range []bool{false, true} {
+		t.Run(fmt.Sprintf("source-local=%t", local), func(t *testing.T) {
+			env := envWith17Data()
+			env.LocalImages[from17] = local
+			_, err := runPlan(t, env, PlanOptions{})
+			require.NoError(t, err)
+			if local {
+				assert.NotContains(t, env.Pulled(), from17, "the existing source is reused")
+			} else {
+				require.NotEmpty(t, env.Pulled())
+				assert.Equal(t, from17, env.Pulled()[0])
+				log := strings.Join(env.Log(), "\n")
+				assert.Less(t, strings.Index(log, "pull:"+from17), strings.Index(log, "run:"+SrcContainer))
+			}
+		})
+	}
+}
+
+func TestPostgresSourcePullFailurePrecedesSourceStart(t *testing.T) {
+	env := envWith17Data()
+	env.FailOn["pull:"+from17] = errors.New("source registry unavailable")
+	_, err := runPlan(t, env, PlanOptions{})
+	require.ErrorContains(t, err, "pull-image")
+	require.ErrorContains(t, err, "source registry unavailable")
+	assert.NotContains(t, strings.Join(env.Log(), "\n"), "run:"+SrcContainer)
+	assert.Equal(t, "17\n", env.Volumes[oldVol]["PG_VERSION"])
+	assert.Empty(t, env.Volumes[newVol])
+}

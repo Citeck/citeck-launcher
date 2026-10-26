@@ -136,7 +136,10 @@ func (f *fakeDaemonSocket) isDown() bool {
 
 func (f *fakeDaemonSocket) serve(t *testing.T) {
 	t.Helper()
-	dir := t.TempDir()
+	// Keep Unix socket paths short even with a long checkout/TMPDIR.
+	dir, dirErr := os.MkdirTemp("", "cli-sock-")
+	require.NoError(t, dirErr)
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	t.Setenv("CITECK_RUN", dir)
 	t.Setenv("CITECK_HOST", "") // force the unix transport even on a box with one set
 

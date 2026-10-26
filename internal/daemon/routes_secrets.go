@@ -461,7 +461,11 @@ func (d *Daemon) handleUnlockSecrets(w http.ResponseWriter, r *http.Request) {
 	// A namespace whose start was deferred because it needs user secrets (an
 	// auth-required registry) can now run — the vault is unlocked and the
 	// registry-auth cache was just rebuilt from the readable secrets.
+	deferred := d.active().deferredForSecrets
 	d.startNamespaceDeferredForSecrets("secrets unlocked")
+	if !deferred {
+		d.refreshStoppedNamespaceSecrets()
+	}
 
 	slog.Info("Secrets unlocked successfully")
 	writeJSON(w, api.ActionResultDto{Success: true, Message: "secrets unlocked"})

@@ -35,7 +35,10 @@ try {
   while (true) {
     await page.waitForTimeout(5000);
     const ready = await page.getByText('Available spaces', {exact:true}).isVisible();
-    if (ready && failures.length === 0) break;
+    // The heading renders before its widgets finish: a screenshot of their
+    // spinners is not proof that the dashboard initialized successfully.
+    const loading = await page.locator('[class*="loader"]:visible,[class*="spinner"]:visible').count();
+    if (ready && loading === 0 && failures.length === 0) break;
     transientFailures += failures.length; failures = [];
     if (Date.now() >= deadline) throw new Error('Platform initialization timeout');
     await page.reload({waitUntil:'domcontentloaded',timeout:30000});

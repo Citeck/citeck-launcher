@@ -193,6 +193,7 @@ func TestAllRoutesRegistered(t *testing.T) {
 		{"POST", api.DiagnosticsFix},
 		// Snapshots
 		{"GET", api.Snapshots},
+		{"GET", "/api/v1/snapshots/operations/test-id"},
 		{"POST", api.SnapshotsExport},
 		{"POST", api.SnapshotsImport},
 		{"POST", api.SnapshotsDownload},

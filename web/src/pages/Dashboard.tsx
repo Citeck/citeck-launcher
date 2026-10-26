@@ -27,6 +27,7 @@ import { BundleErrorBanner } from '../components/BundleErrorBanner'
 import { StateWriteBanner } from '../components/StateWriteBanner'
 import { DependencyUpgradeBanner } from '../components/DependencyUpgradeBanner'
 import { ContentStorageBanner } from '../components/ContentStorageBanner'
+import { StartupBanners } from '../components/StartupBanners'
 import { DependenciesDialog } from '../components/DependenciesDialog'
 import { RightDrawer } from '../components/RightDrawer'
 import { AppDrawerContent } from '../components/AppDrawerContent'
@@ -224,28 +225,30 @@ export function Dashboard() {
 
   return (
     <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
-      {/* Low-disk warning from the daemon disk monitor (disk_low SSE event) */}
-      <DiskLowBanner />
-      {/* Registry auth prompt — auto-opens the credentials dialog on a pull
-          auth failure and persists as a banner until resolved. */}
-      <RegistryAuthBanner />
-      {/* Bundle resolution failed (or produced zero applications): without this
-          the app table below simply shows the seven infra containers going
-          green, and nothing says the product is missing from them. */}
-      <BundleErrorBanner />
-      {/* The daemon's state writes are being refused: detaching an app, saving
-          an app config and editing a mounted file all still report success
-          (they did succeed), so without this the loss is invisible until the
-          next daemon start. */}
-      <StateWriteBanner />
-      {/* Infra dependency (postgres, rabbitmq, …) upgrades the generator held
-          back because applying them to existing data would break it — plus the
-          pending-rollback state, which nothing else surfaces. */}
-      <DependencyUpgradeBanner onDetails={() => setDepsDialogOpen(true)} />
-      {/* S3 content storage (an S3 namespace only): the one-time connection of
-          ecos-content to its provider while it is in progress, failed (with
-          Retry), or impossible because the provider was not generated. */}
-      <ContentStorageBanner />
+      <StartupBanners>
+        {/* Low-disk warning from the daemon disk monitor (disk_low SSE event) */}
+        <DiskLowBanner />
+        {/* Registry auth prompt — auto-opens the credentials dialog on a pull
+            auth failure and persists as a banner until resolved. */}
+        <RegistryAuthBanner />
+        {/* Bundle resolution failed (or produced zero applications): without this
+            the app table below simply shows the seven infra containers going
+            green, and nothing says the product is missing from them. */}
+        <BundleErrorBanner />
+        {/* The daemon's state writes are being refused: detaching an app, saving
+            an app config and editing a mounted file all still report success
+            (they did succeed), so without this the loss is invisible until the
+            next daemon start. */}
+        <StateWriteBanner />
+        {/* Infra dependency (postgres, rabbitmq, …) upgrades the generator held
+            back because applying them to existing data would break it — plus the
+            pending-rollback state, which nothing else surfaces. */}
+        <DependencyUpgradeBanner onDetails={() => setDepsDialogOpen(true)} />
+        {/* S3 content storage (an S3 namespace only): the one-time connection of
+            ecos-content to its provider while it is in progress, failed (with
+            Retry), or impossible because the provider was not generated. */}
+        <ContentStorageBanner />
+      </StartupBanners>
       {/* Top: sidebar + table + drawer overlay */}
       <div className="flex flex-1 min-h-0 relative">
         {/* Left info panel */}

@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -291,12 +292,17 @@ func TestRollbackStopsTheNamespaceBeforeItMovesThePin(t *testing.T) {
 // and the dialog's progress screen work unchanged.
 func TestRollbackRecordsItsVerdictAndReportsThreeSteps(t *testing.T) {
 	d, mux, rt, _ := newRollbackDaemon(t)
+	activeAtVerdict := make(chan bool, 1)
+	oldLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(depsVerdictWriter{d, "Dependency rollback finished", activeAtVerdict}, nil)))
+	t.Cleanup(func() { slog.SetDefault(oldLogger) })
 	events, _, ok := d.addSubscriber()
 	require.True(t, ok)
 	t.Cleanup(func() { d.removeSubscriber(events) })
 
 	require.Equal(t, http.StatusAccepted, depsPost(mux, api.DependencyRollbackPath("postgres"), "").Code)
 	d.bgWg.Wait()
+	assert.False(t, <-activeAtVerdict, "rollback must publish settled HTTP state before its verdict event")
 
 	res := rt.LastDependencyMigration()
 	require.NotNil(t, res)

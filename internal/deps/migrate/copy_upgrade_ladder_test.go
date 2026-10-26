@@ -118,7 +118,7 @@ func TestAThreeRungPlanPullsEveryRung(t *testing.T) {
 		okPreflight(path.From(), path.To()))
 	require.NoError(t, err)
 	require.NoError(t, Run(context.Background(), j2store(), j, plan, nil))
-	assert.ElementsMatch(t, path.Rungs(), env.Pulled(),
+	assert.ElementsMatch(t, append([]string{path.From()}, path.Rungs()...), env.Pulled(),
 		"every rung is pulled before anything irreversible happens")
 }
 

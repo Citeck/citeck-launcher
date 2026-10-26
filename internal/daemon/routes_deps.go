@@ -759,6 +759,10 @@ func (d *Daemon) handleDependencyMigrate(w http.ResponseWriter, r *http.Request)
 			d.broadcastEvent(evt(api.EventDepsMigrationProgress, step, i, n, pct, m))
 		}
 		runErr := migrate.Run(d.bgCtx, rt, journal, plan, progress)
+		// Publish settled HTTP state before the terminal event. Its consumers
+		// immediately refetch; deferred cleanup runs after report I/O and can
+		// otherwise resurrect the final step in the dialog.
+		d.setDepsMigration(nsID, nil)
 		rep := migrationReport{
 			Kind: "upgrade", Namespace: nsID, Dependency: string(id), From: from, To: to,
 			Launcher: d.version, StartedAt: startedAt, FinishedAt: time.Now(), StepCount: steps,

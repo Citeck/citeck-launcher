@@ -24,6 +24,7 @@ import { ToastContainer } from './components/Toast'
 import { ErrorModalHost } from './components/ErrorModal'
 import { LoadingOverlayHost } from './components/LoadingOverlay'
 import { SecretsUnlockGuard } from './components/SecretsUnlockGuard'
+import { StartupBanners } from './components/StartupBanners'
 import { MigrationDegradedBanner } from './components/MigrationDegradedBanner'
 import { useEffect } from 'react'
 
@@ -101,7 +102,7 @@ function MainLayout() {
       <TabBar />
       {/* A lossy 1.x migration leaves the launcher looking freshly installed;
           without this it is reported only to the log file. */}
-      <MigrationDegradedBanner />
+      <StartupBanners><MigrationDegradedBanner /></StartupBanners>
       <main className="flex-1 min-h-0 flex flex-col">
         <Routes>
           {/* Root: Welcome (desktop, no namespace) or Dashboard */}

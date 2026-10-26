@@ -237,6 +237,30 @@ func (r *Runtime) Regenerate(apps []appdef.ApplicationDef, cfg *Config, bundleDe
 	}
 }
 
+// RefreshStoppedApps updates the stopped namespace's desired set without
+// queuing work for a runtime loop or starting any containers. Lifecycle callers
+// must serialize it against Start, as they do for other generation changes.
+func (r *Runtime) RefreshStoppedApps(apps []appdef.ApplicationDef) bool {
+	r.awaitStoppedLoopExit()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.status != NsStatusStopped || r.running.Load() {
+		return false
+	}
+	r.lastApps = apps
+	next := make(map[string]*AppRuntime, len(apps))
+	for _, def := range apps {
+		if existing := r.apps[def.Name]; existing != nil {
+			existing.Def = def
+			next[def.Name] = existing
+		} else {
+			next[def.Name] = &AppRuntime{Name: def.Name, Status: AppStatusStopped, Def: def}
+		}
+	}
+	r.apps = next
+	return true
+}
+
 // generatedDefForApp returns the last freshly-generated PATCH-FREE baseline def
 // for appName (the baseline a patch is computed against, and the editor's change
 // gutter source). Reads generatedDefs only: it is refreshed on every load/reload

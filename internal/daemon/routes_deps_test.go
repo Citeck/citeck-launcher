@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -689,8 +690,27 @@ func (f fakeMigrator) Plan(_ context.Context, _ migrate.Env, path migrate.Path, 
 	return f.plan, deps.MigrationJournal{ID: deps.Postgres, From: from, To: to}, nil
 }
 
+// Inspect the HTTP-visible state at the verdict boundary, before report I/O
+// and deferred cleanup can conceal the ordering bug.
+type depsVerdictWriter struct {
+	d       *Daemon
+	message string
+	active  chan bool
+}
+
+func (w depsVerdictWriter) Write(p []byte) (int, error) {
+	if strings.Contains(string(p), w.message) {
+		w.active <- w.d.currentDepsMigration("ns1") != nil
+	}
+	return len(p), nil
+}
+
 func TestMigrateAcceptsRunsAndBroadcasts(t *testing.T) {
 	d, mux, rt := newDepsRoutesDaemon(t)
+	activeAtVerdict := make(chan bool, 1)
+	oldLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(depsVerdictWriter{d, "Dependency migration finished", activeAtVerdict}, nil)))
+	t.Cleanup(func() { slog.SetDefault(oldLogger) })
 	d.activeNs.dockerClient = &docker.Client{}
 	d.bgCtx, d.bgCancel = context.WithCancel(context.Background())
 	t.Cleanup(d.bgCancel)
@@ -736,6 +756,7 @@ func TestMigrateAcceptsRunsAndBroadcasts(t *testing.T) {
 	}
 	d.bgWg.Wait()
 
+	assert.False(t, <-activeAtVerdict, "the terminal event must not race a still-active progress DTO")
 	assert.Equal(t, "postgres:18", rt.DependencyPins()[deps.Postgres], "the commit moved the pin")
 	assert.Nil(t, rt.MigrationJournal(), "a committed migration closes its journal")
 	require.NotNil(t, rt.LastDependencyMigration())

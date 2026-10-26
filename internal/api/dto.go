@@ -4,8 +4,9 @@ import "github.com/citeck/citeck-launcher/internal/msg"
 
 // ActionResultDto is the response for simple action endpoints.
 type ActionResultDto struct {
-	Success bool   `json:"success"`
-	Message string `json:"message"`
+	OperationID string `json:"operationId,omitempty"`
+	Success     bool   `json:"success"`
+	Message     string `json:"message"`
 	// StateSaveError is set only by POST /daemon/shutdown?leave_running=true,
 	// and only when that detach could not write the namespace state.
 	//
@@ -729,6 +730,7 @@ type LinkDto struct {
 // broadcasts them and the CLI selects on them. The web store cannot import Go,
 // so it keeps its own literals with a comment naming these.
 type EventDto struct {
+	OperationID string `json:"operationId,omitempty"`
 	Type        string `json:"type"`
 	Seq         int64  `json:"seq"`
 	Timestamp   int64  `json:"timestamp"`

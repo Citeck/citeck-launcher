@@ -308,12 +308,7 @@ func (r *copyRun) stopNamespace(ctx context.Context, _ *Journal, _ StepProgress)
 // on a ladder that has to hold for the rung four steps up, not just the
 // first.
 func (r *copyRun) pullImages(ctx context.Context, _ *Journal, p StepProgress) error {
-	for _, image := range r.path.Rungs() {
-		if err := pullImageStep(ctx, r.env, image, p); err != nil {
-			return err
-		}
-	}
-	return nil
+	return pullMigrationImagesStep(ctx, r.env, r.path, p)
 }
 
 // createVolume makes the volume this plan writes into; the write-ahead

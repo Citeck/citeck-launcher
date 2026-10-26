@@ -38,8 +38,19 @@ func newUnixSocket(t *testing.T, path string) {
 	t.Cleanup(func() { _ = ln.Close() })
 }
 
+// contextSocketHome avoids encoding a long test name in Unix socket paths.
+func contextSocketHome(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "context-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
+}
+
 func TestDockerHostFromContext_DesktopLinux(t *testing.T) {
-	home := t.TempDir()
+	home := contextSocketHome(t)
 	t.Setenv("HOME", home)
 	t.Setenv("DOCKER_CONTEXT", "")
 
@@ -59,7 +70,7 @@ func TestDockerHostFromContext_DesktopLinux(t *testing.T) {
 }
 
 func TestDockerHostFromContext_EnvOverride(t *testing.T) {
-	home := t.TempDir()
+	home := contextSocketHome(t)
 	t.Setenv("HOME", home)
 	t.Setenv("DOCKER_CONTEXT", "colima")
 

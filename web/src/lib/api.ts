@@ -1,3 +1,5 @@
+import { useLongOpStore } from './longOp'
+import type { EventDto } from './types'
 import type {
   GitFailureDto,
   NamespaceDto,
@@ -747,6 +749,17 @@ export async function postDiagnosticsFix(): Promise<DiagFixResultDto> {
   return request('POST', '/diagnostics/fix')
 }
 
+async function snapshotRequest(path: string, opts?: RequestOpts): Promise<ActionResultDto> {
+  const token = useLongOpStore.getState().current?.token
+  const result = await request<ActionResultDto>('POST', path, opts)
+  if (token !== undefined && result.operationId) useLongOpStore.getState().bindOperation(result.operationId, token)
+  return result
+}
+
+export async function getSnapshotOperation(id: string): Promise<EventDto> {
+  return request('GET', `/snapshots/operations/${enc(id)}`)
+}
+
 // Phase F3: Snapshots
 export async function getSnapshots(): Promise<SnapshotDto[]> {
   return request('GET', '/snapshots')
@@ -758,13 +771,13 @@ export async function getSnapshots(): Promise<SnapshotDto[]> {
 export async function postExportSnapshot(name?: string, volumes?: string[]): Promise<ActionResultDto> {
   const qs = name ? `?name=${enc(name)}` : ''
   const body = volumes ? { volumes } : undefined
-  return request('POST', `/snapshots/export${qs}`, { timeout: 300_000, body })
+  return snapshotRequest(`/snapshots/export${qs}`, { timeout: 300_000, body })
 }
 
 export async function postImportSnapshot(file: File): Promise<ActionResultDto> {
   const formData = new FormData()
   formData.append('file', file)
-  return request('POST', '/snapshots/import', { body: formData, timeout: 300_000 })
+  return snapshotRequest('/snapshots/import', { body: formData, timeout: 300_000 })
 }
 
 /**
@@ -775,7 +788,7 @@ export async function postImportSnapshot(file: File): Promise<ActionResultDto> {
  */
 export async function postImportSnapshotByName(name: string): Promise<ActionResultDto> {
   const filename = name.endsWith('.zip') ? name : `${name}.zip`
-  return request('POST', `/snapshots/import?name=${enc(filename)}`, { timeout: 300_000 })
+  return snapshotRequest(`/snapshots/import?name=${enc(filename)}`, { timeout: 300_000 })
 }
 
 export async function getWorkspaceSnapshots(): Promise<{ id: string; name: string; url: string; size?: string }[]> {
@@ -783,7 +796,7 @@ export async function getWorkspaceSnapshots(): Promise<{ id: string; name: strin
 }
 
 export async function postSnapshotDownload(url: string, name?: string): Promise<ActionResultDto> {
-  return request('POST', '/snapshots/download', { body: { url, name } })
+  return snapshotRequest('/snapshots/download', { body: { url, name } })
 }
 
 export async function renameSnapshot(oldName: string, newName: string): Promise<ActionResultDto> {

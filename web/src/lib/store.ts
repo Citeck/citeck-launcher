@@ -1,11 +1,9 @@
 import { create } from 'zustand'
 import type { NamespaceDto, HealthDto, EventDto } from './types'
 import { getNamespace, getHealth } from './api'
+import { applySnapshotEvent, reconcileSnapshotOperation } from './snapshotEvents'
 import { connectEvents } from './websocket'
 import { connectDesktopEvents, isWailsDesktop } from './desktopEvents'
-import { showError } from './errorModal'
-import { toast } from './toast'
-import { t } from './i18n'
 import { useLongOpStore } from './longOp'
 import { registryHostOf, isAuthErrorText } from './registry'
 import { useDepsStore } from './depsStore'
@@ -91,6 +89,17 @@ let lastSseFrameAt = 0
 let sseLive = false
 let pollTimer: ReturnType<typeof setInterval> | null = null
 let pollInFlight = false
+// Namespace responses started before a lifecycle event cannot overwrite it.
+let depsEventRevision = 0
+let fetchRevision = 0
+
+const scheduleFetch = () => {
+  if (fetchDebounceTimer) clearTimeout(fetchDebounceTimer)
+  fetchDebounceTimer = setTimeout(() => {
+    fetchDebounceTimer = null
+    void get().fetchData()
+  }, 100)
+}
 
 const ensurePollFallback = () => {
   if (pollTimer !== null) return
@@ -99,7 +108,18 @@ const ensurePollFallback = () => {
     // Nothing to refresh outside an active namespace (Welcome owns its own load).
     if (get().namespace === null) return
     // Phase 2: stream proven live AND a frame arrived recently — let SSE drive.
-    if (sseLive && Date.now() - lastSseFrameAt < SSE_STALE_MS) return
+    if (sseLive && Date.now() - lastSseFrameAt < SSE_STALE_MS) {
+      if (useDepsStore.getState().migration) {
+        // Pings prove transport health, not delivery of the terminal event.
+        // Re-read authoritative state while a migration is displayed.
+        pollInFlight = true
+        void get().fetchData().finally(() => { pollInFlight = false })
+      } else if (useLongOpStore.getState().current?.operationId) {
+        pollInFlight = true
+        void reconcileSnapshotOperation().finally(() => { pollInFlight = false })
+      }
+      return
+    }
     // Phase 1 (not yet proven live) or phase 2 gone stale → poll.
     pollInFlight = true
     void get().fetchData().finally(() => { pollInFlight = false })
@@ -161,11 +181,19 @@ return ({
   },
 
   fetchData: async () => {
+    const depsRevisionAtStart = depsEventRevision
+    const fetchRevisionAtStart = ++fetchRevision
     const isInitial = get().namespace === null
     if (isInitial) set({ loading: true })
     set({ error: null })
     try {
       const [namespace, health] = await Promise.all([getNamespace(), getHealth()])
+      // A terminal event starts a fresh fetch. A slower earlier response must
+      // not overwrite that request's state, including the namespace controls.
+      if (fetchRevisionAtStart !== fetchRevision) return
+      if (depsRevisionAtStart !== depsEventRevision) {
+        namespace.dependencyMigration = useDepsStore.getState().migration ?? undefined
+      }
       // Self-heal the registry-auth banner from the app list. The daemon's
       // `pull_auth_required` SSE event is one-shot (auth failures pause the
       // retry loop, so it never re-fires), and a desktop reconnect / a missed
@@ -185,7 +213,9 @@ return ({
       // The namespace DTO is the namespace-scoped truth about a running
       // dependency migration — the deps_migration_* events only reach clients
       // that were already listening, so a reload or a reconnect needs this.
-      useDepsStore.getState().hydrate(namespace.dependencyMigration)
+      if (depsRevisionAtStart === depsEventRevision) {
+        useDepsStore.getState().hydrate(namespace.dependencyMigration)
+      }
       // And about an interrupted one whose restart-recovery ROLLBACK FAILED:
       // that recovery runs at load time, emits no event and produces no
       // result, so before this the alarm reached the user only when something
@@ -195,7 +225,9 @@ return ({
       // at every start, and the fetch that finds it gone must take the
       // deliberately non-dismissible red banner down.
       useDepsStore.getState().setRollbackPending(namespace.dependencyRollbackPending ?? '')
+      await reconcileSnapshotOperation()
     } catch (err) {
+      if (fetchRevisionAtStart !== fetchRevision) return
       const msg = (err as Error).message
       // The daemon explicitly reports no namespace (deactivated, deleted, or
       // never selected). Clear the stale namespace so the UI falls back to
@@ -248,10 +280,11 @@ return ({
         // Detect sequence gap — fetch fresh state to catch up
         const { lastSeq } = get()
         if (lastSeq > 0 && event.seq > lastSeq + 1) {
-          toast(t('store.connectionRestored'), 'info')
-          get().fetchData()
+          // A missing frame is not evidence of a lost/restored connection.
+          // Reconcile quietly and coalesce bursts of gaps into one fetch.
+          scheduleFetch()
         }
-        set({ lastSeq: event.seq })
+        set({ lastSeq: Math.max(lastSeq, event.seq) })
 
         // Fast path for `app_stats` — patch only the matching app's cpu/memory
         // in place to avoid the full namespace refetch (these fire every 5s
@@ -291,30 +324,9 @@ return ({
         // events (`snapshot_complete` / `snapshot_error`). Toasts are owned
         // by the dialog that initiated the op so they fire in the correct
         // localized phrasing.
-        if (event.type === 'snapshot_download' || event.type === 'snapshot_import') {
-          const ops = useLongOpStore.getState()
-          const downloading = event.type === 'snapshot_download'
-          if (!ops.current) ops.start(downloading ? 'snapshot.download' : 'snapshot.import', t(downloading ? 'longOp.snapshot.download' : 'longOp.snapshot.import'))
-          ops.update({ current: 0, total: 0, phase: downloading ? 'downloading' : 'importing' })
-          return
-        }
-        if (event.type === 'snapshot_progress') {
-          useLongOpStore.getState().update({
-            receivedBytes: event.receivedBytes,
-            totalBytes: event.totalBytes,
-            phase: event.phase,
-            current: event.current ?? 0,
-            total: event.total ?? 0,
-            message: event.after || undefined,
-          })
-          return
-        }
-        if (event.type === 'snapshot_complete' || event.type === 'snapshot_error') {
-          useLongOpStore.getState().end()
-          if (event.type === 'snapshot_error') showError({ title: t('snapshots.dialog.title'), message: event.after || t('errorModal.title') })
-          // Async export/import returned 202 before the file existed; signal the
-          // SnapshotsDialog (if open) to reload now that the backend is done.
-          useLongOpStore.getState().markCompleted()
+        if (event.type.startsWith('snapshot_')) {
+          applySnapshotEvent(event)
+          if (event.type !== 'snapshot_complete' && event.type !== 'snapshot_error') return
         }
         // Unrelated app events do not count as snapshot transfer progress.
 
@@ -329,10 +341,12 @@ return ({
         // them, so they are spelled out here; change them there and here
         // together.
         if (event.type === 'deps_migration_start') {
+          depsEventRevision++
           useDepsStore.getState().onStart(event.appName, event.total ?? 0, undefined, event.stepIds)
           return
         }
         if (event.type === 'deps_migration_progress') {
+          depsEventRevision++
           useDepsStore.getState().onProgress({
             appName: event.appName,
             phase: event.phase ?? '',
@@ -345,6 +359,7 @@ return ({
           return
         }
         if (event.type === 'deps_migration_complete' || event.type === 'deps_migration_error') {
+          depsEventRevision++
           if (event.type === 'deps_migration_complete') useDepsStore.getState().onComplete(event.appName, event.after ?? '')
           else useDepsStore.getState().onError(event.appName, event.after ?? '')
           // The migration moved the version pin, the container and (on
@@ -422,11 +437,7 @@ return ({
         }
 
         // Debounce: coalesce rapid event bursts into a single fetchData
-        if (fetchDebounceTimer) clearTimeout(fetchDebounceTimer)
-        fetchDebounceTimer = setTimeout(() => {
-          fetchDebounceTimer = null
-          get().fetchData()
-        }, 100)
+        scheduleFetch()
     }
 
     if (isWailsDesktop()) {

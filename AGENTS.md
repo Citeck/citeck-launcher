@@ -49,7 +49,7 @@ and [docs/agent-api.md](docs/agent-api.md).
 
 ### Go + Web UI (primary)
 
-Go 1.26.9 or newer is required (`go.mod` is the CI toolchain source of truth).
+Go 1.26.10 or newer is required (`go.mod` is the CI toolchain source of truth).
 
 ```bash
 make check                    # FULL local gate (CI superset + eslint) — run before committing/tagging

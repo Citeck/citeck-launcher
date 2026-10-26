@@ -1,11 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { useDashboardStore } from './store'
 import { useDepsStore } from './depsStore'
+import { useErrorModalStore } from './errorModal'
 
 // Mock the api module
-vi.mock('./api', () => ({
+vi.mock('./api', async () => ({
   getNamespace: vi.fn(),
   getHealth: vi.fn(),
+  getSnapshotOperation: vi.fn(),
+  ApiError: (await vi.importActual<typeof import('./api')>('./api')).ApiError,
 }))
 
 // Mock the websocket module
@@ -25,10 +28,12 @@ vi.mock('./desktopEvents', () => ({
   connectDesktopEvents: vi.fn(() => ({ close: vi.fn() })),
 }))
 
-import { getNamespace, getHealth } from './api'
+import { getNamespace, getHealth, getSnapshotOperation, ApiError } from './api'
+import { useLongOpStore } from './longOp'
 import { connectEvents } from './websocket'
 import { isWailsDesktop, connectDesktopEvents } from './desktopEvents'
 import type { EventDto } from './types'
+import { toast } from './toast'
 
 const mockedGetNamespace = vi.mocked(getNamespace)
 const mockedGetHealth = vi.mocked(getHealth)
@@ -38,6 +43,8 @@ const mockedConnectDesktop = vi.mocked(connectDesktopEvents)
 
 describe('useDashboardStore', () => {
   beforeEach(() => {
+    useDashboardStore.getState().stopEventStream()
+    useDepsStore.setState(useDepsStore.getInitialState())
     vi.useFakeTimers()
     // Reset store state before each test
     useDashboardStore.setState({
@@ -323,6 +330,60 @@ describe('useDashboardStore', () => {
     useDashboardStore.getState().stopEventStream()
   })
 
+  it('does not resurrect a completed migration from a pre-terminal namespace response', async () => {
+    const stale = { id: 'ns1', name: 'x', status: 'STOPPED', bundleRef: '', apps: [],
+      dependencyMigration: { id: 'rabbitmq', step: 'stop-new', stepIndex: 11, stepCount: 11 } }
+    useDepsStore.getState().onStart('rabbitmq', 11)
+    let releaseHealth!: (value: { status: string; healthy: boolean; checks: [] }) => void
+    mockedGetNamespace.mockResolvedValueOnce(stale).mockResolvedValue({ ...stale, dependencyMigration: undefined })
+    mockedGetHealth.mockReturnValueOnce(new Promise((resolve) => { releaseHealth = resolve }))
+    const pending = useDashboardStore.getState().fetchData()
+    mockedGetHealth.mockResolvedValue({ status: 'healthy', healthy: true, checks: [] })
+    useDashboardStore.getState().startEventStream()
+    const onEvent = mockedConnectEvents.mock.calls[0][0]
+    onEvent({ type: 'deps_migration_complete', seq: 1, timestamp: 0,
+      namespaceId: 'ns1', appName: 'rabbitmq', before: '', after: 'migrated' })
+    releaseHealth({ status: 'healthy', healthy: true, checks: [] })
+    await pending
+    expect(useDepsStore.getState().migration).toBeNull()
+    expect(useDepsStore.getState().result).toMatchObject({ id: 'rabbitmq', success: true })
+    expect(useDashboardStore.getState().namespace?.dependencyMigration).toBeUndefined()
+  })
+
+  it('reconciles migration completion even while SSE keeps delivering pings', async () => {
+    const ns = { id: 'ns1', name: 'x', status: 'STOPPED', bundleRef: '', apps: [] }
+    useDashboardStore.setState({ namespace: ns })
+    useDepsStore.getState().onStart('rabbitmq', 11)
+    mockedGetNamespace.mockResolvedValue(ns)
+    mockedGetHealth.mockResolvedValue({ status: 'healthy', healthy: true, checks: [] })
+    useDashboardStore.getState().startEventStream()
+    const onPing = mockedConnectEvents.mock.calls[0][5]
+    onPing?.()
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(mockedGetNamespace).toHaveBeenCalled()
+    expect(useDepsStore.getState().migration).toBeNull()
+  })
+
+  it('silently coalesces sequence-gap resyncs without claiming connection recovery', async () => {
+    mockedGetNamespace.mockResolvedValue({ id: 'ns1', name: 'x', status: 'STARTING', bundleRef: '', apps: [] })
+    mockedGetHealth.mockResolvedValue({ status: 'healthy', healthy: true, checks: [] })
+    useDashboardStore.getState().startEventStream()
+    const onEvent = mockedConnectEvents.mock.calls[0][0]
+    const base = { type: 'app_stats', timestamp: 0, namespaceId: 'ns1', appName: 'emodel', before: '', after: '' }
+    for (const seq of [1, 3, 5, 7, 9, 11]) onEvent({ ...base, seq })
+    expect(toast).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(100)
+    expect(mockedGetNamespace).toHaveBeenCalledTimes(1)
+  })
+
+  it('never moves the replay cursor backwards on a late event', () => {
+    useDashboardStore.getState().startEventStream()
+    const onEvent = mockedConnectEvents.mock.calls[0][0]
+    const base = { type: 'app_stats', timestamp: 0, namespaceId: 'ns1', appName: 'emodel', before: '', after: '' }
+    for (const seq of [1, 3, 2]) onEvent({ ...base, seq })
+    expect(useDashboardStore.getState().lastSeq).toBe(3)
+  })
+
   // A client that connects or reloads mid-migration never saw the start event;
   // NamespaceDto.dependencyMigration is the namespace-scoped truth for it.
   it('hydrates the deps store from the namespace DTO, and clears it when the namespace goes away', async () => {
@@ -421,4 +482,119 @@ describe('snapshot byte progress transport', () => {
   expect(useLongOpStore.getState().current).toBeNull()
   useDashboardStore.getState().stopEventStream()
  })
+})
+
+
+describe('snapshot status reconciliation', () => {
+  afterEach(() => { useLongOpStore.getState().end(); useErrorModalStore.getState().close(); vi.useRealTimers() })
+  const namespace = { id: 'ns1', name: 'Test', status: 'STOPPED', bundleRef: '', apps: [] }
+  const event = { seq: 42, timestamp: 0, namespaceId: 'ns1', appName: '', before: '', after: '', type: 'snapshot_complete', operationId: 'accepted-op' }
+
+  it('recovers a completion missing from the SSE ring and deduplicates its later replay', async () => {
+    useLongOpStore.getState().start('snapshot.import', 'Import')
+    useLongOpStore.getState().bindOperation('accepted-op')
+    vi.mocked(getSnapshotOperation).mockResolvedValue(event)
+    mockedGetNamespace.mockResolvedValue(namespace)
+    mockedGetHealth.mockResolvedValue({ status: 'healthy', healthy: true, checks: [] })
+    const before = useLongOpStore.getState().completed
+    await useDashboardStore.getState().fetchData()
+    expect(getSnapshotOperation).toHaveBeenLastCalledWith('accepted-op')
+    expect(useLongOpStore.getState().current).toBeNull()
+    expect(useLongOpStore.getState().completed).toBe(before + 1)
+    const { applySnapshotEvent } = await import('./snapshotEvents')
+    applySnapshotEvent(event)
+    expect(useLongOpStore.getState().completed).toBe(before + 1)
+  })
+
+  it.each(['snapshot_download', 'snapshot_import'])('ignores replayed %s lifecycle after HTTP completion', async (startType) => {
+    const { applySnapshotEvent, reconcileSnapshotOperation } = await import('./snapshotEvents')
+    const id = `completed-replay-${startType}`
+    const terminal = { ...event, operationId: id }
+    useLongOpStore.getState().start('snapshot.import', 'Import')
+    useLongOpStore.getState().bindOperation(id)
+    vi.mocked(getSnapshotOperation).mockResolvedValue(terminal)
+    const before = useLongOpStore.getState().completed
+    await reconcileSnapshotOperation()
+    expect(useLongOpStore.getState().current).toBeNull()
+    // Another completion must not erase the first operation's replay protection.
+    applySnapshotEvent({ ...terminal, operationId: `${id}-second` })
+    const completed = useLongOpStore.getState().completed
+    expect(completed).toBe(before + 2)
+    for (const type of [startType, 'snapshot_progress', 'snapshot_complete']) {
+      applySnapshotEvent({ ...terminal, type, current: 1, total: 2 })
+      expect(useLongOpStore.getState().current).toBeNull()
+      expect(useLongOpStore.getState().completed).toBe(completed)
+    }
+    useLongOpStore.getState().start('snapshot.import', 'New request')
+    const pending = useLongOpStore.getState().current
+    applySnapshotEvent({ ...terminal, type: 'snapshot_progress', current: 1, total: 2 })
+    expect(useLongOpStore.getState().current).toEqual(pending)
+  })
+
+  it('does not clear a newer operation if an older status request finishes late', async () => {
+    useLongOpStore.getState().start('snapshot.import', 'Old')
+    useLongOpStore.getState().bindOperation('accepted-op')
+    let resolve!: (e: EventDto) => void
+    vi.mocked(getSnapshotOperation).mockImplementation(() => new Promise(r => { resolve = r }))
+    mockedGetNamespace.mockResolvedValue(namespace)
+    mockedGetHealth.mockResolvedValue({ status: 'healthy', healthy: true, checks: [] })
+    const pending = useDashboardStore.getState().fetchData()
+    await Promise.resolve(); await Promise.resolve()
+    useLongOpStore.getState().start('snapshot.import', 'New')
+    resolve(event)
+    await pending
+    expect(useLongOpStore.getState().current?.title).toBe('New')
+  })
+
+  it('does not turn repeated status reads into fresh progress', async () => {
+    vi.useFakeTimers()
+    useLongOpStore.getState().start('snapshot.import', 'Import')
+    useLongOpStore.getState().bindOperation('pending-op')
+    const before = useLongOpStore.getState().current!.lastProgressAt
+    vi.setSystemTime(before + 10000)
+    vi.mocked(getSnapshotOperation).mockResolvedValue({ ...event, operationId: 'pending-op', type: 'snapshot_progress', current: 1, total: 2 })
+    const { reconcileSnapshotOperation } = await import('./snapshotEvents')
+    await reconcileSnapshotOperation()
+    expect(useLongOpStore.getState().current?.lastProgressAt).toBe(before)
+  })
+
+  it('reports unavailable status as unknown without claiming a completion', async () => {
+    useLongOpStore.getState().start('snapshot.import', 'Import')
+    useLongOpStore.getState().bindOperation('expired-op')
+    vi.mocked(getSnapshotOperation).mockRejectedValue(new ApiError('completion cannot be confirmed', 404, 'STATUS_UNAVAILABLE'))
+    mockedGetNamespace.mockResolvedValue(namespace)
+    mockedGetHealth.mockResolvedValue({ status: 'healthy', healthy: true, checks: [] })
+    const before = useLongOpStore.getState().completed
+    await useDashboardStore.getState().fetchData()
+    expect(useLongOpStore.getState().current).toBeNull()
+    expect(useLongOpStore.getState().completed).toBe(before)
+    expect(useErrorModalStore.getState().current?.message).toBe('completion cannot be confirmed')
+  })
+})
+
+
+describe('snapshot status with a live event transport', () => {
+  afterEach(() => {
+    useDashboardStore.getState().stopEventStream()
+    useLongOpStore.getState().end()
+    mockedIsWailsDesktop.mockReturnValue(false)
+    vi.useRealTimers()
+  })
+  it('polls the accepted result even when native pings continue', async () => {
+    vi.useFakeTimers()
+    mockedIsWailsDesktop.mockReturnValue(true)
+    useDashboardStore.setState({ namespace: { id: 'ns1', name: '', status: 'STOPPED', bundleRef: '', apps: [] } })
+    useLongOpStore.getState().start('snapshot.import', 'Import')
+    useLongOpStore.getState().bindOperation('polled-op')
+    vi.mocked(getSnapshotOperation).mockResolvedValue({ operationId: 'polled-op', type: 'snapshot_complete', seq: 1, timestamp: 0, namespaceId: 'ns1', appName: '', before: '', after: '' })
+    useDashboardStore.getState().startEventStream()
+    const [, , ping] = mockedConnectDesktop.mock.calls.at(-1)!
+    ping()
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(getSnapshotOperation).toHaveBeenLastCalledWith('polled-op')
+    expect(useLongOpStore.getState().current).toBeNull()
+    useDashboardStore.getState().stopEventStream()
+    mockedIsWailsDesktop.mockReturnValue(false)
+    vi.useRealTimers()
+  })
 })

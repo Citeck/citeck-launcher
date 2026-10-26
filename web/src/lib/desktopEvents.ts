@@ -34,6 +34,7 @@ interface DesktopSubscriber {
 
 const subscribers = new Set<DesktopSubscriber>()
 let bridgeInstalled = false
+let runtimeReady = false
 
 type WailsEvent = { name?: string; data?: unknown }
 type DispatchFn = (evt: WailsEvent) => void
@@ -98,5 +99,13 @@ export function connectDesktopEvents(
   installBridge()
   const sub: DesktopSubscriber = { onEvent, onResync, onPing, onDisconnect }
   subscribers.add(sub)
+  // Core is injected by Wails, but this UI does not import its JS runtime.
+  // Until the ready handshake, WebviewWindow.ExecJS queues all native events.
+  // Subscribe BEFORE releasing that queue so the first frames are not lost.
+  const runtime = (window as unknown as WailsGlobal)._wails
+  if (!runtimeReady && typeof runtime?.invoke === 'function') {
+    runtime.invoke('wails:runtime:ready')
+    runtimeReady = true
+  }
   return { close: () => { subscribers.delete(sub) } }
 }

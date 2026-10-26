@@ -354,12 +354,7 @@ func (r *pgRun) stopNamespace(ctx context.Context, _ *Journal, _ StepProgress) e
 // whatever rung it is on. At a single hop this pulls exactly r.path.To(), as
 // pullImage always did.
 func (r *pgRun) pullImages(ctx context.Context, _ *Journal, p StepProgress) error {
-	for _, image := range r.path.Rungs() {
-		if err := pullImageStep(ctx, r.env, image, p); err != nil {
-			return err
-		}
-	}
-	return nil
+	return pullMigrationImagesStep(ctx, r.env, r.path, p)
 }
 
 // startSource runs the OLD image on the generation the pin names — the

@@ -210,15 +210,16 @@ func (d *Daemon) handleExportSnapshot(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	op := d.newSnapshotOperation(act.workspaceID, nsID)
 	// Lock ownership transferred to goroutine — unlocked when export completes
 	d.bgWg.Go(func() {
 		defer d.longOp.Unlock()
-		d.broadcastEvent(api.EventDto{
+		op.emit(api.EventDto{
 			Type: "snapshot_export", Timestamp: time.Now().UnixMilli(),
 			NamespaceID: nsID, After: fmt.Sprintf("exporting to %s", fileName),
 		})
 		progress := func(current, total int, volumeName string) {
-			d.broadcastEvent(api.EventDto{
+			op.emit(api.EventDto{
 				Type: "snapshot_progress", Timestamp: time.Now().UnixMilli(),
 				NamespaceID: nsID, After: volumeName,
 				Current: current, Total: total,
@@ -231,20 +232,20 @@ func (d *Daemon) handleExportSnapshot(w http.ResponseWriter, r *http.Request) {
 		meta, err := snapshot.Export(d.bgCtx, dc, outputPath, volumesBase, includeVolumes, secrets, dependencyStates, progress)
 		if err != nil {
 			slog.Error("Snapshot export failed", "err", err)
-			d.broadcastEvent(api.EventDto{
+			op.emit(api.EventDto{
 				Type: "snapshot_error", Timestamp: time.Now().UnixMilli(),
 				NamespaceID: nsID, After: err.Error(),
 			})
 			return
 		}
-		d.broadcastEvent(api.EventDto{
+		op.emit(api.EventDto{
 			Type: "snapshot_complete", Timestamp: time.Now().UnixMilli(),
 			NamespaceID: nsID, After: fmt.Sprintf("exported %d volumes to %s", len(meta.Volumes), fileName),
 		})
 	})
 
 	writeJSON(w, api.ActionResultDto{
-		Success: true,
+		Success: true, OperationID: op.id,
 		Message: fmt.Sprintf("Export started: %s", fileName),
 	})
 }
@@ -343,6 +344,7 @@ func (d *Daemon) handleImportSnapshot(w http.ResponseWriter, r *http.Request) {
 		tmpPath = tmpFile.Name() // goroutine will clean up
 	}
 
+	op := d.newSnapshotOperation(act.workspaceID, act.nsConfig.ID)
 	// Launch import in background and return 202 immediately.
 	// Lock ownership transferred to goroutine.
 	importPath := zipPath
@@ -353,7 +355,7 @@ func (d *Daemon) handleImportSnapshot(w http.ResponseWriter, r *http.Request) {
 		}
 		nsID := act.nsConfig.ID
 		progress := func(current, total int, volumeName string) {
-			d.broadcastEvent(api.EventDto{
+			op.emit(api.EventDto{
 				Type: "snapshot_progress", Timestamp: time.Now().UnixMilli(),
 				NamespaceID: nsID, After: volumeName,
 				Current: current, Total: total,
@@ -362,19 +364,19 @@ func (d *Daemon) handleImportSnapshot(w http.ResponseWriter, r *http.Request) {
 		meta, err := snapshot.Import(d.bgCtx, dc, importPath, volumesBase, d.snapshotDestinationFor(d.bgCtx, act), progress)
 		if err != nil {
 			slog.Error("Snapshot import failed", "err", err)
-			d.broadcastEvent(api.EventDto{
+			op.emit(api.EventDto{
 				Type: "snapshot_error", Timestamp: time.Now().UnixMilli(),
 				NamespaceID: nsID, After: err.Error(),
 			})
 			return
 		}
 		if refreshErr := d.refreshSnapshotSystemSecrets(act); refreshErr != nil {
-			d.broadcastEvent(api.EventDto{Type: "snapshot_error", Timestamp: time.Now().UnixMilli(), NamespaceID: nsID, After: refreshErr.Error()})
+			op.emit(api.EventDto{Type: "snapshot_error", Timestamp: time.Now().UnixMilli(), NamespaceID: nsID, After: refreshErr.Error()})
 			return
 		}
 		slog.Info("Snapshot import completed", "volumes", len(meta.Volumes)) //nolint:gosec // G706: meta.Volumes is internal count, not user-controlled
 
-		d.broadcastEvent(api.EventDto{
+		op.emit(api.EventDto{
 			Type: "snapshot_complete", Timestamp: time.Now().UnixMilli(),
 			NamespaceID: nsID, After: fmt.Sprintf("imported %d volumes", len(meta.Volumes)),
 		})
@@ -383,7 +385,7 @@ func (d *Daemon) handleImportSnapshot(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	_ = json.NewEncoder(w).Encode(api.ActionResultDto{
-		Success: true,
+		Success: true, OperationID: op.id,
 		Message: "Import started",
 	})
 }
@@ -430,10 +432,11 @@ func (d *Daemon) handleDownloadSnapshot(w http.ResponseWriter, r *http.Request) 
 	}
 	destPath := filepath.Join(dir, fileName)
 
+	op := d.newSnapshotOperation(d.activeWorkspaceID(), d.activeNsID())
 	// Skip if already downloaded
 	if _, err := os.Stat(destPath); err == nil {
-		d.broadcastEvent(api.EventDto{Type: "snapshot_complete", Timestamp: time.Now().UnixMilli(), NamespaceID: d.activeNsID(), After: "snapshot already cached"})
-		writeJSON(w, api.ActionResultDto{Success: true, Message: fmt.Sprintf("Snapshot %s already exists", fileName)})
+		op.emit(api.EventDto{Type: "snapshot_complete", Timestamp: time.Now().UnixMilli(), NamespaceID: d.activeNsID(), After: "snapshot already cached"})
+		writeJSON(w, api.ActionResultDto{Success: true, OperationID: op.id, Message: fmt.Sprintf("Snapshot %s already exists", fileName)})
 		return
 	}
 
@@ -443,26 +446,26 @@ func (d *Daemon) handleDownloadSnapshot(w http.ResponseWriter, r *http.Request) 
 	// EOF — the single-shot path silently failed on flaky links.
 	nsID := d.activeNsID()
 	d.bgWg.Go(func() {
-		d.broadcastEvent(api.EventDto{
+		op.emit(api.EventDto{
 			Type: "snapshot_download", Timestamp: time.Now().UnixMilli(),
 			NamespaceID: nsID, After: fmt.Sprintf("downloading %s", fileName),
 		})
-		if err := snapshot.DownloadWithRetry(d.bgCtx, ssrfSafeClient, req.URL, destPath, req.SHA256, d.snapshotDownloadProgress(nsID)); err != nil {
+		if err := snapshot.DownloadWithRetry(d.bgCtx, ssrfSafeClient, req.URL, destPath, req.SHA256, d.snapshotDownloadProgress(nsID, op.emit)); err != nil {
 			slog.Error("Snapshot download failed", "url", req.URL, "err", err)
-			d.broadcastEvent(api.EventDto{
+			op.emit(api.EventDto{
 				Type: "snapshot_error", Timestamp: time.Now().UnixMilli(),
 				NamespaceID: nsID, After: err.Error(),
 			})
 			return
 		}
-		d.broadcastEvent(api.EventDto{
+		op.emit(api.EventDto{
 			Type: "snapshot_complete", Timestamp: time.Now().UnixMilli(),
 			NamespaceID: nsID, After: fmt.Sprintf("downloaded %s", fileName),
 		})
 	})
 
 	writeJSON(w, api.ActionResultDto{
-		Success: true,
+		Success: true, OperationID: op.id,
 		Message: fmt.Sprintf("Download started: %s", fileName),
 	})
 }
@@ -494,13 +497,19 @@ func safeSnapshotFileName(rawURL string) string {
 // active namespace) would restore the snapshot into another namespace's volumes.
 //
 //nolint:nestif // download+import orchestration requires nested SHA256 verification and retry logic
-func (d *Daemon) downloadAndImportSnapshot(dc *docker.Client, snapshotID, wsID, nsID string) error {
+func (d *Daemon) downloadAndImportSnapshot(dc *docker.Client, snapshotID, wsID, nsID string) (resultErr error) {
+	op := d.newSnapshotOperation(wsID, nsID)
+	defer func() {
+		if resultErr != nil {
+			op.emit(api.EventDto{Type: "snapshot_error", Timestamp: time.Now().UnixMilli(), NamespaceID: nsID, After: resultErr.Error()})
+		}
+	}()
 	wsCfg := d.active().workspaceConfig
 
 	snapDef := bundle.FindSnapshot(wsCfg, snapshotID)
 	if snapDef == nil {
 		slog.Warn("Snapshot not found in workspace config", "id", snapshotID)
-		d.broadcastEvent(api.EventDto{
+		op.emit(api.EventDto{
 			Type: "snapshot_error", Timestamp: time.Now().UnixMilli(),
 			NamespaceID: nsID, After: fmt.Sprintf("snapshot %q not found", snapshotID),
 		})
@@ -519,7 +528,7 @@ func (d *Daemon) downloadAndImportSnapshot(dc *docker.Client, snapshotID, wsID, 
 	}
 	destPath := filepath.Join(cacheDir, snapshotID+".zip")
 
-	d.broadcastEvent(api.EventDto{
+	op.emit(api.EventDto{
 		Type: "snapshot_download", Timestamp: time.Now().UnixMilli(),
 		NamespaceID: nsID, After: fmt.Sprintf("downloading %s", snapshotID+".zip"),
 	})
@@ -551,12 +560,12 @@ func (d *Daemon) downloadAndImportSnapshot(dc *docker.Client, snapshotID, wsID, 
 	}
 
 	if needsDownload {
-		progress := d.snapshotDownloadProgress(nsID)
+		progress := d.snapshotDownloadProgress(nsID, op.emit)
 
 		// Kotlin-parity retry: 100 total / 3 without progress / 3s delay.
 		if downloadErr := snapshot.DownloadWithRetry(d.bgCtx, ssrfSafeClient, snapDef.URL, destPath, snapDef.SHA256, progress); downloadErr != nil {
 			slog.Error("Snapshot download failed after retries", "url", snapDef.URL, "err", downloadErr)
-			d.broadcastEvent(api.EventDto{
+			op.emit(api.EventDto{
 				Type: "snapshot_error", Timestamp: time.Now().UnixMilli(),
 				NamespaceID: nsID, After: downloadErr.Error(),
 			})
@@ -570,13 +579,13 @@ func (d *Daemon) downloadAndImportSnapshot(dc *docker.Client, snapshotID, wsID, 
 		return fmt.Errorf("docker client not available for snapshot import")
 	}
 
-	d.broadcastEvent(api.EventDto{
+	op.emit(api.EventDto{
 		Type: "snapshot_import", Timestamp: time.Now().UnixMilli(),
 		NamespaceID: nsID, After: "importing snapshot",
 	})
 
 	importProgress := func(current, total int, volumeName string) {
-		d.broadcastEvent(api.EventDto{
+		op.emit(api.EventDto{
 			Type: "snapshot_progress", Timestamp: time.Now().UnixMilli(),
 			NamespaceID: nsID, After: volumeName,
 			Current: current, Total: total,
@@ -585,7 +594,7 @@ func (d *Daemon) downloadAndImportSnapshot(dc *docker.Client, snapshotID, wsID, 
 	meta, err := snapshot.Import(d.bgCtx, dc, destPath, volumesBase, SnapshotDestination(d.store, d.secretService, wsID, nsID, nil), importProgress)
 	if err != nil {
 		slog.Error("Snapshot import failed", "err", err)
-		d.broadcastEvent(api.EventDto{
+		op.emit(api.EventDto{
 			Type: "snapshot_error", Timestamp: time.Now().UnixMilli(),
 			NamespaceID: nsID, After: err.Error(),
 		})
@@ -594,7 +603,7 @@ func (d *Daemon) downloadAndImportSnapshot(dc *docker.Client, snapshotID, wsID, 
 
 	slog.Info("Snapshot imported for new namespace", "ns", nsID, "volumes", len(meta.Volumes))
 
-	d.broadcastEvent(api.EventDto{
+	op.emit(api.EventDto{
 		Type: "snapshot_complete", Timestamp: time.Now().UnixMilli(),
 		NamespaceID: nsID, After: fmt.Sprintf("imported %d volumes", len(meta.Volumes)),
 	})
@@ -785,7 +794,11 @@ func isBlockedIP(ip net.IP) bool {
 }
 
 // snapshotDownloadProgress reports bytes at a bounded cadence, including unknown sizes.
-func (d *Daemon) snapshotDownloadProgress(nsID string) snapshot.ProgressFunc {
+func (d *Daemon) snapshotDownloadProgress(nsID string, send ...func(api.EventDto)) snapshot.ProgressFunc {
+	emit := d.broadcastEvent
+	if len(send) > 0 {
+		emit = send[0]
+	}
 	var last time.Time
 	return func(received, total int64) {
 		now := time.Now()
@@ -793,6 +806,6 @@ func (d *Daemon) snapshotDownloadProgress(nsID string) snapshot.ProgressFunc {
 			return
 		}
 		last = now
-		d.broadcastEvent(api.EventDto{Type: "snapshot_progress", Timestamp: now.UnixMilli(), NamespaceID: nsID, Phase: "downloading", ReceivedBytes: received, TotalBytes: total})
+		emit(api.EventDto{Type: "snapshot_progress", Timestamp: now.UnixMilli(), NamespaceID: nsID, Phase: "downloading", ReceivedBytes: received, TotalBytes: total})
 	}
 }

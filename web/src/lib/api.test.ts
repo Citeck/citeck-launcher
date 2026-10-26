@@ -13,6 +13,7 @@ import {
   type NamespaceEditDto,
 } from './api'
 import { useAuthGateStore } from './authGate'
+import { useLongOpStore } from './longOp'
 
 /** Minimal Response stand-in for the fetch stub. */
 function jsonResponse(body: unknown, status = 200, statusText = 'OK'): Response {
@@ -52,6 +53,29 @@ function lastUrl(): string {
 }
 
 describe('api request core (rawRequest/request via public helpers)', () => {
+  it('does not attach a late snapshot receipt to a newer request', async () => {
+    vi.stubGlobal('fetch', fetchMock)
+    useLongOpStore.getState().start('snapshot.import', 'Old')
+    let resolve!: (r: Response) => void
+    fetchMock.mockImplementationOnce(() => new Promise(r => { resolve = r }))
+    const pending = postImportSnapshot(new File(['zip'], 'snapshot.zip'))
+    useLongOpStore.getState().start('snapshot.import', 'New')
+    resolve(jsonResponse({ success: true, operationId: 'old-receipt' }))
+    await pending
+    expect(useLongOpStore.getState().current?.operationId).toBeUndefined()
+    expect(useLongOpStore.getState().current?.title).toBe('New')
+    useLongOpStore.getState().end()
+  })
+
+  it('binds the accepted snapshot receipt to the initiating operation', async () => {
+    vi.stubGlobal('fetch', fetchMock)
+    useLongOpStore.getState().start('snapshot.import', 'Import')
+    fetchMock.mockResolvedValueOnce(jsonResponse({ success: true, message: 'Import started', operationId: 'receipt-id' }))
+    await postImportSnapshot(new File(['zip'], 'snapshot.zip'))
+    expect(useLongOpStore.getState().current?.operationId).toBe('receipt-id')
+    useLongOpStore.getState().end()
+  })
+
   beforeEach(() => {
     vi.stubGlobal('fetch', fetchMock)
     fetchMock.mockReset()

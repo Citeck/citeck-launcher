@@ -160,6 +160,16 @@ func (l *longOpLock) TryLock(kind longOpKind) bool {
 	return true
 }
 
+// Lock waits for ownership, preserving the same data-barrier order as TryLock.
+// Used by a queued refresh that must not drop a one-shot secret unlock.
+func (l *longOpLock) Lock(kind longOpKind) {
+	if longOpOwnsNamespaceData(kind) {
+		l.dataBarrier.Lock()
+	}
+	l.mu.Lock()
+	l.owner.Store(kind)
+}
+
 // Unlock releases the lock. Clearing the owner FIRST keeps the invariant that a
 // lock-free reader never attributes the lock to a holder that has let go.
 func (l *longOpLock) Unlock() {

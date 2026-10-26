@@ -11,7 +11,14 @@ export interface LongOpProgress {
   message?: string
 }
 
+// Retain more IDs than the daemon's 500-frame replay ring can contain.
+const COMPLETED_OPERATION_HISTORY = 512
+
+let nextLongOpToken = 0
+
 export interface LongOp {
+  token: number
+  operationId?: string
   kind: LongOpKind
   title: string
   progress?: LongOpProgress
@@ -31,21 +38,26 @@ interface LongOpState {
    *  async export/import returns 202 before the file exists, so reloading right
    *  after the HTTP call shows a stale list. */
   completed: number
+  completedOperationIds: string[]
+  bindOperation: (operationId: string, token?: number) => void
   start: (kind: LongOpKind, title: string) => void
   update: (progress: LongOpProgress) => void
   markProgress: () => void
   markStalled: () => void
-  markCompleted: () => void
+  markCompleted: (operationId?: string) => void
   end: () => void
 }
 
 export const useLongOpStore = create<LongOpState>((set) => ({
   current: null,
   completed: 0,
+  completedOperationIds: [],
   start: (kind, title) => {
     const now = Date.now()
-    set({ current: { kind, title, startedAt: now, lastProgressAt: now, stalled: false } })
+    set({ current: { token: ++nextLongOpToken, kind, title, startedAt: now, lastProgressAt: now, stalled: false } })
   },
+  bindOperation: (operationId, token) => set((s) => s.current && (token === undefined || s.current.token === token)
+    ? { current: { ...s.current, operationId } } : s),
   update: (progress) =>
     set((s) =>
       s.current ? { current: { ...s.current, progress, lastProgressAt: Date.now(), stalled: false } } : s,
@@ -54,7 +66,9 @@ export const useLongOpStore = create<LongOpState>((set) => ({
     set((s) => (s.current ? { current: { ...s.current, lastProgressAt: Date.now(), stalled: false } } : s)),
   markStalled: () =>
     set((s) => (s.current && !s.current.stalled ? { current: { ...s.current, stalled: true } } : s)),
-  markCompleted: () => set((s) => ({ completed: s.completed + 1 })),
+  markCompleted: (operationId) => set((s) => operationId && s.completedOperationIds.includes(operationId)
+    ? s : { completed: s.completed + 1, completedOperationIds: operationId
+      ? [...s.completedOperationIds, operationId].slice(-COMPLETED_OPERATION_HISTORY) : s.completedOperationIds }),
   end: () => set({ current: null }),
 }))
 

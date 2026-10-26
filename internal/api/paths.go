@@ -105,6 +105,7 @@ const (
 	SnapshotsExport    = APIV1 + "/snapshots/export"
 	SnapshotsImport    = APIV1 + "/snapshots/import"
 	SnapshotsDownload  = APIV1 + "/snapshots/download"
+	SnapshotsOperation = APIV1 + "/snapshots/operations/{id}"
 	WorkspaceSnapshots = APIV1 + "/workspace/snapshots"
 	WorkspaceUpdate    = APIV1 + "/workspace/update"
 

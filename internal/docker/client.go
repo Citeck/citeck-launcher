@@ -1213,10 +1213,15 @@ func (c *Client) ContainerStats(ctx context.Context, containerID string) (*Conta
 // WaitForContainerExit waits for a container to finish and exit (for init containers).
 // Uses Docker's ContainerWait API for instant notification instead of polling.
 func (c *Client) WaitForContainerExit(ctx context.Context, containerID string, timeout time.Duration) error {
-	// Pre-check: if container already exited, return immediately
+	return c.waitForContainerExit(ctx, containerID, timeout, true)
+}
+
+// Utils commands report their exit status separately from transport failures.
+// Init containers, in contrast, must exit successfully before an app can start.
+func (c *Client) waitForContainerExit(ctx context.Context, containerID string, timeout time.Duration, requireSuccess bool) error {
 	info, err := c.InspectContainer(ctx, containerID)
-	if err == nil && !info.State.Running {
-		if info.State.ExitCode != 0 {
+	if err == nil && info.State != nil && !info.State.Running {
+		if requireSuccess && info.State.ExitCode != 0 {
 			return fmt.Errorf("init container exited with code %d", info.State.ExitCode)
 		}
 		return nil
@@ -1232,7 +1237,7 @@ func (c *Client) WaitForContainerExit(ctx context.Context, containerID string, t
 	case err := <-wait.Error:
 		return fmt.Errorf("wait error for %s: %w", containerID, err)
 	case result := <-wait.Result:
-		if result.StatusCode != 0 {
+		if requireSuccess && result.StatusCode != 0 {
 			return fmt.Errorf("init container exited with code %d", result.StatusCode)
 		}
 		return nil
@@ -1350,7 +1355,7 @@ func (c *Client) RunUtilsContainerWithTimeout(ctx context.Context, cmd, binds []
 		return "", -1, fmt.Errorf("start utils container: %w", startErr)
 	}
 
-	if waitErr := c.WaitForContainerExit(ctx, containerID, timeout); waitErr != nil {
+	if waitErr := c.waitForContainerExit(ctx, containerID, timeout, false); waitErr != nil {
 		return "", -1, fmt.Errorf("wait for utils container: %w", waitErr)
 	}
 

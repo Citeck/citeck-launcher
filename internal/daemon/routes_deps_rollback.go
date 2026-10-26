@@ -214,6 +214,7 @@ func (d *Daemon) runRollback(run rollbackRun) {
 		StartedAt: time.Now(), StepCount: total,
 	}
 	finish := func(outcome string, err error) {
+		d.setDepsRollback(run.nsID, nil)
 		rep.Outcome, rep.FinishedAt = outcome, time.Now()
 		rep.Steps = reportStepsFrom(rep.Steps, err != nil)
 		if err != nil {

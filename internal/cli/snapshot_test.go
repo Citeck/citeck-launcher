@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
@@ -15,7 +16,10 @@ import (
 )
 
 func TestSnapshotImportFailureNeverRestartsTheNamespace(t *testing.T) {
-	dir := t.TempDir()
+	// Keep Unix socket paths short even with a long checkout/TMPDIR.
+	dir, dirErr := os.MkdirTemp("", "cli-sock-")
+	require.NoError(t, dirErr)
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	t.Setenv("CITECK_RUN", dir)
 	t.Setenv("CITECK_HOST", "")
 	i18n.InitI18n("en")

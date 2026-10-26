@@ -1,4 +1,5 @@
 export interface ActionResultDto {
+  operationId?: string
   success: boolean
   message: string
   // Set only by POST /daemon/shutdown?leave_running=true, and only when that
@@ -400,6 +401,7 @@ export interface DaemonStatusDto {
 }
 
 export interface EventDto {
+  operationId?: string
   /** Download byte counters; total <= 0 means unknown. */
   receivedBytes?: number
   totalBytes?: number

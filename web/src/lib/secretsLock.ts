@@ -12,10 +12,15 @@ import { create } from 'zustand'
 // the token becomes usable.
 interface SecretsLockState {
   epoch: number
+  ready: boolean
+  setReady: (ready: boolean) => void
   markUnlocked: () => void
 }
 
 export const useSecretsLockStore = create<SecretsLockState>((set) => ({
   epoch: 0,
-  markUnlocked: () => set((s) => ({ epoch: s.epoch + 1 })),
+  // Keep all startup banners quiet until the master-password flow settles.
+  ready: false,
+  setReady: (ready) => set({ ready }),
+  markUnlocked: () => set((s) => ({ epoch: s.epoch + 1, ready: true })),
 }))

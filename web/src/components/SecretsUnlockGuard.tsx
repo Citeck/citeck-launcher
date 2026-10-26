@@ -43,9 +43,13 @@ export function SecretsUnlockGuard() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setChecked(true)
     getMigrationStatus().then((s) => {
+      useSecretsLockStore.getState().setReady(!s.locked && !s.hasPendingSecrets)
       if (s.hasPendingSecrets) setStep('kotlin-decrypt')
       else if (s.encrypted && s.locked) setStep('unlock')
-    }).catch(() => { /* silent — daemon down handled elsewhere */ })
+    }).catch(() => {
+      // A failed status lookup must not hide genuine configuration errors.
+      useSecretsLockStore.getState().setReady(true)
+    })
   }, [checked, step])
 
   const handleKotlinDecrypt = useCallback(async (pwd: string) => {
@@ -55,9 +59,9 @@ export function SecretsUnlockGuard() {
     try {
       await submitMasterPassword(pwd)
       toast(t('migration.secretsImported'), 'success')
-      setStep(null)
+      await fetchData()
       useSecretsLockStore.getState().markUnlocked()
-      fetchData()
+      setStep(null)
     } catch {
       setError(t('migration.wrongPassword'))
     } finally {
@@ -72,9 +76,9 @@ export function SecretsUnlockGuard() {
     try {
       await unlockSecrets(pwd)
       toast(t('migration.unlock.success'), 'success')
-      setStep(null)
+      await fetchData()
       useSecretsLockStore.getState().markUnlocked()
-      fetchData()
+      setStep(null)
     } catch {
       setError(t('migration.wrongPassword'))
     } finally {
@@ -87,13 +91,15 @@ export function SecretsUnlockGuard() {
     try {
       await resetSecrets()
       toast(t('migration.unlock.reset.success'), 'success')
+      await fetchData()
+      useSecretsLockStore.getState().markUnlocked()
       setStep(null)
     } catch (e) {
       setError((e as Error).message)
     } finally {
       setLoading(false)
     }
-  }, [t])
+  }, [fetchData, t])
 
   return (
     <MasterPasswordDialog

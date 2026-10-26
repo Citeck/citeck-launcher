@@ -117,9 +117,12 @@ func (c *Client) VolumeSize(ctx context.Context, name string) (int64, error) {
 		return 0, err
 	}
 	// busybox du: -s summarize, -k 1024-byte blocks (portable; busybox has no -b).
-	out, _, err := c.RunUtilsContainer(ctx, []string{"du", "-sk", "/vol"}, []string{name + ":/vol:ro"})
+	out, code, err := c.RunUtilsContainer(ctx, []string{"du", "-sk", "/vol"}, []string{name + ":/vol:ro"})
 	if err != nil {
 		return 0, fmt.Errorf("run du for volume %s: %w", name, err)
+	}
+	if code != 0 {
+		return 0, fmt.Errorf("du for volume %s exited with code %d: %s", name, code, out)
 	}
 	// `du -s` prints the total as the LAST line ("<kb>\t/vol"); any permission
 	// warnings precede it. Scan from the end for the first numeric first-field.

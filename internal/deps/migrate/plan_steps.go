@@ -29,7 +29,7 @@ func stopNamespaceStep(ctx context.Context, env Env) error {
 	return nil
 }
 
-// pullImageStep fetches the target image before anything irreversible starts,
+// pullImageStep fetches a migration image before anything irreversible starts,
 // so a registry that cannot be reached costs a stopped namespace and nothing
 // else.
 func pullImageStep(ctx context.Context, env Env, image string, p StepProgress) error {
@@ -37,6 +37,23 @@ func pullImageStep(ctx context.Context, env Env, image string, p StepProgress) e
 		p(pct, msg.New("deps.msg.progress.pulling", "image", image))
 	}); err != nil {
 		return fmt.Errorf("pull %s: %w", image, err)
+	}
+	return nil
+}
+
+// A restored volume can have a version pin without ever having run on this
+// host. Both plans start the old image, so fetch it too when absent. Reuse an
+// existing source image to preserve the version already running this data.
+func pullMigrationImagesStep(ctx context.Context, env Env, path Path, p StepProgress) error {
+	if !env.ImageExists(ctx, path.From()) {
+		if err := pullImageStep(ctx, env, path.From(), p); err != nil {
+			return err
+		}
+	}
+	for _, image := range path.Rungs() {
+		if err := pullImageStep(ctx, env, image, p); err != nil {
+			return err
+		}
 	}
 	return nil
 }
