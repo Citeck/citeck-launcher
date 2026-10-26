@@ -46,5 +46,5 @@ func statDev(path string) (uint64, error) {
 	if !ok {
 		return 0, fmt.Errorf("stat %s: no filesystem id available", path)
 	}
-	return uint64(sys.Dev), nil //nolint:unconvert // Dev is uint64 on linux but int32 on darwin
+	return uint64(sys.Dev), nil //nolint:unconvert,gosec // Dev is uint64 on linux but int32 on darwin; G115: the id is only ever compared for equality, and the widening is one-to-one
 }
