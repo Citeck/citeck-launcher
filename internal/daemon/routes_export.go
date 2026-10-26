@@ -66,7 +66,20 @@ func (d *Daemon) exportPath(w http.ResponseWriter, appName, file string) string 
 		writeError(w, http.StatusNotFound, fmt.Sprintf("export file %q not found", name))
 		return ""
 	}
-	if resolved != full && !isPathUnder(resolved, dir) {
+	// Resolve the DIRECTORY too, so the guard compares like with like. The
+	// export dir is derived from CITECK_HOME / the desktop home as configured,
+	// and that path may itself go through a symlink — /opt/citeck pointed at a
+	// data disk, a CITECK_HOME under /var on macOS — in which case every resolved file
+	// lands outside the unresolved prefix and every download is refused as a
+	// traversal that never happened.
+	realDir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		// The file resolved, so its directory exists; anything else here is a
+		// permission or I/O problem, and the safe answer is to serve nothing.
+		writeError(w, http.StatusInternalServerError, "cannot resolve the export directory")
+		return ""
+	}
+	if !isPathUnder(resolved, realDir) {
 		writeError(w, http.StatusForbidden, "export file resolves outside the export directory")
 		return ""
 	}

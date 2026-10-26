@@ -21,7 +21,14 @@ import (
 // a real volumesBase on disk, so the export handlers work against real files.
 func newExportTestDaemon(t *testing.T) (mux *http.ServeMux, exportDir string) {
 	t.Helper()
-	base := t.TempDir()
+	return newExportTestDaemonAt(t, t.TempDir())
+}
+
+// newExportTestDaemonAt is newExportTestDaemon with the volumesBase chosen by
+// the caller — the way production hands the daemon whatever CITECK_HOME says,
+// symlinks and all.
+func newExportTestDaemonAt(t *testing.T, base string) (mux *http.ServeMux, exportDir string) {
+	t.Helper()
 	rt := namespace.NewRuntime(&namespace.Config{ID: "test"}, planStubDocker{}, base)
 	t.Cleanup(rt.Shutdown)
 	rt.SetGeneratedDefs([]appdef.ApplicationDef{{Name: "emodel", Image: "ecos-model:1"}})
@@ -139,6 +146,39 @@ func TestGetAppExport_RefusesSymlinkOutOfTheExportDir(t *testing.T) {
 	require.NoError(t, os.Symlink(outside, filepath.Join(dir, "innocent.txt")))
 
 	rec := doExport(mux, "GET", "/api/v1/apps/emodel/export/innocent.txt")
+	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	assert.NotContains(t, rec.Body.String(), "hunter2")
+}
+
+// The export dir is derived from the configured home, and that path may go
+// through a symlink: /opt/citeck pointed at a data disk, a macOS HOME under
+// /var. Resolving the FILE and comparing it against the UNRESOLVED directory
+// then refuses every download as a traversal that never happened (403 on each
+// `citeck export get`). Both sides must be resolved before they are compared.
+func TestExportRoutes_ServeAFileUnderASymlinkedVolumesBase(t *testing.T) {
+	realBase := t.TempDir()
+	link := filepath.Join(t.TempDir(), "citeck-home")
+	require.NoError(t, os.Symlink(realBase, link))
+	mux, dir := newExportTestDaemonAt(t, link)
+	require.Equal(t, namespace.ExportDirFor(link, "emodel"), dir, "the daemon works with the path as configured")
+	payload := []byte("heap-under-a-symlinked-home")
+	writeExportFile(t, dir, "heap.hprof.gz", payload)
+
+	rec := doExport(mux, "GET", api.AppExportFile("emodel", "heap.hprof.gz"))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, payload, rec.Body.Bytes())
+
+	rec = doExport(mux, "DELETE", "/api/v1/apps/emodel/export/heap.hprof.gz")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	_, err := os.Stat(filepath.Join(namespace.ExportDirFor(realBase, "emodel"), "heap.hprof.gz"))
+	assert.True(t, os.IsNotExist(err), "the file behind the symlink must be gone")
+
+	// Resolving the directory must not loosen the guard: a link planted inside
+	// the export dir that points outside is still refused.
+	outside := filepath.Join(t.TempDir(), "secrets.yml")
+	require.NoError(t, os.WriteFile(outside, []byte("master-password: hunter2"), 0o600))
+	require.NoError(t, os.Symlink(outside, filepath.Join(dir, "innocent.txt")))
+	rec = doExport(mux, "GET", "/api/v1/apps/emodel/export/innocent.txt")
 	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
 	assert.NotContains(t, rec.Body.String(), "hunter2")
 }
