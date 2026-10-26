@@ -9,11 +9,11 @@ import (
 // reloadWebview re-requests the UI through the wrapper's proxy so the page is
 // served by whichever daemon is running NOW.
 //
-// It deliberately does NOT call WebviewWindow.Reload(). In the pinned Wails
-// v3 alpha that method is implemented on Linux (webkit_web_view_load_uri) and
+// It deliberately does NOT call WebviewWindow.Reload(). In Wails v3 before
+// 3.0.0 that method was implemented on Linux (webkit_web_view_load_uri) and
 // Windows (execJS window.location.reload), but on macOS
-// `macosWebviewWindow.reload` is a `//TODO: Implement` stub that logs a debug
-// line and returns. Nothing reports the difference — Reload() succeeds
+// `macosWebviewWindow.reload` was a `//TODO: Implement` stub that logged a
+// debug line and returned (3.0.0 implements it). Nothing reports the difference — Reload() succeeds
 // silently on every platform — so an auto-update on macOS swapped the daemon
 // underneath a page that was never told, leaving the update dialog stuck in
 // its "installing" state with every button (Cancel included) disabled and the

@@ -267,13 +267,9 @@ func run() error {
 		},
 	})
 
-	// Re-apply the UI zoom once the webview is ready. On macOS the init path
-	// skips options.Zoom (setMagnification is only wired at runtime), so without
-	// this the main window would render at 1.0 there; harmless re-apply on
-	// Linux/Windows where options.Zoom already took effect.
-	window.RegisterHook(events.Common.WindowRuntimeReady, func(_ *application.WindowEvent) {
-		window.SetZoom(wailswin.UIZoom)
-	})
+	// macOS ignores options.Zoom at init, so the main window takes the UI zoom
+	// after its first page load; Linux/Windows applied options.Zoom already.
+	wailswin.ApplyUIZoomOnFirstLoad(window)
 
 	// raiseToFront shows the window and brings it above other windows with
 	// focus. On Linux/GTK, Focus() maps to gtk_window_present, which is subject

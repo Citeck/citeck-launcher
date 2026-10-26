@@ -22,15 +22,38 @@ import (
 )
 
 // UIZoom is the desktop webview zoom applied to every window. It uses the
-// webview's NATIVE zoom (WebKitGTK set_zoom_level / WebView2 PutZoomFactor /
-// WKWebView setMagnification), which scales the whole UI uniformly (text +
-// icons + everything) and composes on top of the OS DPI scaling — so a Windows
-// install at 125% and this zoom multiply correctly. The 2.x web UI read
-// noticeably smaller than the 1.x launcher; this restores a comparable size.
-// It's native (not a CSS hack), so it stays transparent to JS layout
-// (getBoundingClientRect / pointer coords keep their CSS-px values), which
-// keeps the virtualized app table and the bottom-panel drag working. Tune here.
+// webview's NATIVE page zoom (WebKitGTK set_zoom_level / WebView2
+// PutZoomFactor / WKWebView pageZoom), which scales the whole UI uniformly
+// (text + icons + everything), lays the page out at window/zoom CSS px, and
+// composes on top of the OS DPI scaling — so a Windows install at 125% and
+// this zoom multiply correctly. The 2.x web UI read noticeably smaller than
+// the 1.x launcher; this restores a comparable size. It's native (not a CSS
+// hack), so it stays transparent to JS layout (getBoundingClientRect / pointer
+// coords keep their CSS-px values), which keeps the virtualized app table and
+// the bottom-panel drag working. Wails before 3.0.0 zoomed macOS with
+// setMagnification (pinch-zoom: the page stayed laid out at the window size
+// and rendered wider than it, with scrollbars) — do not go back below 3.0.0.
+// Tune here.
 const UIZoom = 1.1
+
+// ApplyUIZoom applies [UIZoom] to a running window. Linux and Windows already
+// apply options.Zoom when they create the webview; macOS ignores it there.
+func ApplyUIZoom(win application.Window) {
+	win.SetZoom(UIZoom)
+}
+
+// ApplyUIZoomOnFirstLoad zooms a window created before app.Run, which has no
+// native webview yet. The page never loads Wails' JS runtime, so
+// WindowRuntimeReady never fires; the native WebViewDidFinishNavigation always
+// does (macOS only — elsewhere options.Zoom has already been applied). Only the
+// first load: the zoom survives navigation, and re-applying it on every load
+// would undo the user's Cmd+/Cmd- on each reload.
+func ApplyUIZoomOnFirstLoad(win application.Window) {
+	var once sync.Once
+	win.RegisterHook(events.Mac.WebViewDidFinishNavigation, func(_ *application.WindowEvent) {
+		once.Do(func() { ApplyUIZoom(win) })
+	})
+}
 
 // WindowSpec fields match the equivalent fields of [application.WebviewWindowOptions]
 // so the frontend can stay close to the Wails vocabulary.
@@ -152,9 +175,10 @@ func (m *WindowManager) handleOpen(w http.ResponseWriter, r *http.Request) {
 				"F12": func(w application.Window) { w.OpenDevTools() },
 			},
 		})
-		// Re-apply on macOS, where the init path skips options.Zoom (the
-		// no-op elsewhere is harmless). Runs on the UI thread inside InvokeAsync.
-		win.SetZoom(UIZoom)
+		// macOS ignores options.Zoom at init (the re-apply elsewhere is
+		// harmless). Runs on the UI thread inside InvokeAsync, and the window is
+		// already running, so its native handle exists.
+		ApplyUIZoom(win)
 		win.RegisterHook(events.Common.WindowClosing, func(_ *application.WindowEvent) {
 			m.mu.Lock()
 			delete(m.windows, name)
