@@ -14,12 +14,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Wails holds everything sent to a window through ExecJS — the wrapper's
-// reload, and every event the daemon event bridge emits — until the window is
-// told its page runtime is ready, and our page never loads the Wails JS runtime
-// that would tell it. So every webview window the wrapper creates must go
-// through wailswin.MarkRuntimeReadyOnFirstLoad; one that does not silently
-// queues that traffic for as long as it is open (see runtime_ready.go).
+// Wails queues ExecJS until runtime readiness is marked. Every wrapper-created
+// window must pass through MarkRuntimeReadyOnFirstLoad so older daemon pages
+// without a handshake work too. The v2.17.3 frontend already sends the message;
+// these guards check wrapper independence, not the absence of that frontend
+// path. See docs/desktop-webview.md.
 //
 // These checks read source rather than run Wails: cmd/citeck-desktop and
 // wailswin only build with the desktop / gtk3 tags, which the Linux CI test job

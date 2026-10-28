@@ -272,10 +272,10 @@ func run() error {
 	// its first page load; Linux/Windows have nothing left to do.
 	wailswin.PrepareWindowOnFirstLoad(window)
 
-	// Without this nothing the wrapper sends the page — reloadWebview, the
-	// daemon event bridge — ever runs (see MarkRuntimeReadyOnFirstLoad). It
-	// also makes WindowRuntimeReady fire for the first time; window setup does
-	// not hang off it, it takes the native first-load event above.
+	// Mark readiness independently of the daemon-served page. The v2.17.3
+	// frontend also sends the handshake, but older pages do not. Keep zoom
+	// setup on the native first-load event, not on WindowRuntimeReady, because
+	// either side can mark readiness (see docs/desktop-webview.md).
 	wailswin.MarkRuntimeReadyOnFirstLoad(window)
 
 	// raiseToFront shows the window and brings it above other windows with
@@ -345,7 +345,7 @@ func run() error {
 	// Control server: the daemon (a separate process) calls native verbs over
 	// the wrapper unix socket. Register handlers BEFORE building capabilities so
 	// the advertised verb set honestly reflects what is wired. Only register
-	// verbs whose Wails API is confirmed in this alpha — anything else stays out
+	// verbs supported by the pinned Wails version — anything else stays out
 	// of cs.Verbs() and is excluded from the advertised capabilities.
 	controlServer = desktop.NewControlServer(config.WrapperSocketPath())
 	controlServer.Handle(desktop.VerbWindowFocus, func(json.RawMessage) (any, error) {
@@ -525,7 +525,7 @@ func run() error {
 			slog.Warn("Failed to build tray menu from backend; keeping fallback", "err", err)
 			return
 		}
-		// Wails alpha.95 live-replaces the menu via SystemTray.SetMenu
+		// Wails live-replaces the menu via SystemTray.SetMenu
 		// (linuxSystemTray.setMenu rebuilds the D-Bus menu + refresh), so no
 		// tray recreation is needed.
 		application.InvokeAsync(func() { tray.SetMenu(menu) })

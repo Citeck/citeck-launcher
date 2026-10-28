@@ -4,9 +4,9 @@
 // internal/desktop so that the larger desktop package can be unit-tested
 // without pulling in Wails (and therefore GTK) build dependencies.
 //
-// On Linux the package only compiles with `-tags gtk3` because the GTK4 path
-// of Wails v3 alpha.96+ requires webkitgtk-6.0 packages that are not standard
-// on Ubuntu 24.04. macOS and Windows builds are unaffected.
+// On Linux this package selects Wails 3.0.0's GTK3 backend with `-tags gtk3`;
+// its default GTK4 backend needs WebKitGTK 6.0. macOS and Windows builds are
+// unaffected by the gtk3 tag.
 package wailswin
 
 import (
@@ -47,11 +47,10 @@ func PrepareWindow(win application.Window) {
 
 // PrepareWindowOnFirstLoad prepares a window created before app.Run, which has
 // no native webview yet, on its first native WebViewDidFinishNavigation (macOS
-// only — elsewhere there is nothing left to do). Not on WindowRuntimeReady: the
-// page never loads Wails' JS runtime, so that event fires only because
-// MarkRuntimeReadyOnFirstLoad stands in for it. Only the first load: the zoom
-// survives navigation, and re-applying it on every load would undo the user's
-// Cmd+/Cmd- on each reload.
+// only — elsewhere there is nothing left to do). It does not depend on
+// WindowRuntimeReady, which can be triggered by this wrapper or the daemon's
+// frontend handshake. Only the first load: the zoom survives navigation, and
+// re-applying it on every load would undo the user's Cmd+/Cmd- on reload.
 func PrepareWindowOnFirstLoad(win application.Window) {
 	var once sync.Once
 	win.RegisterHook(events.Mac.WebViewDidFinishNavigation, func(_ *application.WindowEvent) {

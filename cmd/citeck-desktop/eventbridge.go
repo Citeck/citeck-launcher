@@ -20,13 +20,11 @@ import (
 // frames incrementally there. Native Wails events are plain webview IPC (not
 // HTTP), so they stream identically on WebView2, WKWebView and WebKitGTK.
 //
-// That IPC is ExecJS: Wails turns each Emit into a
-// window._wails.dispatchWailsEvent(...) call per window, and holds every ExecJS
-// in a queue until the window has been marked ready. The page never loads the
-// Wails JS runtime that would mark it, so before every window the wrapper
-// creates went through wailswin.MarkRuntimeReadyOnFirstLoad nothing emitted
-// here ever reached it: on every platform the desktop UI ran on the store's 3 s
-// HTTP poll fallback while the queue grew for the life of the wrapper.
+// That IPC uses ExecJS, which Wails queues until the window is runtime-ready.
+// MarkRuntimeReadyOnFirstLoad releases it for every window this wrapper creates,
+// including pages without a frontend handshake. The v2.17.3 frontend also marks
+// readiness itself after subscribing; loading the full Wails JS runtime is not
+// required. See docs/desktop-webview.md for the version boundary.
 const (
 	wailsDaemonEvent      = "daemon:event"
 	wailsDaemonPing       = "daemon:ping"

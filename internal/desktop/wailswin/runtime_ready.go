@@ -18,14 +18,12 @@ import (
 // takes into the page — app.Event.Emit reaches every window as
 // ExecJS("window._wails.dispatchWailsEvent(...)").
 //
-// Our web UI never loads that runtime (it has no use for its bindings), so the
-// message never came: every reload, every bridged daemon event and every ping
-// was appended to the queue for the life of the window and never executed.
-// Measured on macOS before the fix: no WindowRuntimeReady in two minutes of a
-// loaded UI, a requested reload still not done 78 s later, and none of the
-// daemon's 10 s pings reaching the page — which therefore ran on the store's
-// 3 s HTTP poll fallback, while the queue kept every app_stats event (one per
-// running app every 5 s) in the wrapper's memory.
+// The UI does not import that runtime, but can send this message directly:
+// v2.17.3 does so after subscribing to desktop events. The older ece634d
+// baseline did not, leaving wrapper JS queued. MarkRuntimeReadyOnFirstLoad
+// makes this wrapper independent of the daemon-served page's version.
+// See docs/desktop-webview.md; absence of the JS runtime alone is not proof
+// that the handshake is missing.
 const runtimeReadyMessage = "wails:runtime:ready"
 
 // pageLoadEvents are the native "a page has finished loading" events, one per
@@ -49,8 +47,8 @@ type readyWindow interface {
 // MarkRuntimeReadyOnFirstLoad tells Wails that win's page can take ExecJS once
 // the window's first page has finished loading, standing in for the runtime the
 // page does not load. Call it for EVERY webview window the wrapper creates,
-// right after creating it: app.Event.Emit reaches all windows, so a window left
-// out keeps queuing the event bridge's traffic for as long as it is open.
+// right after creating it: app.Event.Emit reaches all windows, and a page
+// without its own handshake would otherwise keep queuing that traffic.
 //
 // The wrapper's JS is safe to run on whatever document is showing — events go
 // through a guarded window._wails.dispatchWailsEvent call, and a reload is a
@@ -59,12 +57,11 @@ type readyWindow interface {
 // navigation. Once marked, a window stays marked across reloads (Wails never
 // resets it), hence once per window.
 //
-// Done from Go rather than by having the page post the message itself, because
-// the page arrives from the daemon and an auto-update replaces the daemon but
-// not the wrapper: a web UI that posted it would also reach every wrapper
-// already installed, and those register a WindowRuntimeReady hook that applies
-// UIZoom — on macOS under Wails alpha.98 that is setMagnification, the
-// pinch-zoom that lays the page out wider than the window.
+// Doing this in the wrapper also covers older daemon pages without changing
+// their frontend. Auto-update replaces the daemon, not this wrapper: v2.17.3's
+// frontend handshake can activate an older wrapper's WindowRuntimeReady zoom
+// hook, whose alpha.98 macOS implementation uses pinch magnification. Only a
+// wrapper upgrade supplies Wails 3.0.0 page zoom; see docs/desktop-webview.md.
 func MarkRuntimeReadyOnFirstLoad(win readyWindow) {
 	var once sync.Once
 	for _, ev := range pageLoadEvents {
