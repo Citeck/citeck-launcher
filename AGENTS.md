@@ -51,6 +51,9 @@ and [docs/agent-api.md](docs/agent-api.md).
 
 Go 1.26.10 or newer is required (`go.mod` is the CI toolchain source of truth).
 
+See [docs/development-checks.md](docs/development-checks.md) for full frontend
+dependency audits and supervisor process-fixture cleanup requirements.
+
 ```bash
 make check                    # FULL local gate (CI superset + eslint) — run before committing/tagging
 make build                    # Build Go binary + embed React web UI → dist/bin/citeck-server

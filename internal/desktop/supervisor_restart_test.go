@@ -11,11 +11,13 @@ import (
 
 // writeSleepScript creates an executable shell script that sleeps, so the
 // supervisor has a real long-lived child to manage. It appends its own name to
-// `marker` on start so the test can observe which binary ran.
+// `marker` on start so the test can observe which binary ran. The shell then
+// execs sleep so stopping the supervised child also closes its output pipes;
+// a separate sleep process would outlive the shell and hold go test output open.
 func writeSleepScript(t *testing.T, dir, name, marker string) string {
 	t.Helper()
 	p := filepath.Join(dir, name)
-	script := "#!/bin/sh\necho " + name + " >> " + marker + "\nsleep 30\n"
+	script := "#!/bin/sh\necho " + name + " >> " + marker + "\nexec sleep 30\n"
 	if err := os.WriteFile(p, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
