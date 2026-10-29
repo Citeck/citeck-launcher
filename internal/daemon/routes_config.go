@@ -308,6 +308,7 @@ func appDefsToStoppedApps(defs []appdef.ApplicationDef, runtime *namespace.Runti
 			Edited:           edited,
 			Locked:           edited,
 			EditedFilesCount: runtime.EditedFilesCountForApp(def.Name),
+			Experimental:     def.Experimental,
 		})
 	}
 	return apps

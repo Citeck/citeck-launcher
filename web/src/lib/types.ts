@@ -60,6 +60,10 @@ export interface AppDto {
   // is the one per-app lifecycle action the daemon carries out while the
   // namespace is stopped, so the row's start button stays live for it.
   detached?: boolean
+  /** A BETA module: declared in the bundle's `experimental:` section and
+   *  switched on for this namespace. Badged in the table; it changes nothing
+   *  about how the app runs. */
+  experimental?: boolean
 }
 
 /** One dependency an app is held on: its name, and the status it is in. */
@@ -190,6 +194,25 @@ export interface ContentStorageOptionDto {
   providerApp?: string
   /** The provider's name for the option label (see ContentStorageDto). */
   providerTitle?: string
+}
+
+/** One BETA feature a bundle offers (its top-level `experimental:` section):
+ *  the id a namespace stores, the bundle author's words for the dialog, and
+ *  the apps the switch turns on. `enabled` is filled where the namespace is
+ *  known (the edit form). */
+export interface ExperimentalFeatureDto {
+  id: string
+  title: string
+  description?: string
+  apps: string[]
+  enabled?: boolean
+}
+
+/** GET /experimental-features — what the given bundle offers, or why nothing
+ *  can be listed (`reason: BUNDLE_UNRESOLVED` while the bundle is not on disk). */
+export interface ExperimentalFeaturesDto {
+  features: ExperimentalFeatureDto[]
+  reason?: string
 }
 
 /** One infrastructure dependency of the active namespace. */
@@ -498,6 +521,9 @@ export interface NamespaceCreateDto {
   useDefaultPassword?: boolean
   /** "DB" | "S3"; absent = DB. */
   contentStorage?: string
+  /** The BETA features of the chosen bundle to switch on (ids from
+   *  GET /experimental-features); each must be one the bundle offers. */
+  experimentalFeatures?: string[]
 }
 
 export interface BundleInfoDto {

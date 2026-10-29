@@ -161,6 +161,11 @@ type NsGenContext struct {
 	// DependsOnDetachedApps, which are about dependency wiring on apps that are
 	// generated either way). Surfaced to the daemon as GenResp.GatingApps.
 	GatingApps map[string]bool
+	// ExperimentalApps maps each BETA module this namespace opted into — and
+	// the effective bundle therefore admitted into Applications — to its
+	// feature id (bundle.Def.WithExperimentalEnabled). Generate stamps
+	// ApplicationDef.Experimental from it; nothing else reads it.
+	ExperimentalApps map[string]string
 	// ContentStorageProblem is set by wireContentStorage when an S3 namespace's
 	// ecos-content could not be wired to its provider. Surfaced as
 	// GenResp.ContentStorageProblem; never a generation error.

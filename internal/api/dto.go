@@ -95,6 +95,10 @@ type AppDto struct {
 	// cannot tell those two apart without this, and the daemon refuses the
 	// second with NAMESPACE_NOT_RUNNING.
 	Detached bool `json:"detached,omitempty"`
+	// Experimental marks a BETA module: an app the bundle declares in its
+	// `experimental:` section and this namespace opted into. The UI badges it
+	// and `citeck status` marks it; it changes nothing about how the app runs.
+	Experimental bool `json:"experimental,omitempty"`
 }
 
 // WaitingDepDto is ONE dependency an app is held on: its name, and the app
@@ -1069,6 +1073,13 @@ const (
 	// LAUNCHER_TOO_OLD — an edit that KEEPS S3 but moves to a bundle without
 	// the provider is refused here too.
 	ErrCodeContentStorageUnavailable = "CONTENT_STORAGE_UNAVAILABLE"
+	// ErrCodeExperimentalFeatureUnknown is returned (HTTP 400) when a create or
+	// edit request enables an experimental feature the chosen bundle does not
+	// offer, and (HTTP 409) when the bundle cannot be read from disk so nothing
+	// can be verified. Only the ids a request ADDS are checked: a stored id the
+	// bundle no longer offers is kept and inert — see
+	// namespace.Config.ExperimentalFeatures.
+	ErrCodeExperimentalFeatureUnknown = "EXPERIMENTAL_FEATURE_UNKNOWN"
 	// ErrCodeContentStorageDowngrade is returned (HTTP 409) when a write would
 	// move a namespace that stores its content in S3 back to the database —
 	// including a raw config PUT that simply drops the `contentStorage:` block.
@@ -1306,6 +1317,11 @@ type NamespaceCreateDto struct {
 	// refused with CONTENT_STORAGE_UNAVAILABLE unless the chosen bundle has
 	// ecos-content and the workspace declares a usable S3 provider.
 	ContentStorage string `json:"contentStorage,omitempty"`
+	// ExperimentalFeatures are the BETA features of the chosen bundle to switch
+	// on (GET /experimental-features lists them). Every id must be one the
+	// bundle offers, else EXPERIMENTAL_FEATURE_UNKNOWN; a template's own list is
+	// ignored, like its contentStorage — the choice is the operator's.
+	ExperimentalFeatures []string `json:"experimentalFeatures,omitempty"`
 }
 
 // SnapshotDownloadDto is the request body for downloading a snapshot from a URL.
@@ -1372,6 +1388,48 @@ type NamespaceEditDto struct {
 	// storage cannot be combined with: the edit dialog shows the S3 option
 	// disabled instead of offering a switch the daemon refuses.
 	ExternalS3 bool `json:"externalS3,omitempty"`
+	// ExperimentalFeatures (GET only) are the BETA features the STORED bundle
+	// offers, each with whether this namespace has it on. A stored id the
+	// bundle does not offer is not listed — it is inert, and kept.
+	ExperimentalFeatures []ExperimentalFeatureDto `json:"experimentalFeatures,omitempty"`
+	// StoredExperimentalFeatures (GET only) includes every persisted enabled
+	// id, even when the current bundle does not offer it. The form needs this
+	// lossless state when selecting a different bundle, including a rollback.
+	StoredExperimentalFeatures []string `json:"storedExperimentalFeatures,omitempty"`
+	// EnabledExperimentalFeatures (PUT only) is the state of the OFFERED
+	// features: the ids among those the bundle named by this request offers
+	// that are on; every other offered feature is off. Pointer semantics like
+	// MongoEnabled — absent leaves the stored list unchanged. Stored ids the
+	// bundle does not offer survive either way, so an upgrade to a release
+	// that graduated a module is never refused and a move back keeps the
+	// choice. An id the bundle does not offer is refused with
+	// EXPERIMENTAL_FEATURE_UNKNOWN; so is any change while the bundle cannot
+	// be read from disk.
+	EnabledExperimentalFeatures *[]string `json:"enabledExperimentalFeatures,omitempty"`
+}
+
+// ExperimentalFeatureDto is one BETA feature a bundle offers: the id a
+// namespace stores, the bundle author's words for the dialog, and the apps the
+// switch turns on. Enabled is filled where the namespace is known (the edit
+// form, the active namespace); the options endpoint leaves it false otherwise.
+type ExperimentalFeatureDto struct {
+	ID          string   `json:"id"`
+	Title       string   `json:"title"`
+	Description string   `json:"description,omitempty"`
+	Apps        []string `json:"apps"`
+	Enabled     bool     `json:"enabled,omitempty"`
+}
+
+// ExperimentalFeaturesBundleUnresolved is ExperimentalFeaturesDto.Reason when
+// the bundle asked about is not on disk yet, so nothing can be offered — the
+// dialog hides the section rather than offering what saving might refuse.
+const ExperimentalFeaturesBundleUnresolved = "BUNDLE_UNRESOLVED"
+
+// ExperimentalFeaturesDto is the answer of GET /experimental-features: the
+// BETA features the given bundle offers, or why none can be listed.
+type ExperimentalFeaturesDto struct {
+	Features []ExperimentalFeatureDto `json:"features"`
+	Reason   string                   `json:"reason,omitempty"`
 }
 
 // BundleInfoDto describes a bundle repository and its available versions.

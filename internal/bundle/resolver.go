@@ -1538,28 +1538,35 @@ func parseBundleFile(path, version string, aliasMap, imageRepoMap map[string]str
 
 	for _, top := range mappingEntries(documentRoot(&rootNode)) {
 		appName := top.key
-		// Neither of these is an application. `dependencies` MUST be skipped
-		// (an entry id colliding with the entry schema's own key would be read
-		// as an app named "dependencies"); `minLauncherVersion` is a scalar and
-		// would be ignored anyway — it is named here so the non-application
-		// keys are one list rather than an inference from a type switch.
-		if appName == bundleDependenciesKey || appName == bundleMinLauncherVersionKey {
+		// None of these is an application. `dependencies` and `experimental`
+		// MUST be skipped (an entry id colliding with the entry schema's own key
+		// would be read as an app named "dependencies"; a module under
+		// `experimental:` must not be generated for everybody); `minLauncherVersion`
+		// is a scalar and would be ignored anyway — it is named here so the
+		// non-application keys are one list rather than an inference from a
+		// type switch.
+		if appName == bundleDependenciesKey || appName == bundleMinLauncherVersionKey || appName == bundleExperimentalKey {
 			continue
 		}
 		processApp(appName, top.node)
 	}
+	// After the applications: a module that is also a regular application loses
+	// to it, and that needs the regular set complete.
+	experimental := parseBundleExperimental(documentRoot(&rootNode), applications, aliasMap, imageRepoMap, logger)
 
 	def := &Def{
 		Key:                Key{Version: version},
 		Applications:       applications,
 		Dependencies:       dependencies,
+		Experimental:       experimental,
 		CiteckApps:         citeckApps,
 		MinLauncherVersion: minLauncherVersion,
 		Content:            raw,
 	}
 
 	logger.Debug("Resolved bundle", "version", version,
-		"apps", len(applications), "dependencies", len(dependencies), "citeckApps", len(citeckApps))
+		"apps", len(applications), "dependencies", len(dependencies), "experimental", len(experimental),
+		"citeckApps", len(citeckApps))
 	return def, nil
 }
 
@@ -1587,6 +1594,105 @@ const bundleDependenciesKey = "dependencies"
 // NOT applications is readable in one place (the other is
 // bundleDependenciesKey).
 const bundleMinLauncherVersionKey = "minLauncherVersion"
+
+// bundleExperimentalKey is the top-level bundle key carrying the modules a
+// release ships as BETA — see Def.Experimental for the contract. Its entries
+// have the shape of a top-level application entry (the same `image:` forms)
+// plus the optional `feature`, `title` and `description` keys.
+//
+// It is skipped by the main loop for the reason `dependencies` is, and for one
+// more: processApp admits every entry with an image, which would start each
+// beta module on every stand — the opposite of what the section is for.
+const bundleExperimentalKey = "experimental"
+
+// parseBundleExperimental reads the `experimental:` section into the modules
+// it declares, keyed by canonical app name.
+//
+// It reads from the node tree like everything else in this file, through the
+// same extractBundleImage, so an image spelled one way at the top level cannot
+// fail inside the section. Per entry: no `image:` at all is a WARN and a skip
+// (unlike the top level, where a key without an image is ordinary, every entry
+// here is meant to be a module); an image the launcher cannot read is the same
+// WARN the top level emits; the alias map applies as it does to a regular
+// application; and an id a regular application already uses loses to it with a
+// WARN — one name, one definition, and the top level is the one every
+// launcher agrees on. `feature` defaults to the app's own name.
+//
+// A section that is not a mapping costs the section, never the bundle.
+func parseBundleExperimental(root *yaml.Node, applications map[string]AppDef, aliasMap, imageRepoMap map[string]string, logger *slog.Logger) map[string]ExperimentalApp {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	root = followAlias(root)
+	if root == nil || root.Kind != yaml.MappingNode {
+		return nil
+	}
+	var section *yaml.Node
+	for _, e := range mappingEntries(root) {
+		if e.key == bundleExperimentalKey {
+			section = followAlias(e.node)
+			break
+		}
+	}
+	if section == nil {
+		return nil
+	}
+	if section.Kind != yaml.MappingNode {
+		logger.Warn("Bundle experimental section is not a mapping of applications; ignoring it")
+		return nil
+	}
+
+	out := make(map[string]ExperimentalApp)
+	for _, e := range mappingEntries(section) {
+		name := strings.TrimSpace(e.key)
+		if name == "" {
+			continue
+		}
+		image, named := extractBundleImage(e.node, imageRepoMap)
+		if image == "" {
+			if named {
+				logger.Warn("Bundle experimental entry names an image the launcher cannot read; ignoring the module", "app", name)
+			} else {
+				logger.Warn("Bundle experimental entry has no image; ignoring the module", "app", name)
+			}
+			continue
+		}
+		canonical := name
+		if mapped, ok := aliasMap[name]; ok {
+			canonical = mapped
+		}
+		if _, top := applications[canonical]; top {
+			logger.Warn("Bundle experimental entry is also a regular application; the regular entry wins", "app", canonical)
+			continue
+		}
+		var meta struct {
+			Feature     string `yaml:"feature"`
+			Title       string `yaml:"title"`
+			Description string `yaml:"description"`
+		}
+		// A failed decode leaves the defaults: the image already read is the
+		// module, the words are optional.
+		decodeEntry(e.node, &meta)
+		feature := strings.TrimSpace(meta.Feature)
+		if feature == "" {
+			feature = canonical
+		}
+		if !IsValidExperimentalFeatureID(feature) {
+			logger.Warn("Bundle experimental entry has an invalid feature id; ignoring the module", "app", canonical, "feature", feature)
+			continue
+		}
+		out[canonical] = ExperimentalApp{
+			AppDef:      AppDef{Image: image},
+			Feature:     feature,
+			Title:       strings.TrimSpace(meta.Title),
+			Description: strings.TrimSpace(meta.Description),
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
 
 // parseBundleMinLauncherVersion reads the floor from the YAML text.
 //

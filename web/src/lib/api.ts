@@ -32,6 +32,8 @@ import type {
   DependencyMigrateRequestDto,
   PreflightResult,
   ContentStorageOptionsDto,
+  ExperimentalFeatureDto,
+  ExperimentalFeaturesDto,
 } from './types'
 import { notifyAuthRequired } from './authGate'
 import { currentLocale } from './i18n'
@@ -581,6 +583,20 @@ export interface NamespaceEditDto {
    *  namespace.yml `s3:` block), which S3 content storage cannot be combined
    *  with — the dialog shows the S3 option disabled. */
   externalS3?: boolean
+  /** GET only: the BETA features the STORED bundle offers, each with whether
+   *  this namespace has it on. A stored id the bundle does not offer is not
+   *  listed — it is inert, and kept. */
+  experimentalFeatures?: ExperimentalFeatureDto[]
+  /** GET only: all persisted enabled IDs, including inert choices absent
+   *  from the current bundle's offers. Preserves selection across rollback. */
+  storedExperimentalFeatures?: string[]
+  /** PUT only: the state of the OFFERED features — the ids, among those the
+   *  bundle named by this request offers, that are on; every other offered one
+   *  is off. Absent = leave unchanged. Stored ids outside the offered set are
+   *  kept by the daemon, so a move to the release that graduated a module is
+   *  never refused. An id the bundle does not offer is refused
+   *  (EXPERIMENTAL_FEATURE_UNKNOWN). */
+  enabledExperimentalFeatures?: string[]
 }
 
 /**
@@ -635,6 +651,23 @@ export async function getContentStorageOptions(
   const params = new URLSearchParams({ bundleRepo, bundleKey })
   if (workspaceId) params.set('workspaceId', workspaceId)
   return request('GET', `/content-storage/options?${params.toString()}`, { signal })
+}
+
+/**
+ * Which BETA features a namespace on the given bundle may switch on — the
+ * bundle's top-level `experimental:` section, resolved OFFLINE like the content
+ * storage options, so the dialog offers exactly what saving will accept.
+ * `reason: BUNDLE_UNRESOLVED` while the bundle is not on disk yet.
+ */
+export async function getExperimentalFeatures(
+  bundleRepo: string,
+  bundleKey: string,
+  workspaceId?: string,
+  signal?: AbortSignal,
+): Promise<ExperimentalFeaturesDto> {
+  const params = new URLSearchParams({ bundleRepo, bundleKey })
+  if (workspaceId) params.set('workspaceId', workspaceId)
+  return request('GET', `/experimental-features?${params.toString()}`, { signal })
 }
 
 /**

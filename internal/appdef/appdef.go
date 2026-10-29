@@ -174,8 +174,14 @@ type ApplicationDef struct {
 	// ourselves (alfresco + alf-solr are Java 8 and are not being updated).
 	// json:"-" for the same reason as IsJVM: it describes the image, not the
 	// deployment, so it stays out of the hash and out of the config editor.
-	JVMMajor    int `json:"-" yaml:"-"`
-	StopTimeout int `json:"stopTimeout,omitempty" yaml:"stopTimeout,omitempty"` // seconds; 0 = default (15s webapps, 30s infra)
+	JVMMajor int `json:"-" yaml:"-"`
+	// Experimental marks a module the bundle ships as BETA (its top-level
+	// `experimental:` section) that this namespace opted into. json:"-" for the
+	// reason IsJVM is: it describes the release, not the deployment, so it stays
+	// out of the hash (an opt-in must recreate nothing) and out of the config
+	// editor; the UI reads it off AppDto.Experimental.
+	Experimental bool `json:"-" yaml:"-"`
+	StopTimeout  int  `json:"stopTimeout,omitempty" yaml:"stopTimeout,omitempty"` // seconds; 0 = default (15s webapps, 30s infra)
 }
 
 // GetHashInput returns the string used to compute the application definition hash (for debugging).

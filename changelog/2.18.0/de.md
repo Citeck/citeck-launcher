@@ -1,0 +1,4 @@
+## Neue Funktionen
+- Experimentelle (Beta-)Module: Ein Release kann neue Dienste als Beta im Abschnitt `experimental:` des Bundles ausliefern. Sie werden je Umgebung auf dem neuen Reiter „Experimentell“ des Dialogs zum Anlegen/Bearbeiten eingeschaltet; solche Anwendungen sind in der App-Tabelle und in `citeck status` mit BETA markiert.
+- Servermodus: `citeck features` listet die Beta-Module auf, die das Bundle der Umgebung anbietet, `citeck features enable|disable <id>` schaltet sie ein und aus; `citeck install` fragt, welche aktiviert werden sollen. Ein ausgeschaltetes Modul wird beim nächsten Anwenden der Konfiguration entfernt, seine Datenvolumes bleiben erhalten.
+- Ein Beta-Modul, das ein späteres Release zum regulären macht, läuft dort weiter, wo es eingeschaltet war; andernorts wird es wie jede neue Anwendung gemäß der Workspace-Vorlage angeboten.

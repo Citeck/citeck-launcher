@@ -151,17 +151,29 @@ type AppTableResult struct {
 	// (an ApplicationDef override or an edited mounted file). Callers use it
 	// to print the "* config edited" legend under the table.
 	AnyEdited bool
+	// AnyExperimental is true when at least one app is a BETA module (an app
+	// the bundle declares in its `experimental:` section and this namespace
+	// opted into). Callers print the "[beta]" legend under the table.
+	AnyExperimental bool
 }
 
 // EditedMarker is the glyph appended to an app's name in the table when the app
 // has a user config edit (override patch or edited mounted file).
 const EditedMarker = " *"
 
+// ExperimentalMarker is appended to the name of a BETA module, so `citeck
+// status` says what the UI's badge says.
+const ExperimentalMarker = " [beta]"
+
 // appNameCell renders the indented app name plus a dim edited-marker when the
 // app carries a user config edit, so `citeck status` visibly flags which apps
-// diverge from their generated defaults.
+// diverge from their generated defaults — and a beta marker for a module the
+// release ships as experimental.
 func appNameCell(app api.AppDto) string {
 	name := "  " + app.Name
+	if app.Experimental {
+		name += Colorize(Yellow, ExperimentalMarker)
+	}
 	if app.Edited || app.EditedFilesCount > 0 {
 		return name + Colorize(Dim, EditedMarker)
 	}
@@ -416,23 +428,26 @@ func FormatAppTable(apps []api.AppDto) AppTableResult {
 	// (e.g. STARTING → RUNNING → STOPPING_FAILED). 15 = len("STOPPING_FAILED").
 	const statusMinWidth = 15
 
-	anyEdited := false
+	anyEdited, anyExperimental := false, false
 	for _, app := range apps {
 		if app.Edited || app.EditedFilesCount > 0 {
 			anyEdited = true
-			break
+		}
+		if app.Experimental {
+			anyExperimental = true
 		}
 	}
 
 	return AppTableResult{
-		Held:      held,
-		HeldDeps:  heldDeps,
-		Table:     FormatTable(headers, rows, 0, statusMinWidth),
-		Running:   running,
-		Failed:    failed,
-		Stopped:   stopped,
-		Total:     total,
-		AnyEdited: anyEdited,
+		Held:            held,
+		HeldDeps:        heldDeps,
+		Table:           FormatTable(headers, rows, 0, statusMinWidth),
+		Running:         running,
+		Failed:          failed,
+		Stopped:         stopped,
+		Total:           total,
+		AnyEdited:       anyEdited,
+		AnyExperimental: anyExperimental,
 	}
 }
 

@@ -43,6 +43,12 @@ const (
 	ContentStorageLocalEnv = APIV1 + "/content-storage/local-env"
 	ContentStorageOptions  = APIV1 + "/content-storage/options"
 
+	// ExperimentalFeatures answers which BETA features a namespace on a bundle
+	// may switch on (GET ?bundleRepo=&bundleKey=[&workspaceId=]), resolved
+	// offline like ContentStorageOptions — the create and edit dialogs ask it
+	// whenever the bundle selection changes.
+	ExperimentalFeatures = APIV1 + "/experimental-features"
+
 	// Dependencies lists the ACTIVE namespace's infrastructure dependencies
 	// (internal/deps: postgres, rabbitmq, zookeeper, keycloak, mongodb) with
 	// the image each one's data runs on, the image the bundle wants, and

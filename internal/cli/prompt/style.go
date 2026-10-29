@@ -88,6 +88,7 @@ type Hints struct {
 	Select string // e.g. "Enter select"
 	Cancel string // e.g. "Esc cancel"
 	Toggle string // e.g. "←/→ toggle"  (Confirm only)
+	Mark   string // e.g. "Space mark"   (MultiSelect only)
 }
 
 // WithDefaults fills unset fields with English defaults.
@@ -104,6 +105,9 @@ func (h Hints) WithDefaults() Hints {
 	if h.Toggle == "" {
 		h.Toggle = "←/→ toggle"
 	}
+	if h.Mark == "" {
+		h.Mark = "Space mark"
+	}
 	return h
 }
 
@@ -119,6 +123,7 @@ func HintsFromT(t func(key string, args ...string) string) Hints {
 		Select: t("hint.key.submit"),
 		Cancel: t("hint.key.cancel"),
 		Toggle: t("hint.key.toggle"),
+		Mark:   t("hint.key.mark"),
 	}
 	if strings.HasPrefix(h.Move, "hint.") {
 		return Hints{}

@@ -94,6 +94,8 @@ contents before sharing them with others or saving them in shared reports.
 | Apply configuration | `POST /api/v1/namespace/reload` | `citeck reload` |
 | Application logs | `GET /api/v1/apps/{name}/logs?tail=100` | `citeck logs <name> --tail 100` |
 | Launcher logs | `GET /api/v1/daemon/logs?tail=100` | `citeck logs --tail 100` |
+| Experimental (beta) features the bundle offers, and which are on | `GET /api/v1/experimental-features` | `citeck features --format json` |
+| Switch an experimental feature on / off | `PUT /api/v1/namespaces/{id}/edit` with `enabledExperimentalFeatures` | `citeck features enable <id>` / `citeck features disable <id>` |
 
 These operations target the **active** namespace, not an arbitrary `id`.
 First read its `id` and short application names from `apps[].name`. A server has
@@ -107,6 +109,17 @@ recalculates the configuration of dependent applications. Stopping a namespace
 preserves data and manual detach settings, leaving the daemon running. Stopping
 an essential dependency may leave the namespace in `STALLED`; this reflects the
 selected state and is not a reason to bypass Launcher.
+
+Experimental (beta) features are bundle-declared modules a namespace opts into.
+`features.list` answers for the active namespace's bundle (`enabled` reflects its
+choices; `reason: BUNDLE_UNRESOLVED` means the bundle is not on disk — refresh it
+first). `features.enable` and `features.disable` share one route: the edit PUT whose
+`enabledExperimentalFeatures` body is the resulting state of EVERY offered feature,
+so read `features.list` first and send the full list, never a single id and never
+stored ids the bundle does not offer (the daemon keeps those on its own and refuses
+unknown ids with `EXPERIMENTAL_FEATURE_UNKNOWN`). The active namespace is reloaded;
+a stopped one applies the change on its next start, and disabling keeps the
+modules' data volumes.
 
 `docker stop` does not persist this intent: reconciliation may start the container
 again, and Launcher's state will diverge from Docker. For Launcher-managed

@@ -178,6 +178,68 @@ type Config struct {
 	// seeded or always-written value would rewrite every namespace.yml on its
 	// next save. Absent means DB — see ContentStorageType.
 	ContentStorage *ContentStorageProps `yaml:"contentStorage,omitempty" json:"contentStorage,omitempty"`
+	// ExperimentalFeatures are the BETA features this namespace opted into —
+	// the feature ids of the bundle's `experimental:` section (see
+	// bundle.Def.Experimental). Absent means none, and omitempty keeps it off
+	// every namespace.yml that never chose one.
+	//
+	// An id the current bundle does not offer is KEPT and inert: a bundle that
+	// graduates the module to a regular application, or one that never had it,
+	// must not refuse the edit that moves to it, and the choice must survive a
+	// move back. Nothing validates stored ids against a bundle for that reason;
+	// only the ids a request ADDS are checked, by the daemon.
+	ExperimentalFeatures []string `yaml:"experimentalFeatures,omitempty" json:"experimentalFeatures,omitempty"`
+}
+
+// ExperimentalEnabled is the set of feature ids this namespace opted into, the
+// form bundle.Def.WithExperimentalEnabled takes. Nil-safe; a namespace with no
+// features on answers an empty set.
+func (c *Config) ExperimentalEnabled() map[string]bool {
+	if c == nil || len(c.ExperimentalFeatures) == 0 {
+		return nil
+	}
+	out := make(map[string]bool, len(c.ExperimentalFeatures))
+	for _, id := range c.ExperimentalFeatures {
+		out[id] = true
+	}
+	return out
+}
+
+// NormalizeExperimentalFeatures trims the ids, drops blanks and duplicates, and
+// keeps the first occurrence's order; an empty result is nil so omitempty
+// leaves the key out of namespace.yml. Every path that stores a list goes
+// through it — the parser for what is on disk, the daemon for what a request
+// carries — so a list compares equal whatever spelling it arrived in.
+func NormalizeExperimentalFeatures(ids []string) []string {
+	if len(ids) == 0 {
+		return nil
+	}
+	seen := make(map[string]bool, len(ids))
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// validateExperimentalFeatures refuses an id outside the grammar. The list
+// has been normalized, so a blank never reaches here; an id the bundle does
+// not know is deliberately NOT refused (see Config.ExperimentalFeatures).
+func validateExperimentalFeatures(cfg *Config) error {
+	for _, id := range cfg.ExperimentalFeatures {
+		if !bundle.IsValidExperimentalFeatureID(id) {
+			return fmt.Errorf("experimentalFeatures: invalid feature id %q", id)
+		}
+	}
+	return nil
 }
 
 // ContentStorageType answers where this namespace keeps its content: DB when
@@ -304,6 +366,7 @@ func ParseNamespaceConfig(data []byte) (*Config, error) {
 			cfg.ContentStorage.Type = t
 		}
 	}
+	cfg.ExperimentalFeatures = NormalizeExperimentalFeatures(cfg.ExperimentalFeatures)
 	if err := ValidateNamespaceConfig(&cfg); err != nil {
 		return nil, err
 	}
@@ -361,7 +424,10 @@ func ValidateNamespaceConfig(cfg *Config) error {
 			return fmt.Errorf("s3 secret key is required")
 		}
 	}
-	return validateContentStorage(cfg)
+	if err := validateContentStorage(cfg); err != nil {
+		return err
+	}
+	return validateExperimentalFeatures(cfg)
 }
 
 // validateContentStorage refuses a content-storage type this launcher does not

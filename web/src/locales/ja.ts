@@ -649,10 +649,20 @@ const ja = {
   'nsEdit.saveSuccess': '名前空間が更新されました',
   'nsEdit.tab.general': '一般',
   'nsEdit.tab.advanced': '詳細',
+  'nsEdit.tab.experimental': '実験的機能',
   'nsEdit.mongo.label': 'MongoDB を有効にする',
   'nsEdit.mongo.hint': 'MongoDB には ecos-process のプロセス定義とインスタンスが保存されていましたが、PostgreSQL へ移行された後は不要な負担でしかないため、新しい名前空間では作成されません。ecos-process 2.33.0 以降が必要です。この名前空間にすでにプロセスがある場合は、移行が完了するまで有効のままにしてください。データが未移行のまま MongoDB を無効にすると ecos-process は起動しません。',
   'nsEdit.https.label': 'HTTPS を有効化（自己署名）',
   'nsEdit.https.hint': '自己署名証明書を使用して HTTPS でプロキシを提供します。初回アクセス時にブラウザがセキュリティ警告を表示します。',
+
+  // -- Experimental (beta) features (namespace dialog, app table) --
+  'experimental.label': '実験的機能',
+  'experimental.badge': 'BETA',
+  'experimental.hint': 'このリリースがベータとして提供するモジュールです。機能を有効にすると、そのコンテナが名前空間に追加され、アプリ一覧では BETA と表示されます。',
+  'experimental.disclaimer': 'ベータのモジュールは今後のリリースで変更または廃止されることがあり、データ形式も確定していません。まずテスト環境でお試しください。',
+  'experimental.apps': 'コンテナ: {apps}',
+  'experimental.disable.warning': '機能を無効にすると、次回の設定適用時にそのコンテナが削除されます。データボリュームは残ります。',
+  'experimental.app.tooltip': 'このリリースの実験的（ベータ）モジュール',
 
   // -- Content storage (namespace dialog, dashboard banner, provider stop confirmation) --
   'contentStorage.label': 'コンテンツの保存先',

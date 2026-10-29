@@ -743,6 +743,9 @@ func (d *Daemon) buildNamespaceConfigFromCreate(req api.NamespaceCreateDto, wsID
 	if err := applyCreateContentStorage(&nsCfg, req.ContentStorage); err != nil {
 		return nil, err
 	}
+	// Whether the chosen bundle offers them is checked below, once the bundle
+	// key is pinned and the bundle resolved.
+	applyCreateExperimentalFeatures(&nsCfg, req.ExperimentalFeatures)
 
 	// Store the effective snapshot id in the config so the demo data is imported
 	// before start (createNamespace) and re-imported on later restarts only when
@@ -801,6 +804,11 @@ func (d *Daemon) buildNamespaceConfigFromCreate(req api.NamespaceCreateDto, wsID
 	// what makes the answer about the repo rather than about the clone.
 	resolved, err := d.resolveBundleForCreate(wsID, nsCfg.BundleRef)
 	if err != nil {
+		return nil, err
+	}
+	// The beta features asked for must be ones THIS bundle offers; a create
+	// has no stored list, so every id is a new one and every id is checked.
+	if err := checkCreateExperimentalFeatures(&nsCfg, resolved.Bundle); err != nil {
 		return nil, err
 	}
 	namespace.ApplyNewNamespaceMongoDefault(&nsCfg, resolved.Bundle)
@@ -1052,6 +1060,10 @@ func (d *Daemon) handleGetNamespaceEdit(w http.ResponseWriter, r *http.Request) 
 		// predates the option has the block, and every one of them is DB.
 		ContentStorage: string(nsCfg.ContentStorageType()),
 		ExternalS3:     nsCfg.S3 != nil,
+		// What the STORED bundle offers, with this namespace's choices; an
+		// unreadable bundle lists nothing and the form shows no section.
+		ExperimentalFeatures:       d.experimentalFeaturesForEdit(d.activeWorkspaceID(), nsCfg),
+		StoredExperimentalFeatures: nsCfg.ExperimentalFeatures,
 	}
 	writeJSON(w, dto)
 }
@@ -1228,6 +1240,11 @@ func (d *Daemon) handlePutNamespaceEdit(w http.ResponseWriter, r *http.Request) 
 		// so a stand that keeps mongo keeps it across a later default change.
 		enabled := *req.MongoEnabled
 		current.MongoDB.Enabled = &enabled
+	}
+	// After the bundleRef change above: the ids a request adds are checked
+	// against the bundle the namespace will be on.
+	if !d.applyEditExperimentalFeatures(w, wsID, current, req.EnabledExperimentalFeatures) {
+		return
 	}
 	storageBefore := current.ContentStorageType()
 	if !d.applyEditContentStorage(w, r, current, req.ContentStorage) {

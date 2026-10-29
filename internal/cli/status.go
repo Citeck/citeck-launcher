@@ -21,6 +21,12 @@ import (
 const editedLegend = "* config edited — `citeck edit <app> --reset` reverts an override; " +
 	"reset an edited file in the app's config editor"
 
+// experimentalLegend explains the "[beta]" marker: a module the bundle ships as
+// experimental, which this namespace switched on. Plain English for the reason
+// editedLegend is.
+const experimentalLegend = "[beta] experimental module of this release — switched on in the namespace " +
+	"settings; it may change or be removed in a later release"
+
 // statusExtrasClient is the daemon surface `citeck status` needs on TOP of the
 // namespace DTO. Narrowed to the two calls so the policy below can be tested
 // without a daemon.
@@ -115,6 +121,9 @@ func newStatusCmd() *cobra.Command {
 					output.PrintText(r.Table)
 					if r.AnyEdited {
 						output.PrintText(output.Colorize(output.Dim, editedLegend))
+					}
+					if r.AnyExperimental {
+						output.PrintText(output.Colorize(output.Dim, experimentalLegend))
 					}
 				}
 			})
@@ -247,6 +256,9 @@ func watchEvents(c *client.DaemonClient) error {
 		table := r.Table
 		if r.AnyEdited {
 			table += "\n" + output.Colorize(output.Dim, editedLegend)
+		}
+		if r.AnyExperimental {
+			table += "\n" + output.Colorize(output.Dim, experimentalLegend)
 		}
 
 		if tty && lastLines > 0 {

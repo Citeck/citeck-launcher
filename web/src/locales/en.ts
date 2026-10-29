@@ -655,10 +655,20 @@ const en = {
   'nsEdit.saveSuccess': 'Namespace updated',
   'nsEdit.tab.general': 'General',
   'nsEdit.tab.advanced': 'Advanced',
+  'nsEdit.tab.experimental': 'Experimental',
   'nsEdit.mongo.label': 'Enable MongoDB',
   'nsEdit.mongo.hint': 'MongoDB held ecos-process definitions and instances until they were migrated to PostgreSQL; after that the container is dead weight, so newer namespaces are created without it. Needs ecos-process 2.33.0 or newer. If this namespace already has processes, leave it on until the migration has completed — ecos-process refuses to start with MongoDB off and unmigrated data.',
   'nsEdit.https.label': 'Enable HTTPS (self-signed)',
   'nsEdit.https.hint': 'Serve the proxy over HTTPS with a self-signed certificate. Your browser will show a security warning the first time.',
+
+  // -- Experimental (beta) features (namespace dialog, app table) --
+  'experimental.label': 'Experimental features',
+  'experimental.badge': 'BETA',
+  'experimental.hint': 'Modules this release ships as beta. Switch a feature on to add its containers to the namespace; they are marked BETA in the app table.',
+  'experimental.disclaimer': 'Beta modules may change or be removed in a later release, and their data format is not final. Try them on test stands first.',
+  'experimental.apps': 'Containers: {apps}',
+  'experimental.disable.warning': 'Switching a feature off removes its containers the next time the configuration is applied; their data volumes are kept.',
+  'experimental.app.tooltip': 'Experimental (beta) module of this release',
 
   // -- Content storage (namespace dialog, dashboard banner, provider stop confirmation) --
   'contentStorage.label': 'Content storage',

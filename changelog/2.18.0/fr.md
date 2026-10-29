@@ -1,0 +1,4 @@
+## Nouveautés
+- Modules expérimentaux (bêta) : une version peut livrer de nouveaux services en bêta dans la section `experimental:` du bundle. Ils s'activent par environnement dans le nouvel onglet « Expérimental » de la boîte de dialogue de création/modification ; ces applications sont marquées BETA dans le tableau des applications et dans `citeck status`.
+- Mode serveur : `citeck features` liste les modules bêta proposés par le bundle de l'environnement et `citeck features enable|disable <id>` les active ou les désactive ; `citeck install` demande lesquels activer. Un module désactivé est retiré à la prochaine application de la configuration, ses volumes de données sont conservés.
+- Un module bêta qu'une version ultérieure rend permanent continue de fonctionner là où il était activé ; ailleurs il est proposé comme toute nouvelle application, selon le modèle du workspace.

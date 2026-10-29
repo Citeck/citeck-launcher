@@ -45,6 +45,7 @@ func (r *Runtime) ToNamespaceDto() api.NamespaceDto {
 			WaitingFor:       r.appWaitingForDeps(app),
 			Held:             r.heldByStoppedDepsUnderLock(app),
 			Detached:         r.isDetachedLocked(app.Name),
+			Experimental:     app.Def.Experimental,
 		})
 	}
 	return api.NamespaceDto{

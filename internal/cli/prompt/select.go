@@ -20,6 +20,9 @@ type Option[T any] struct {
 	Value T
 	// Hint is optional trailing markup (e.g. "(current)", "(latest)").
 	Hint string
+	// Description is an optional line rendered under the option. Only
+	// MultiSelect shows it; Select ignores it.
+	Description string
 }
 
 // Select shows a list of options and returns the chosen one's Value.

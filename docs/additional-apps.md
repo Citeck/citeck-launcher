@@ -92,3 +92,12 @@ additionalApps:
 On `citeck reload` the launcher pulls the image, starts the container with those env
 vars, and the simulator registers itself in ZooKeeper — the real `ecos-edi` (or any
 service) in the same namespace then finds it by name with no fixed address.
+
+## Experimental (beta) modules
+
+An entry **without `image:`** whose name the bundle lists only in its top-level
+`experimental:` section is generated **only for a namespace that switched that feature
+on** (`namespace.yml` `experimentalFeatures:`). Everywhere else the bundle "names no
+image" for it, and the entry is not generated — the ordinary rule above. The entry
+itself needs nothing special: it configures the module, the release decides that it
+exists and that it is beta. See [experimental-features.md](experimental-features.md).

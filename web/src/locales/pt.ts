@@ -649,10 +649,20 @@ const pt = {
   'nsEdit.saveSuccess': 'Namespace atualizado',
   'nsEdit.tab.general': 'Geral',
   'nsEdit.tab.advanced': 'Avançado',
+  'nsEdit.tab.experimental': 'Experimentais',
   'nsEdit.mongo.label': 'Ativar o MongoDB',
   'nsEdit.mongo.hint': 'O MongoDB guardava as definições e instâncias de processos do ecos-process até serem migradas para o PostgreSQL; depois disso o contêiner é peso morto, por isso namespaces novos são criados sem ele. Requer o ecos-process 2.33.0 ou mais recente. Se este namespace já tem processos, mantenha-o ligado até a migração terminar: com o MongoDB desligado e dados não migrados, o ecos-process não sobe.',
   'nsEdit.https.label': 'Ativar HTTPS (autoassinado)',
   'nsEdit.https.hint': 'Servir o proxy por HTTPS com um certificado autoassinado. O navegador mostrará um aviso de segurança na primeira vez.',
+
+  // -- Experimental (beta) features (namespace dialog, app table) --
+  'experimental.label': 'Funcionalidades experimentais',
+  'experimental.badge': 'BETA',
+  'experimental.hint': 'Módulos que esta versão entrega como beta. Ative uma funcionalidade para adicionar os seus contêineres ao namespace; na tabela de aplicativos eles são marcados como BETA.',
+  'experimental.disclaimer': 'Módulos beta podem mudar ou desaparecer em uma versão posterior, e o formato dos seus dados não é definitivo. Experimente-os primeiro em ambientes de teste.',
+  'experimental.apps': 'Contêineres: {apps}',
+  'experimental.disable.warning': 'Desativar uma funcionalidade remove os seus contêineres na próxima aplicação da configuração; os volumes de dados são mantidos.',
+  'experimental.app.tooltip': 'Módulo experimental (beta) desta versão',
 
   // -- Content storage (namespace dialog, dashboard banner, provider stop confirmation) --
   'contentStorage.label': 'Armazenamento de conteúdo',

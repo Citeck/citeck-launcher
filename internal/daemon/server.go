@@ -1119,6 +1119,9 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 	register("GET "+api.ContentStorageLocalEnv, d.handleContentStorageLocalEnv)
 	register("POST "+api.NamespaceContentStorageProvision, d.handleContentStorageProvision)
 
+	// Experimental (BETA) features a bundle offers, for the namespace dialog.
+	register("GET "+api.ExperimentalFeatures, d.handleExperimentalFeatures)
+
 	// Config
 	register("GET /api/v1/config", d.handleGetConfig)
 	register("GET /api/v1/config/applied", d.handleGetAppliedConfig)

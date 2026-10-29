@@ -119,9 +119,10 @@ func ApplyAppDefPatch(base appdef.ApplicationDef, patch json.RawMessage) (appdef
 	if err := json.Unmarshal(merged, &out); err != nil {
 		return base, fmt.Errorf("unmarshal merged appdef: %w", err)
 	}
-	out.IsInit = base.IsInit     // json:"-" — absent from the marshaled form
-	out.IsJVM = base.IsJVM       // same: a patch cannot make an app a JVM or stop it being one
-	out.JVMMajor = base.JVMMajor // same: the image's Java version is not a deployment setting
+	out.IsInit = base.IsInit             // json:"-" — absent from the marshaled form
+	out.IsJVM = base.IsJVM               // same: a patch cannot make an app a JVM or stop it being one
+	out.JVMMajor = base.JVMMajor         // same: the image's Java version is not a deployment setting
+	out.Experimental = base.Experimental // same: whether the release calls it beta is not a deployment setting
 	out.ImageDigest = ""
 	out.VolumesContentHash = base.VolumesContentHash
 	return out, nil

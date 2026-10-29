@@ -4,6 +4,7 @@ import {
   createNamespace,
   getBundles,
   getContentStorageOptions,
+  getExperimentalFeatures,
   getNamespaceCreateDefaults,
   getNamespaceEdit,
   getWorkspaceSnapshots,
@@ -14,7 +15,13 @@ import {
 } from '../lib/api'
 import { gitRecoveryCache } from '../lib/giturl'
 import { GitPullErrorDialog } from './GitPullErrorDialog'
-import type { BundleInfoDto, GitFailureDto, ContentStorageOptionDto, NamespaceCreateDto } from '../lib/types'
+import type {
+  BundleInfoDto,
+  ContentStorageOptionDto,
+  ExperimentalFeatureDto,
+  GitFailureDto,
+  NamespaceCreateDto,
+} from '../lib/types'
 import { useTranslation } from '../lib/i18n'
 import { toast } from '../lib/toast'
 import { primeDesktopModeCache } from '../lib/desktop'
@@ -29,6 +36,7 @@ import {
 import { Select } from './Select'
 import { Modal, ModalField } from './Modal'
 import { LoadingLabel } from './LoadingLabel'
+import { BetaBadge } from './BetaBadge'
 
 interface NamespaceEditDialogProps {
   open: boolean
@@ -106,7 +114,18 @@ export function NamespaceEditDialog({
   // bundle it answers so a slow reply for a previous selection is never read
   // as the answer for the current one.
   const [s3Options, setS3Options] = useState<{ bundle: string; option: ContentStorageOptionDto } | null>(null)
-  const [tab, setTab] = useState<'general' | 'advanced'>('general')
+  // GET /experimental-features for the selected bundle, tagged like s3Options.
+  // A `reason` (BUNDLE_UNRESOLVED) means nothing can be offered yet.
+  const [expFeatures, setExpFeatures] = useState<{ bundle: string; features: ExperimentalFeatureDto[]; reason?: string } | null>(null)
+  // The beta features the form has ON. Seeded from the edit GET (what the
+  // namespace runs) and empty in create mode. `loadedFeatures` is that seed, so
+  // the form can warn when a running module is about to be switched off, and
+  // `featuresTouched` decides whether the choice is SENT at all — the daemon's
+  // contract is "absent = leave unchanged".
+  const [enabledFeatures, setEnabledFeatures] = useState<Set<string>>(() => new Set())
+  const [loadedFeatures, setLoadedFeatures] = useState<Set<string>>(() => new Set())
+  const [featuresTouched, setFeaturesTouched] = useState(false)
+  const [tab, setTab] = useState<'general' | 'advanced' | 'experimental'>('general')
 
   const [bundles, setBundles] = useState<BundleInfoDto[]>([])
   const [snapshots, setSnapshots] = useState<WsSnapshotOpt[]>([])
@@ -131,6 +150,10 @@ export function NamespaceEditDialog({
     setStorageChoice(CONTENT_STORAGE_DB)
     setExternalS3(false)
     setLoadedBundle(null)
+    setExpFeatures(null)
+    setEnabledFeatures(new Set())
+    setLoadedFeatures(new Set())
+    setFeaturesTouched(false)
     primeDesktopModeCache().then(setIsDesktop).catch(() => setIsDesktop(false))
 
     setBundlesLoading(true)
@@ -175,6 +198,10 @@ export function NamespaceEditDialog({
             setStorageChoice(stored)
             setExternalS3(!!n.externalS3)
             setLoadedBundle({ repo: n.bundleRepo, key: n.bundleKey })
+            const on = new Set(n.storedExperimentalFeatures
+              ?? (n.experimentalFeatures ?? []).filter((f) => f.enabled).map((f) => f.id))
+            setEnabledFeatures(on)
+            setLoadedFeatures(new Set(on))
           })
           .catch((e) => setSubmitError((e as Error).message))
       }
@@ -274,6 +301,18 @@ export function NamespaceEditDialog({
     return () => ctl.abort()
   }, [open, mode, workspaceId, bundleRepo, bundleKey, bundles])
 
+  // The same for the beta features the selected bundle offers. Best-effort
+  // too: a failed request leaves the answer unknown and the section hidden.
+  useEffect(() => {
+    if (!open || !bundleRepo || !bundleKey) return
+    const bundle = `${bundleRepo}\n${bundleKey}`
+    const ctl = new AbortController()
+    getExperimentalFeatures(bundleRepo, bundleKey, mode === 'create' ? workspaceId : undefined, ctl.signal)
+      .then((o) => setExpFeatures({ bundle, features: o.features ?? [], reason: o.reason }))
+      .catch(() => {})
+    return () => ctl.abort()
+  }, [open, mode, workspaceId, bundleRepo, bundleKey, bundles])
+
   // When the user picks a different bundle repo, auto-select that repo's latest
   // release (versions are newest-first). Only fires on a manual repo change —
   // on initial edit-load the repo is set directly (not through this handler),
@@ -319,15 +358,43 @@ export function NamespaceEditDialog({
     ? CONTENT_STORAGE_S3
     : CONTENT_STORAGE_DB
   const showStorageField = storedS3 || !!s3Opt
-  // Only legacy MongoDB belongs on Advanced; content storage is on General.
-  const hasAdvanced = showMongoToggle
-  const activeTab = hasAdvanced ? tab : 'general'
   // An S3 namespace moved to a bundle that cannot have S3 is refused on save
   // (CONTENT_STORAGE_UNAVAILABLE). Say so before the click; the daemon still
   // decides.
   const bundleChanged = loadedBundle !== null
     && (loadedBundle.repo !== bundleRepo || loadedBundle.key !== bundleKey)
   const storedS3Refused = storedS3 && bundleChanged && !!s3Opt && !s3Opt.available
+  // Beta features, derived the same way: offered only once the daemon has
+  // answered for THIS bundle. What is sent is the state of the OFFERED ones —
+  // a choice for a feature the selected bundle does not offer is neither shown
+  // nor sent, and the daemon keeps such stored ids on its own.
+  const offeredFeatures = expFeatures && expFeatures.bundle === `${bundleRepo}\n${bundleKey}` && !expFeatures.reason
+    ? expFeatures.features
+    : []
+  const showFeatures = offeredFeatures.length > 0
+  const offeredEnabled = offeredFeatures.filter((f) => enabledFeatures.has(f.id)).map((f) => f.id)
+  const switchingOff = offeredFeatures.some((f) => loadedFeatures.has(f.id) && !enabledFeatures.has(f.id))
+  // Tabs: only legacy MongoDB belongs on Advanced, content storage is on
+  // General, and the beta modules get a tab of their own — like S3 once had —
+  // so the main form stays the main form and the beta warning is read by
+  // whoever asked for it. A tab with nothing to show is not offered, and a
+  // selection of one that just vanished (the bundle changed) falls back to
+  // General.
+  const tabs: Array<'general' | 'advanced' | 'experimental'> = ['general']
+  if (showMongoToggle) tabs.push('advanced')
+  if (showFeatures) tabs.push('experimental')
+  const hasTabs = tabs.length > 1
+  const activeTab = tabs.includes(tab) ? tab : 'general'
+
+  function toggleFeature(id: string, on: boolean) {
+    setEnabledFeatures((prev) => {
+      const next = new Set(prev)
+      if (on) next.add(id)
+      else next.delete(id)
+      return next
+    })
+    setFeaturesTouched(true)
+  }
 
   function validate(): boolean {
     const errors: Record<string, string> = {}
@@ -381,6 +448,9 @@ export function NamespaceEditDialog({
           // the request alone (a template's contentStorage is ignored), so
           // what was shown is exactly what is created.
           contentStorage: effectiveStorage,
+          // The beta features shown ON, if any; the daemon checks them against
+          // the bundle it resolves and ignores a template's own list.
+          experimentalFeatures: offeredEnabled.length > 0 ? offeredEnabled : undefined,
         }
         await createNamespace(payload)
         toast(t('namespace.form.createSuccess'), 'success')
@@ -408,6 +478,10 @@ export function NamespaceEditDialog({
           // Absent = unchanged. Only the DB → S3 switch is ever sent: the
           // daemon re-attaches the provider and reloads on exactly that.
           contentStorage: !storedS3 && effectiveStorage === CONTENT_STORAGE_S3 ? CONTENT_STORAGE_S3 : undefined,
+          // Only an explicit checkbox change replaces offered choices. A
+          // bundle change alone must preserve stored opt-ins, including on
+          // older daemons whose GET cannot expose inert IDs to the form.
+          enabledExperimentalFeatures: featuresTouched && showFeatures ? offeredEnabled : undefined,
         }
         await putNamespaceEdit(nsId, payload)
         toast(t('nsEdit.saveSuccess'), 'success')
@@ -453,9 +527,9 @@ export function NamespaceEditDialog({
         </>
       }
     >
-      {hasAdvanced && (
+      {hasTabs && (
         <div className="flex gap-1 border-b border-border -mt-1">
-          {(['general', 'advanced'] as const).map((id) => (
+          {tabs.map((id) => (
             <button
               key={id}
               type="button"
@@ -491,6 +565,42 @@ export function NamespaceEditDialog({
             </label>
           )}
         </>
+      ) : activeTab === 'experimental' ? (
+        <fieldset className="min-w-0">
+          <legend className="flex items-center gap-1.5 text-xs font-medium mb-1">
+            {t('experimental.label')}
+            <BetaBadge />
+          </legend>
+          <p className="mb-1.5 text-[11px] text-muted-foreground">{t('experimental.hint')}</p>
+          <div className="flex flex-col gap-1.5">
+            {offeredFeatures.map((f) => (
+              <label key={f.id} className="flex items-start gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  className="rounded border-border align-middle m-0 mt-0.5 shrink-0"
+                  checked={enabledFeatures.has(f.id)}
+                  onChange={(e) => toggleFeature(f.id, e.target.checked)}
+                />
+                <span className="flex min-w-0 flex-col gap-0.5">
+                  <span className="flex items-center gap-1.5 text-xs font-medium">
+                    {f.title}
+                    <BetaBadge title={t('experimental.app.tooltip')} />
+                  </span>
+                  {f.description && (
+                    <span className="text-[11px] text-muted-foreground">{f.description}</span>
+                  )}
+                  <span className="font-mono text-[11px] text-muted-foreground">
+                    {t('experimental.apps', { apps: f.apps.join(', ') })}
+                  </span>
+                </span>
+              </label>
+            ))}
+          </div>
+          <p className="mt-1.5 rounded-md border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-[11px] text-amber-700 dark:text-amber-300">
+            {t('experimental.disclaimer')}
+            {switchingOff && <> {t('experimental.disable.warning')}</>}
+          </p>
+        </fieldset>
       ) : (
         <>
       <ModalField label={t('namespace.form.name')} error={fieldErrors.name} required>

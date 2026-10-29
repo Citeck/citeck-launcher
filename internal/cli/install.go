@@ -301,6 +301,11 @@ hostStep:
 		nsCfg.ContentStorage = chooseInstallContentStorage(
 			installContentStorageAvailability(nsCfg.BundleRef, info.Version), promptInstallContentStorage)
 
+		// Experimental (beta) modules sub-step: asked only when the picked
+		// release offers one, and nothing is marked by default.
+		nsCfg.ExperimentalFeatures = chooseInstallExperimentalFeatures(
+			installExperimentalFeatures(nsCfg.BundleRef, info.Version), promptInstallExperimentalFeatures)
+
 		// --- Step 6: Snapshot selection (optional demo data) ---
 		if wsCfg != nil && len(wsCfg.Snapshots) > 0 {
 			nsCfg.Snapshot = selectSnapshot(wsCfg.Snapshots)

@@ -649,10 +649,20 @@ const de = {
   'nsEdit.saveSuccess': 'Namespace aktualisiert',
   'nsEdit.tab.general': 'Allgemein',
   'nsEdit.tab.advanced': 'Erweitert',
+  'nsEdit.tab.experimental': 'Experimentell',
   'nsEdit.mongo.label': 'MongoDB aktivieren',
   'nsEdit.mongo.hint': 'In MongoDB lagen die Prozessdefinitionen und -instanzen von ecos-process, bis sie nach PostgreSQL migriert wurden; danach ist der Container totes Gewicht, deshalb werden neue Namespaces ohne ihn angelegt. Erfordert ecos-process 2.33.0 oder neuer. Hat dieser Namespace bereits Prozesse, lassen Sie es aktiviert, bis die Migration abgeschlossen ist: mit deaktiviertem MongoDB und nicht migrierten Daten startet ecos-process nicht.',
   'nsEdit.https.label': 'HTTPS aktivieren (selbstsigniert)',
   'nsEdit.https.hint': 'Den Proxy über HTTPS mit einem selbstsignierten Zertifikat bereitstellen. Der Browser zeigt beim ersten Mal eine Sicherheitswarnung.',
+
+  // -- Experimental (beta) features (namespace dialog, app table) --
+  'experimental.label': 'Experimentelle Funktionen',
+  'experimental.badge': 'BETA',
+  'experimental.hint': 'Module, die dieses Release als Beta ausliefert. Schalten Sie eine Funktion ein, um ihre Container zum Namespace hinzuzufügen; in der App-Tabelle sind sie mit BETA markiert.',
+  'experimental.disclaimer': 'Beta-Module können sich in einem späteren Release ändern oder entfallen, und ihr Datenformat ist nicht endgültig. Probieren Sie sie zuerst auf Teststands aus.',
+  'experimental.apps': 'Container: {apps}',
+  'experimental.disable.warning': 'Das Ausschalten einer Funktion entfernt ihre Container beim nächsten Anwenden der Konfiguration; die Datenvolumes bleiben erhalten.',
+  'experimental.app.tooltip': 'Experimentelles (Beta-)Modul dieses Releases',
 
   // -- Content storage (namespace dialog, dashboard banner, provider stop confirmation) --
   'contentStorage.label': 'Inhaltsspeicher',

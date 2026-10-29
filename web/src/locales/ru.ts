@@ -649,10 +649,20 @@ const ru = {
   'nsEdit.saveSuccess': 'Namespace обновлён',
   'nsEdit.tab.general': 'Основное',
   'nsEdit.tab.advanced': 'Дополнительно',
+  'nsEdit.tab.experimental': 'Экспериментальные',
   'nsEdit.mongo.label': 'Включить MongoDB',
   'nsEdit.mongo.hint': 'В MongoDB лежали определения и экземпляры процессов ecos-process, пока их не перенесли в PostgreSQL; после этого контейнер — мёртвый груз, поэтому новые неймспейсы создаются без него. Нужен ecos-process 2.33.0 или новее. Если в неймспейсе уже есть процессы, оставьте её включённой, пока миграция не завершится: с выключенной MongoDB и неперенесёнными данными ecos-process не стартует.',
   'nsEdit.https.label': 'Включить HTTPS (самоподписанный)',
   'nsEdit.https.hint': 'Отдавать прокси по HTTPS с самоподписанным сертификатом. При первом заходе браузер покажет предупреждение безопасности.',
+
+  // -- Experimental (beta) features (namespace dialog, app table) --
+  'experimental.label': 'Экспериментальные функции',
+  'experimental.badge': 'BETA',
+  'experimental.hint': 'Модули, которые этот релиз поставляет как beta. Включите функцию, чтобы добавить её контейнеры в namespace; в таблице приложений они помечены BETA.',
+  'experimental.disclaimer': 'Beta-модули могут измениться или исчезнуть в следующих релизах, формат их данных не окончательный. Сначала проверяйте их на тестовых стендах.',
+  'experimental.apps': 'Контейнеры: {apps}',
+  'experimental.disable.warning': 'Выключение функции удалит её контейнеры при следующем применении конфигурации; тома с данными сохраняются.',
+  'experimental.app.tooltip': 'Экспериментальный (beta) модуль этого релиза',
 
   // -- Content storage (namespace dialog, dashboard banner, provider stop confirmation) --
   'contentStorage.label': 'Способ хранения контента',

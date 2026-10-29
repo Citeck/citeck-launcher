@@ -649,10 +649,20 @@ const zh = {
   'nsEdit.saveSuccess': '命名空间已更新',
   'nsEdit.tab.general': '常规',
   'nsEdit.tab.advanced': '高级',
+  'nsEdit.tab.experimental': '实验性功能',
   'nsEdit.mongo.label': '启用 MongoDB',
   'nsEdit.mongo.hint': '在迁移到 PostgreSQL 之前，ecos-process 的流程定义和实例都保存在 MongoDB 中；迁移之后该容器就成了无用负担，因此新的命名空间不再创建它。需要 ecos-process 2.33.0 或更高版本。如果该命名空间已有流程，请保持开启直到迁移完成：数据尚未迁移时关闭 MongoDB 会导致 ecos-process 无法启动。',
   'nsEdit.https.label': '启用 HTTPS（自签名）',
   'nsEdit.https.hint': '使用自签名证书通过 HTTPS 提供代理服务。首次访问时浏览器会显示安全警告。',
+
+  // -- Experimental (beta) features (namespace dialog, app table) --
+  'experimental.label': '实验性功能',
+  'experimental.badge': 'BETA',
+  'experimental.hint': '本版本以 Beta 形式提供的模块。开启某项功能即可把它的容器加入命名空间；在应用表中它们会标记为 BETA。',
+  'experimental.disclaimer': 'Beta 模块可能在后续版本中变更或移除，其数据格式尚未最终确定。请先在测试环境中试用。',
+  'experimental.apps': '容器：{apps}',
+  'experimental.disable.warning': '关闭功能后，下一次应用配置时会移除它的容器；数据卷会保留。',
+  'experimental.app.tooltip': '本版本的实验性（Beta）模块',
 
   // -- Content storage (namespace dialog, dashboard banner, provider stop confirmation) --
   'contentStorage.label': '内容存储方式',

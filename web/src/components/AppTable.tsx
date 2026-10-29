@@ -16,6 +16,7 @@ import { guardedProviderApp } from '../lib/contentStorage'
 import { ConfirmModal } from './ConfirmModal'
 import { StatusBadge } from './StatusBadge'
 import { StatsCell } from './StatsCell'
+import { BetaBadge } from './BetaBadge'
 import { Square, Play, RotateCw, FileText, Settings, Circle, Lock } from 'lucide-react'
 
 // "2.3%" / "0%" → numeric percent. Empty/unparseable yields 0.
@@ -270,6 +271,8 @@ function GroupRows({ labelKey, apps, allApps, onAction, highlightedApp }: { labe
             }}>
             <td className="py-[2px] pr-4 font-mono whitespace-nowrap">
               <span className="text-primary group-hover:underline">{app.name}</span>
+              {/* A module the release ships as beta says so next to its name. */}
+              {app.experimental && <BetaBadge className="ml-1.5 align-middle" title={t('experimental.app.tooltip')} />}
             </td>
             <td className="py-[2px] pr-4 overflow-hidden">
               <span className="flex items-center gap-1.5 min-w-0">

@@ -4,12 +4,13 @@ import { NamespaceEditDialog } from './NamespaceEditDialog'
 import {
   createNamespace,
   getContentStorageOptions,
+  getExperimentalFeatures,
   getNamespaceCreateDefaults,
   getNamespaceEdit,
   putNamespaceEdit,
   type NamespaceEditDto,
 } from '../lib/api'
-import type { ContentStorageOptionDto } from '../lib/types'
+import type { ContentStorageOptionDto, ExperimentalFeatureDto } from '../lib/types'
 
 vi.mock('../lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../lib/api')>()),
@@ -24,6 +25,8 @@ vi.mock('../lib/api', async (importOriginal) => ({
   ]),
   // Default: a Community bundle without ecos-content; S3 is shown disabled.
   getContentStorageOptions: vi.fn().mockResolvedValue({ s3: { available: false, reason: 'NO_CONTENT_APP' } }),
+  // Default: a bundle with no beta modules; the section stays hidden.
+  getExperimentalFeatures: vi.fn().mockResolvedValue({ features: [] }),
   getNamespaceCreateDefaults: vi.fn().mockResolvedValue({
     name: 'Citeck #1', bundleRepo: 'community', bundleKey: '2026.2', authType: 'KEYCLOAK',
   }),
@@ -56,6 +59,8 @@ beforeEach(() => {
   vi.mocked(createNamespace).mockClear()
   vi.mocked(getContentStorageOptions).mockReset()
   vi.mocked(getContentStorageOptions).mockResolvedValue({ s3: { available: false, reason: 'NO_CONTENT_APP' } })
+  vi.mocked(getExperimentalFeatures).mockReset()
+  vi.mocked(getExperimentalFeatures).mockResolvedValue({ features: [] })
 })
 
 describe('NamespaceEditDialog Advanced tab', () => {
@@ -124,6 +129,120 @@ async function waitForStorage() {
 async function submit(label: RegExp) {
   await act(async () => { screen.getAllByRole('button', { name: label }).at(-1)!.click() })
 }
+
+const SCANNER: ExperimentalFeatureDto = {
+  id: 'documentScanner', title: 'Document scanning', description: 'New OCR service.',
+  apps: ['ecos-scanner', 'scanner-postgres'],
+}
+const BACKUP: ExperimentalFeatureDto = { id: 'backupEngineV2', title: 'backupEngineV2', apps: ['backup-engine'] }
+
+describe('NamespaceEditDialog experimental features', () => {
+  it('shows no section when the bundle offers nothing, and sends nothing', async () => {
+    await openCreate({ bundleRepo: 'community', bundleKey: '2026.2' })
+    await waitFor(() => expect(getExperimentalFeatures).toHaveBeenCalledWith('community', '2026.2', undefined, expect.anything()))
+    expect(screen.queryByRole('tab', { name: 'Experimental' })).toBeNull()
+    expect(screen.queryByText('Experimental features')).toBeNull()
+
+    await submit(/^Submit$/)
+    await waitFor(() => expect(createNamespace).toHaveBeenCalled())
+    expect(vi.mocked(createNamespace).mock.calls[0][0].experimentalFeatures).toBeUndefined()
+  })
+
+  // The beta modules live on a tab of their own. Every row is marked BETA,
+  // and what is sent is exactly what was switched on.
+  it('lists the offered features on their own tab with a BETA badge and sends the ones switched on', async () => {
+    vi.mocked(getExperimentalFeatures).mockResolvedValue({ features: [BACKUP, SCANNER] })
+    await openCreate({ bundleRepo: 'enterprise', bundleKey: '2026.3' })
+    expect(screen.queryByText('Experimental features')).toBeNull()
+    await act(async () => { (await screen.findByRole('tab', { name: 'Experimental' })).click() })
+    await screen.findByText('Experimental features')
+
+    expect(screen.getAllByText('BETA').length).toBeGreaterThanOrEqual(3)
+    expect(screen.getByText('New OCR service.')).toBeDefined()
+    expect(screen.getByText(/ecos-scanner, scanner-postgres/)).toBeDefined()
+    expect(screen.getByText(/may change or be removed/)).toBeDefined()
+    const scanner = screen.getByRole('checkbox', { name: /Document scanning/ })
+    expect((scanner as HTMLInputElement).checked).toBe(false)
+    await act(async () => { scanner.click() })
+
+    await submit(/^Submit$/)
+    await waitFor(() => expect(createNamespace).toHaveBeenCalled())
+    expect(vi.mocked(createNamespace).mock.calls[0][0].experimentalFeatures).toEqual(['documentScanner'])
+  })
+
+  // The daemon's contract is "absent = leave unchanged": a form nobody touched
+  // must not answer the question.
+  it('seeds the switches from the edit GET and sends nothing when none was touched', async () => {
+    vi.mocked(getExperimentalFeatures).mockResolvedValue({ features: [SCANNER, BACKUP] })
+    await open(edited({ experimentalFeatures: [{ ...SCANNER, enabled: true }, BACKUP] }))
+    await act(async () => { (await screen.findByRole('tab', { name: 'Experimental' })).click() })
+
+    const scanner = await screen.findByRole('checkbox', { name: /Document scanning/ })
+    expect((scanner as HTMLInputElement).checked).toBe(true)
+    expect((screen.getByRole('checkbox', { name: /backupEngineV2/ }) as HTMLInputElement).checked).toBe(false)
+
+    await submit(/^Save$/)
+    await waitFor(() => expect(putNamespaceEdit).toHaveBeenCalled())
+    expect(vi.mocked(putNamespaceEdit).mock.calls[0][1].enabledExperimentalFeatures).toBeUndefined()
+  })
+
+  it('warns when a running module is switched off, and sends the remaining set', async () => {
+    vi.mocked(getExperimentalFeatures).mockResolvedValue({ features: [SCANNER, BACKUP] })
+    await open(edited({ experimentalFeatures: [{ ...SCANNER, enabled: true }, BACKUP] }))
+    await act(async () => { (await screen.findByRole('tab', { name: 'Experimental' })).click() })
+
+    const scanner = await screen.findByRole('checkbox', { name: /Document scanning/ })
+    expect(screen.queryByText(/removes its containers/)).toBeNull()
+    await act(async () => { scanner.click() })
+    expect(screen.getByText(/removes its containers/)).toBeDefined()
+
+    await submit(/^Save$/)
+    await waitFor(() => expect(putNamespaceEdit).toHaveBeenCalled())
+    expect(vi.mocked(putNamespaceEdit).mock.calls[0][1].enabledExperimentalFeatures).toEqual([])
+  })
+
+  it.each([false, true])('restores inert selections on rollback and preserves them when another choice changes (%s)', async (changeBackup) => {
+    vi.mocked(getExperimentalFeatures).mockImplementation(async (_repo, key) => ({
+      features: key === '2026.3' ? [] : [SCANNER, BACKUP],
+    }))
+    await open(edited({
+      bundleRepo: 'enterprise', bundleKey: '2026.3', experimentalFeatures: [],
+      storedExperimentalFeatures: ['documentScanner', 'retiredFeature'],
+    }))
+    await act(async () => { screen.getByRole('button', { name: /2026\.3/ }).click() })
+    await act(async () => { screen.getByRole('option', { name: '2026.2' }).click() })
+    await act(async () => { (await screen.findByRole('tab', { name: 'Experimental' })).click() })
+    expect((screen.getByRole('checkbox', { name: /Document scanning/ }) as HTMLInputElement).checked).toBe(true)
+    if (changeBackup) {
+      await act(async () => { screen.getByRole('checkbox', { name: /backupEngineV2/ }).click() })
+    }
+    await submit(/^Save$/)
+    await waitFor(() => expect(putNamespaceEdit).toHaveBeenCalled())
+    expect(vi.mocked(putNamespaceEdit).mock.calls[0][1].enabledExperimentalFeatures)
+      .toEqual(changeBackup ? ['documentScanner', 'backupEngineV2'] : undefined)
+  })
+
+  it('does not replace feature choices on a bundle-only edit with an older daemon', async () => {
+    vi.mocked(getExperimentalFeatures).mockResolvedValue({ features: [SCANNER] })
+    await open(edited({ bundleRepo: 'enterprise', bundleKey: '2026.3' }))
+    await act(async () => { screen.getByRole('button', { name: /2026\.3/ }).click() })
+    await act(async () => { screen.getByRole('option', { name: '2026.2' }).click() })
+    await screen.findByRole('tab', { name: 'Experimental' })
+    await submit(/^Save$/)
+    await waitFor(() => expect(putNamespaceEdit).toHaveBeenCalled())
+    expect(vi.mocked(putNamespaceEdit).mock.calls[0][1].enabledExperimentalFeatures).toBeUndefined()
+  })
+
+  // Nothing is offered for a bundle that is not on disk: the section would
+  // only promise what saving refuses.
+  it('hides the section while the bundle is not resolved', async () => {
+    vi.mocked(getExperimentalFeatures).mockResolvedValue({ features: [], reason: 'BUNDLE_UNRESOLVED' })
+    await openCreate({ bundleRepo: 'enterprise', bundleKey: '2026.3' })
+    await waitFor(() => expect(getExperimentalFeatures).toHaveBeenCalled())
+    expect(screen.queryByRole('tab', { name: 'Experimental' })).toBeNull()
+    expect(screen.queryByText('Experimental features')).toBeNull()
+  })
+})
 
 describe('NamespaceEditDialog content storage', () => {
   // Community explains the Enterprise-only S3 feature without allowing it.

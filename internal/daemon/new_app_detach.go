@@ -211,6 +211,7 @@ func decideNewAppDetach(known []string, generated []appdef.ApplicationDef, nsCfg
 	res := namespace.DecideNewAppDetach(namespace.NewAppDetachInput{
 		Known:            known,
 		Generated:        names,
+		OptedIn:          experimentalAppNames(generated),
 		TemplateDetached: detachedByTemplate,
 		TemplateStale:    !fresh,
 		Presence:         presence,
@@ -226,6 +227,21 @@ func decideNewAppDetach(known []string, generated []appdef.ApplicationDef, nsCfg
 			"apps", res.Deferred)
 	}
 	return res
+}
+
+// experimentalAppNames names the generated apps that are BETA modules this
+// namespace opted into (ApplicationDef.Experimental), for
+// NewAppDetachInput.OptedIn: an explicit opt-in is never held back by the
+// template's detach list, and it is recorded as known so a later release that
+// graduates the module keeps it running.
+func experimentalAppNames(apps []appdef.ApplicationDef) []string {
+	out := make([]string, 0, len(apps))
+	for _, a := range apps {
+		if a.Experimental {
+			out = append(out, a.Name)
+		}
+	}
+	return out
 }
 
 // knownAppsOf reads the persisted known-app set. Absent (a state file written

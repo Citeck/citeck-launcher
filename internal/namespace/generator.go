@@ -118,6 +118,8 @@ func generateBundleWebapps(ctx *NsGenContext, bun *bundle.Def, wsCfg *bundle.Wor
 	}
 	webappNames := make([]string, 0, len(bun.Applications))
 	for name := range bun.Applications {
+		// Beta and regular applications obey the same workspace filter, so
+		// graduation cannot change a service's eligibility for generation.
 		if len(wsWebapps) > 0 && !wsWebapps[name] {
 			continue
 		}
@@ -145,7 +147,16 @@ func generateBundleWebapps(ctx *NsGenContext, bun *bundle.Def, wsCfg *bundle.Wor
 // init script); callers should abort the reload/start on error rather than
 // deploy a half-configured namespace.
 func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secrets SystemSecrets, opts ...GenerateOpts) (*GenResp, error) {
+	// The bundle this generation reads: the regular applications plus the BETA
+	// modules this namespace opted into. This is the ONE gate for experimental
+	// features — every image resolver and the webapp loop read ctx.Bundle, so a
+	// module whose feature is off is simply an image the bundle does not name,
+	// and every existing "not generated" path (an additionalApps entry without
+	// an image, a webapp absent from the bundle, the dependsOn prune) applies
+	// unchanged. A namespace with nothing on gets the very same *Def.
+	bun, experimentalApps := bun.WithExperimentalEnabled(cfg.ExperimentalEnabled())
 	ctx := NewNsGenContext(cfg, bun)
+	ctx.ExperimentalApps = experimentalApps
 	ctx.WorkspaceConfig = wsCfg
 	ctx.Secrets = secrets
 	if len(opts) > 0 {
@@ -242,6 +253,16 @@ func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secre
 	baselineApps := make([]appdef.ApplicationDef, 0, len(ctx.Applications))
 	for _, b := range ctx.Applications {
 		baselineApps = append(baselineApps, b.Build())
+	}
+	// The beta marker rides on the def (json:"-", outside GetHashInput) and is
+	// stamped on the BASELINE, before the patch overlay copies it: the effective
+	// def inherits it through `apps[i] = base`, and ApplyAppDefPatch restores it
+	// like IsJVM, so a `citeck edit` cannot turn a beta module into a regular
+	// one or the reverse.
+	for i := range baselineApps {
+		if _, beta := ctx.ExperimentalApps[baselineApps[i].Name]; beta {
+			baselineApps[i].Experimental = true
+		}
 	}
 
 	// Effective applications: overlay each stored patch onto its baseline.

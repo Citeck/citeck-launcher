@@ -78,6 +78,13 @@ type NewAppDetachInput struct {
 	Known []string
 	// Generated is every app name this generation emitted.
 	Generated []string
+	// OptedIn names the generated apps the operator switched on BY NAME — the
+	// BETA modules whose feature this namespace enabled. They are never
+	// candidates: the template's detach list is a default for arrivals nobody
+	// asked for, and these were asked for. They are recorded as known, so a
+	// release that later graduates one to a regular application keeps it
+	// running instead of offering it again.
+	OptedIn []string
 	// TemplateDetached is detachedApps of the workspace template the namespace
 	// was created from. Empty (no template, no such template any more, no list)
 	// means nothing is detached and the pass only records what it saw.
@@ -125,6 +132,12 @@ func DecideNewAppDetach(in NewAppDetachInput) NewAppDetachResult {
 		for _, name := range baselineKnownApps {
 			known[name] = true
 		}
+	}
+	// After the baseline fallback, never before it: an opted-in module must
+	// not turn an absent Known into a non-empty one and rob every regular app
+	// of the baseline.
+	for _, name := range in.OptedIn {
+		known[name] = true
 	}
 	tmpl := make(map[string]bool, len(in.TemplateDetached))
 	for _, name := range in.TemplateDetached {
