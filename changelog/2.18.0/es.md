@@ -2,3 +2,7 @@
 - Módulos experimentales (beta): una versión puede incluir servicios nuevos como beta en la sección `experimental:` del bundle. Se activan por entorno en la nueva pestaña «Experimentales» del diálogo de creación/edición; estas aplicaciones se marcan como BETA en la tabla de aplicaciones y en `citeck status`.
 - Modo servidor: `citeck features` muestra los módulos beta que ofrece el bundle del entorno y `citeck features enable|disable <id>` los activa o desactiva; `citeck install` pregunta cuáles activar. Un módulo desactivado se elimina en la siguiente aplicación de la configuración y sus volúmenes de datos se conservan.
 - Un módulo beta que una versión posterior convierte en permanente sigue funcionando donde estaba activado; en los demás entornos se ofrece como cualquier aplicación nueva, según la plantilla del workspace.
+- El bundle puede proporcionar nombres y descripciones de las funciones en varios idiomas.
+
+## Correcciones
+- La exportación y eliminación de archivos de aplicaciones funciona cuando se accede al directorio de datos de Launcher mediante un enlace simbólico.
