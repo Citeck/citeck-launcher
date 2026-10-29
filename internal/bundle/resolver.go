@@ -1595,31 +1595,39 @@ const bundleDependenciesKey = "dependencies"
 // bundleDependenciesKey).
 const bundleMinLauncherVersionKey = "minLauncherVersion"
 
-// bundleExperimentalKey is the top-level bundle key carrying the modules a
+// bundleExperimentalKey is the top-level bundle key carrying the features a
 // release ships as BETA — see Def.Experimental for the contract. Its entries
-// have the shape of a top-level application entry (the same `image:` forms)
-// plus the optional `feature`, `title` and `description` keys.
+// are keyed by FEATURE id and carry the optional `title` and `description`
+// (each a LocalizedText) plus `apps:`, a mapping of app entries in the shape
+// of a top-level application entry (the same `image:` forms).
 //
 // It is skipped by the main loop for the reason `dependencies` is, and for one
 // more: processApp admits every entry with an image, which would start each
 // beta module on every stand — the opposite of what the section is for.
 const bundleExperimentalKey = "experimental"
 
-// parseBundleExperimental reads the `experimental:` section into the modules
-// it declares, keyed by canonical app name.
+// bundleExperimentalAppsKey is the key under a feature that lists its modules.
+const bundleExperimentalAppsKey = "apps"
+
+// parseBundleExperimental reads the `experimental:` section into the features
+// it declares, keyed by feature id.
 //
 // It reads from the node tree like everything else in this file, through the
 // same extractBundleImage, so an image spelled one way at the top level cannot
-// fail inside the section. Per entry: no `image:` at all is a WARN and a skip
+// fail inside the section. Per feature: an id outside the grammar namespace.yml
+// stores, an entry that is not a mapping, and an entry with no `apps:` mapping
+// are each a WARN and a skip. Per app: no `image:` at all is a WARN and a skip
 // (unlike the top level, where a key without an image is ordinary, every entry
 // here is meant to be a module); an image the launcher cannot read is the same
 // WARN the top level emits; the alias map applies as it does to a regular
-// application; and an id a regular application already uses loses to it with a
-// WARN — one name, one definition, and the top level is the one every
-// launcher agrees on. `feature` defaults to the app's own name.
+// application; an id a regular application already uses loses to it with a
+// WARN — one name, one definition, and the top level is the one every launcher
+// agrees on — and an app two features both name belongs to the FIRST (in
+// document order), because one container has one switch. A feature left with
+// no module is nothing to switch on and is dropped with a WARN.
 //
 // A section that is not a mapping costs the section, never the bundle.
-func parseBundleExperimental(root *yaml.Node, applications map[string]AppDef, aliasMap, imageRepoMap map[string]string, logger *slog.Logger) map[string]ExperimentalApp {
+func parseBundleExperimental(root *yaml.Node, applications map[string]AppDef, aliasMap, imageRepoMap map[string]string, logger *slog.Logger) map[string]ExperimentalFeatureDef {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -1638,22 +1646,72 @@ func parseBundleExperimental(root *yaml.Node, applications map[string]AppDef, al
 		return nil
 	}
 	if section.Kind != yaml.MappingNode {
-		logger.Warn("Bundle experimental section is not a mapping of applications; ignoring it")
+		logger.Warn("Bundle experimental section is not a mapping of features; ignoring it")
 		return nil
 	}
 
-	out := make(map[string]ExperimentalApp)
+	out := make(map[string]ExperimentalFeatureDef)
+	claimed := make(map[string]string) // app → the feature that named it first
 	for _, e := range mappingEntries(section) {
-		name := strings.TrimSpace(e.key)
+		id := strings.TrimSpace(e.key)
+		if id == "" {
+			continue
+		}
+		if !IsValidExperimentalFeatureID(id) {
+			logger.Warn("Bundle experimental feature has an id a namespace cannot store; ignoring the feature", "feature", id)
+			continue
+		}
+		entry := followAlias(e.node)
+		if entry == nil || entry.Kind != yaml.MappingNode {
+			logger.Warn("Bundle experimental feature is not a mapping; ignoring the feature", "feature", id)
+			continue
+		}
+		var meta struct {
+			Title       LocalizedText `yaml:"title"`
+			Description LocalizedText `yaml:"description"`
+		}
+		// A failed decode leaves the defaults: the words are optional, the
+		// apps are read below.
+		decodeEntry(entry, &meta)
+		apps := parseBundleExperimentalApps(id, entry, applications, aliasMap, imageRepoMap, claimed, logger)
+		if len(apps) == 0 {
+			logger.Warn("Bundle experimental feature turns on no readable module; ignoring the feature", "feature", id)
+			continue
+		}
+		out[id] = ExperimentalFeatureDef{Title: meta.Title, Description: meta.Description, Apps: apps}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// parseBundleExperimentalApps reads one feature's `apps:` mapping, recording
+// every app it admits in `claimed` so a later feature cannot name it again.
+func parseBundleExperimentalApps(feature string, entry *yaml.Node, applications map[string]AppDef, aliasMap, imageRepoMap, claimed map[string]string, logger *slog.Logger) map[string]AppDef {
+	var appsNode *yaml.Node
+	for _, a := range mappingEntries(entry) {
+		if a.key == bundleExperimentalAppsKey {
+			appsNode = followAlias(a.node)
+			break
+		}
+	}
+	if appsNode == nil || appsNode.Kind != yaml.MappingNode {
+		logger.Warn("Bundle experimental feature has no `apps:` mapping", "feature", feature)
+		return nil
+	}
+	apps := make(map[string]AppDef)
+	for _, a := range mappingEntries(appsNode) {
+		name := strings.TrimSpace(a.key)
 		if name == "" {
 			continue
 		}
-		image, named := extractBundleImage(e.node, imageRepoMap)
+		image, named := extractBundleImage(a.node, imageRepoMap)
 		if image == "" {
 			if named {
-				logger.Warn("Bundle experimental entry names an image the launcher cannot read; ignoring the module", "app", name)
+				logger.Warn("Bundle experimental app names an image the launcher cannot read; ignoring the module", "feature", feature, "app", name)
 			} else {
-				logger.Warn("Bundle experimental entry has no image; ignoring the module", "app", name)
+				logger.Warn("Bundle experimental app has no image; ignoring the module", "feature", feature, "app", name)
 			}
 			continue
 		}
@@ -1662,36 +1720,17 @@ func parseBundleExperimental(root *yaml.Node, applications map[string]AppDef, al
 			canonical = mapped
 		}
 		if _, top := applications[canonical]; top {
-			logger.Warn("Bundle experimental entry is also a regular application; the regular entry wins", "app", canonical)
+			logger.Warn("Bundle experimental app is also a regular application; the regular entry wins", "feature", feature, "app", canonical)
 			continue
 		}
-		var meta struct {
-			Feature     string `yaml:"feature"`
-			Title       string `yaml:"title"`
-			Description string `yaml:"description"`
-		}
-		// A failed decode leaves the defaults: the image already read is the
-		// module, the words are optional.
-		decodeEntry(e.node, &meta)
-		feature := strings.TrimSpace(meta.Feature)
-		if feature == "" {
-			feature = canonical
-		}
-		if !IsValidExperimentalFeatureID(feature) {
-			logger.Warn("Bundle experimental entry has an invalid feature id; ignoring the module", "app", canonical, "feature", feature)
+		if first, taken := claimed[canonical]; taken {
+			logger.Warn("Bundle experimental app is named by two features; the first keeps it", "app", canonical, "feature", first, "ignoredIn", feature)
 			continue
 		}
-		out[canonical] = ExperimentalApp{
-			AppDef:      AppDef{Image: image},
-			Feature:     feature,
-			Title:       strings.TrimSpace(meta.Title),
-			Description: strings.TrimSpace(meta.Description),
-		}
+		claimed[canonical] = feature
+		apps[canonical] = AppDef{Image: image}
 	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
+	return apps
 }
 
 // parseBundleMinLauncherVersion reads the floor from the YAML text.

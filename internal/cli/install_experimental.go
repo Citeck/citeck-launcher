@@ -7,6 +7,7 @@ import (
 	"github.com/citeck/citeck-launcher/internal/bundle"
 	"github.com/citeck/citeck-launcher/internal/cli/prompt"
 	"github.com/citeck/citeck-launcher/internal/config"
+	"github.com/citeck/citeck-launcher/internal/i18n"
 	"github.com/citeck/citeck-launcher/internal/namespace"
 )
 
@@ -52,19 +53,23 @@ func chooseInstallExperimentalFeatures(offered []bundle.ExperimentalFeature,
 // promptInstallExperimentalFeatures asks the question as a checklist with
 // nothing marked: each row is the feature's title (and its id when the
 // author gave it a title), the apps the switch turns on as the hint, and the
-// author's description under it.
+// author's description under it. The words are picked for the CLI's own
+// locale here — the wizard reads the bundle itself, past the daemon, so there
+// is no HTTP boundary to pick them at.
 func promptInstallExperimentalFeatures(offered []bundle.ExperimentalFeature) []string {
+	locale := i18n.CurrentLocale()
 	options := make([]prompt.Option[string], 0, len(offered))
 	for _, f := range offered {
-		label := f.Title
-		if f.Title != f.ID {
+		title := f.TitleFor(locale)
+		label := title
+		if title != f.ID {
 			label += " (" + f.ID + ")"
 		}
 		options = append(options, prompt.Option[string]{
 			Label:       label,
 			Value:       f.ID,
 			Hint:        "BETA · " + strings.Join(f.Apps, ", "),
-			Description: f.Description,
+			Description: f.DescriptionFor(locale),
 		})
 	}
 	chosen, err := (&prompt.MultiSelect[string]{

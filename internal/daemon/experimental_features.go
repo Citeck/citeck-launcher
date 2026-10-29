@@ -38,14 +38,18 @@ func (d *Daemon) offeredExperimentalFeatures(wsID string, ref bundle.Ref) ([]bun
 	return res.Bundle.ExperimentalFeatures(), true
 }
 
-// experimentalFeatureDtos renders the offers with the given namespace choices.
-func experimentalFeatureDtos(features []bundle.ExperimentalFeature, enabled map[string]bool) []api.ExperimentalFeatureDto {
+// experimentalFeatureDtos renders the offers with the given namespace choices,
+// the author's words in the reader's language. This is the HTTP boundary the
+// LocalizedText contract names: the locale is the REQUEST's (translatorFor —
+// header, then query, then daemon.yml), and the DTO carries one plain string,
+// so neither the web UI nor the CLI knows the text was ever multilingual.
+func experimentalFeatureDtos(features []bundle.ExperimentalFeature, enabled map[string]bool, locale string) []api.ExperimentalFeatureDto {
 	out := make([]api.ExperimentalFeatureDto, 0, len(features))
 	for _, f := range features {
 		out = append(out, api.ExperimentalFeatureDto{
 			ID:          f.ID,
-			Title:       f.Title,
-			Description: f.Description,
+			Title:       f.TitleFor(locale),
+			Description: f.DescriptionFor(locale),
 			Apps:        f.Apps,
 			Enabled:     enabled[f.ID],
 		})
@@ -54,14 +58,15 @@ func experimentalFeatureDtos(features []bundle.ExperimentalFeature, enabled map[
 }
 
 // experimentalFeaturesForEdit is NamespaceEditDto.ExperimentalFeatures: what
-// the STORED bundle offers, each with whether the namespace has it on. Nil when
-// the bundle offers nothing or cannot be read, and the form shows no section.
-func (d *Daemon) experimentalFeaturesForEdit(wsID string, nsCfg *namespace.Config) []api.ExperimentalFeatureDto {
+// the STORED bundle offers, each with whether the namespace has it on, worded
+// for the request's locale. Nil when the bundle offers nothing or cannot be
+// read, and the form shows no section.
+func (d *Daemon) experimentalFeaturesForEdit(r *http.Request, wsID string, nsCfg *namespace.Config) []api.ExperimentalFeatureDto {
 	features, ok := d.offeredExperimentalFeatures(wsID, nsCfg.BundleRef)
 	if !ok || len(features) == 0 {
 		return nil
 	}
-	return experimentalFeatureDtos(features, nsCfg.ExperimentalEnabled())
+	return experimentalFeatureDtos(features, nsCfg.ExperimentalEnabled(), d.translatorFor(r).Locale())
 }
 
 // handleExperimentalFeatures answers GET /experimental-features: the BETA
@@ -93,7 +98,7 @@ func (d *Daemon) handleExperimentalFeatures(w http.ResponseWriter, r *http.Reque
 			Reason: api.ExperimentalFeaturesBundleUnresolved})
 		return
 	}
-	writeJSON(w, api.ExperimentalFeaturesDto{Features: experimentalFeatureDtos(features, enabled)})
+	writeJSON(w, api.ExperimentalFeaturesDto{Features: experimentalFeatureDtos(features, enabled, d.translatorFor(r).Locale())})
 }
 
 // applyCreateExperimentalFeatures sets the new namespace's features from the

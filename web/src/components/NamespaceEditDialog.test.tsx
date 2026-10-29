@@ -132,7 +132,7 @@ async function submit(label: RegExp) {
 
 const SCANNER: ExperimentalFeatureDto = {
   id: 'documentScanner', title: 'Document scanning', description: 'New OCR service.',
-  apps: ['ecos-scanner', 'scanner-postgres'],
+  apps: ['citeck-scanner', 'scanner-postgres'],
 }
 const BACKUP: ExperimentalFeatureDto = { id: 'backupEngineV2', title: 'backupEngineV2', apps: ['backup-engine'] }
 
@@ -159,7 +159,7 @@ describe('NamespaceEditDialog experimental features', () => {
 
     expect(screen.getAllByText('BETA').length).toBeGreaterThanOrEqual(3)
     expect(screen.getByText('New OCR service.')).toBeDefined()
-    expect(screen.getByText(/ecos-scanner, scanner-postgres/)).toBeDefined()
+    expect(screen.getByText(/citeck-scanner, scanner-postgres/)).toBeDefined()
     expect(screen.getByText(/may change or be removed/)).toBeDefined()
     const scanner = screen.getByRole('checkbox', { name: /Document scanning/ })
     expect((scanner as HTMLInputElement).checked).toBe(false)

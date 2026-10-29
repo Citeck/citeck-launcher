@@ -15,9 +15,10 @@ import (
 
 const installBetaBundleYAML = "EcosModelApp:\n  image: core/ecos-model:1.0\n" +
 	"experimental:\n" +
-	"  ecos-scanner:\n    image: core/ecos-scanner:1.0\n    feature: documentScanner\n    title: Document scanning\n" +
-	"  scanner-postgres:\n    image: postgres:17.11\n    feature: documentScanner\n" +
-	"  backup-engine:\n    image: core/backup-engine:0.3\n"
+	"  documentScanner:\n    title: Document scanning\n    apps:\n" +
+	"      citeck-scanner:\n        image: core/citeck-scanner:1.0\n" +
+	"      scanner-postgres:\n        image: postgres:17.11\n" +
+	"  backup-engine:\n    apps:\n      backup-engine:\n        image: core/backup-engine:0.3\n"
 
 // writeInstallBetaWorkspace puts a workspace on disk the way `citeck install`
 // finds one after the release picker: 2026.1 with an experimental section,
@@ -44,8 +45,8 @@ func TestInstallExperimentalFeaturesResolvesThePickedReleaseOffline(t *testing.T
 	require.Len(t, offered, 2)
 	assert.Equal(t, "backup-engine", offered[0].ID)
 	assert.Equal(t, "documentScanner", offered[1].ID)
-	assert.Equal(t, "Document scanning", offered[1].Title)
-	assert.Equal(t, []string{"ecos-scanner", "scanner-postgres"}, offered[1].Apps)
+	assert.Equal(t, "Document scanning", offered[1].TitleFor(""))
+	assert.Equal(t, []string{"citeck-scanner", "scanner-postgres"}, offered[1].Apps)
 
 	assert.Empty(t, installExperimentalFeatures(ref("2026.2"), "2.17.2"), "the release that graduated them")
 	assert.Empty(t, installExperimentalFeatures(ref("2099.1"), "2.17.2"), "a release that is not on disk")
@@ -64,8 +65,8 @@ func TestChooseInstallExperimentalFeatures(t *testing.T) {
 		}
 	}
 	offered := []bundle.ExperimentalFeature{
-		{ID: "backup-engine", Title: "backup-engine", Apps: []string{"backup-engine"}},
-		{ID: "documentScanner", Title: "Document scanning", Apps: []string{"ecos-scanner"}},
+		{ID: "backup-engine", Apps: []string{"backup-engine"}},
+		{ID: "documentScanner", Title: bundle.PlainText("Document scanning"), Apps: []string{"citeck-scanner"}},
 	}
 
 	assert.Nil(t, chooseInstallExperimentalFeatures(nil, answer("documentScanner")))

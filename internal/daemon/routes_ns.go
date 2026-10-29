@@ -1060,9 +1060,9 @@ func (d *Daemon) handleGetNamespaceEdit(w http.ResponseWriter, r *http.Request) 
 		// predates the option has the block, and every one of them is DB.
 		ContentStorage: string(nsCfg.ContentStorageType()),
 		ExternalS3:     nsCfg.S3 != nil,
-		// What the STORED bundle offers, with this namespace's choices; an
-		// unreadable bundle lists nothing and the form shows no section.
-		ExperimentalFeatures:       d.experimentalFeaturesForEdit(d.activeWorkspaceID(), nsCfg),
+		// Offers are localized for this reader; stored IDs include inert
+		// choices so bundle rollback cannot lose the persisted opt-in.
+		ExperimentalFeatures:       d.experimentalFeaturesForEdit(r, d.activeWorkspaceID(), nsCfg),
 		StoredExperimentalFeatures: nsCfg.ExperimentalFeatures,
 	}
 	writeJSON(w, dto)

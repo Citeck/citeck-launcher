@@ -2,6 +2,7 @@ package namespace
 
 import (
 	"encoding/json"
+	"maps"
 	"testing"
 
 	"github.com/citeck/citeck-launcher/internal/appdef"
@@ -12,22 +13,23 @@ import (
 )
 
 // betaBundle is a release that ships emodel and two BETA modules: a webapp
-// (ecos-scanner, admitted through the workspace webapps list like any other
+// (citeck-scanner, admitted through the workspace webapps list like any other
 // bundle application) and a raw container the workspace declares without an
 // image (backup-engine, an additionalApps entry the bundle names the image of).
 func betaBundle() *bundle.Def {
 	return &bundle.Def{
 		Applications: map[string]bundle.AppDef{"emodel": {Image: "core/ecos-model:1.0"}},
-		Experimental: map[string]bundle.ExperimentalApp{
-			"ecos-scanner":  {AppDef: bundle.AppDef{Image: "core/ecos-scanner:1.0"}, Feature: "documentScanner", Title: "Document scanning"},
-			"backup-engine": {AppDef: bundle.AppDef{Image: "core/backup-engine:0.3"}, Feature: "backupEngineV2"},
+		Experimental: map[string]bundle.ExperimentalFeatureDef{
+			"documentScanner": {Title: bundle.PlainText("Document scanning"),
+				Apps: map[string]bundle.AppDef{"citeck-scanner": {Image: "core/citeck-scanner:1.0"}}},
+			"backupEngineV2": {Apps: map[string]bundle.AppDef{"backup-engine": {Image: "core/backup-engine:0.3"}}},
 		},
 	}
 }
 
 func betaWorkspace() *bundle.WorkspaceConfig {
 	return &bundle.WorkspaceConfig{
-		Webapps:        []bundle.WebappConfig{{ID: "emodel"}, {ID: "ecos-scanner"}},
+		Webapps:        []bundle.WebappConfig{{ID: "emodel"}, {ID: "citeck-scanner"}},
 		AdditionalApps: []bundle.AdditionalAppProps{{Name: "backup-engine"}},
 	}
 }
@@ -73,7 +75,7 @@ func TestExperimental_NothingOnGeneratesExactlyTheOldBundle(t *testing.T) {
 	plain.Experimental = nil
 	without := genBeta(t, basicCfg(), plain)
 
-	assert.Nil(t, betaApp(with.Applications, "ecos-scanner"))
+	assert.Nil(t, betaApp(with.Applications, "citeck-scanner"))
 	assert.Nil(t, betaApp(with.Applications, "backup-engine"))
 	assert.Equal(t, hashesByName(without.Applications), hashesByName(with.Applications))
 	for _, a := range with.Applications {
@@ -87,11 +89,11 @@ func TestExperimental_NothingOnGeneratesExactlyTheOldBundle(t *testing.T) {
 func TestExperimental_OptInGeneratesTheModuleWithTheMarker(t *testing.T) {
 	resp := genBeta(t, cfgWithFeatures("documentScanner"), betaBundle())
 
-	scanner := betaApp(resp.Applications, "ecos-scanner")
+	scanner := betaApp(resp.Applications, "citeck-scanner")
 	require.NotNil(t, scanner, "the opted-in webapp is generated")
 	assert.True(t, scanner.Experimental)
-	assert.Equal(t, "core/ecos-scanner:1.0", scanner.Image)
-	baseline := betaApp(resp.BaselineApplications, "ecos-scanner")
+	assert.Equal(t, "core/citeck-scanner:1.0", scanner.Image)
+	baseline := betaApp(resp.BaselineApplications, "citeck-scanner")
 	require.NotNil(t, baseline)
 	assert.True(t, baseline.Experimental, "the marker is stamped on the baseline too")
 
@@ -111,11 +113,11 @@ func TestExperimental_OptInGeneratesTheModuleWithTheMarker(t *testing.T) {
 // marker is restored through ApplyAppDefPatch like IsJVM.
 func TestExperimental_MarkerSurvivesAnAppPatch(t *testing.T) {
 	resp := genBeta(t, cfgWithFeatures("documentScanner"), betaBundle(), GenerateOpts{
-		EditedAppPatches: map[string]json.RawMessage{"ecos-scanner": json.RawMessage(`{"image":"core/ecos-scanner:1.1"}`)},
+		EditedAppPatches: map[string]json.RawMessage{"citeck-scanner": json.RawMessage(`{"image":"core/citeck-scanner:1.1"}`)},
 	})
-	scanner := betaApp(resp.Applications, "ecos-scanner")
+	scanner := betaApp(resp.Applications, "citeck-scanner")
 	require.NotNil(t, scanner)
-	assert.Equal(t, "core/ecos-scanner:1.1", scanner.Image, "the patch applied")
+	assert.Equal(t, "core/citeck-scanner:1.1", scanner.Image, "the patch applied")
 	assert.True(t, scanner.Experimental, "and the marker stayed")
 }
 
@@ -124,7 +126,7 @@ func TestExperimental_MarkerSurvivesAnAppPatch(t *testing.T) {
 // module, and refusing it would refuse the bundle upgrade that graduated it.
 func TestExperimental_AnUnknownFeatureIsInert(t *testing.T) {
 	resp := genBeta(t, cfgWithFeatures("graduatedLongAgo"), betaBundle())
-	assert.Nil(t, betaApp(resp.Applications, "ecos-scanner"))
+	assert.Nil(t, betaApp(resp.Applications, "citeck-scanner"))
 	assert.Nil(t, betaApp(resp.Applications, "backup-engine"))
 }
 
@@ -144,8 +146,8 @@ func TestExperimental_WorkspaceEligibilitySurvivesGraduationAndRollback(t *testi
 				ws.AdditionalApps = nil
 			}
 			stable := betaBundle()
-			for app, def := range stable.Experimental {
-				stable.Applications[app] = def.AppDef
+			for _, feature := range stable.Experimental {
+				maps.Copy(stable.Applications, feature.Apps)
 			}
 			stable.Experimental = nil
 			cfg := cfgWithFeatures("documentScanner", "backupEngineV2")
@@ -153,7 +155,7 @@ func TestExperimental_WorkspaceEligibilitySurvivesGraduationAndRollback(t *testi
 			for _, bun := range []*bundle.Def{betaBundle(), stable, betaBundle()} {
 				resp, err := Generate(cfg, bun, ws, SystemSecrets{JWT: "j", OIDC: "o", CiteckSA: "sa"})
 				require.NoError(t, err)
-				for _, app := range []string{"ecos-scanner", "backup-engine"} {
+				for _, app := range []string{"citeck-scanner", "backup-engine"} {
 					def := betaApp(resp.Applications, app)
 					if registered {
 						require.NotNil(t, def, app)

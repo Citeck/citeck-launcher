@@ -20,8 +20,11 @@ import (
 
 const betaBundleYAML = "EcosModelApp:\n  image: core/ecos-model:1.0\n" +
 	"experimental:\n" +
-	"  ecos-scanner:\n    image: core/ecos-scanner:1.0\n    feature: documentScanner\n    title: Document scanning\n" +
-	"  backup-engine:\n    image: core/backup-engine:0.3\n"
+	"  documentScanner:\n" +
+	"    title:\n      en: Document scanning\n      ru: Сканирование документов\n" +
+	"    description:\n      en: New OCR service.\n      ru: Новый сервис распознавания.\n" +
+	"    apps:\n      citeck-scanner:\n        image: core/citeck-scanner:1.0\n" +
+	"  backup-engine:\n    apps:\n      backup-engine:\n        image: core/backup-engine:0.3\n"
 
 // writeBetaBundle puts a bundle with an experimental section on disk for wsID
 // (2026.1), beside a later version WITHOUT one (2026.2) — the release that
@@ -31,7 +34,7 @@ func writeBetaBundle(t *testing.T, wsID string) {
 	writeCreatableBundle(t, wsID, "2026.1")
 	root := filepath.Join(config.BundlesDataDir(wsID), "repo", "community")
 	require.NoError(t, os.WriteFile(filepath.Join(root, "2026.1.yaml"), []byte(betaBundleYAML), 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(root, "2026.2.yaml"), []byte("EcosModelApp:\n  image: core/ecos-model:1.1\necos-scanner:\n  image: core/ecos-scanner:1.0\nbackup-engine:\n  image: core/backup-engine:0.3\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "2026.2.yaml"), []byte("EcosModelApp:\n  image: core/ecos-model:1.1\nciteck-scanner:\n  image: core/citeck-scanner:1.0\nbackup-engine:\n  image: core/backup-engine:0.3\n"), 0o600))
 }
 
 // A create takes its beta features from the REQUEST and from nothing else, and
@@ -119,7 +122,7 @@ func TestNamespaceEdit_ExperimentalFeatures(t *testing.T) {
 		assert.Equal(t, "backup-engine", dto.ExperimentalFeatures[0].Title, "no title falls back to the id")
 		assert.Equal(t, "documentScanner", dto.ExperimentalFeatures[1].ID)
 		assert.Equal(t, "Document scanning", dto.ExperimentalFeatures[1].Title)
-		assert.Equal(t, []string{"ecos-scanner"}, dto.ExperimentalFeatures[1].Apps)
+		assert.Equal(t, []string{"citeck-scanner"}, dto.ExperimentalFeatures[1].Apps)
 		for _, f := range dto.ExperimentalFeatures {
 			assert.False(t, f.Enabled, f.ID)
 		}
@@ -177,21 +180,39 @@ func TestExperimentalFeaturesEndpoint(t *testing.T) {
 	t.Setenv("CITECK_HOME", t.TempDir())
 	_, mux := newNsCrudTestDaemon(t)
 	writeBetaBundle(t, "wsMain")
-	get := func(query string) api.ExperimentalFeaturesDto {
+	getAs := func(query, locale string) api.ExperimentalFeaturesDto {
 		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, httptest.NewRequest("GET", api.ExperimentalFeatures+"?"+query, http.NoBody))
+		req := httptest.NewRequest("GET", api.ExperimentalFeatures+"?"+query, http.NoBody)
+		if locale != "" {
+			req.Header.Set(api.LocaleHeader, locale)
+		}
+		mux.ServeHTTP(rec, req)
 		require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 		var dto api.ExperimentalFeaturesDto
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &dto))
 		return dto
 	}
+	get := func(query string) api.ExperimentalFeaturesDto { return getAs(query, "") }
 
 	beta := get("workspaceId=wsMain&bundleRepo=community&bundleKey=2026.1")
 	assert.Empty(t, beta.Reason)
 	require.Len(t, beta.Features, 2)
 	assert.Equal(t, "backup-engine", beta.Features[0].ID)
+	assert.Equal(t, "backup-engine", beta.Features[0].Title, "no title falls back to the id")
 	assert.Equal(t, "documentScanner", beta.Features[1].ID)
-	assert.Equal(t, []string{"ecos-scanner"}, beta.Features[1].Apps)
+	assert.Equal(t, []string{"citeck-scanner"}, beta.Features[1].Apps)
+
+	// The author's words come out in the READER's language — the request's
+	// locale, the same boundary the migration sentences are rendered at — and
+	// the DTO carries one plain string either way.
+	assert.Equal(t, "Document scanning", beta.Features[1].Title, "no locale asked: English")
+	assert.Equal(t, "New OCR service.", beta.Features[1].Description)
+	ru := getAs("workspaceId=wsMain&bundleRepo=community&bundleKey=2026.1", "ru")
+	assert.Equal(t, "Сканирование документов", ru.Features[1].Title)
+	assert.Equal(t, "Новый сервис распознавания.", ru.Features[1].Description)
+	assert.Equal(t, "backup-engine", ru.Features[0].Title)
+	de := getAs("workspaceId=wsMain&bundleRepo=community&bundleKey=2026.1", "de")
+	assert.Equal(t, "Document scanning", de.Features[1].Title, "a language the author did not write: English")
 
 	graduated := get("workspaceId=wsMain&bundleRepo=community&bundleKey=2026.2")
 	assert.Empty(t, graduated.Reason)

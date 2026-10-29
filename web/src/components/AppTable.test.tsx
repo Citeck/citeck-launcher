@@ -211,7 +211,7 @@ describe('AppTable', () => {
   // A module the bundle ships as beta says so in the row, next to its name.
   it('badges an experimental app with BETA', () => {
     const beta: AppDto = {
-      name: 'ecos-scanner', status: 'RUNNING', image: 'ecos-scanner:1.0', cpu: '', memory: '',
+      name: 'citeck-scanner', status: 'RUNNING', image: 'citeck-scanner:1.0', cpu: '', memory: '',
       kind: 'CITECK_ADDITIONAL', edited: false, locked: false, experimental: true,
     }
     renderWithRouter(<AppTable apps={[beta, mockApps[0]]} />)
