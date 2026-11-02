@@ -48,3 +48,18 @@ and hold the test runner's output pipes open: assertions print `PASS`, but
 `go test` then fails with `WaitDelay expired before I/O complete`. Verify the
 command's exit status, not just the test's assertion output. This lifecycle can
 be checked with repeated scoped race tests as well as the full package suite.
+
+## CodeMirror themes and package identity
+
+Keep one resolved copy of CodeMirror's state, view and language packages and
+Lezer's highlighting packages. Compatible duplicate versions can silently split
+facet and highlighting identities: the app requests dark mode, but the editor
+still reads its dark-theme facet as false, leaving light gutters and blue text
+on the app's dark background. A successful build does not detect this.
+
+After regenerating frontend dependencies, review `pnpm dedupe` and run the
+`CodeEditor` integration test. It checks the editor's actual dark-theme facet
+through a dark → light → dark switch, rather than just checking the React prop.
+Also inspect the editor in a browser with synthetic YAML: verify gutter and
+syntax contrast, search, editing and theme switching. Never use real namespace
+secrets in screenshots or test fixtures.
