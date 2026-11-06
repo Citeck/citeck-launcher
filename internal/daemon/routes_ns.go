@@ -657,39 +657,10 @@ func (d *Daemon) createNamespace(req api.NamespaceCreateDto) (*namespace.Config,
 // namespace.Config: template merge (default or explicit QuickStart variant),
 // request-field overlay, opaque-ID generation with collision retry, and
 // symbolic-LATEST pinning.
-//
-//nolint:nestif // template selection mirrors the Kotlin create flow's branching
 func (d *Daemon) buildNamespaceConfigFromCreate(req api.NamespaceCreateDto, wsID string) (*namespace.Config, error) {
-	// Generate namespace config — start from template if specified
-	nsCfg := namespace.DefaultNamespaceConfig()
-
-	templateID := req.Template
-	if templateID == "" {
-		templateID = "default" // use default template if none specified
-	}
-	wsCfg := d.active().workspaceConfig
-	if templateID == "default" {
-		// Shared helper — keeps this path in lockstep with
-		// handleNamespaceCreateDefaults so the form preview matches what
-		// the server actually persists.
-		applyDefaultTemplate(&nsCfg, wsCfg)
-		nsCfg.Template = templateID
-	} else if wsCfg != nil {
-		// Non-default templates (QuickStart variants) — apply explicit template.
-		for _, tmpl := range wsCfg.NamespaceTemplates {
-			if tmpl.ID == templateID {
-				if len(tmpl.Config) > 0 {
-					if tmplData, err := yaml.Marshal(tmpl.Config); err == nil {
-						_ = yaml.Unmarshal(tmplData, &nsCfg)
-					}
-				}
-				nsCfg.Template = templateID
-				break
-			}
-		}
-		if nsCfg.BundleRef.IsEmpty() && req.BundleRepo == "" && len(wsCfg.BundleRepos) > 0 {
-			nsCfg.BundleRef = bundle.Ref{Repo: wsCfg.BundleRepos[0].ID, Key: "LATEST"}
-		}
+	nsCfg, templateErr := d.namespaceConfigFromCreateTemplate(req, wsID)
+	if templateErr != nil {
+		return nil, templateErr
 	}
 
 	// Stamp the config generation AFTER the template merge, so the launcher

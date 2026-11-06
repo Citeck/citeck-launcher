@@ -85,38 +85,38 @@ func TestCreateSnapshotMinimumCheckedBeforePersistenceIncludingTemplate(t *testi
 	wsFile := filepath.Join(config.WorkspaceRepoDir("wsTarget"), "workspace-v1.yml")
 	raw, err := os.ReadFile(wsFile)
 	require.NoError(t, err)
-	raw = append(raw, []byte("snapshots:\n  - id: demo\n    minBundleVersion: 2026.3\nnamespaceTemplates:\n  - id: with-data\n    config:\n      snapshot: demo\n")...)
+	raw = append(raw, []byte("snapshots:\n  - id: demo\n    minBundleVersion: 2026.3\nnamespaceTemplates:\n  - id: default\n    config:\n      snapshot: demo\n  - id: with-data\n    config:\n      snapshot: demo\n")...)
 	require.NoError(t, os.WriteFile(wsFile, raw, 0o600))
 	// Deliberately different active workspace: target definitions must win.
 	d.activeNs.workspaceConfig = &bundle.WorkspaceConfig{
 		Snapshots:          []bundle.SnapshotDef{{ID: "demo"}},
-		NamespaceTemplates: []bundle.NamespaceTemplate{{ID: "with-data", Config: map[string]any{"snapshot": "demo"}}},
+		NamespaceTemplates: []bundle.NamespaceTemplate{{ID: "with-data", Config: map[string]any{"snapshot": "legacy"}}},
 	}
-	for _, fromTemplate := range []bool{false, true} {
-		req := api.NamespaceCreateDto{Name: "New stand", AuthType: "KEYCLOAK", BundleRepo: "community", BundleKey: "2026.2", WorkspaceID: "wsTarget"}
-		if fromTemplate {
-			req.Template = "with-data"
-		} else {
-			req.Snapshot = "demo"
-		}
-		body, marshalErr := json.Marshal(req)
-		require.NoError(t, marshalErr)
-		rec := httptest.NewRecorder()
-		request := httptest.NewRequest("POST", api.Namespaces, bytes.NewReader(body))
-		request.Header.Set("X-Citeck-Locale", "ru")
-		mux.ServeHTTP(rec, request)
-		require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
-		require.Contains(t, rec.Body.String(), api.ErrCodeSnapshotBundleIncompatible)
-		require.Contains(t, rec.Body.String(), "требует бандл версии 2026.3")
-		rows, listErr := d.store.ListNamespaces("wsTarget")
-		require.NoError(t, listErr)
-		require.Empty(t, rows)
-		// The same template/snapshot IS usable at the inclusive boundary,
-		// checked through the production config builder without touching Docker.
-		req.BundleKey = "2026.3"
-		cfg, buildErr := d.buildNamespaceConfigFromCreate(req, "wsTarget")
-		require.NoError(t, buildErr)
-		require.Equal(t, "demo", cfg.Snapshot)
+	for _, templateID := range []string{"", "default", "with-data"} {
+		t.Run("template="+templateID, func(t *testing.T) {
+			req := api.NamespaceCreateDto{Name: "New stand", AuthType: "KEYCLOAK", BundleRepo: "community", BundleKey: "2026.2", WorkspaceID: "wsTarget", Template: templateID}
+			if templateID == "" {
+				req.Snapshot = "demo"
+			}
+			body, marshalErr := json.Marshal(req)
+			require.NoError(t, marshalErr)
+			rec := httptest.NewRecorder()
+			request := httptest.NewRequest("POST", api.Namespaces, bytes.NewReader(body))
+			request.Header.Set("X-Citeck-Locale", "ru")
+			mux.ServeHTTP(rec, request)
+			require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+			require.Contains(t, rec.Body.String(), api.ErrCodeSnapshotBundleIncompatible)
+			require.Contains(t, rec.Body.String(), "требует бандл версии 2026.3")
+			rows, listErr := d.store.ListNamespaces("wsTarget")
+			require.NoError(t, listErr)
+			require.Empty(t, rows)
+			// The same template/snapshot IS usable at the inclusive boundary,
+			// checked through the production config builder without touching Docker.
+			req.BundleKey = "2026.3"
+			cfg, buildErr := d.buildNamespaceConfigFromCreate(req, "wsTarget")
+			require.NoError(t, buildErr)
+			require.Equal(t, "demo", cfg.Snapshot)
+		})
 	}
 	_, cacheErr := os.Stat(config.WorkspaceSnapshotsDir("wsTarget"))
 	require.True(t, os.IsNotExist(cacheErr))
