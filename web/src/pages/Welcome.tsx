@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { ApiError, activateNamespace, getNamespaces, getQuickStarts, deleteNamespace, postNamespaceStart, createNamespace, closeAllDesktopWindows } from '../lib/api'
-import { useDaemonStatusStore, useActiveWorkspaceId } from '../lib/daemonStatus'
+import { useDaemonStatusStore } from '../lib/daemonStatus'
 import type { NamespaceSummaryDto, QuickStartDto } from '../lib/types'
 import { ConfirmModal } from '../components/ConfirmModal'
 import { NamespaceDialog } from '../components/NamespaceDialog'
@@ -50,8 +50,11 @@ export function Welcome() {
   // Active workspace ID (used for filtering namespaces + scoping the create
   // request explicitly). Sourced from the daemon-status store so a workspace
   // switch from the top-panel picker re-renders + reloads this screen.
-  const activeWorkspaceId = useActiveWorkspaceId()
-  const workspaceLoaded = useDaemonStatusStore((s) => s.status !== null)
+  // An explicit workspace refresh also changes configuration when the ID
+  // stays the same. Subscribe to the refreshed status object, not just its ID.
+  const workspaceStatus = useDaemonStatusStore((s) => s.status)
+  const activeWorkspaceId = workspaceStatus?.workspace ?? ''
+  const workspaceLoaded = workspaceStatus !== null
   // Re-fetch quick-starts when secrets are unlocked: their bundle refs resolve
   // a git "LATEST" via the workspace token, which is unavailable on a locked
   // start — the first fetch returns the symbolic ref, this brings the concrete
@@ -83,29 +86,41 @@ export function Welcome() {
   // without re-creating loadData on every render.
   const loadDataRef = useRef<() => void>(undefined)
 
+  const loadSequence = useRef(0)
+  const retryTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
+
+  const cancelLoad = useCallback(() => {
+    ++loadSequence.current
+    clearTimeout(retryTimer.current)
+  }, [])
+
   const loadData = useCallback(async () => {
+    cancelLoad()
+    const sequence = loadSequence.current
     setLoading(true)
     try {
       const [ns, qs] = await Promise.all([getNamespaces(), getQuickStarts()])
+      if (sequence !== loadSequence.current) return
       setNamespaces(ns)
       setQuickStarts(qs)
       setLoadError(null)
       setErrorCode('')
     } catch (e) {
+      if (sequence !== loadSequence.current) return
       const msg = e instanceof Error ? e.message : String(e)
       // Daemon still starting — retry silently. WS_REPO_SYNC_FAILED (502) is
       // a real failure (workspace repo unsyncable, no cache) and must surface
       // — it intentionally does NOT match these transient patterns.
       if (msg.includes('Service Unavailable') || msg.includes('503') || msg.includes('Failed to fetch')) {
-        setTimeout(() => loadDataRef.current?.(), 1000)
+        retryTimer.current = setTimeout(() => loadDataRef.current?.(), 1000)
         return
       }
       setLoadError(msg)
       setErrorCode(e instanceof ApiError ? e.code : '')
     } finally {
-      setLoading(false)
+      if (sequence === loadSequence.current) setLoading(false)
     }
-  }, [])
+  }, [cancelLoad])
 
   // Keep the ref pointing at the latest loadData (stable here, but updated via
   // an effect to avoid mutating a ref during render).
@@ -113,14 +128,15 @@ export function Welcome() {
     loadDataRef.current = loadData
   }, [loadData])
 
-  // Reload the namespace list on mount and whenever the active workspace
-  // changes (e.g. the user switches workspace from the top-panel picker).
+  // Reload after switching, updating, or saving the current workspace.
+  // Older in-flight reads must not replace the refreshed Quick Start choices.
   useEffect(() => {
     // Intentional: load-on-mount / on-workspace-change fetch sets a loading
     // flag then awaits; not a cascading render.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     loadData()
-  }, [loadData, activeWorkspaceId, secretsEpoch])
+    return cancelLoad
+  }, [loadData, cancelLoad, workspaceStatus, secretsEpoch])
 
   // Ensure daemon status is loaded so the active workspace id resolves. Fails
   // silently — the screen still renders without it.
