@@ -5,8 +5,8 @@
 //	snapshot.zip
 //	├── secrets.json      — optional portable namespace/system secret name/value pairs
 //	├── meta.json         — NamespaceSnapshotMeta
-//	├── postgres.tar.zst  — compressed tar of volume data
-//	├── rabbitmq.tar.zst
+//	├── postgres.tar.xz  — compressed tar of volume data
+//	├── rabbitmq.tar.xz
 //	└── ...
 //
 // Each volume is archived using a temporary `launcher-utils` container
@@ -34,7 +34,7 @@ import (
 
 const (
 	metaFileName   = "meta.json"
-	compressionExt = "zst" // zstd by default
+	compressionExt = "xz" // preserve the Kotlin launcher default
 )
 
 // NamespaceSnapshotMeta is the top-level snapshot metadata.
@@ -48,7 +48,7 @@ type NamespaceSnapshotMeta struct {
 type VolumeSnapshotMeta struct {
 	Name     string `json:"name"`     // original volume name (from Docker label)
 	RootStat string `json:"rootStat"` // "uid:gid|0755"
-	DataFile string `json:"dataFile"` // "postgres.tar.zst"
+	DataFile string `json:"dataFile"` // "postgres.tar.xz"
 }
 
 var unsafeChars = regexp.MustCompile(`[^a-zA-Z0-9._-]`)

@@ -163,8 +163,14 @@ type snapshotArchiveOps struct{ fakeVolumeOps }
 
 func (s *snapshotArchiveOps) RunUtilsContainer(ctx context.Context, cmd, binds []string) (output string, exitCode int, err error) {
 	if strings.Contains(cmd[2], "stat -c") {
+		s.lastCmd = cmd
+		s.lastBinds = binds
 		dir := strings.TrimSuffix(binds[1], ":/dest")
-		err := os.WriteFile(filepath.Join(dir, "postgres.tar.zst"), []byte("fixture"), 0o600)
+		name := "postgres.tar.zst"
+		if strings.Contains(cmd[2], "tar --xz -cf") {
+			name = "postgres.tar.xz"
+		}
+		err := os.WriteFile(filepath.Join(dir, name), []byte("fixture"), 0o600)
 		if err != nil {
 			return "", 0, fmt.Errorf("fixture archive: %w", err)
 		}

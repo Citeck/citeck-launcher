@@ -112,9 +112,14 @@ workspace-определением эта граница неизвестна. �
 snapshot.zip
 ├── meta.json
 ├── secrets.json (только с --include-secrets)
-├── postgres3.tar.zst
-└── seaweedfs2.tar.zst
+├── postgres3.tar.xz
+└── seaweedfs2.tar.xz
 ```
+
+Новые снапшоты сжимают данные томов в XZ, как в Kotlin Launcher. Импорт
+поддерживает как `.tar.xz`, так и `.tar.zst` из предыдущих Go-версий.
+Это физическая копия томов: в PostgreSQL-архив входят также индексы и `pg_wal`,
+поэтому его размер зависит от количества журналов WAL и алгоритма сжатия.
 
 `meta.json` содержит дату создания, имена архивов и ownership/mode корней томов.
 Поле `dependencies` сохраняет image pin и `volumeGen` зависимостей, данные которых
