@@ -67,3 +67,28 @@ func TestSnapshotImportFailureNeverRestartsTheNamespace(t *testing.T) {
 	require.Equal(t, int32(1), stopped.Load())
 	require.Zero(t, starts.Load(), "restored data may be incomplete")
 }
+
+func TestSnapshotImportBundleRefusalDoesNotStopNamespace(t *testing.T) {
+	dir, err := os.MkdirTemp("", "sv-sock-")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	t.Setenv("CITECK_RUN", dir)
+	t.Setenv("CITECK_HOST", "")
+	listener, err := net.Listen("unix", filepath.Join(dir, "daemon.sock"))
+	require.NoError(t, err)
+	var otherRequests atomic.Int32
+	mux := http.NewServeMux()
+	mux.HandleFunc(api.Snapshots, func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode([]api.SnapshotDto{{Name: "demo.zip", UnavailableReason: "requires bundle 2026.3"}})
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+		otherRequests.Add(1)
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	server := &http.Server{Handler: mux, ReadHeaderTimeout: time.Second}
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(func() { _ = server.Close() })
+	command := newSnapshotImportCmd()
+	require.ErrorContains(t, command.RunE(command, []string{"demo"}), "requires bundle 2026.3")
+	require.Zero(t, otherRequests.Load(), "do not ask to stop, stop, start or restore an incompatible namespace")
+}

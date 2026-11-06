@@ -621,5 +621,8 @@
   "features.enabled.running": "Module expérimental {id} activé — le namespace recharge sa configuration et ses conteneurs ({apps}) démarrent",
   "features.enabled.stopped": "Module expérimental {id} activé — ses conteneurs ({apps}) démarreront avec le namespace au prochain `citeck start`",
   "features.disabled.running": "Module expérimental {id} désactivé — le namespace recharge sa configuration et ses conteneurs ({apps}) sont supprimés ; leurs volumes de données sont conservés",
-  "features.disabled.stopped": "Module expérimental {id} désactivé — ses conteneurs ({apps}) seront exclus du prochain `citeck start` ; leurs volumes de données sont conservés"
+  "features.disabled.stopped": "Module expérimental {id} désactivé — ses conteneurs ({apps}) seront exclus du prochain `citeck start` ; leurs volumes de données sont conservés",
+  "snapshot.bundleMinimum": "L’instantané {name} nécessite le bundle {minimum} ou ultérieur ; version sélectionnée : {current}.",
+  "snapshot.bundleVersionUnknown": "L’instantané {name} nécessite le bundle {minimum} ou ultérieur. Sélectionnez une version précise avant de le restaurer.",
+  "snapshot.bundleMinimumInvalid": "L’instantané {name} a une version minimale de bundle non valide : {minimum}."
 }

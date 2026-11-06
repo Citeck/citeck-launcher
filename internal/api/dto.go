@@ -911,25 +911,26 @@ const (
 
 // ErrCodeAppNotFound and related constants are machine-readable error codes for API consumers.
 const (
-	ErrCodeAppNotFound              = "APP_NOT_FOUND"
-	ErrCodeSnapshotInProgress       = "SNAPSHOT_IN_PROGRESS"
-	ErrCodeSnapshotImportIncomplete = "SNAPSHOT_IMPORT_INCOMPLETE"
-	ErrCodeInvalidConfig            = "INVALID_CONFIG"
-	ErrCodeInvalidRequest           = "INVALID_REQUEST"
-	ErrCodeSSRFBlocked              = "SSRF_BLOCKED"
-	ErrCodeRateLimited              = "RATE_LIMITED"
-	ErrCodeNotConfigured            = "NOT_CONFIGURED"
-	ErrCodeAppAlreadyRunning        = "APP_ALREADY_RUNNING"
-	ErrCodeNamespaceRunning         = "NAMESPACE_RUNNING"
-	ErrCodeCSRFMissing              = "CSRF_MISSING"
-	ErrCodeInternalError            = "INTERNAL_ERROR"
-	ErrCodeNamespaceExists          = "NAMESPACE_EXISTS"
-	ErrCodeReloadInProgress         = "RELOAD_IN_PROGRESS"
-	ErrCodeDesktopOnly              = "DESKTOP_ONLY"
-	ErrCodeWorkspaceExists          = "WORKSPACE_EXISTS"
-	ErrCodeWorkspaceNotFound        = "WORKSPACE_NOT_FOUND"
-	ErrCodeNamespaceNotFound        = "NAMESPACE_NOT_FOUND"
-	ErrCodeWorkspaceInUse           = "WORKSPACE_IN_USE"
+	ErrCodeAppNotFound                = "APP_NOT_FOUND"
+	ErrCodeSnapshotBundleIncompatible = "SNAPSHOT_BUNDLE_INCOMPATIBLE"
+	ErrCodeSnapshotInProgress         = "SNAPSHOT_IN_PROGRESS"
+	ErrCodeSnapshotImportIncomplete   = "SNAPSHOT_IMPORT_INCOMPLETE"
+	ErrCodeInvalidConfig              = "INVALID_CONFIG"
+	ErrCodeInvalidRequest             = "INVALID_REQUEST"
+	ErrCodeSSRFBlocked                = "SSRF_BLOCKED"
+	ErrCodeRateLimited                = "RATE_LIMITED"
+	ErrCodeNotConfigured              = "NOT_CONFIGURED"
+	ErrCodeAppAlreadyRunning          = "APP_ALREADY_RUNNING"
+	ErrCodeNamespaceRunning           = "NAMESPACE_RUNNING"
+	ErrCodeCSRFMissing                = "CSRF_MISSING"
+	ErrCodeInternalError              = "INTERNAL_ERROR"
+	ErrCodeNamespaceExists            = "NAMESPACE_EXISTS"
+	ErrCodeReloadInProgress           = "RELOAD_IN_PROGRESS"
+	ErrCodeDesktopOnly                = "DESKTOP_ONLY"
+	ErrCodeWorkspaceExists            = "WORKSPACE_EXISTS"
+	ErrCodeWorkspaceNotFound          = "WORKSPACE_NOT_FOUND"
+	ErrCodeNamespaceNotFound          = "NAMESPACE_NOT_FOUND"
+	ErrCodeWorkspaceInUse             = "WORKSPACE_IN_USE"
 	// ErrCodeNamespaceNotRunning is returned (HTTP 409) by the per-app start
 	// and restart routes while the namespace is not running. The runtime's app
 	// registry is built by doStart and the loop that drives a per-app
@@ -1289,9 +1290,10 @@ type DiagFixResultDto struct {
 
 // SnapshotDto represents a snapshot file with metadata.
 type SnapshotDto struct {
-	Name      string `json:"name"`
-	CreatedAt string `json:"createdAt"`
-	Size      int64  `json:"size"`
+	UnavailableReason string `json:"unavailableReason,omitempty"`
+	Name              string `json:"name"`
+	CreatedAt         string `json:"createdAt"`
+	Size              int64  `json:"size"`
 }
 
 // --- Namespace creation ---

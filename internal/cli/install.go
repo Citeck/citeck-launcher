@@ -308,7 +308,10 @@ hostStep:
 
 		// --- Step 6: Snapshot selection (optional demo data) ---
 		if wsCfg != nil && len(wsCfg.Snapshots) > 0 {
-			nsCfg.Snapshot = selectSnapshot(wsCfg.Snapshots)
+			nsCfg.Snapshot = selectSnapshot(wsCfg.Snapshots, nsCfg.BundleRef.Key)
+		}
+		if snapshotErr := validateInstallSnapshot(&nsCfg, wsCfg); snapshotErr != nil {
+			return snapshotErr
 		}
 
 		break
@@ -358,7 +361,7 @@ hostStep:
 	// volumes. Import BEFORE start so containers mount populated volumes.
 	if nsCfg.Snapshot != "" {
 		printDoneTitle(t("install.snapshot.label"))
-		if impErr := importInstallSnapshot(context.Background(), nsCfg.Snapshot); impErr != nil {
+		if impErr := importInstallSnapshot(context.Background(), &nsCfg); impErr != nil {
 			// Imported volumes and their credentials must agree before start.
 			return fmt.Errorf("restore install snapshot: %w", impErr)
 		}
@@ -931,7 +934,8 @@ func bundleImageRepoIDs(ref bundle.Ref, wsCfg *bundle.WorkspaceConfig) map[strin
 // resolveStartupTarget hands the daemon in server mode — so the import lands in
 // exactly the runtime volumes the booting daemon will mount
 // (config.ResolveVolumesBase ignores wsID in server mode and keys volumes by nsID).
-func importInstallSnapshot(ctx context.Context, snapshotID string) error {
+func importInstallSnapshot(ctx context.Context, nsCfg *namespace.Config) error {
+	snapshotID := nsCfg.Snapshot
 	// Server-mode startup identity (see daemon resolveStartupTarget).
 	const wsID, nsID = "daemon", "default"
 
@@ -940,6 +944,10 @@ func importInstallSnapshot(ctx context.Context, snapshotID string) error {
 	snapDef := bundle.FindSnapshot(resolver.ResolveWorkspaceOnly(), snapshotID)
 	if snapDef == nil {
 		return fmt.Errorf("snapshot %q not found in workspace config", snapshotID)
+	}
+
+	if refusal := snapDef.BundleVersionRefusal(nsCfg.BundleRef.Key); !refusal.Empty() {
+		return errors.New(t(refusal.Key, refusal.Args...))
 	}
 
 	// Workspace-scope cache (Kotlin parity, shared with downloadAndImportSnapshot).
@@ -999,7 +1007,11 @@ func importInstallSnapshot(ctx context.Context, snapshotID string) error {
 }
 
 // selectSnapshot shows an optional snapshot picker. Returns selected snapshot ID or "".
-func selectSnapshot(snapshots []bundle.SnapshotDef) string {
+func selectSnapshot(snapshots []bundle.SnapshotDef, bundleVersion string) string {
+	snapshots = compatibleInstallSnapshots(snapshots, bundleVersion)
+	if len(snapshots) == 0 {
+		return ""
+	}
 	options := make([]string, 0, len(snapshots)+1)
 	for _, snap := range snapshots {
 		label := snap.Name

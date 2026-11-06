@@ -621,5 +621,8 @@
   "features.enabled.running": "Experimental module {id} switched on — the namespace is reloading and its containers ({apps}) are starting",
   "features.enabled.stopped": "Experimental module {id} switched on — its containers ({apps}) start with the namespace on the next `citeck start`",
   "features.disabled.running": "Experimental module {id} switched off — the namespace is reloading and its containers ({apps}) are being removed; their data volumes stay",
-  "features.disabled.stopped": "Experimental module {id} switched off — its containers ({apps}) are left out of the next `citeck start`; their data volumes stay"
+  "features.disabled.stopped": "Experimental module {id} switched off — its containers ({apps}) are left out of the next `citeck start`; their data volumes stay",
+  "snapshot.bundleMinimum": "Snapshot {name} requires bundle {minimum} or newer; selected bundle: {current}.",
+  "snapshot.bundleVersionUnknown": "Snapshot {name} requires bundle {minimum} or newer. Select a concrete bundle version before restoring it.",
+  "snapshot.bundleMinimumInvalid": "Snapshot {name} has an invalid minimum bundle version: {minimum}."
 }

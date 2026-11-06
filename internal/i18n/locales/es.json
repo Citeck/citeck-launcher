@@ -621,5 +621,8 @@
   "features.enabled.running": "Módulo experimental {id} activado: el namespace recarga su configuración y sus contenedores ({apps}) están arrancando",
   "features.enabled.stopped": "Módulo experimental {id} activado: sus contenedores ({apps}) arrancan con el namespace en el próximo `citeck start`",
   "features.disabled.running": "Módulo experimental {id} desactivado: el namespace recarga su configuración y sus contenedores ({apps}) se están eliminando; sus volúmenes de datos se conservan",
-  "features.disabled.stopped": "Módulo experimental {id} desactivado: sus contenedores ({apps}) quedan fuera del próximo `citeck start`; sus volúmenes de datos se conservan"
+  "features.disabled.stopped": "Módulo experimental {id} desactivado: sus contenedores ({apps}) quedan fuera del próximo `citeck start`; sus volúmenes de datos se conservan",
+  "snapshot.bundleMinimum": "La instantánea {name} requiere el paquete {minimum} o posterior; versión seleccionada: {current}.",
+  "snapshot.bundleVersionUnknown": "La instantánea {name} requiere el paquete {minimum} o posterior. Seleccione una versión concreta antes de restaurarla.",
+  "snapshot.bundleMinimumInvalid": "La instantánea {name} tiene una versión mínima de paquete no válida: {minimum}."
 }

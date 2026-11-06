@@ -65,6 +65,7 @@ const MONGO_DROPPED_IN_CONFIG_VERSION = 2
 interface WsSnapshotOpt {
   id: string
   name: string
+  unavailableReason?: string
 }
 
 /**
@@ -128,7 +129,10 @@ export function NamespaceEditDialog({
   const [tab, setTab] = useState<'general' | 'advanced' | 'experimental'>('general')
 
   const [bundles, setBundles] = useState<BundleInfoDto[]>([])
-  const [snapshots, setSnapshots] = useState<WsSnapshotOpt[]>([])
+  const [snapshotOptions, setSnapshotOptions] = useState<{ key: string; values: WsSnapshotOpt[]; error?: string }>({ key: '', values: [] })
+  const snapshotContext = `${workspaceId ?? ''}\n${bundleKey}`
+  const snapshotsPending = mode === 'create' && !!bundleKey && snapshotOptions.key !== snapshotContext
+  const snapshots = snapshotOptions.key === snapshotContext ? snapshotOptions.values : []
   const [gitError, setGitError] = useState<{ repo: string; message: string; failure: GitFailureDto } | null>(null)
   const [bundlesLoading, setBundlesLoading] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -161,12 +165,6 @@ export function NamespaceEditDialog({
       .then((bs) => setBundles(bs))
       .catch(() => setBundles([]))
       .finally(() => setBundlesLoading(false))
-
-    if (mode === 'create') {
-      getWorkspaceSnapshots()
-        .then((s) => setSnapshots(s.map((x) => ({ id: x.id, name: x.name }))))
-        .catch(() => setSnapshots([]))
-    }
 
     if (mode === 'edit') {
       // Always load authoritative values from the daemon — never seed from a
@@ -231,6 +229,25 @@ export function NamespaceEditDialog({
         })
     }
   }, [open, mode, nsId])
+
+  useEffect(() => {
+    if (!open || mode !== 'create' || !bundleKey) return
+    const ctl = new AbortController()
+    let cancelled = false
+    getWorkspaceSnapshots(bundleKey, workspaceId, ctl.signal)
+      .then((values) => {
+        if (cancelled) return
+        setSnapshotOptions({ key: snapshotContext, values })
+        setSnapshot((selected) => values.some((s) => s.id === selected && !s.unavailableReason) ? selected : '')
+      })
+      .catch((error: Error) => {
+        if (!cancelled) {
+          setSnapshotOptions({ key: snapshotContext, values: [], error: error.message })
+          setSnapshot('')
+        }
+      })
+    return () => { cancelled = true; ctl.abort() }
+  }, [open, mode, bundleKey, workspaceId, snapshotContext])
 
   const bundleRepoOptions = useMemo(() => {
     // Offer every configured repo, even one with no versions on disk yet (e.g.
@@ -412,6 +429,7 @@ export function NamespaceEditDialog({
 
   async function handleSubmit(e?: React.FormEvent) {
     e?.preventDefault()
+    if (snapshotsPending) return
     if (!validate()) {
       // Every validated field lives on the General tab; leaving the user on
       // Advanced would show a form that refuses to submit and says nothing.
@@ -442,7 +460,7 @@ export function NamespaceEditDialog({
           tlsMode: isDesktop && tlsEnabled ? 'self-signed' : undefined,
           pgAdminEnabled: false,
           workspaceId: workspaceId || undefined,
-          snapshot: snapshot || undefined,
+          snapshot: snapshots.some((s) => s.id === snapshot && !s.unavailableReason) ? snapshot : undefined,
           useDefaultPassword: true,
           // Always the choice the form shows — DB included. The daemon reads
           // the request alone (a template's contentStorage is ignored), so
@@ -518,7 +536,7 @@ export function NamespaceEditDialog({
           <button
             type="submit"
             className="rounded-md bg-primary text-primary-foreground px-3 py-1.5 text-xs font-medium hover:bg-primary/90 disabled:opacity-50"
-            disabled={loading}
+            disabled={loading || snapshotsPending}
           >
             <LoadingLabel loading={loading}>
               {mode === 'create' ? t('namespace.form.submit') : t('namespace.form.save')}
@@ -734,13 +752,17 @@ export function NamespaceEditDialog({
       )}
 
       {mode === 'create' && (
-        <ModalField label={t('namespace.form.snapshot')}>
+        <ModalField label={t('namespace.form.snapshot')} error={snapshotOptions.error}>
           <Select
-            value={snapshot}
-            options={snapshots.map((s) => ({ value: s.id, label: s.name }))}
+            value={snapshots.some((s) => s.id === snapshot && !s.unavailableReason) ? snapshot : ''}
+            options={snapshots.filter((s) => !s.unavailableReason).map((s) => ({ value: s.id, label: s.name }))}
+            disabled={snapshotsPending}
             onChange={setSnapshot}
             placeholder={t('namespace.form.snapshot.none')}
           />
+          {snapshots.filter((s) => s.unavailableReason).map((s) => (
+            <p key={s.id} className="mt-1 text-xs text-muted-foreground">{s.unavailableReason}</p>
+          ))}
         </ModalField>
       )}
 

@@ -562,6 +562,7 @@ func (d *Daemon) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 		var ce *createNamespaceError
 		switch {
 		case d.writeConfigGateRefusal(w, r, err):
+		case d.writeSnapshotBundleRefusal(w, r, err):
 		case errors.As(err, &ce) && ce.code != "":
 			writeErrorCode(w, ce.status, ce.code, ce.message)
 		case errors.As(err, &ce):
@@ -808,7 +809,7 @@ func (d *Daemon) buildNamespaceConfigFromCreate(req api.NamespaceCreateDto, wsID
 	}
 	// The beta features asked for must be ones THIS bundle offers; a create
 	// has no stored list, so every id is a new one and every id is checked.
-	if err := checkCreateExperimentalFeatures(&nsCfg, resolved.Bundle); err != nil {
+	if err := checkCreateBundleChoices(&nsCfg, resolved); err != nil {
 		return nil, err
 	}
 	namespace.ApplyNewNamespaceMongoDefault(&nsCfg, resolved.Bundle)
@@ -954,7 +955,7 @@ func (d *Daemon) importCreateSnapshot(wsID string, nsCfg *namespace.Config) erro
 		defer fc.Close()
 		importClient = fc
 	}
-	return d.downloadAndImportSnapshot(importClient, nsCfg.Snapshot, wsID, nsCfg.ID)
+	return d.downloadAndImportSnapshot(importClient, nsCfg.Snapshot, wsID, nsCfg.ID, nsCfg.BundleRef.Key)
 }
 
 // autoActivateAfterCreate activates the newly-created namespace in desktop

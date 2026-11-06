@@ -71,7 +71,7 @@ func (d *Daemon) snapshotsDir() (string, error) {
 	return filepath.Join(config.ResolveVolumesBase(d.activeWorkspaceID(), nsID), "snapshots"), nil
 }
 
-func (d *Daemon) handleListSnapshots(w http.ResponseWriter, _ *http.Request) {
+func (d *Daemon) handleListSnapshots(w http.ResponseWriter, r *http.Request) {
 	dir, err := d.snapshotsDir()
 	if err != nil {
 		writeJSON(w, []api.SnapshotDto{})
@@ -83,6 +83,7 @@ func (d *Daemon) handleListSnapshots(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 
+	act := d.active()
 	result := make([]api.SnapshotDto, 0, len(entries))
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".zip") {
@@ -93,9 +94,10 @@ func (d *Daemon) handleListSnapshots(w http.ResponseWriter, _ *http.Request) {
 			continue
 		}
 		result = append(result, api.SnapshotDto{
-			Name:      entry.Name(),
-			CreatedAt: info.ModTime().Format(time.RFC3339),
-			Size:      info.Size(),
+			UnavailableReason: d.translatorFor(r).Render(snapshotNameRefusal(act, entry.Name())),
+			Name:              entry.Name(),
+			CreatedAt:         info.ModTime().Format(time.RFC3339),
+			Size:              info.Size(),
 		})
 	}
 	writeJSON(w, result)
@@ -297,6 +299,11 @@ func (d *Daemon) handleImportSnapshot(w http.ResponseWriter, r *http.Request) {
 	// operating on the namespace that was active at validation time even if a
 	// workspace/namespace switch happens mid-import.
 	act := d.active()
+	if refusal := snapshotNameRefusal(act, snapshotName); !refusal.Empty() {
+		d.longOp.Unlock()
+		d.writeSnapshotBundleRefusal(w, r, &snapshotBundleError{refusal: refusal})
+		return
+	}
 	if act.runtime != nil && act.runtime.Status() != namespace.NsStatusStopped {
 		d.longOp.Unlock()
 		writeErrorCode(w, http.StatusConflict, api.ErrCodeNamespaceRunning, "namespace must be stopped before import")
@@ -317,13 +324,18 @@ func (d *Daemon) handleImportSnapshot(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid multipart form")
 			return
 		}
-		file, _, err := r.FormFile("file")
+		file, header, err := r.FormFile("file")
 		if err != nil {
 			d.longOp.Unlock()
 			writeError(w, http.StatusBadRequest, "file field required")
 			return
 		}
 		defer file.Close()
+		if refusal := snapshotNameRefusal(act, header.Filename); !refusal.Empty() {
+			d.longOp.Unlock()
+			d.writeSnapshotBundleRefusal(w, r, &snapshotBundleError{refusal: refusal})
+			return
+		}
 
 		tmpFile, err := os.CreateTemp("", "citeck-snapshot-upload-*.zip")
 		if err != nil {
@@ -398,6 +410,11 @@ func (d *Daemon) handleDownloadSnapshot(w http.ResponseWriter, r *http.Request) 
 	}
 	if req.URL == "" {
 		writeError(w, http.StatusBadRequest, "url is required")
+		return
+	}
+
+	if refusal := snapshotDownloadRefusal(d.active(), req); !refusal.Empty() {
+		d.writeSnapshotBundleRefusal(w, r, &snapshotBundleError{refusal: refusal})
 		return
 	}
 
@@ -497,14 +514,17 @@ func safeSnapshotFileName(rawURL string) string {
 // active namespace) would restore the snapshot into another namespace's volumes.
 //
 //nolint:nestif // download+import orchestration requires nested SHA256 verification and retry logic
-func (d *Daemon) downloadAndImportSnapshot(dc *docker.Client, snapshotID, wsID, nsID string) (resultErr error) {
+func (d *Daemon) downloadAndImportSnapshot(dc *docker.Client, snapshotID, wsID, nsID, bundleVersion string) (resultErr error) {
 	op := d.newSnapshotOperation(wsID, nsID)
 	defer func() {
 		if resultErr != nil {
 			op.emit(api.EventDto{Type: "snapshot_error", Timestamp: time.Now().UnixMilli(), NamespaceID: nsID, After: resultErr.Error()})
 		}
 	}()
-	wsCfg := d.active().workspaceConfig
+	wsCfg, syncErr := d.snapshotWorkspaceConfig(wsID)
+	if syncErr != "" {
+		return fmt.Errorf("read snapshot workspace: %s", syncErr)
+	}
 
 	snapDef := bundle.FindSnapshot(wsCfg, snapshotID)
 	if snapDef == nil {
@@ -514,6 +534,10 @@ func (d *Daemon) downloadAndImportSnapshot(dc *docker.Client, snapshotID, wsID, 
 			NamespaceID: nsID, After: fmt.Sprintf("snapshot %q not found", snapshotID),
 		})
 		return fmt.Errorf("snapshot %q not found in workspace config", snapshotID)
+	}
+
+	if refusal := snapDef.BundleVersionRefusal(bundleVersion); !refusal.Empty() {
+		return &snapshotBundleError{refusal: refusal}
 	}
 
 	// Per Kotlin parity: workspace-scope cache at
@@ -610,13 +634,20 @@ func (d *Daemon) downloadAndImportSnapshot(dc *docker.Client, snapshotID, wsID, 
 	return nil
 }
 
-func (d *Daemon) handleWorkspaceSnapshots(w http.ResponseWriter, _ *http.Request) {
+func (d *Daemon) handleWorkspaceSnapshots(w http.ResponseWriter, r *http.Request) {
 	// Same no-silent-fallback gate as handleGetQuickStarts: a custom workspace
 	// repo that can't sync (and has no cached config) must not masquerade as a
 	// workspace with no snapshots. See api.ErrCodeWsRepoSyncFailed.
 	// activeWorkspaceConfigForRead re-resolves on a cached error so a freshly
 	// added repo token clears it without a restart.
-	wsCfg, syncErr := d.activeWorkspaceConfigForRead()
+	wsID := r.URL.Query().Get("workspaceId")
+	if wsID == "" {
+		wsID = d.activeWorkspaceID()
+	} else if !validateID(wsID) {
+		writeError(w, http.StatusBadRequest, "invalid workspace id")
+		return
+	}
+	wsCfg, syncErr := d.snapshotWorkspaceConfig(wsID)
 	if syncErr != "" {
 		writeErrorCode(w, http.StatusBadGateway, api.ErrCodeWsRepoSyncFailed, syncErr)
 		return
@@ -626,7 +657,20 @@ func (d *Daemon) handleWorkspaceSnapshots(w http.ResponseWriter, _ *http.Request
 		writeJSON(w, []bundle.SnapshotDef{})
 		return
 	}
-	writeJSON(w, wsCfg.Snapshots)
+	version := r.URL.Query().Get("bundleKey")
+	if version == "" && wsID == d.activeWorkspaceID() {
+		version = snapshotBundleVersion(d.active())
+	}
+	type snapshotOption struct {
+		bundle.SnapshotDef
+		UnavailableReason string `json:"unavailableReason,omitempty"`
+	}
+	options := make([]snapshotOption, 0, len(wsCfg.Snapshots))
+	for _, def := range wsCfg.Snapshots {
+		options = append(options, snapshotOption{SnapshotDef: def,
+			UnavailableReason: d.translatorFor(r).Render(def.BundleVersionRefusal(version))})
+	}
+	writeJSON(w, options)
 }
 
 func (d *Daemon) handleRenameSnapshot(w http.ResponseWriter, r *http.Request) {

@@ -599,6 +599,7 @@ export interface DiagFixResultDto {
 
 // Phase F3: Snapshots
 export interface SnapshotDto {
+  unavailableReason?: string
   name: string
   createdAt: string
   size: number
@@ -703,4 +704,14 @@ export interface GitFailureDto {
   cacheUpdatedAt?: number
   cachedRepos?: string[]
   force?: boolean
+}
+
+/** Workspace-configured snapshot and its availability for the selected bundle. */
+export interface WorkspaceSnapshotDto {
+  id: string
+  name: string
+  url: string
+  size?: string
+  minBundleVersion?: string
+  unavailableReason?: string
 }

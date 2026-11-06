@@ -621,5 +621,8 @@
   "features.enabled.running": "実験的モジュール {id} を有効にしました。名前空間が設定を再読み込みし、そのコンテナ（{apps}）を起動しています",
   "features.enabled.stopped": "実験的モジュール {id} を有効にしました。そのコンテナ（{apps}）は次回の `citeck start` で名前空間とともに起動します",
   "features.disabled.running": "実験的モジュール {id} を無効にしました。名前空間が設定を再読み込みし、そのコンテナ（{apps}）を削除しています。データボリュームは残ります",
-  "features.disabled.stopped": "実験的モジュール {id} を無効にしました。そのコンテナ（{apps}）は次回の `citeck start` から除外されます。データボリュームは残ります"
+  "features.disabled.stopped": "実験的モジュール {id} を無効にしました。そのコンテナ（{apps}）は次回の `citeck start` から除外されます。データボリュームは残ります",
+  "snapshot.bundleMinimum": "スナップショット {name} にはバンドル {minimum} 以降が必要です。選択中のバージョン：{current}。",
+  "snapshot.bundleVersionUnknown": "スナップショット {name} にはバンドル {minimum} 以降が必要です。復元する前に具体的なバンドルバージョンを選択してください。",
+  "snapshot.bundleMinimumInvalid": "スナップショット {name} の最小バンドルバージョンが無効です：{minimum}。"
 }

@@ -182,6 +182,9 @@ func newSnapshotImportCmd() *cobra.Command {
 			found := false
 			for _, s := range snapshots {
 				if s.Name == name {
+					if s.UnavailableReason != "" {
+						return errors.New(s.UnavailableReason)
+					}
 					found = true
 					break
 				}

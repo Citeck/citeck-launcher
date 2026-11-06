@@ -4,6 +4,7 @@ import { NamespaceEditDialog } from './NamespaceEditDialog'
 import {
   createNamespace,
   getContentStorageOptions,
+  getWorkspaceSnapshots,
   getExperimentalFeatures,
   getNamespaceCreateDefaults,
   getNamespaceEdit,
@@ -57,6 +58,8 @@ beforeEach(() => {
   HTMLDialogElement.prototype.close = vi.fn(function (this: HTMLDialogElement) { this.open = false })
   vi.mocked(putNamespaceEdit).mockClear()
   vi.mocked(createNamespace).mockClear()
+  vi.mocked(getWorkspaceSnapshots).mockReset()
+  vi.mocked(getWorkspaceSnapshots).mockResolvedValue([])
   vi.mocked(getContentStorageOptions).mockReset()
   vi.mocked(getContentStorageOptions).mockResolvedValue({ s3: { available: false, reason: 'NO_CONTENT_APP' } })
   vi.mocked(getExperimentalFeatures).mockReset()
@@ -466,5 +469,53 @@ describe('NamespaceEditDialog content storage', () => {
     await waitForStorage()
     const warning = await screen.findByText(/Saving will be refused/)
     expect(warning.textContent).toContain('names an image for seaweedfs')
+  })
+})
+
+
+describe('NamespaceEditDialog snapshot bundle requirements', () => {
+  const reason = 'Snapshot demo requires bundle 2026.3 or newer; selected bundle: 2026.2.'
+  const snapshots = (key?: string) => [
+    { id: 'demo', name: 'New demo data', url: 'https://example.invalid/demo.zip', minBundleVersion: '2026.3', unavailableReason: key === '2026.2' ? reason : undefined },
+    { id: 'legacy', name: 'Legacy data', url: 'https://example.invalid/legacy.zip' },
+  ]
+
+  it('shows the refusal and excludes incompatible data from the snapshot picker', async () => {
+    vi.mocked(getWorkspaceSnapshots).mockImplementation(async (key) => snapshots(key))
+    await openCreate({ bundleRepo: 'community', bundleKey: '2026.2' })
+    await screen.findByText(reason)
+    await act(async () => { screen.getByRole('button', { name: '(none)' }).click() })
+    expect(screen.queryByRole('option', { name: 'New demo data' })).toBeNull()
+    expect(screen.getByRole('option', { name: 'Legacy data' })).toBeDefined()
+  })
+
+  it('drops a selected snapshot after switching to an older bundle', async () => {
+    vi.mocked(getWorkspaceSnapshots).mockImplementation(async (key) => snapshots(key))
+    await openCreate({ bundleRepo: 'enterprise', bundleKey: '2026.3' })
+    await waitFor(() => expect(vi.mocked(getWorkspaceSnapshots)).toHaveBeenCalledWith('2026.3', undefined, expect.anything()))
+    await act(async () => { screen.getByRole('button', { name: '(none)' }).click() })
+    await act(async () => { screen.getByRole('option', { name: 'New demo data' }).click() })
+    await act(async () => { screen.getByRole('button', { name: /2026\.3/ }).click() })
+    await act(async () => { screen.getByRole('option', { name: '2026.2' }).click() })
+    await screen.findByText(reason)
+    await submit(/^Submit$/)
+    await waitFor(() => expect(createNamespace).toHaveBeenCalled())
+    expect(vi.mocked(createNamespace).mock.calls[0][0].snapshot).toBeUndefined()
+  })
+
+  it('ignores an old availability response that arrives after a bundle change', async () => {
+    let resolveOld!: (value: ReturnType<typeof snapshots>) => void
+    vi.mocked(getWorkspaceSnapshots).mockImplementation((key) => key === '2026.3'
+      ? new Promise((resolve) => { resolveOld = resolve })
+      : Promise.resolve(snapshots(key)))
+    await openCreate({ bundleRepo: 'enterprise', bundleKey: '2026.3' })
+    await waitFor(() => expect(resolveOld).toBeDefined())
+    await act(async () => { screen.getByRole('button', { name: /2026\.3/ }).click() })
+    await act(async () => { screen.getByRole('option', { name: '2026.2' }).click() })
+    await screen.findByText(reason)
+    await act(async () => { resolveOld(snapshots('2026.3')) })
+    expect(screen.getByText(reason)).toBeDefined()
+    await act(async () => { screen.getByRole('button', { name: '(none)' }).click() })
+    expect(screen.queryByRole('option', { name: 'New demo data' })).toBeNull()
   })
 })

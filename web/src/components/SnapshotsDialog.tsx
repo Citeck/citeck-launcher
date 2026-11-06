@@ -21,6 +21,7 @@ interface SnapshotRow {
   scope: 'workspace' | 'namespace'
   url?: string
   id?: string
+  unavailableReason?: string
 }
 
 interface WsSnapshot {
@@ -28,6 +29,7 @@ interface WsSnapshot {
   name: string
   url: string
   size?: string
+  unavailableReason?: string
 }
 
 interface SnapshotsDialogProps {
@@ -86,6 +88,7 @@ export function SnapshotsDialog({ open, onClose, namespaceStopped }: SnapshotsDi
               size: formatBytes(s.size),
               created: formatDateTime(s.createdAt),
               scope: 'namespace' as const,
+              unavailableReason: s.unavailableReason,
             })),
         )
         setWsRows(
@@ -96,6 +99,7 @@ export function SnapshotsDialog({ open, onClose, namespaceStopped }: SnapshotsDi
             scope: 'workspace' as const,
             url: s.url,
             id: s.id,
+            unavailableReason: s.unavailableReason,
           })),
         )
       }).finally(() => setLoading(false))
@@ -213,6 +217,7 @@ export function SnapshotsDialog({ open, onClose, namespaceStopped }: SnapshotsDi
   }
 
   function importRow(row: SnapshotRow) {
+    if (row.unavailableReason) return
     if (row.scope === 'workspace') {
       startLongOp('snapshot.download', t('longOp.snapshot.download'))
       let started = false
@@ -482,14 +487,17 @@ function SnapshotRowView({ row, busy, namespaceStopped, onImport, onRename, onDe
   const { t } = useTranslation()
   return (
     <tr className="border-b border-border/20 hover:bg-muted/30">
-      <td className="py-[3px] pr-4 font-mono">{row.name}</td>
+      <td className="py-[3px] pr-4 font-mono">
+        {row.name}
+        {row.unavailableReason && <p className="mt-1 font-sans text-muted-foreground">{row.unavailableReason}</p>}
+      </td>
       <td className="py-[3px] pr-4 text-muted-foreground">{row.size}</td>
       <td className="py-[3px] pr-4 text-muted-foreground">{row.created}</td>
       <td className="py-[3px] pr-0 text-right whitespace-nowrap">
         <RowButton
           icon={Download}
-          title={!namespaceStopped ? t('snapshots.requireStopped') : t('snapshots.action.import')}
-          disabled={!namespaceStopped || busy !== null}
+          title={row.unavailableReason || (!namespaceStopped ? t('snapshots.requireStopped') : t('snapshots.action.import'))}
+          disabled={!!row.unavailableReason || !namespaceStopped || busy !== null}
           onClick={() => onImport(row)}
         />
         {row.scope === 'namespace' && (

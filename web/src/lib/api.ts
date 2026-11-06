@@ -21,6 +21,7 @@ import type {
   DiagnosticsDto,
   DiagFixResultDto,
   SnapshotDto,
+  WorkspaceSnapshotDto,
   RestartEventDto,
   WorkspaceDto,
   WorkspaceCreateDto,
@@ -824,8 +825,11 @@ export async function postImportSnapshotByName(name: string): Promise<ActionResu
   return snapshotRequest(`/snapshots/import?name=${enc(filename)}`, { timeout: 300_000 })
 }
 
-export async function getWorkspaceSnapshots(): Promise<{ id: string; name: string; url: string; size?: string }[]> {
-  return request('GET', '/workspace/snapshots')
+export async function getWorkspaceSnapshots(bundleKey?: string, workspaceId?: string, signal?: AbortSignal): Promise<WorkspaceSnapshotDto[]> {
+  const params = new URLSearchParams()
+  if (bundleKey) params.set('bundleKey', bundleKey)
+  if (workspaceId) params.set('workspaceId', workspaceId)
+  return request('GET', `/workspace/snapshots${params.size ? `?${params}` : ''}`, { signal })
 }
 
 export async function postSnapshotDownload(url: string, name?: string): Promise<ActionResultDto> {

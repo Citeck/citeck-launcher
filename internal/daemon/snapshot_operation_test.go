@@ -64,8 +64,8 @@ func TestWorkspaceSnapshotPreparationErrorHasRetainedOutcome(t *testing.T) {
 	path := config.WorkspaceDir("ws")
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
 	require.NoError(t, os.WriteFile(path, []byte("not a directory"), 0o600))
-	d := &Daemon{activeNs: &activeNamespace{workspaceConfig: &bundle.WorkspaceConfig{Snapshots: []bundle.SnapshotDef{{ID: "snapshot"}}}}}
-	require.Error(t, d.downloadAndImportSnapshot(nil, "snapshot", "ws", "ns"))
+	d := &Daemon{activeNs: &activeNamespace{workspaceID: "ws", workspaceConfig: &bundle.WorkspaceConfig{Snapshots: []bundle.SnapshotDef{{ID: "snapshot"}}}}}
+	require.Error(t, d.downloadAndImportSnapshot(nil, "snapshot", "ws", "ns", "2026.3"))
 	require.Len(t, d.snapshotOps, 1)
 	for _, record := range d.snapshotOps {
 		require.Equal(t, "snapshot_error", record.event.Type)

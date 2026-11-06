@@ -621,5 +621,8 @@
   "features.enabled.running": "Experimentelles Modul {id} eingeschaltet — der Namespace lädt seine Konfiguration neu, seine Container ({apps}) starten",
   "features.enabled.stopped": "Experimentelles Modul {id} eingeschaltet — seine Container ({apps}) starten mit dem Namespace beim nächsten `citeck start`",
   "features.disabled.running": "Experimentelles Modul {id} ausgeschaltet — der Namespace lädt seine Konfiguration neu, seine Container ({apps}) werden entfernt; ihre Daten-Volumes bleiben erhalten",
-  "features.disabled.stopped": "Experimentelles Modul {id} ausgeschaltet — seine Container ({apps}) bleiben beim nächsten `citeck start` außen vor; ihre Daten-Volumes bleiben erhalten"
+  "features.disabled.stopped": "Experimentelles Modul {id} ausgeschaltet — seine Container ({apps}) bleiben beim nächsten `citeck start` außen vor; ihre Daten-Volumes bleiben erhalten",
+  "snapshot.bundleMinimum": "Snapshot {name} erfordert Bundle {minimum} oder neuer; ausgewählte Version: {current}.",
+  "snapshot.bundleVersionUnknown": "Snapshot {name} erfordert Bundle {minimum} oder neuer. Wählen Sie vor der Wiederherstellung eine konkrete Bundle-Version.",
+  "snapshot.bundleMinimumInvalid": "Snapshot {name} hat eine ungültige minimale Bundle-Version: {minimum}."
 }

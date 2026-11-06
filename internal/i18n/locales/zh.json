@@ -621,5 +621,8 @@
   "features.enabled.running": "实验性模块 {id} 已开启 — 命名空间正在重新加载配置，其容器（{apps}）正在启动",
   "features.enabled.stopped": "实验性模块 {id} 已开启 — 其容器（{apps}）将在下次 `citeck start` 时随命名空间启动",
   "features.disabled.running": "实验性模块 {id} 已关闭 — 命名空间正在重新加载配置，其容器（{apps}）正在移除；数据卷保留",
-  "features.disabled.stopped": "实验性模块 {id} 已关闭 — 其容器（{apps}）不会随下次 `citeck start` 启动；数据卷保留"
+  "features.disabled.stopped": "实验性模块 {id} 已关闭 — 其容器（{apps}）不会随下次 `citeck start` 启动；数据卷保留",
+  "snapshot.bundleMinimum": "快照 {name} 要求版本为 {minimum} 或更新的包；当前所选版本：{current}。",
+  "snapshot.bundleVersionUnknown": "快照 {name} 要求版本为 {minimum} 或更新的包。恢复前请选择具体的包版本。",
+  "snapshot.bundleMinimumInvalid": "快照 {name} 的最低包版本无效：{minimum}。"
 }
