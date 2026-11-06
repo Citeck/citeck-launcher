@@ -24,6 +24,7 @@ import (
 
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/config"
+	"github.com/citeck/citeck-launcher/internal/fsutil"
 	cerrdefs "github.com/containerd/errdefs"
 	"github.com/moby/moby/api/pkg/authconfig"
 	"github.com/moby/moby/api/pkg/stdcopy"
@@ -410,6 +411,11 @@ func (c *Client) buildCreateOptions(
 	volumesBaseDir string,
 	opts ContainerCreateOpts,
 ) (client.ContainerCreateOptions, error) {
+	if app.Resources != nil {
+		if _, err := appdef.NanoCPUs(app.Resources.Limits.CPU); err != nil {
+			return client.ContainerCreateOptions{}, fmt.Errorf("app %s: %w", app.Name, err)
+		}
+	}
 	name, overridden := effectiveName(app, opts)
 	// An override spelled exactly like the app's own name is refused rather
 	// than served. It would produce a container named and labeled like the
@@ -709,6 +715,9 @@ func buildHostConfig(
 	if memoryBytes > 0 {
 		hostConfig.Memory = memoryBytes
 		hostConfig.MemorySwap = memoryBytes
+	}
+	if app.Resources != nil && app.Resources.Limits.CPU > 0 {
+		hostConfig.NanoCPUs, _ = appdef.NanoCPUs(app.Resources.Limits.CPU)
 	}
 	if shmSize > 0 {
 		hostConfig.ShmSize = shmSize
@@ -1086,16 +1095,44 @@ func (c *Client) ExecInContainerSplit(ctx context.Context, containerID string, c
 	if err != nil {
 		return "", "", -1, err //nolint:wrapcheck // thin Docker SDK wrapper
 	}
-	defer attachResp.Close()
+	// ExecAttach hijacks the connection: the SDK no longer binds stream reads
+	// to ctx after the upgrade. Close it on cancellation, including a silent
+	// stream blocked before its first frame.
+	stopClose := context.AfterFunc(ctx, attachResp.Close)
+	defer func() {
+		stopClose()
+		attachResp.Close()
+	}()
 
-	stdout, stderr, err = demuxExecOutput(attachResp.Reader)
-	if err != nil {
-		// Fallback for TTY-mode exec: the stream carries no frame headers, so
-		// there is nothing to split — everything the exec wrote is reported as
-		// stdout, which is also what the concatenating caller used to get.
-		data, _ := io.ReadAll(attachResp.Reader)
-		inspectResp, _ := c.cli.ExecInspect(ctx, execResp.ID, client.ExecInspectOptions{})
-		return string(data), "", inspectResp.ExitCode, nil
+	budget := fsutil.DiagnosticOutputLimit(ctx)
+	if budget != nil {
+		var truncated bool
+		stdout, truncated, err = readLogsBounded(attachResp.Reader, budget.Bytes)
+		if truncated {
+			budget.Truncated.Store(true)
+			return stdout, "", 0, err
+		}
+		if err != nil {
+			return stdout, "", -1, err
+		}
+	}
+	if budget == nil {
+		stdout, stderr, err = demuxExecOutput(attachResp.Reader)
+		// Cancellation closes the hijack too; it is not a TTY stream and
+		// cannot establish successful command completion.
+		if ctx.Err() != nil {
+			return stdout, stderr, -1, fmt.Errorf("read exec output: %w", ctx.Err())
+		}
+		if err != nil {
+			// Fallback for TTY-mode exec: the stream carries no frame headers, so
+			// there is nothing to split — everything the exec wrote is reported as
+			// stdout, which is also what the concatenating caller used to get.
+			data, readErr := io.ReadAll(attachResp.Reader)
+			if readErr != nil {
+				return string(data), "", -1, readErr //nolint:wrapcheck // thin Docker stream wrapper
+			}
+			stdout, stderr = string(data), ""
+		}
 	}
 
 	// Get exit code

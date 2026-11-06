@@ -4,7 +4,11 @@ import (
 	"archive/zip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"github.com/citeck/citeck-launcher/internal/fsutil"
+	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -20,6 +24,10 @@ import (
 )
 
 func (d *Daemon) buildDumpData(ctx context.Context) map[string]any {
+	return d.buildDumpDataFor(ctx, d.active())
+}
+
+func (d *Daemon) buildDumpDataFor(ctx context.Context, act activeNamespace) map[string]any {
 	dump := make(map[string]any)
 	dump["daemon"] = map[string]any{
 		"pid":     os.Getpid(),
@@ -27,7 +35,6 @@ func (d *Daemon) buildDumpData(ctx context.Context) map[string]any {
 		"version": d.version,
 		"socket":  d.socketPath,
 	}
-	act := d.active()
 	if nsCfg := act.nsConfig; nsCfg != nil {
 		dump["namespace"] = map[string]any{
 			"id":     nsCfg.ID,
@@ -95,147 +102,164 @@ func (d *Daemon) handleSystemDump(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *Daemon) writeSystemDumpZip(ctx context.Context, w http.ResponseWriter, dump map[string]any, nsCfgYAML, daemonCfgYAML []byte) {
-	// Extend write deadline for potentially large ZIP with per-app logs
-	rc := http.NewResponseController(w)
-	_ = rc.SetWriteDeadline(time.Now().Add(5 * time.Minute))
-
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(5 * time.Minute))
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition", "attachment; filename=system-dump.zip")
+	if operationErr := d.streamSystemDumpZip(ctx, w, d.active(), dump, nsCfgYAML, daemonCfgYAML); operationErr != nil {
+		slog.Warn("System dump transfer incomplete", "operationErr", operationErr)
+	}
+}
 
+// streamSystemDumpZip is the existing diagnostic snapshot, not the CLI's host
+// inventory collector. The explicit snapshot keeps logs and config on one target.
+func (d *Daemon) streamSystemDumpZip(ctx context.Context, w io.Writer, act activeNamespace, dump map[string]any, nsCfgYAML, daemonCfgYAML []byte) (err error) {
 	zw := zip.NewWriter(w)
-	defer zw.Close()
-
-	// system-info.json
-	if infoData, err := json.MarshalIndent(dump, "", "  "); err == nil {
-		if fw, err := zw.Create("system-info.json"); err == nil {
-			_, _ = fw.Write(infoData)
+	defer func() { err = errors.Join(err, zw.Close()) }()
+	add := func(name string, b []byte) error {
+		if e := ctx.Err(); e != nil {
+			return fmt.Errorf("routes system: %w", e)
 		}
+		fw, e := zw.Create(name)
+		if e != nil {
+			return fmt.Errorf("routes system: %w", e)
+		}
+		if _, e = fw.Write(b); e != nil {
+			return fmt.Errorf("write diagnostic ZIP entry: %w", e)
+		}
+		return nil
 	}
-
-	// goroutine-dump.txt — pprof debug=2 emits ThreadInfo-like per-goroutine
-	// stacks (state, locks, full frames). Kotlin parity: SystemDumpUtils.kt
-	// writes `thread-dump.txt` via ThreadMXBean.dumpAllThreads; the closest Go
-	// analog is the goroutine profile.
-	if fw, err := zw.Create("goroutine-dump.txt"); err == nil {
-		_ = pprof.Lookup("goroutine").WriteTo(fw, 2)
+	info, err := json.MarshalIndent(dump, "", "  ")
+	if err != nil {
+		return fmt.Errorf("routes system: %w", err)
 	}
-
-	// namespace.yml (pre-marshaled under configMu lock)
+	if operationErr := add("system-info.json", info); operationErr != nil {
+		return operationErr
+	}
+	fw, err := zw.Create("goroutine-dump.txt")
+	if err != nil {
+		return fmt.Errorf("routes system: %w", err)
+	}
+	if operationErr := pprof.Lookup("goroutine").WriteTo(fw, 2); operationErr != nil {
+		return fmt.Errorf("routes system: %w", operationErr)
+	}
 	if len(nsCfgYAML) > 0 {
-		if fw, err := zw.Create("namespace.yml"); err == nil {
-			_, _ = fw.Write(nsCfgYAML)
+		if operationErr := add("namespace.yml", nsCfgYAML); operationErr != nil {
+			return operationErr
 		}
 	}
-
-	// daemon.yml (pre-marshaled under configMu lock)
 	if len(daemonCfgYAML) > 0 {
-		if fw, err := zw.Create("daemon.yml"); err == nil {
-			_, _ = fw.Write(daemonCfgYAML)
+		if operationErr := add("daemon.yml", daemonCfgYAML); operationErr != nil {
+			return operationErr
 		}
 	}
-
-	// reports/ — the durable record of every dependency migration this stand
-	// has run (see deps_report.go). They are the whole reason a "it would not
-	// update" can be answered from the dump instead of from a screenshot: the
-	// containers a failed migration built, and their logs, are gone by the time
-	// anybody asks.
-	addReports(zw)
-
-	// Daemon logs (daemon.log + rotated variants)
-	addRotatedLogs(zw, config.DaemonLogPath(), "daemon-logs")
-
-	// Wrapper log (launcher.log + rotated variants) — desktop only, and absent
-	// in server mode, which is not a failure. It is the ONLY record of which
-	// daemon binary the wrapper selected and of how an auto-update's health gate
-	// ended, and on Windows it is the wrapper's only output at all: the wrapper
-	// is linked -H windowsgui and therefore has no stderr to fall back on.
-	addRotatedLogs(zw, config.LauncherLogPath(), "launcher-logs")
-
-	// updates/manifest.json — what was staged and what each payload's verdict
-	// was (staged / pending / good / failed). Read from disk rather than
-	// marshaled from update.Load, which answers a missing file with an EMPTY
-	// manifest: that would put a synthetic "nothing was ever staged" record into
-	// every server-mode dump, the same fabrication the daemon.yml entry above
-	// refuses to make. It carries no secret — the entries are a version, a path
-	// under the launcher home, a payload sha256 and two timestamps.
-	if data, err := os.ReadFile(update.ManifestPath(config.UpdatesDir())); err == nil { //nolint:gosec // G304: path derived from internal config
-		if fw, createErr := zw.Create("updates/manifest.json"); createErr == nil {
-			_, _ = fw.Write(data)
-		}
+	if operationErr := addReportsChecked(zw); operationErr != nil {
+		return operationErr
 	}
-
-	// Per-app logs — one snapshot so runtime and docker client agree.
-	if act := d.active(); act.runtime != nil && act.dockerClient != nil {
-		dc := act.dockerClient
+	if operationErr := addRotatedLogsChecked(zw, config.DaemonLogPath(), "daemon-logs"); operationErr != nil {
+		return operationErr
+	}
+	if operationErr := addRotatedLogsChecked(zw, config.LauncherLogPath(), "launcher-logs"); operationErr != nil {
+		return operationErr
+	}
+	if data, e := readDumpFile(update.ManifestPath(config.UpdatesDir())); e == nil {
+		if operationErr := add("updates/manifest.json", data); operationErr != nil {
+			return operationErr
+		}
+	} else if !errors.Is(e, os.ErrNotExist) {
+		return e
+	}
+	if act.runtime != nil && act.dockerClient != nil {
 		for _, app := range act.runtime.Apps() {
 			if app.ContainerID == "" {
 				continue
 			}
-			logs, err := dc.ContainerLogs(ctx, app.ContainerID, 500)
-			if err != nil {
-				continue
+			logs, _, e := act.dockerClient.ContainerLogsBounded(ctx, app.ContainerID, 500, maxDumpLogSize)
+			name := "logs/" + app.Name + ".log"
+			if e != nil {
+				name += ".err"
+				logs = "application log unavailable"
 			}
-			fname := fmt.Sprintf("logs/%s.log", app.Name)
-			if fw, err := zw.Create(fname); err == nil {
-				// Strip ANSI color codes (Spring Boot emits SGR sequences) so the
-				// dumped .log files are readable in a plain text editor — same
-				// normalization the live log viewer already applies.
-				_, _ = fw.Write([]byte(stripAnsi(logs)))
+			if operationErr := add(name, []byte(stripAnsi(logs))); operationErr != nil {
+				return operationErr
 			}
 		}
 	}
+	return nil
 }
 
-// maxDumpLogSize caps each log file copied into the diagnostics ZIP. The dump
-// is something a user emails to support, not an archive of the whole history.
-const maxDumpLogSize = 2 * 1024 * 1024 // 2MB cap per file
+const maxDumpLogSize = 2 * 1024 * 1024
 
-// addRotatedLogs copies a log file and its rotated siblings into the ZIP under
-// dirName/, keeping the TAIL of anything over the cap. Best-effort throughout:
-// a file that does not exist is skipped silently, because the daemon log is
-// present in both modes while the wrapper log exists only on desktop, and a
-// server-mode dump must not report that absence as a failure.
-// addReports puts every migration report into the ZIP under reports/. A
-// directory that is not there (no migration has ever run) adds nothing, which
-// is why the read error is ignored rather than reported: an absent report is
-// not a dump failure.
-func addReports(zw *zip.Writer) {
-	dir := config.ReportsDir()
-	entries, err := os.ReadDir(dir)
+func readDumpFile(path string) ([]byte, error) { return readTailFile(path, maxDumpLogSize) }
+func readTailFile(path string, limit int64) ([]byte, error) {
+	root, err := fsutil.OpenCanonicalRoot(filepath.Dir(path))
 	if err != nil {
-		return
+		return nil, fmt.Errorf("routes system: %w", err)
+	}
+	defer root.Close()
+	f, err := fsutil.OpenRegularRooted(root, filepath.Base(path))
+	if err != nil {
+		return nil, fmt.Errorf("routes system: %w", err)
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("routes system: %w", err)
+	}
+	if info.Size() > limit {
+		if _, err = f.Seek(-limit, io.SeekEnd); err != nil {
+			return nil, fmt.Errorf("routes system: %w", err)
+		}
+	}
+	data, err := io.ReadAll(io.LimitReader(f, limit))
+	if err != nil {
+		return nil, fmt.Errorf("read diagnostic tail: %w", err)
+	}
+	return data, nil
+}
+func addReportsChecked(zw *zip.Writer) error {
+	entries, err := os.ReadDir(config.ReportsDir())
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("routes system: %w", err)
 	}
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
 		}
-		data, readErr := os.ReadFile(filepath.Join(dir, e.Name())) //nolint:gosec // G304: path is the launcher's own reports dir
-		if readErr != nil {
-			continue
-		}
-		if len(data) > maxDumpLogSize {
-			data = data[len(data)-maxDumpLogSize:]
-		}
-		if fw, createErr := zw.Create("reports/" + e.Name()); createErr == nil {
-			_, _ = fw.Write(data)
-		}
-	}
-}
-
-func addRotatedLogs(zw *zip.Writer, logPath, dirName string) {
-	for _, suffix := range []string{"", ".1", ".2", ".3"} {
-		logFile := logPath + suffix
-		data, err := os.ReadFile(logFile) //nolint:gosec // G304: logFile path is derived from internal config
+		data, err := readDumpFile(filepath.Join(config.ReportsDir(), e.Name()))
 		if err != nil {
-			continue
+			return err
 		}
-		if len(data) > maxDumpLogSize {
-			data = data[len(data)-maxDumpLogSize:]
+		fw, err := zw.Create("reports/" + e.Name())
+		if err != nil {
+			return fmt.Errorf("routes system: %w", err)
 		}
-		if fw, createErr := zw.Create(dirName + "/" + filepath.Base(logFile)); createErr == nil {
-			_, _ = fw.Write(data)
+		if _, err = fw.Write(data); err != nil {
+			return fmt.Errorf("routes system: %w", err)
 		}
 	}
+	return nil
+}
+func addRotatedLogsChecked(zw *zip.Writer, path, dir string) error {
+	for _, suffix := range []string{"", ".1", ".2", ".3"} {
+		data, err := readDumpFile(path + suffix)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		fw, err := zw.Create(dir + "/" + filepath.Base(path+suffix))
+		if err != nil {
+			return fmt.Errorf("create diagnostic log entry: %w", err)
+		}
+		if _, err = fw.Write(data); err != nil {
+			return fmt.Errorf("routes system: %w", err)
+		}
+	}
+	return nil
 }
 
 //nolint:nestif // health aggregation checks multiple subsystems with per-app status roll-up

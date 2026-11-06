@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/citeck/citeck-launcher/internal/appdef"
+	"github.com/citeck/citeck-launcher/internal/fsutil"
 )
 
 // The export directory: one bind mount, present on EVERY generated container,
@@ -245,14 +246,23 @@ func ExportDirFor(volumesBase, appName string) string {
 // daemon's umask — which is exactly the case that leaves a non-root container
 // unable to write. Creating it here first is what makes the mount usable.
 func EnsureExportDir(volumesBase, appName string) error {
-	dir := ExportDirFor(volumesBase, appName)
-	if err := os.MkdirAll(dir, ExportDirPerm); err != nil {
-		return fmt.Errorf("create export dir %s: %w", dir, err)
+	root, err := fsutil.OpenCanonicalRoot(volumesBase)
+	if err != nil {
+		return fmt.Errorf("open export runtime root: %w", err)
 	}
-	// MkdirAll applies the umask, and an existing directory keeps its old mode,
-	// so set it explicitly.
-	if err := os.Chmod(dir, ExportDirPerm); err != nil {
-		return fmt.Errorf("chmod export dir %s: %w", dir, err)
+	defer root.Close()
+	dir, _, err := fsutil.RootedParent(root, "export/"+appName+"/.artifact", true)
+	if err != nil {
+		return fmt.Errorf("prepare export dir: %w", err)
+	}
+	defer dir.Close()
+	f, err := dir.Open(".")
+	if err != nil {
+		return fmt.Errorf("generator export: %w", err)
+	}
+	defer f.Close()
+	if err := f.Chmod(ExportDirPerm); err != nil {
+		return fmt.Errorf("set export permissions: %w", err)
 	}
 	return nil
 }

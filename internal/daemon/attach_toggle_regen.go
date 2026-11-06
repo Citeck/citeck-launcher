@@ -57,7 +57,14 @@ func regenOnAttachToggle(rt *namespace.Runtime, name string) bool {
 // memory-relief recipe (`citeck stop onlyoffice attorneys ecom …`), where each
 // toggle after the first finds the previous one still regenerating.
 func (d *Daemon) regenAfterAttachToggleAsync(app, action string) {
+	captured := d.active()
 	go func() {
+		d.targetMu.RLock()
+		defer d.targetMu.RUnlock()
+		if !sameActiveTarget(captured, d.active()) {
+			slog.Warn("Attach-toggle regeneration skipped: target changed")
+			return
+		}
 		if !d.longOp.TryLock(longOpUpdatePass) {
 			//nolint:gosec // G706: app is validated by validateAppName and gated to the runtime's GatingApps set; action is a caller literal
 			slog.Warn("Attach-toggle regeneration skipped: "+d.longOp.Holder().busyEnglish()+

@@ -32,6 +32,9 @@ func isJSONFile(filename string) bool { return strings.HasSuffix(strings.ToLower
 // MakeFileEdit computes the stored delta from the generated template to the
 // user's edited content.
 func MakeFileEdit(filename string, template, edited []byte) (FileEdit, error) {
+	if isStructuralFile(filename) && (multipleYAMLDocuments(template) || multipleYAMLDocuments(edited)) {
+		return textualEdit(template, edited)
+	}
 	if isStructuralFile(filename) {
 		bt, err := decodeStructural(template)
 		if err != nil {
@@ -68,7 +71,7 @@ func ApplyFileEdit(filename string, edit FileEdit, template, current []byte) ([]
 	switch edit.Format {
 	case "structural":
 		if _, err := decodeStructural(template); err != nil {
-			return current, nil // template no longer parses → keep current
+			return keepCurrentFile(current) // template no longer parses → keep current
 		}
 		var patch any
 		if err := json.Unmarshal(edit.Payload, &patch); err != nil {
@@ -92,12 +95,12 @@ func ApplyFileEdit(filename string, edit FileEdit, template, current []byte) ([]
 		result, applied := dmp.PatchApply(patches, string(template))
 		for _, ok := range applied {
 			if !ok {
-				return current, nil // any failed hunk → keep current (sticky, no markers)
+				return keepCurrentFile(current) // any failed hunk → keep current (sticky, no markers)
 			}
 		}
 		return []byte(result), nil
 	default:
-		return current, nil
+		return keepCurrentFile(current)
 	}
 }
 
@@ -119,7 +122,7 @@ func decodeStructural(data []byte) (map[string]any, error) {
 func applyStructuralJSON(template []byte, patch any, current []byte) ([]byte, error) {
 	bt, err := decodeStructural(template)
 	if err != nil {
-		return current, nil
+		return keepCurrentFile(current)
 	}
 	merged := ApplyTree(bt, patch)
 	raw, err := json.MarshalIndent(merged, "", "  ")
@@ -157,5 +160,26 @@ func normalizeYaml(v any) any {
 		return out
 	default:
 		return v
+	}
+}
+
+func keepCurrentFile(current []byte) ([]byte, error) {
+	if current == nil {
+		return nil, fmt.Errorf("file edit requires current content, but current is unavailable; disk and override retained")
+	}
+	return current, nil
+}
+
+func multipleYAMLDocuments(b []byte) bool {
+	d := yaml.NewDecoder(bytes.NewReader(b))
+	for n := 0; ; n++ {
+		var node yaml.Node
+		err := d.Decode(&node)
+		if err != nil {
+			return false
+		}
+		if n > 0 {
+			return true
+		}
 	}
 }

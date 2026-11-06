@@ -2,137 +2,139 @@ package daemon
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
-	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/citeck/citeck-launcher/internal/fsutil"
 	"github.com/citeck/citeck-launcher/internal/namespace"
 )
 
-// Runtime bind-mount file materialization. writeRuntimeFiles is the single
-// source of truth for everything under a namespace's rtfiles tree — the
-// generator owns the content; nothing else writes into this directory.
-
-// prepareDestPath handles the pre-write checks for a single runtime file:
-//   - If the path is a directory (Docker auto-created it), remove it so we can
-//     write a regular file in its place.
-//   - If the path is an existing regular file with the same size and identical
-//     contents, return skip=true so the caller can skip the write (avoids
-//     touching the mtime and keeps the container deployment hash stable).
-//
-// destPath is always filepath.Join(baseDir, relPath) where baseDir is the
-// trusted namespace runtime directory — the path is not user-supplied.
-func prepareDestPath(destPath string, content []byte) (skip bool, err error) {
-	fi, statErr := os.Stat(destPath)
-	if statErr != nil {
-		return false, nil // path does not exist yet — proceed with write
+func runtimeFileMode(name string) os.FileMode {
+	if strings.HasSuffix(name, ".sh") {
+		return 0o755
 	}
-	if fi.IsDir() {
-		// Case 1: Docker auto-created a dir instead of a file; remove it.
-		if err := os.RemoveAll(destPath); err != nil {
-			return false, fmt.Errorf("remove dir at runtime file path: %w", err)
+	return 0o644
+}
+
+// prepareDestPath operates on a pinned parent, not an absolute pathname.
+// Comparison is bounded by the known generated content length. Chmod uses the
+// opened descriptor, so a replacement symlink cannot redirect it.
+func prepareDestPath(parent *os.Root, leaf string, content []byte) (bool, error) {
+	info, err := parent.Lstat(leaf)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("runtime files: %w", err)
+	}
+	if info.IsDir() {
+		if operationErr := parent.RemoveAll(leaf); operationErr != nil {
+			return false, fmt.Errorf("runtime files: %w", operationErr)
 		}
 		return false, nil
 	}
-	// Case 2: same size — compare bytes, skip if unchanged.
-	if !fi.Mode().IsRegular() || int64(len(content)) != fi.Size() {
+	f, err := fsutil.OpenRegularRooted(parent, leaf)
+	if err != nil {
+		return false, fmt.Errorf("open generated file: %w", err)
+	}
+	defer f.Close()
+	info, err = f.Stat()
+	if err != nil {
+		return false, fmt.Errorf("runtime files: %w", err)
+	}
+	if info.Size() != int64(len(content)) {
 		return false, nil
 	}
-	existing, readErr := os.ReadFile(destPath) //nolint:gosec // G304: destPath is filepath.Join(trusted baseDir, relPath)
-	if readErr != nil || !bytes.Equal(existing, content) {
+	b, err := readKnownFile(f, int64(len(content)))
+	if err != nil {
+		return false, err
+	}
+	if !bytes.Equal(b, content) {
 		return false, nil
 	}
-	// Before skipping, make sure the mode still matches what we'd write —
-	// a .sh that somehow lost its executable bit (umask change, prior
-	// launcher version bug, manual edit) would otherwise never recover,
-	// since we'd never rewrite the file.
-	wantPerm := os.FileMode(0o644)
-	if strings.HasSuffix(destPath, ".sh") {
-		wantPerm = 0o755
-	}
-	if fi.Mode().Perm() != wantPerm {
-		_ = os.Chmod(destPath, wantPerm)
+	if info.Mode().Perm() != runtimeFileMode(leaf) {
+		if operationErr := f.Chmod(runtimeFileMode(leaf)); operationErr != nil {
+			return false, fmt.Errorf("restore generated file mode: %w", operationErr)
+		}
 	}
 	return true, nil
 }
 
-// writeRuntimeFiles applies the generator's file map (the full set of
-// files any app can bind-mount) to disk under baseDir. Single source of
-// truth — nothing else writes into this directory tree. Handles three
-// edge cases that the naïve loop-and-WriteFile version did not:
-//
-//  1. A host path exists as an EMPTY DIRECTORY where the container
-//     expects a file. Docker auto-creates a directory whenever it needs
-//     to bind-mount a path that doesn't exist on the host; if postgres
-//     was recreated while its config was missing, we end up with
-//     /opt/citeck/data/runtime/.../postgres/postgresql.conf as a dir
-//     and postgres chokes with "configuration file contains errors".
-//  2. Content is identical — skip the atomic-rename dance entirely, so
-//     unchanged files don't get a new mtime each regenerate (preserves
-//     the container deployment hash so Docker doesn't pointlessly
-//     recreate containers whose files didn't really change).
-//  3. Parent directory doesn't exist yet — MkdirAll first.
-//
-// Shell scripts (.sh) are written 0755, everything else 0644. The optional
-// `edited` map (keys: "<app>/<rel-path>", no leading "./") flags files whose
-// on-disk content was modified by the user through the Web UI; those entries
-// are skipped so user edits survive reload/regenerate. Passing nil disables
-// the skip behavior (initial materialization paths where the user-edit
-// set has not yet been restored use nil).
-func writeRuntimeFiles(baseDir string, files map[string][]byte, edited map[string]bool) {
-	for filePath, content := range files {
-		if edited[filePath] {
-			slog.Debug("Skipping user-edited file", "path", filePath)
+// writeRuntimeFiles returns materialization errors before definitions or hashes
+// can be handed to Runtime. Already written other files need not be rolled back.
+func writeRuntimeFiles(base string, files map[string][]byte, edited map[string]bool) error {
+	if operationErr := os.MkdirAll(base, 0o755); operationErr != nil { //nolint:gosec // G301: runtime bind directories must be accessible to container users.
+		return fmt.Errorf("runtime files: %w", operationErr)
+	}
+	root, err := fsutil.OpenCanonicalRoot(base)
+	if err != nil {
+		return fmt.Errorf("runtime files: %w", err)
+	}
+	defer root.Close()
+	keys := make([]string, 0, len(files))
+	for k := range files {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if edited[key] {
 			continue
 		}
-		destPath := filepath.Join(baseDir, filePath)
-		skip, prepErr := prepareDestPath(destPath, content)
-		if prepErr != nil {
-			slog.Error("Failed to remove stale dir at file path", "path", destPath, "err", prepErr)
-			continue
+		parent, leaf, e := fsutil.RootedParent(root, key, true)
+		if e != nil {
+			return fmt.Errorf("materialize %s: %w", key, e)
 		}
-		if skip {
-			continue
+		skip, e := prepareDestPath(parent, leaf, files[key])
+		if e == nil && !skip {
+			e = fsutil.AtomicWriteRooted(parent, leaf, files[key], runtimeFileMode(leaf))
 		}
-		if mkdirErr := os.MkdirAll(filepath.Dir(destPath), 0o755); mkdirErr != nil { //nolint:gosec // G301: dirs need 0o755 for Docker bind-mount access
-			slog.Error("Failed to create dir for generated file", "path", destPath, "err", mkdirErr)
-			continue
-		}
-		perm := os.FileMode(0o644)
-		if strings.HasSuffix(filePath, ".sh") {
-			perm = 0o755
-		}
-		if writeErr := fsutil.AtomicWriteFile(destPath, content, perm); writeErr != nil {
-			slog.Error("Failed to write generated file", "path", destPath, "err", writeErr)
-			continue
-		}
-		// fsutil.AtomicWriteFile respects umask for the temp file; re-chmod
-		// to the exact perm we want (matters for .sh which need 0755).
-		if chmodErr := os.Chmod(destPath, perm); chmodErr != nil {
-			slog.Warn("Failed to chmod generated file", "path", destPath, "err", chmodErr)
+		_ = parent.Close()
+		if e != nil {
+			return fmt.Errorf("materialize %s: %w", key, e)
 		}
 	}
+	return nil
 }
 
-// readDiskContent reads on-disk content for the given file-edit keys. Supplies
-// the generator's file-merge step with the YAML comment source / textual
-// conflict fallback. Missing/unreadable files are skipped — the generator then
-// merges against the template only.
-func readDiskContent(volumesBase string, edits map[string]namespace.FileEdit) map[string][]byte {
-	if len(edits) == 0 {
-		return nil
-	}
+// Missing, unsafe and oversized overlays stay ABSENT, distinct from a present
+// zero-byte document. Merge may replay the persisted delta without current;
+// when a conflict requires current it returns an error, preserving disk+edit.
+func readDiskContent(base string, edits map[string]namespace.FileEdit) map[string][]byte {
 	out := make(map[string][]byte, len(edits))
-	for k := range edits {
-		abs := filepath.Join(volumesBase, k)
-		data, err := os.ReadFile(abs) //nolint:gosec // G304: key is constrained to volumesBase by the original write
-		if err != nil {
+	if len(edits) == 0 {
+		return out
+	}
+	root, err := fsutil.OpenCanonicalRoot(base)
+	if err != nil {
+		slog.Warn("Runtime overlays unavailable", "err", err)
+		return out
+	}
+	defer root.Close()
+	for key := range edits {
+		parent, leaf, e := fsutil.RootedParent(root, key, false)
+		if e != nil {
+			slog.Warn("Runtime overlay unavailable", "key", key, "err", e)
 			continue
 		}
-		out[k] = data
+		b, e := fsutil.ReadRooted(parent, leaf, 1<<20)
+		_ = parent.Close()
+		if e != nil {
+			slog.Warn("Runtime overlay unavailable", "key", key, "err", e)
+			continue
+		}
+		out[key] = b
 	}
 	return out
+}
+func readKnownFile(f *os.File, n int64) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(f, n+1))
+	if err != nil {
+		return nil, fmt.Errorf("read generated comparison: %w", err)
+	}
+	return data, nil
 }

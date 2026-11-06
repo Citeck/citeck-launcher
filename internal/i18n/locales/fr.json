@@ -624,5 +624,11 @@
   "features.disabled.stopped": "Module expérimental {id} désactivé — ses conteneurs ({apps}) seront exclus du prochain `citeck start` ; leurs volumes de données sont conservés",
   "snapshot.bundleMinimum": "L’instantané {name} nécessite le bundle {minimum} ou ultérieur ; version sélectionnée : {current}.",
   "snapshot.bundleVersionUnknown": "L’instantané {name} nécessite le bundle {minimum} ou ultérieur. Sélectionnez une version précise avant de le restaurer.",
-  "snapshot.bundleMinimumInvalid": "L’instantané {name} a une version minimale de bundle non valide : {minimum}."
+  "snapshot.bundleMinimumInvalid": "L’instantané {name} a une version minimale de bundle non valide : {minimum}.",
+  "mcp.oauth.browser.title": "Connexion à Launcher",
+  "mcp.oauth.browser.waiting": "En attente de la décision du propriétaire de Launcher…",
+  "mcp.oauth.browser.unverified": "Nom du client non vérifié",
+  "mcp.oauth.browser.instruction": "Ouvrez les paramètres de Launcher → Accès MCP. Comparez le code de demande et autorisez ou refusez explicitement cette connexion. Ce navigateur ne peut pas approuver l’accès.",
+  "mcp.oauth.browser.correlation": "Code de demande",
+  "mcp.oauth.browser.terminal": "Cette demande de connexion est terminée ou inaccessible. Lancez une nouvelle connexion depuis votre client."
 }

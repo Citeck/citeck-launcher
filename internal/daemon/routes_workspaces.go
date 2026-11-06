@@ -480,6 +480,14 @@ func (d *Daemon) handleDeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 //     or the load fails, daemon falls back to a clean "no namespace" state
 //     and the UI shows Welcome with the namespace picker.
 func (d *Daemon) SwitchWorkspace(wsID string) error {
+	if !d.targetMu.TryLock() {
+		return errWorkspaceBusy
+	}
+	defer d.targetMu.Unlock()
+	return d.switchWorkspace(wsID)
+}
+
+func (d *Daemon) switchWorkspace(wsID string) error {
 	if wsID == d.activeWorkspaceID() {
 		return nil // no-op
 	}
@@ -693,7 +701,11 @@ func (d *Daemon) handleActivateWorkspace(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "invalid workspace id")
 		return
 	}
-	if err := d.SwitchWorkspace(id); err != nil {
+	switchFn := d.SwitchWorkspace
+	if held, _ := r.Context().Value(targetLockKey{}).(bool); held {
+		switchFn = d.switchWorkspace
+	}
+	if err := switchFn(id); err != nil {
 		if errors.Is(err, errWorkspaceNotFound) {
 			writeErrorCode(w, http.StatusNotFound, api.ErrCodeWorkspaceNotFound, err.Error())
 			return

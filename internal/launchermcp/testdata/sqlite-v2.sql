@@ -1,0 +1,34 @@
+PRAGMA user_version=1;
+CREATE TABLE mcp_meta(id INTEGER PRIMARY KEY CHECK(id=1), identity TEXT NOT NULL, revision INTEGER NOT NULL, receipt TEXT NOT NULL, confirmation INTEGER NOT NULL DEFAULT 0, phase TEXT NOT NULL DEFAULT 'provisional', fingerprint TEXT NOT NULL DEFAULT '');
+CREATE TABLE mcp_settings(id INTEGER PRIMARY KEY CHECK(id=1), enabled INTEGER NOT NULL CHECK(enabled IN(0,1)), port INTEGER NOT NULL CHECK(port BETWEEN 1024 AND 65535), epoch INTEGER NOT NULL);
+CREATE TABLE mcp_root(id INTEGER PRIMARY KEY CHECK(id=1), key BLOB NOT NULL CHECK(length(key)=32));
+CREATE TABLE oauth_clients(id TEXT PRIMARY KEY, redirect TEXT NOT NULL, name TEXT NOT NULL, metadata BLOB NOT NULL CHECK(length(metadata)<=24576), expiry INTEGER NOT NULL, redirects TEXT NOT NULL DEFAULT '[]', created INTEGER NOT NULL DEFAULT 1, epoch INTEGER NOT NULL);
+CREATE TABLE oauth_grants(id TEXT PRIMARY KEY, client TEXT NOT NULL REFERENCES oauth_clients(id), resource TEXT NOT NULL, role TEXT NOT NULL CHECK(role IN('observer','developer')), approved INTEGER NOT NULL, deadline INTEGER NOT NULL CHECK(deadline>approved), epoch INTEGER NOT NULL, revoked INTEGER NOT NULL DEFAULT 0, revoked_at INTEGER, last_used INTEGER, credential_issued_at INTEGER, lifecycle TEXT NOT NULL CHECK(lifecycle IN('pending','code','issued','terminal','unknown')), reserved INTEGER NOT NULL CHECK(reserved IN(0,1)), pending_expiry INTEGER NOT NULL, metadata BLOB NOT NULL DEFAULT X'' CHECK(length(metadata)<=2048));
+CREATE INDEX grants_client_deadline ON oauth_grants(client,deadline);
+CREATE INDEX grants_revoked ON oauth_grants(revoked,reserved);
+CREATE INDEX grants_expiry ON oauth_grants(deadline);
+CREATE INDEX grants_lifecycle ON oauth_grants(lifecycle,pending_expiry);
+CREATE TABLE oauth_codes(signature TEXT PRIMARY KEY CHECK(length(signature) BETWEEN 32 AND 128), grant_id TEXT NOT NULL UNIQUE REFERENCES oauth_grants(id) ON DELETE CASCADE, expiry INTEGER NOT NULL CHECK(typeof(expiry)='integer' AND expiry>0), active INTEGER NOT NULL CHECK(active IN(0,1)), redirect TEXT NOT NULL);
+CREATE INDEX codes_expiry ON oauth_codes(expiry);
+CREATE TABLE oauth_pkce(signature TEXT PRIMARY KEY REFERENCES oauth_codes(signature) ON DELETE CASCADE, grant_id TEXT NOT NULL REFERENCES oauth_grants(id) ON DELETE CASCADE, expiry INTEGER NOT NULL CHECK(typeof(expiry)='integer' AND expiry>0), challenge TEXT NOT NULL, method TEXT NOT NULL CHECK(method='S256'));
+CREATE TABLE oauth_access(signature TEXT PRIMARY KEY CHECK(length(signature) BETWEEN 32 AND 128), grant_id TEXT NOT NULL REFERENCES oauth_grants(id) ON DELETE CASCADE, expiry INTEGER NOT NULL CHECK(typeof(expiry)='integer' AND expiry>0), active INTEGER NOT NULL CHECK(active IN(0,1)));
+CREATE INDEX access_grant ON oauth_access(grant_id,expiry);
+CREATE INDEX access_expiry ON oauth_access(expiry);
+CREATE TABLE oauth_refresh_current(signature TEXT PRIMARY KEY CHECK(length(signature) BETWEEN 32 AND 128), grant_id TEXT NOT NULL UNIQUE REFERENCES oauth_grants(id) ON DELETE CASCADE, expiry INTEGER NOT NULL CHECK(typeof(expiry)='integer' AND expiry>0));
+CREATE TABLE oauth_refresh_used(signature TEXT PRIMARY KEY CHECK(length(signature) BETWEEN 32 AND 128), grant_id TEXT NOT NULL REFERENCES oauth_grants(id) ON DELETE CASCADE, expiry INTEGER NOT NULL CHECK(typeof(expiry)='integer' AND expiry>0), CHECK(length(CAST(signature AS BLOB))+length(CAST(grant_id AS BLOB))+16<=192));
+CREATE INDEX used_grant ON oauth_refresh_used(grant_id);
+CREATE TABLE manual_tokens(id TEXT PRIMARY KEY CHECK(length(id) BETWEEN 1 AND 128), name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 100), hash BLOB NOT NULL UNIQUE CHECK(length(hash)=32), role TEXT NOT NULL CHECK(role IN('observer','developer')), created INTEGER NOT NULL, expiry INTEGER, last_used INTEGER, revoked_at INTEGER);
+CREATE TRIGGER family_quota BEFORE INSERT ON oauth_grants WHEN NEW.reserved=1 AND (SELECT count(*) FROM oauth_grants WHERE reserved=1)>=16 BEGIN SELECT RAISE(ABORT,'family quota'); END;
+CREATE TRIGGER grant_quota BEFORE INSERT ON oauth_grants WHEN (SELECT count(*) FROM oauth_grants)>=1024 BEGIN SELECT RAISE(ABORT,'grant quota'); END;
+CREATE TRIGGER client_quota BEFORE INSERT ON oauth_clients WHEN (SELECT count(*) FROM oauth_clients)>=256 BEGIN SELECT RAISE(ABORT,'client quota'); END;
+CREATE TRIGGER manual_quota BEFORE INSERT ON manual_tokens WHEN (SELECT count(*) FROM manual_tokens)>=1000 BEGIN SELECT RAISE(ABORT,'manual quota'); END;
+CREATE TRIGGER used_quota BEFORE INSERT ON oauth_refresh_used WHEN (SELECT count(*) FROM oauth_refresh_used WHERE grant_id=NEW.grant_id)>=16384 BEGIN SELECT RAISE(ABORT,'history quota'); END;
+-- Rotation deactivates the prior access rows; retained legacy history must
+-- never prevent an existing family from refreshing. Used-refresh quota bounds it.
+CREATE TRIGGER access_quota BEFORE INSERT ON oauth_access WHEN NEW.active=1 AND (SELECT count(*) FROM oauth_access WHERE grant_id=NEW.grant_id AND active=1)>=252 BEGIN SELECT RAISE(ABORT,'access quota'); END;
+CREATE TABLE oauth_pending(id TEXT PRIMARY KEY CHECK(length(id)=64), client TEXT NOT NULL REFERENCES oauth_clients(id), request TEXT NOT NULL CHECK(length(request)<=8192), nonce_hash BLOB NOT NULL CHECK(length(nonce_hash)=32), csrf_hash BLOB NOT NULL CHECK(length(csrf_hash)=32), correlation TEXT NOT NULL CHECK(length(correlation)=8), created INTEGER NOT NULL, expiry INTEGER NOT NULL CHECK(expiry=created+300000000000), epoch INTEGER NOT NULL, resource TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN('pending','approved','denied','expired','cancelled','completed')), role TEXT CHECK(role IN('observer','developer')), approved INTEGER, CHECK((approved IS NULL AND role IS NULL) OR (approved>=created AND approved<expiry AND role IS NOT NULL)));
+CREATE INDEX pending_expiry ON oauth_pending(expiry);
+CREATE TRIGGER pending_quota BEFORE INSERT ON oauth_pending WHEN (SELECT count(*) FROM oauth_pending)>=256 OR (SELECT count(*) FROM oauth_pending WHERE status IN('pending','approved'))+(SELECT count(*) FROM oauth_grants WHERE reserved=1)>=16 BEGIN SELECT RAISE(ABORT,'pending quota'); END;
+DROP TRIGGER family_quota;
+CREATE TRIGGER family_quota BEFORE INSERT ON oauth_grants WHEN NEW.reserved=1 AND (SELECT count(*) FROM oauth_grants WHERE reserved=1)+(SELECT count(*) FROM oauth_pending WHERE status IN('pending','approved'))>=16 BEGIN SELECT RAISE(ABORT,'family quota'); END;
+PRAGMA user_version=2;

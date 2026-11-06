@@ -2,8 +2,10 @@ package daemon
 
 import (
 	"bytes"
+	"github.com/citeck/citeck-launcher/internal/fsutil"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -11,7 +13,7 @@ import (
 func TestPrepareDestPath_NonExistent(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "does-not-exist", "file.txt")
-	skip, err := prepareDestPath(path, []byte("hi"))
+	skip, err := prepareDestPath(runtimeTestParent(t, dir, path), filepath.Base(path), []byte("hi"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -26,7 +28,7 @@ func TestPrepareDestPath_DirAtFilePath_RemovesAndAllowsWrite(t *testing.T) {
 	if err := os.MkdirAll(path, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	skip, err := prepareDestPath(path, []byte("content"))
+	skip, err := prepareDestPath(runtimeTestParent(t, dir, path), filepath.Base(path), []byte("content"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -45,7 +47,7 @@ func TestPrepareDestPath_SameContent_Skips(t *testing.T) {
 	if err := os.WriteFile(path, content, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	skip, err := prepareDestPath(path, content)
+	skip, err := prepareDestPath(runtimeTestParent(t, dir, path), filepath.Base(path), content)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -65,7 +67,7 @@ func TestPrepareDestPath_SameContentWrongPerm_RestoresExecutableBit(t *testing.T
 	if err := os.WriteFile(path, content, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	skip, err := prepareDestPath(path, content)
+	skip, err := prepareDestPath(runtimeTestParent(t, dir, path), filepath.Base(path), content)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -88,7 +90,7 @@ func TestPrepareDestPath_DifferentContent_DoesNotSkip(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Same size, different bytes — must NOT skip.
-	skip, err := prepareDestPath(path, []byte("new"))
+	skip, err := prepareDestPath(runtimeTestParent(t, dir, path), filepath.Base(path), []byte("new"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -197,4 +199,23 @@ func TestWriteRuntimeFiles_SkipsUnchangedPreservesMtime(t *testing.T) {
 	if !fi.ModTime().Equal(origFi.ModTime()) {
 		t.Errorf("mtime changed on no-op write: old=%v new=%v", origFi.ModTime(), fi.ModTime())
 	}
+}
+
+func runtimeTestParent(t *testing.T, dir, path string) *os.Root {
+	t.Helper()
+	root, err := fsutil.OpenCanonicalRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	rel, err := filepath.Rel(dir, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent, _, err := fsutil.RootedParent(root, strings.ReplaceAll(rel, "\\", "/"), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = parent.Close() })
+	return parent
 }

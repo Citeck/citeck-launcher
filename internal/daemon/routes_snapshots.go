@@ -778,7 +778,7 @@ func validateSnapshotURL(rawURL string) error {
 	}
 
 	// Resolve hostname to IPs and check each
-	ips, err := net.LookupHost(host)
+	ips, err := net.LookupHost(host) //nolint:gosec // G704: this is the SSRF guard itself; every resolved address is checked below.
 	if err != nil {
 		return fmt.Errorf("DNS resolution failed: %w", err)
 	}

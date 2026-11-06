@@ -136,6 +136,7 @@ func Start(opts StartOptions) error {
 		return err
 	}
 
+	d.initMCP()
 	socketMux := d.installRealRoutes(boot)
 	readyURL := d.startWebUI(socketMux, d.active().nsConfig)
 
@@ -444,12 +445,12 @@ func loadEffectiveDaemonConfig(opts StartOptions) config.DaemonConfig {
 // guardSingleDaemonInstance refuses to start when another daemon already
 // listens on the Unix socket; a stale (non-answering) socket file is removed.
 func guardSingleDaemonInstance(socketPath string) error {
-	if conn, dialErr := net.DialTimeout("unix", socketPath, 2*time.Second); dialErr == nil {
+	if conn, dialErr := net.DialTimeout("unix", socketPath, 2*time.Second); dialErr == nil { //nolint:gosec // G704: configured local Unix socket only; no network URL or MCP input.
 		_ = conn.Close()
 		return fmt.Errorf("another daemon is already running (socket %s is active)", socketPath)
 	}
 	// Socket exists but nobody listening — stale, safe to remove
-	_ = os.Remove(socketPath)
+	_ = os.Remove(socketPath) //nolint:gosec // G703: same local boot socket, not a request path.
 	return nil
 }
 
@@ -709,7 +710,9 @@ func (d *Daemon) installRealRoutes(boot *bootSocket) *http.ServeMux {
 // A free function because the chain is wrapped around the boot socket's
 // handler switch before any Daemon exists.
 func unixHandlerChain(mux http.Handler) http.Handler {
-	return RecoveryMiddleware(LoggingMiddleware(mux))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		RecoveryMiddleware(LoggingMiddleware(mux)).ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), localTransportKey{}, true)))
+	})
 }
 
 // serverTCPHandler builds the middleware chain for the server-mode TCP

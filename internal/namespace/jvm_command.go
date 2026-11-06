@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/citeck/citeck-launcher/internal/fsutil"
 	"github.com/citeck/citeck-launcher/internal/jvmattach"
 )
 
@@ -86,12 +87,27 @@ func (r *Runtime) HeapDump(ctx context.Context, appName string, now time.Time) (
 		return "", 0, dirErr
 	}
 
+	root, rootErr := fsutil.OpenCanonicalRoot(r.volumesBase)
+	if rootErr != nil {
+		return "", 0, fmt.Errorf("open heap runtime root: %w", rootErr)
+	}
+	defer root.Close()
+	dir, _, dirErr := fsutil.RootedParent(root, "export/"+appName+"/.artifact", false)
+	if dirErr != nil {
+		return "", 0, fmt.Errorf("jvm command: %w", dirErr)
+	}
+	defer dir.Close()
 	stamp := now.UTC().Format(heapDumpTimeFormat)
 	args := []string{"-gz=1"}
 	file = fmt.Sprintf("%s-%s.hprof.gz", appName, stamp)
 	if !SupportsGzipHeapDump(jvmMajor) {
 		args = nil
 		file = fmt.Sprintf("%s-%s.hprof", appName, stamp)
+	}
+	if _, e := dir.Lstat(file); e == nil {
+		return "", 0, errors.New("a heap dump with this name already exists; source was not overwritten")
+	} else if !errors.Is(e, os.ErrNotExist) {
+		return "", 0, fmt.Errorf("jvm command: %w", e)
 	}
 	out, cmdErr := r.JVMCommand(ctx, appName, "GC.heap_dump", append(args, ExportMountPath+"/"+file)...)
 	if cmdErr != nil {
@@ -101,7 +117,12 @@ func (r *Runtime) HeapDump(ctx context.Context, appName string, now time.Time) (
 	// and refuses to overwrite an existing file with an error it also delivers
 	// as ordinary output. So the file on disk is the verdict, not the text.
 	path := filepath.Join(ExportDirFor(r.volumesBase, appName), file)
-	info, statErr := os.Stat(path)
+	opened, statErr := fsutil.OpenRegularRooted(dir, file)
+	var info os.FileInfo
+	if statErr == nil {
+		defer opened.Close()
+		info, statErr = opened.Stat()
+	}
 	if statErr != nil {
 		return "", 0, fmt.Errorf("heap dump did not appear at %s: %s", path, truncateForLog(out))
 	}
@@ -154,16 +175,28 @@ func (r *Runtime) jvmTargetContainer(appName string) (containerID string, jvmMaj
 // bare VM.flags and drops the option, while "VM.flags -all" in a single slot
 // does what was asked.
 func (r *Runtime) attachJcmd(ctx context.Context, containerID, command string, args ...string) (string, error) {
+	return attachJcmdVia(ctx, containerID, command, args, r.attachHostCommand, r.runAttachInContainer)
+}
+
+// A host failure is fall-backable only before possible dispatch. Once a request
+// may have reached the JVM, an arbitrary action cannot safely be replayed.
+func attachJcmdVia(ctx context.Context, containerID, command string, args []string,
+	host, inContainer func(context.Context, string, string, ...string) (string, error),
+) (string, error) {
 	line := strings.TrimSpace(command + " " + strings.Join(args, " "))
 	if jvmattach.Supported {
-		out, err := r.attachHostCommand(ctx, containerID, "jcmd", line)
+		out, err := host(ctx, containerID, "jcmd", line)
 		if err == nil {
 			return out, nil
 		}
+		var dispatched *jvmattach.DispatchError
+		if errors.As(err, &dispatched) || ctx.Err() != nil {
+			return "", err
+		}
 		slog.Debug("Host attach command failed, trying the in-container client",
-			"container", containerID, "cmd", line, "err", err)
+			"container", containerID, "err", err)
 	}
-	return r.runAttachInContainer(ctx, containerID, "jcmd", line)
+	return inContainer(ctx, containerID, "jcmd", line)
 }
 
 // attachHostCommand runs one attach command against the JVM behind

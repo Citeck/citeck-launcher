@@ -33,6 +33,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/citeck/citeck-launcher/internal/fsutil"
 )
 
 // Attach protocol constants (hotspot/os/posix/attachListener_posix.cpp).
@@ -55,6 +57,17 @@ var (
 	// ErrNoJVM is returned by FindJVM when no JVM exists in the subtree.
 	ErrNoJVM = errors.New("no jvm found in process tree")
 )
+
+// DispatchError means command delivery may have begun. It must never trigger
+// a fallback/replay. Uncertain distinguishes a lost observation from an explicit
+// nonzero completion returned by the JVM.
+type DispatchError struct {
+	Err       error
+	Uncertain bool
+}
+
+func (e *DispatchError) Error() string { return e.Err.Error() }
+func (e *DispatchError) Unwrap() error { return e.Err }
 
 // Attacher performs dynamic attach against a JVM visible in this host's /proc,
 // including one running inside a container: /proc/<pid>/root reaches the
@@ -211,10 +224,11 @@ func (a *Attacher) exchange(ctx context.Context, sock, cmd string, args []string
 		return "", fmt.Errorf("connect to attach listener %s: %w", sock, err)
 	}
 	defer func() { _ = conn.Close() }()
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stop()
 
 	if deadline, ok := ctx.Deadline(); ok {
-		// Best effort: a missed deadline only costs us the ctx-less blocking
-		// read below, which the caller's own timeout still bounds.
+		// Best effort; cancellation also closes the connection above.
 		_ = conn.SetDeadline(deadline)
 	}
 
@@ -229,29 +243,51 @@ func (a *Attacher) exchange(ctx context.Context, sock, cmd string, args []string
 		}
 		req.WriteByte(0)
 	}
-	if _, writeErr := io.WriteString(conn, req.String()); writeErr != nil {
-		return "", fmt.Errorf("write attach request: %w", writeErr)
+	if writeErr := writeRequest(conn, req.String()); writeErr != nil {
+		return "", writeErr
 	}
 
-	raw, err := io.ReadAll(conn)
+	reader := io.Reader(conn)
+	budget := fsutil.DiagnosticOutputLimit(ctx)
+	if budget != nil {
+		reader = io.LimitReader(conn, int64(budget.Bytes+1))
+	}
+	raw, err := io.ReadAll(reader)
+	if budget != nil && len(raw) > budget.Bytes {
+		budget.Truncated.Store(true)
+		raw = raw[:budget.Bytes]
+	}
 	if err != nil {
-		return "", fmt.Errorf("read attach response: %w", err)
+		return "", &DispatchError{Err: fmt.Errorf("read attach response: %w", err), Uncertain: true}
 	}
 	return parseResponse(string(raw))
+}
+
+// Even a partial write can have reached the JVM. Do not infer replay safety
+// from the byte count or a transport error after calling Write.
+func writeRequest(w io.Writer, request string) error {
+	n, err := io.WriteString(w, request)
+	if err == nil && n != len(request) {
+		err = io.ErrShortWrite
+	}
+	if err != nil {
+		return &DispatchError{Err: fmt.Errorf("write attach request: %w", err), Uncertain: true}
+	}
+	return nil
 }
 
 // parseResponse splits the completion code from the payload.
 func parseResponse(raw string) (string, error) {
 	code, body, found := strings.Cut(raw, "\n")
 	if !found {
-		return "", fmt.Errorf("malformed attach response: %q", truncate(raw, 120))
+		return "", &DispatchError{Err: fmt.Errorf("malformed attach response: %q", truncate(raw, 120)), Uncertain: true}
 	}
 	rc, err := strconv.Atoi(strings.TrimSpace(code))
 	if err != nil {
-		return "", fmt.Errorf("malformed attach completion code %q", truncate(code, 40))
+		return "", &DispatchError{Err: fmt.Errorf("malformed attach completion code %q", truncate(code, 40)), Uncertain: true}
 	}
 	if rc != 0 {
-		return "", fmt.Errorf("attach command failed (code %d): %s", rc, truncate(strings.TrimSpace(body), 200))
+		return "", &DispatchError{Err: fmt.Errorf("attach command failed (code %d): %s", rc, truncate(strings.TrimSpace(body), 200))}
 	}
 	return body, nil
 }

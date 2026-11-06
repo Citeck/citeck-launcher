@@ -624,5 +624,11 @@
   "features.disabled.stopped": "実験的モジュール {id} を無効にしました。そのコンテナ（{apps}）は次回の `citeck start` から除外されます。データボリュームは残ります",
   "snapshot.bundleMinimum": "スナップショット {name} にはバンドル {minimum} 以降が必要です。選択中のバージョン：{current}。",
   "snapshot.bundleVersionUnknown": "スナップショット {name} にはバンドル {minimum} 以降が必要です。復元する前に具体的なバンドルバージョンを選択してください。",
-  "snapshot.bundleMinimumInvalid": "スナップショット {name} の最小バンドルバージョンが無効です：{minimum}。"
+  "snapshot.bundleMinimumInvalid": "スナップショット {name} の最小バンドルバージョンが無効です：{minimum}。",
+  "mcp.oauth.browser.title": "Launcher に接続",
+  "mcp.oauth.browser.waiting": "Launcher の所有者の判断を待っています…",
+  "mcp.oauth.browser.unverified": "未確認のクライアント名",
+  "mcp.oauth.browser.instruction": "Launcher の設定 → MCP アクセスを開き、リクエストコードを照合して、この接続を明示的に許可または拒否してください。このブラウザーではアクセスを承認できません。",
+  "mcp.oauth.browser.correlation": "リクエストコード",
+  "mcp.oauth.browser.terminal": "このログインリクエストは終了したか、アクセスできません。クライアントから再度ログインしてください。"
 }

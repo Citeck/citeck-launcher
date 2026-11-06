@@ -96,6 +96,11 @@ func (d *Daemon) handleListNamespaces(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *Daemon) handleDeleteNamespace(w http.ResponseWriter, r *http.Request) {
+	unpin, pinned := d.pinSelection(w, r)
+	if !pinned {
+		return
+	}
+	defer unpin()
 	nsID := r.PathValue("id")
 	if !validateID(nsID) {
 		writeError(w, http.StatusBadRequest, "invalid namespace id")
@@ -351,6 +356,11 @@ func (d *Daemon) resolveLatestBundleKey(wsID, repo string, offline bool) (string
 //     persist the selection in LauncherState.SelectedNs[wsID]. The new
 //     namespace is loaded in STOPPED state — the user clicks Start to run it.
 func (d *Daemon) handleActivateNamespace(w http.ResponseWriter, r *http.Request) {
+	unpin, pinned := d.pinSelection(w, r)
+	if !pinned {
+		return
+	}
+	defer unpin()
 	// Before requireDesktop: the lock says "the daemon is busy", which is true
 	// regardless of mode.
 	release, ok := d.tryLongOp(w, r, tolerateNothing)
@@ -448,6 +458,11 @@ func (d *Daemon) handleActivateNamespace(w http.ResponseWriter, r *http.Request)
 //
 // Refuses while the current namespace is not STOPPED (mirrors switch).
 func (d *Daemon) handleDeactivateNamespace(w http.ResponseWriter, r *http.Request) {
+	unpin, pinned := d.pinSelection(w, r)
+	if !pinned {
+		return
+	}
+	defer unpin()
 	_ = r
 	// Before requireDesktop, for the same reason as handleActivateNamespace.
 	release, ok := d.tryLongOp(w, r, tolerateNothing)
@@ -530,6 +545,11 @@ func (e *createNamespaceError) Error() string { return e.message }
 // handleCreateNamespace is thin HTTP glue: decode → form-validate → delegate
 // to the createNamespace service function → map typed errors to responses.
 func (d *Daemon) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
+	unpin, pinned := d.pinSelection(w, r)
+	if !pinned {
+		return
+	}
+	defer unpin()
 	var req api.NamespaceCreateDto
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")

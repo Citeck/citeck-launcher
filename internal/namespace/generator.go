@@ -305,7 +305,9 @@ func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secre
 	baselineFiles := make(map[string][]byte, len(ctx.Files))
 	maps.Copy(baselineFiles, ctx.Files)
 	if len(ctx.EditedFileEdits) > 0 {
-		applyFileEditsToFiles(ctx.Files, ctx.EditedFileEdits, ctx.DiskContent)
+		if err := applyFileEditsToFiles(ctx.Files, ctx.EditedFileEdits, ctx.DiskContent); err != nil {
+			return nil, err
+		}
 	}
 
 	// Fill VolumesContentHash for each app so the deployment hash changes
@@ -551,7 +553,7 @@ func sortedKeys(m map[string]string) []string {
 // template in `files`, in place. `disk` supplies the on-disk content used as the
 // YAML comment source and textual conflict fallback. Keys absent from `files`
 // (the template no longer emits that path) are skipped.
-func applyFileEditsToFiles(files map[string][]byte, edits map[string]FileEdit, disk map[string][]byte) {
+func applyFileEditsToFiles(files map[string][]byte, edits map[string]FileEdit, disk map[string][]byte) error {
 	for key, edit := range edits {
 		template, ok := files[key]
 		if !ok {
@@ -560,9 +562,9 @@ func applyFileEditsToFiles(files map[string][]byte, edits map[string]FileEdit, d
 		base := key[strings.LastIndex(key, "/")+1:]
 		merged, err := ApplyFileEdit(base, edit, template, disk[key])
 		if err != nil {
-			slog.Warn("Failed to apply file edit; keeping template", "key", key, "err", err)
-			continue
+			return fmt.Errorf("apply file edit %s: %w", key, err)
 		}
 		files[key] = merged
 	}
+	return nil
 }

@@ -14,6 +14,7 @@ import { useIsDesktop } from '../lib/daemonStatus'
 import { WorkspaceFormDialog } from '../components/WorkspaceFormDialog'
 import { WorkspaceConfigDialog } from '../components/WorkspaceConfigDialog'
 import { RegistryCredentialsDialog } from '../components/RegistryCredentialsDialog'
+import { MCPSettings } from '../components/MCPSettings'
 
 /**
  * /config — the launcher's Settings page.
@@ -53,6 +54,8 @@ export function Config() {
       {isDesktop && <WorkspaceSection />}
 
       <RegistrySection />
+
+      <MCPSettings />
 
       {/* Health checks */}
       {health && (

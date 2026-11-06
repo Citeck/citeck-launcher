@@ -228,3 +228,15 @@ invalid partial responses never append data or reset progress counters. A short
 chunked range remains a retryable incomplete transfer even when total size is
 unknown. Git URL diagnostic fields omit userinfo, query and fragment data;
 printable Git errors are sanitized while preserving their underlying identity.
+
+## Local MCP access
+
+The separate, default-off local MCP listener offers fixed Observer and Developer
+roles without exposing this full API. Configure it in global Settings over the
+trusted local transport; creating a token does not enable the listener. Compatible
+local clients can also Sign in using PKCE S256 and a separate trusted-owner
+approval. The public MCP listener never accepts that approval: only the existing
+Unix/desktop management API does. See
+[Local agent access (MCP)](mcp.md) for tools, target preconditions, trusted JVM
+code authority, connection lifetimes/revocation, server-only Unix approval,
+private diagnostic downloads and native-client/Lima URL limitations.

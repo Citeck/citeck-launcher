@@ -26,6 +26,7 @@ import (
 	"github.com/citeck/citeck-launcher/internal/deps/migrate"
 	"github.com/citeck/citeck-launcher/internal/docker"
 	"github.com/citeck/citeck-launcher/internal/fsutil"
+	"github.com/citeck/citeck-launcher/internal/launchermcp"
 	"github.com/citeck/citeck-launcher/internal/license"
 	"github.com/citeck/citeck-launcher/internal/namespace"
 	"github.com/citeck/citeck-launcher/internal/storage"
@@ -132,6 +133,13 @@ type activeNamespace struct {
 
 // Daemon is the main daemon server.
 type Daemon struct {
+	mcp          *launchermcp.Service
+	mcpStore     *launchermcp.Store
+	mcpInitError error
+	// targetMu pins active target independently of reloadMu: Stop can still run during reload.
+	targetMu  sync.RWMutex
+	appEditMu sync.Mutex
+
 	server        *http.Server
 	tcpServer     *http.Server
 	store         storage.Store
@@ -211,7 +219,8 @@ type Daemon struct {
 	// — silently doing nothing for the namespace that was actually clicked.
 	// Last click wins, which matches the queue's own rule that the pass starts
 	// after the folded clicks arrive and therefore satisfies them.
-	updatePendingNsID atomic.Pointer[string]
+	updatePendingNsID   atomic.Pointer[string]
+	updatePendingTarget atomic.Pointer[activeNamespace]
 	// updateInFlight is the user-facing "your click was accepted and work is
 	// happening" flag, surfaced as NamespaceDto.Updating. It is set
 	// SYNCHRONOUSLY in the request handler — before the 200 and before the
@@ -226,7 +235,8 @@ type Daemon struct {
 	// unrelated pass woke up and skipped. An empty/absent pin means "applies to
 	// whatever is active" — reachable only when no namespace config is resolved,
 	// since handleStartNamespace (the sole caller) always passes nsConfig.ID.
-	updateInFlightNsID atomic.Pointer[string]
+	updateInFlightNsID        atomic.Pointer[string]
+	updateInFlightWorkspaceID atomic.Pointer[string]
 	// updateLastFailure records why the last Update & Start pass did not happen,
 	// pinned to the namespace it was aimed at (same scoping rule as
 	// updateInFlightNsID). Surfaced as NamespaceDto.UpdateError; cleared when the
@@ -633,6 +643,9 @@ func (d *Daemon) shutdownServer() {
 }
 
 func (d *Daemon) doShutdownServer() {
+	if d.mcp != nil {
+		d.mcp.Close()
+	}
 	act := d.active()
 	// Phase 4: Drain HTTP connections with 10s timeout
 	httpCtx, httpCancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -710,6 +723,8 @@ func (d *Daemon) invokeReloadEx(forceGitPull, startNotRegen, refreshImages bool)
 //     so a routine reload doesn't hidden-re-pull unrelated apps.
 //
 // requireGitSync is true for explicit update actions; config-only reloads keep cached resolution.
+//
+//nolint:gocyclo // Materialize both generations before committing pins, detach intent or desired defs.
 func (d *Daemon) doReloadEx(forceGitPull, startNotRegenerate, refreshImages, requireGitSync bool) error {
 	// One consistent snapshot: nsConfig/runtime/workspaceConfig/systemSecrets/
 	// workspaceID/volumesBase all come from the same lock acquisition.
@@ -801,11 +816,6 @@ func (d *Daemon) doReloadEx(forceGitPull, startNotRegenerate, refreshImages, req
 	pins, seededPins := resolveDependencyPins(d.bgCtx, act.runtime.DependencyStates(),
 		dockerDependencyProbe{dc: depsDockerOf(act.dockerClient), volumesBase: act.volumesBase},
 		namespaceDependencies(nsCfg, resolveResult.Bundle, resolveResult.Workspace))
-	for id, st := range seededPins {
-		slog.Info("Dependency pin seeded on reload", "ns", nsID, "dependency", id,
-			"image", st.Image, "volumeGen", st.Gen())
-		act.runtime.SetDependencyState(id, st)
-	}
 
 	var genOpts namespace.GenerateOpts
 	genOpts.DependencyStates = pins
@@ -849,7 +859,6 @@ func (d *Daemon) doReloadEx(forceGitPull, startNotRegenerate, refreshImages, req
 		}
 	}
 	if newlyDetached {
-		act.runtime.SetManualStoppedApps(merged)
 		// Regenerate with the new detach set for the same reason the load path
 		// does: it is an input to generation, not just to the runtime.
 		genOpts.DetachedApps = merged
@@ -857,6 +866,15 @@ func (d *Daemon) doReloadEx(forceGitPull, startNotRegenerate, refreshImages, req
 		if genErr != nil {
 			return genErr
 		}
+	}
+	for id, st := range seededPins {
+		slog.Info("Dependency pin seeded on reload", "ns", nsID, "dependency", id,
+			"image", st.Image, "volumeGen", st.Gen())
+		act.runtime.SetDependencyState(id, st)
+	}
+
+	if newlyDetached {
+		act.runtime.SetManualStoppedApps(merged)
 	}
 	act.runtime.SetKnownApps(newApps.Known)
 	act.runtime.SetLastGenFiles(genResp.BaselineFiles)
@@ -1087,6 +1105,16 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 		d.handleAgentOperation(w, r, routes)
 	})
 
+	// MCP management is reachable only with Unix listener provenance, never TCP.
+	register("GET /api/v1/mcp", d.handleMCPStatus)
+	register("PUT /api/v1/mcp", d.handleMCPConfigure)
+	register("POST /api/v1/mcp/tokens", d.handleMCPTokenCreate)
+	register("DELETE /api/v1/mcp/tokens/{id}", d.handleMCPTokenRevoke)
+	register("GET /api/v1/mcp/oauth/pending", d.handleMCPOAuthPending)
+	register("POST /api/v1/mcp/oauth/pending/{id}/approve", d.handleMCPOAuthApprove)
+	register("POST /api/v1/mcp/oauth/pending/{id}/deny", d.handleMCPOAuthDeny)
+	register("GET /api/v1/mcp/oauth/connections", d.handleMCPOAuthConnections)
+	register("DELETE /api/v1/mcp/oauth/connections/{id}", d.handleMCPOAuthRevoke)
 	// Daemon
 	register("GET "+api.DaemonStatus, d.handleDaemonStatus)
 	register("PUT "+api.UIPrefs, d.handlePutUIPrefs)

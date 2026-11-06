@@ -6,9 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
-	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/citeck/citeck-launcher/internal/api"
@@ -17,6 +15,7 @@ import (
 	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/deps"
 	"github.com/citeck/citeck-launcher/internal/docker"
+	"github.com/citeck/citeck-launcher/internal/fsutil"
 	"github.com/citeck/citeck-launcher/internal/license"
 	"github.com/citeck/citeck-launcher/internal/namespace"
 	"github.com/citeck/citeck-launcher/internal/storage"
@@ -211,7 +210,9 @@ func generateAndWriteRuntimeFiles(
 	if err != nil {
 		return nil, fmt.Errorf("generate namespace %q: %w", nsCfg.ID, err)
 	}
-	writeRuntimeFiles(volumesBase, genResp.Files, edited)
+	if err := writeRuntimeFiles(volumesBase, genResp.Files, edited); err != nil {
+		return nil, fmt.Errorf("write runtime files: %w", err)
+	}
 	// Export dirs are not generated FILES, so writeRuntimeFiles never sees them.
 	// They must exist (and be writable by the container's user) before the
 	// container starts, or Docker creates the bind-mount source itself as root
@@ -256,31 +257,42 @@ func migrateLegacyAppPatches(st *namespace.NsPersistedState, gen []appdef.Applic
 
 // migrateLegacyFileEdits converts legacy edited-file flags (≤2.6) into per-file
 // deltas using the generated template and the on-disk content.
-func migrateLegacyFileEdits(st *namespace.NsPersistedState, genFiles map[string][]byte, volumesBase string) map[string]namespace.FileEdit {
+func migrateLegacyFileEdits(st *namespace.NsPersistedState, genFiles map[string][]byte, volumesBase string) (map[string]namespace.FileEdit, error) {
 	if st == nil || len(st.EditedFiles) == 0 {
-		return nil
+		return nil, nil
 	}
+	root, err := fsutil.OpenCanonicalRoot(volumesBase)
+	if err != nil {
+		return nil, fmt.Errorf("open legacy runtime overlays: %w", err)
+	}
+	defer root.Close()
 	out := map[string]namespace.FileEdit{}
 	for _, key := range st.EditedFiles {
+		if _, converted := st.EditedFileEdits[key]; converted {
+			continue
+		}
 		template, ok := genFiles[key]
 		if !ok {
-			continue
+			// There is no safe baseline for a file no longer generated. Refuse
+			// the handoff rather than forgetting its persisted legacy flag.
+			return nil, fmt.Errorf("legacy overlay %q has no generated baseline", key)
 		}
-		disk, err := os.ReadFile(filepath.Join(volumesBase, key)) //nolint:gosec // key validated when recorded
+		parent, leaf, err := fsutil.RootedParent(root, key, false)
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("open legacy overlay %q: %w", key, err)
 		}
-		base := key[strings.LastIndex(key, "/")+1:]
-		edit, err := namespace.MakeFileEdit(base, template, disk)
+		disk, err := fsutil.ReadRooted(parent, leaf, 1<<20)
+		_ = parent.Close()
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("read legacy overlay %q: %w", key, err)
+		}
+		edit, err := namespace.MakeFileEdit(leaf, template, disk)
+		if err != nil {
+			return nil, fmt.Errorf("convert legacy overlay %q: %w", key, err)
 		}
 		out[key] = edit
 	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
+	return out, nil
 }
 
 // dockerClientScoped reports whether dc is non-nil and already scoped to exactly
@@ -544,10 +556,12 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 	// before they are migrated below. Only set when no new-model edits exist but
 	// legacy flags do.
 	var legacySkip map[string]bool
-	if len(fileEdits) == 0 && persistedState != nil && len(persistedState.EditedFiles) > 0 {
+	if persistedState != nil && len(persistedState.EditedFiles) > 0 {
 		legacySkip = make(map[string]bool, len(persistedState.EditedFiles))
 		for _, p := range persistedState.EditedFiles {
-			legacySkip[p] = true
+			if _, converted := fileEdits[p]; !converted {
+				legacySkip[p] = true
+			}
 		}
 	}
 
@@ -567,7 +581,11 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 	// patch would double-apply whatever the (still-empty, at this point)
 	// EditedAppPatches already contributed to the effective set.
 	migratedAppPatches := migrateLegacyAppPatches(persistedState, genResp.BaselineApplications)
-	migratedFileEdits := migrateLegacyFileEdits(persistedState, genResp.BaselineFiles, volumesBase)
+	migratedFileEdits, migrationErr := migrateLegacyFileEdits(persistedState, genResp.BaselineFiles, volumesBase)
+	if migrationErr != nil {
+		closeOwnedDockerClient()
+		return nil, migrationErr
+	}
 	if len(migratedAppPatches) > 0 {
 		// First post-upgrade boot only: fold the migrated patches into genOpts
 		// and re-run Generate once so the effective defs + derived conf +
@@ -681,9 +699,12 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 		if appPatches == nil {
 			appPatches = migratedAppPatches
 		}
-		fEdits := persistedState.EditedFileEdits
-		if fEdits == nil {
-			fEdits = migratedFileEdits
+		fEdits := maps.Clone(persistedState.EditedFileEdits)
+		if len(migratedFileEdits) > 0 {
+			if fEdits == nil {
+				fEdits = map[string]namespace.FileEdit{}
+			}
+			maps.Copy(fEdits, migratedFileEdits)
 		}
 		runtime.RestoreEditedState(appPatches, fEdits)
 		runtime.RestoreRestartState(persistedState.RestartEvents, persistedState.RestartCounts)

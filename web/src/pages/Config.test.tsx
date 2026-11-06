@@ -15,6 +15,7 @@ import type { SecretMetaDto, WorkspaceDto } from '../lib/types'
 // calls the settings page makes.
 vi.mock('../lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../lib/api')>()),
+  getMCPStatus: vi.fn().mockResolvedValue({ enabled: false, port: 19380, listening: false, endpoint: 'http://127.0.0.1:19380/mcp', tokens: [] }),
   getHealth: vi.fn().mockResolvedValue({ healthy: true, checks: [] }),
   getRegistryBindings: vi.fn().mockResolvedValue({}),
   getMissingRegistryAuth: vi.fn().mockResolvedValue([]),

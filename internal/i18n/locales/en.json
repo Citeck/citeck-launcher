@@ -624,5 +624,11 @@
   "features.disabled.stopped": "Experimental module {id} switched off — its containers ({apps}) are left out of the next `citeck start`; their data volumes stay",
   "snapshot.bundleMinimum": "Snapshot {name} requires bundle {minimum} or newer; selected bundle: {current}.",
   "snapshot.bundleVersionUnknown": "Snapshot {name} requires bundle {minimum} or newer. Select a concrete bundle version before restoring it.",
-  "snapshot.bundleMinimumInvalid": "Snapshot {name} has an invalid minimum bundle version: {minimum}."
+  "snapshot.bundleMinimumInvalid": "Snapshot {name} has an invalid minimum bundle version: {minimum}.",
+  "mcp.oauth.browser.title": "Connect to Launcher",
+  "mcp.oauth.browser.waiting": "Waiting for the Launcher owner’s decision…",
+  "mcp.oauth.browser.unverified": "Unverified client name",
+  "mcp.oauth.browser.instruction": "Open Launcher Settings → MCP access. Match the request code and explicitly allow or deny this connection. This browser cannot approve access.",
+  "mcp.oauth.browser.correlation": "Request code",
+  "mcp.oauth.browser.terminal": "This sign-in request ended or could not be reached. Start a new sign in from your client."
 }

@@ -624,5 +624,11 @@
   "features.disabled.stopped": "Экспериментальный модуль {id} выключен — его контейнеры ({apps}) не войдут в следующий `citeck start`; тома с данными остаются",
   "snapshot.bundleMinimum": "Снапшот {name} требует бандл версии {minimum} или новее; выбранная версия: {current}.",
   "snapshot.bundleVersionUnknown": "Снапшот {name} требует бандл версии {minimum} или новее. Перед восстановлением выберите конкретную версию бандла.",
-  "snapshot.bundleMinimumInvalid": "У снапшота {name} некорректная минимальная версия бандла: {minimum}."
+  "snapshot.bundleMinimumInvalid": "У снапшота {name} некорректная минимальная версия бандла: {minimum}.",
+  "mcp.oauth.browser.title": "Подключение к Launcher",
+  "mcp.oauth.browser.waiting": "Ожидание решения владельца Launcher…",
+  "mcp.oauth.browser.unverified": "Непроверенное имя клиента",
+  "mcp.oauth.browser.instruction": "Откройте настройки Launcher → Доступ MCP. Сверьте код запроса и явно разрешите или отклоните подключение. Этот браузер не может одобрить доступ.",
+  "mcp.oauth.browser.correlation": "Код запроса",
+  "mcp.oauth.browser.terminal": "Запрос входа завершён или недоступен. Начните новый вход в своём клиенте."
 }

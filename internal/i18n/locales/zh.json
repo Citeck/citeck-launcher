@@ -624,5 +624,11 @@
   "features.disabled.stopped": "实验性模块 {id} 已关闭 — 其容器（{apps}）不会随下次 `citeck start` 启动；数据卷保留",
   "snapshot.bundleMinimum": "快照 {name} 要求版本为 {minimum} 或更新的包；当前所选版本：{current}。",
   "snapshot.bundleVersionUnknown": "快照 {name} 要求版本为 {minimum} 或更新的包。恢复前请选择具体的包版本。",
-  "snapshot.bundleMinimumInvalid": "快照 {name} 的最低包版本无效：{minimum}。"
+  "snapshot.bundleMinimumInvalid": "快照 {name} 的最低包版本无效：{minimum}。",
+  "mcp.oauth.browser.title": "连接到 Launcher",
+  "mcp.oauth.browser.waiting": "正在等待 Launcher 所有者的决定…",
+  "mcp.oauth.browser.unverified": "未经验证的客户端名称",
+  "mcp.oauth.browser.instruction": "打开 Launcher 设置 → MCP 访问。核对请求代码，并明确允许或拒绝此连接。此浏览器无法批准访问。",
+  "mcp.oauth.browser.correlation": "请求代码",
+  "mcp.oauth.browser.terminal": "此登录请求已结束或无法访问。请从客户端重新登录。"
 }

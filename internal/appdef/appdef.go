@@ -123,7 +123,8 @@ type AppResourcesDef struct {
 
 // LimitsDef defines resource limits (memory).
 type LimitsDef struct {
-	Memory string `json:"memory" yaml:"memory"`
+	Memory string  `json:"memory" yaml:"memory"`
+	CPU    float64 `json:"cpu,omitempty" yaml:"cpu,omitempty"`
 }
 
 // AppInitAction defines an action to run after container creation.
@@ -230,6 +231,9 @@ func (d *ApplicationDef) GetHashInput() string {
 	}
 	if d.Resources != nil {
 		fmt.Fprintf(&b, "mem=%s\n", d.Resources.Limits.Memory)
+		if d.Resources.Limits.CPU != 0 {
+			fmt.Fprintf(&b, "cpu=%g\n", d.Resources.Limits.CPU)
+		}
 	}
 	return b.String()
 }

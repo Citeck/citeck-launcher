@@ -4,11 +4,16 @@ import { Modal } from './Modal'
 
 // jsdom has no native <dialog> modal behaviour — stub the methods the hook calls.
 beforeEach(() => {
-  HTMLDialogElement.prototype.showModal = vi.fn()
-  HTMLDialogElement.prototype.close = vi.fn()
+  HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement) { this.open = true })
+  HTMLDialogElement.prototype.close = vi.fn(function (this: HTMLDialogElement) { this.open = false })
 })
 
 describe('Modal', () => {
+  it('names the native dialog from its visible title', () => {
+    render(<Modal open title="Create access token" onClose={() => {}}>Fields</Modal>)
+    expect(screen.getByRole('dialog', { name: 'Create access token' })).toHaveAttribute('aria-label', 'Create access token')
+  })
+
   it('portals the dialog to document.body so nested modals never nest <form>s', () => {
     // The real-world bug: Chromium resolves a nested submit button's form owner
     // to the OUTERMOST form. Portaling each dialog to <body> keeps every modal's

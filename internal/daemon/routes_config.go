@@ -315,6 +315,8 @@ func appDefsToStoppedApps(defs []appdef.ApplicationDef, runtime *namespace.Runti
 }
 
 func (d *Daemon) handleStartNamespace(w http.ResponseWriter, r *http.Request) {
+	unpin := d.pinActiveOperation(r)
+	defer unpin()
 	// tolerateLifecycleWork: a second click must FOLD into the single-slot
 	// queue (force OR-ed), which is the documented contract, not be refused at
 	// the HTTP layer — and that holds beside a synchronous reload too. Only a
@@ -404,10 +406,11 @@ func (d *Daemon) handleStartNamespace(w http.ResponseWriter, r *http.Request) {
 // the namespace it targeted. `at` (epoch ms) lets a client show each failure
 // exactly once instead of re-raising it on every refetch or remount.
 type updateFailure struct {
-	nsID string
-	msg  string
-	at   int64
-	git  *api.GitFailureDto
+	workspaceID string
+	nsID        string
+	msg         string
+	at          int64
+	git         *api.GitFailureDto
 }
 
 // recordUpdateFailure stores a failure/refusal for the namespace the pass was
@@ -415,7 +418,7 @@ type updateFailure struct {
 // updateInFlight (and its broadcast) is what prompts the client to refetch and
 // find it.
 func (d *Daemon) recordUpdateFailure(nsID, msg string) {
-	d.updateLastFailure.Store(&updateFailure{nsID: nsID, msg: msg, at: time.Now().UnixMilli()})
+	d.updateLastFailure.Store(&updateFailure{workspaceID: d.active().workspaceID, nsID: nsID, msg: msg, at: time.Now().UnixMilli()})
 }
 
 // updateFailureFor returns the recorded failure if it belongs to this namespace.
@@ -423,7 +426,7 @@ func (d *Daemon) recordUpdateFailure(nsID, msg string) {
 // pop up on an unrelated namespace.
 func (d *Daemon) updateFailureFor(nsCfg *namespace.Config) (msg string, at int64) {
 	f := d.updateLastFailure.Load()
-	if f == nil {
+	if f == nil || f.workspaceID != d.active().workspaceID {
 		return "", 0
 	}
 	if f.nsID != "" && nsCfg != nil && f.nsID != nsCfg.ID {
@@ -435,6 +438,9 @@ func (d *Daemon) updateFailureFor(nsCfg *namespace.Config) (msg string, at int64
 // updatingAppliesTo reports whether the in-flight update belongs to the given
 // namespace. An absent or empty pin means "applies to whatever is active".
 func (d *Daemon) updatingAppliesTo(nsCfg *namespace.Config) bool {
+	if ws := d.updateInFlightWorkspaceID.Load(); ws != nil && *ws != d.active().workspaceID {
+		return false
+	}
 	p := d.updateInFlightNsID.Load()
 	if p == nil || *p == "" || nsCfg == nil {
 		return true
@@ -495,8 +501,11 @@ func updateStartActionFor(st namespace.NsRuntimeStatus) updateStartAction {
 func (d *Daemon) setUpdateInFlight(v bool, nsID string) {
 	if v {
 		d.updateInFlightNsID.Store(&nsID)
+		ws := d.active().workspaceID
+		d.updateInFlightWorkspaceID.Store(&ws)
 	} else {
 		d.updateInFlightNsID.Store(nil)
+		d.updateInFlightWorkspaceID.Store(nil)
 	}
 	if d.updateInFlight.Swap(v) == v {
 		return // no transition; don't spam subscribers
@@ -547,6 +556,8 @@ func (d *Daemon) updateAndStartAsync(forceGitPull bool, nsID string, choices ...
 		d.updatePendingForce.Store(true)
 	}
 	d.updatePendingNsID.Store(&nsID)
+	captured := d.active()
+	d.updatePendingTarget.Store(&captured)
 	queued := d.updatePending.CompareAndSwap(false, true)
 	d.updateQueueMu.Unlock()
 	if !queued {
@@ -555,6 +566,8 @@ func (d *Daemon) updateAndStartAsync(forceGitPull bool, nsID string, choices ...
 	}
 
 	go func() {
+		d.targetMu.RLock()
+		defer d.targetMu.RUnlock()
 		d.reloadMu.Lock()
 		defer d.reloadMu.Unlock()
 		// Lower it on the way out — but only if no further pass is queued behind
@@ -576,6 +589,7 @@ func (d *Daemon) updateAndStartAsync(forceGitPull bool, nsID string, choices ...
 		if pending := d.updatePendingNsID.Swap(nil); pending != nil {
 			target = *pending
 		}
+		expected := d.updatePendingTarget.Swap(nil)
 		choice := d.updatePendingCachedRepo.Swap(nil)
 		d.updatePending.Store(false)
 		d.updateQueueMu.Unlock()
@@ -597,6 +611,11 @@ func (d *Daemon) updateAndStartAsync(forceGitPull bool, nsID string, choices ...
 		// the runtime's actual state or Runtime.Start early-returns
 		// ("Runtime already running") and the command is silently lost.
 		act := d.active()
+		if expected != nil && !sameActiveTarget(*expected, act) {
+			slog.Warn("Update and start skipped: target changed")
+			d.updateLastFailure.Store(&updateFailure{workspaceID: expected.workspaceID, nsID: target, msg: "workspace changed before update — retry in the intended workspace", at: time.Now().UnixMilli()})
+			return
+		}
 		if choice != nil {
 			if choice.nsID != target || choice.workspaceID != act.workspaceID {
 				d.recordUpdateFailure(target, "workspace changed before cached update — retry in the intended workspace")
@@ -659,12 +678,14 @@ func (d *Daemon) updateAndStartAsync(forceGitPull bool, nsID string, choices ...
 		defer d.longOp.Unlock()
 		if err := d.invokeReloadEx(force, action == updateStartStart, true); err != nil {
 			slog.Warn("Update and start failed", "err", err)
-			d.updateLastFailure.Store(&updateFailure{nsID: target, msg: err.Error(), at: time.Now().UnixMilli(), git: d.gitFailureDetails(act.workspaceID, err, force, d.cachedRepoURLs)})
+			d.updateLastFailure.Store(&updateFailure{workspaceID: act.workspaceID, nsID: target, msg: err.Error(), at: time.Now().UnixMilli(), git: d.gitFailureDetails(act.workspaceID, err, force, d.cachedRepoURLs)})
 		}
 	}()
 }
 
 func (d *Daemon) handleStopNamespace(w http.ResponseWriter, r *http.Request) {
+	unpin := d.pinActiveOperation(r)
+	defer unpin()
 	// tolerateLifecycleWork: Stop is the escape hatch from a pass stuck in a
 	// slow git pull or a reload grinding through a 24-app namespace, and
 	// refusing it is worse than the race every release before this one already
@@ -684,6 +705,8 @@ func (d *Daemon) handleStopNamespace(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *Daemon) handleReloadNamespace(w http.ResponseWriter, r *http.Request) {
+	unpin := d.pinActiveOperation(r)
+	defer unpin()
 	release, ok := d.tryLongOp(w, r, tolerateNothing)
 	if !ok {
 		return

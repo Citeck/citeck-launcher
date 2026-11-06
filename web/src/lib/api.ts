@@ -1041,3 +1041,56 @@ export async function applyUpdate(retry = false): Promise<{ applying: boolean; v
 export async function linkGitRepoSecret(workspaceId: string, repoUrl: string, secretId: string): Promise<ActionResultDto> {
   return request('PUT', `/workspaces/${enc(workspaceId)}/git-secret`, { body: { repoUrl, secretId } })
 }
+
+export type MCPRole = 'observer' | 'developer'
+export interface MCPToken {
+  id: string
+  name: string
+  role: MCPRole
+  createdAt: string
+  expiresAt?: string
+  revokedAt?: string
+  lastUsedAt?: string
+}
+export interface MCPStatus {
+  enabled: boolean
+  port: number
+  listening: boolean
+  endpoint: string
+  error?: string
+  tokens: MCPToken[]
+  oauthWarning?: string
+}
+export const getMCPStatus = () => request<MCPStatus>('GET', '/mcp')
+export const configureMCP = (enabled: boolean, port: number) => request<MCPStatus>('PUT', '/mcp', { body: { enabled, port } })
+export const createMCPToken = (name: string, role: MCPRole, neverExpires: boolean, expiresAt?: string) => request<{ token: MCPToken; value: string }>('POST', '/mcp/tokens', { body: { name, role, neverExpires, expiresAt } })
+export const revokeMCPToken = (id: string) => request<MCPStatus>('DELETE', `/mcp/tokens/${enc(id)}`)
+
+export interface MCPOAuthPending {
+  id: string
+  clientId: string
+  clientName: string
+  correlationCode: string
+  status: 'pending' | 'approved'
+  role?: MCPRole
+  createdAt: string
+  expiresAt: string
+}
+export interface MCPOAuthConnection {
+  name?: string
+  neverExpires?: boolean
+  revoked: boolean
+  id: string
+  clientId: string
+  clientName: string
+  role: MCPRole
+  approvedAt: string
+  expiresAt?: string
+  revokedAt?: string
+  lastUsedAt?: string
+}
+export const getMCPOAuthPending = (signal?: AbortSignal) => request<{ pending: MCPOAuthPending[] }>('GET', '/mcp/oauth/pending', { signal })
+export const approveMCPOAuth = (id: string, role: MCPRole, approval?: { name: string; neverExpires: boolean; expiresAt?: string }) => request<{ status: string }>('POST', `/mcp/oauth/pending/${enc(id)}/approve`, { body: { role, ...approval } })
+export const denyMCPOAuth = (id: string) => request<{ status: string }>('POST', `/mcp/oauth/pending/${enc(id)}/deny`)
+export const getMCPOAuthConnections = (signal?: AbortSignal) => request<{ connections: MCPOAuthConnection[]; warning?: string }>('GET', '/mcp/oauth/connections', { signal })
+export const revokeMCPOAuth = (id: string) => request<{ status: string }>('DELETE', `/mcp/oauth/connections/${enc(id)}`)

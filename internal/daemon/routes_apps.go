@@ -214,6 +214,8 @@ func (d *Daemon) handleAppsRetryPullFailed(w http.ResponseWriter, _ *http.Reques
 }
 
 func (d *Daemon) handleAppRestart(w http.ResponseWriter, r *http.Request) {
+	unpin := d.pinActiveOperation(r)
+	defer unpin()
 	name := r.PathValue("name")
 	if !validateAppName(w, name) {
 		return
@@ -260,6 +262,8 @@ func (d *Daemon) handleAppRestart(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *Daemon) handleAppStop(w http.ResponseWriter, r *http.Request) {
+	unpin := d.pinActiveOperation(r)
+	defer unpin()
 	name := r.PathValue("name")
 	if !validateAppName(w, name) {
 		return
@@ -375,6 +379,8 @@ func (d *Daemon) requireRunningNamespaceForApp(w http.ResponseWriter, r *http.Re
 }
 
 func (d *Daemon) handleAppStart(w http.ResponseWriter, r *http.Request) {
+	unpin := d.pinActiveOperation(r)
+	defer unpin()
 	name := r.PathValue("name")
 	if !validateAppName(w, name) {
 		return
@@ -647,6 +653,8 @@ func (d *Daemon) handleGetAppConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *Daemon) handlePutAppConfig(w http.ResponseWriter, r *http.Request) {
+	unpin := d.pinActiveOperation(r)
+	defer unpin()
 	name := r.PathValue("name")
 	if !validateAppName(w, name) {
 		return
@@ -671,12 +679,27 @@ func (d *Daemon) handlePutAppConfig(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	d.appEditMu.Lock()
+	defer d.appEditMu.Unlock()
 	body, read := readBodyUpTo(w, r, 512*1024)
 	if !read {
 		return
 	}
 
 	var newDef appdef.ApplicationDef
+	if edit, ok := r.Context().Value(mcpSettingsEditKey{}).(mcpSettingsEdit); ok {
+		var err error
+		newDef, err = d.mergeMCPSettings(rt, name, edit)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		body, err = yaml.Marshal(newDef)
+		if err != nil {
+			writeInternalError(w, err)
+			return
+		}
+	}
 	if err := yaml.Unmarshal(body, &newDef); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid YAML: %s", err.Error()))
 		return
@@ -710,6 +733,12 @@ func (d *Daemon) handlePutAppConfig(w http.ResponseWriter, r *http.Request) {
 	if strings.TrimSpace(newDef.Image) == "" {
 		writeError(w, http.StatusBadRequest, "image is required")
 		return
+	}
+	if newDef.Resources != nil {
+		if _, err := appdef.NanoCPUs(newDef.Resources.Limits.CPU); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 	if err := validateEditedPorts(rt, name, newDef.Ports); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -807,6 +836,8 @@ func (d *Daemon) handlePutAppConfig(w http.ResponseWriter, r *http.Request) {
 // app so the original generated definition is restored. Mirrors Kotlin's
 // `AppCfgEditWindow` Reset button (resume with `null`).
 func (d *Daemon) handleResetAppConfig(w http.ResponseWriter, r *http.Request) {
+	unpin := d.pinActiveOperation(r)
+	defer unpin()
 	name := r.PathValue("name")
 	if !validateAppName(w, name) {
 		return
@@ -977,6 +1008,8 @@ func (d *Daemon) handleGetAppFile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *Daemon) handlePutAppFile(w http.ResponseWriter, r *http.Request) {
+	unpin := d.pinActiveOperation(r)
+	defer unpin()
 	name := r.PathValue("name")
 	if !validateAppName(w, name) {
 		return
@@ -1044,6 +1077,8 @@ func (d *Daemon) handlePutAppFile(w http.ResponseWriter, r *http.Request) {
 // bind-mount of the named app. The canonical key (no leading "./") is what
 // the runtime stores in editedFiles and what writeRuntimeFiles iterates over.
 func (d *Daemon) handleResetAppFile(w http.ResponseWriter, r *http.Request) {
+	unpin := d.pinActiveOperation(r)
+	defer unpin()
 	name := r.PathValue("name")
 	if !validateAppName(w, name) {
 		return

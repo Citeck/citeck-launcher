@@ -93,6 +93,7 @@ export function Modal({ open, title, onClose, width = 'md', children, footer, on
   return createPortal(
     <dialog
       ref={ref}
+      aria-label={title}
       // Only react to THIS dialog's own close event. A nested modal fires its own
       // native `close`, and React replays it up the fiber tree to this ancestor
       // <dialog>'s onClose — which would otherwise close the dialog behind it too.

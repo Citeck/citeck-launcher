@@ -624,5 +624,11 @@
   "features.disabled.stopped": "Experimentelles Modul {id} ausgeschaltet — seine Container ({apps}) bleiben beim nächsten `citeck start` außen vor; ihre Daten-Volumes bleiben erhalten",
   "snapshot.bundleMinimum": "Snapshot {name} erfordert Bundle {minimum} oder neuer; ausgewählte Version: {current}.",
   "snapshot.bundleVersionUnknown": "Snapshot {name} erfordert Bundle {minimum} oder neuer. Wählen Sie vor der Wiederherstellung eine konkrete Bundle-Version.",
-  "snapshot.bundleMinimumInvalid": "Snapshot {name} hat eine ungültige minimale Bundle-Version: {minimum}."
+  "snapshot.bundleMinimumInvalid": "Snapshot {name} hat eine ungültige minimale Bundle-Version: {minimum}.",
+  "mcp.oauth.browser.title": "Mit Launcher verbinden",
+  "mcp.oauth.browser.waiting": "Warten auf die Entscheidung des Launcher-Eigentümers…",
+  "mcp.oauth.browser.unverified": "Unbestätigter Clientname",
+  "mcp.oauth.browser.instruction": "Öffnen Sie Launcher-Einstellungen → MCP-Zugriff. Vergleichen Sie den Anfragecode und erlauben oder verweigern Sie diese Verbindung ausdrücklich. Dieser Browser kann keinen Zugriff genehmigen.",
+  "mcp.oauth.browser.correlation": "Anfragecode",
+  "mcp.oauth.browser.terminal": "Diese Anmeldeanfrage ist beendet oder nicht erreichbar. Starten Sie eine neue Anmeldung in Ihrem Client."
 }

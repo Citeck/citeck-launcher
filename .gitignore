@@ -61,3 +61,17 @@ docs/superpowers/
 
 # SDD scratch workspace (ledger, briefs, review packages)
 .superpowers/
+
+build
+
+# Pi
+/.pi/*
+
+!/.pi/settings.json
+!/.pi/AGENTS.md
+!/.pi/prompts/
+!/.pi/extensions/
+!/.pi/skills/
+!/.pi/themes/
+
+.playwright-cli
