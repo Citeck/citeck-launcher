@@ -66,6 +66,19 @@ beforeEach(() => {
   vi.mocked(getExperimentalFeatures).mockResolvedValue({ features: [] })
 })
 
+it('preserves an existing pinned bundle absent from the repository list when saving', async () => {
+  await open(edited({ bundleRepo: 'enterprise', bundleKey: '2026.3-RC6' }))
+  await waitFor(() => expect(getExperimentalFeatures).toHaveBeenCalledWith(
+    'enterprise', '2026.3-RC6', undefined, expect.any(AbortSignal), 'ns1',
+  ))
+  expect(getContentStorageOptions).toHaveBeenCalledWith(
+    'enterprise', '2026.3-RC6', undefined, expect.any(AbortSignal), 'ns1',
+  )
+  await act(async () => { screen.getByRole('button', { name: /Save/i }).click() })
+  await waitFor(() => expect(putNamespaceEdit).toHaveBeenCalled())
+  expect(vi.mocked(putNamespaceEdit).mock.calls[0][1].bundleKey).toBe('2026.3-RC6')
+})
+
 describe('NamespaceEditDialog Advanced tab', () => {
   // Only ecos-process ever used mongo and newer namespaces are created without
   // it, so the toggle is a real choice on an OLD namespace and a switch with
@@ -142,7 +155,7 @@ const BACKUP: ExperimentalFeatureDto = { id: 'backupEngineV2', title: 'backupEng
 describe('NamespaceEditDialog experimental features', () => {
   it('shows no section when the bundle offers nothing, and sends nothing', async () => {
     await openCreate({ bundleRepo: 'community', bundleKey: '2026.2' })
-    await waitFor(() => expect(getExperimentalFeatures).toHaveBeenCalledWith('community', '2026.2', undefined, expect.anything()))
+    await waitFor(() => expect(getExperimentalFeatures).toHaveBeenCalledWith('community', '2026.2', undefined, expect.anything(), undefined))
     expect(screen.queryByRole('tab', { name: 'Experimental' })).toBeNull()
     expect(screen.queryByText('Experimental features')).toBeNull()
 
@@ -252,7 +265,7 @@ describe('NamespaceEditDialog content storage', () => {
   // The create request still explicitly chooses DB, never a template default.
   it('shows disabled Enterprise S3 on a bundle without ecos-content, and creates on the database', async () => {
     await openCreate({ bundleRepo: 'community', bundleKey: '2026.2' })
-    await waitFor(() => expect(getContentStorageOptions).toHaveBeenCalledWith('community', '2026.2', undefined, expect.anything()))
+    await waitFor(() => expect(getContentStorageOptions).toHaveBeenCalledWith('community', '2026.2', undefined, expect.anything(), undefined))
 
     const s3 = await screen.findByRole('radio', { name: /^S3/ })
     expect((s3 as HTMLInputElement).disabled).toBe(true)

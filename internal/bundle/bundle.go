@@ -138,6 +138,9 @@ func IsValidExperimentalFeatureID(s string) bool {
 type Def struct {
 	Key          Key               `json:"key" yaml:"key"`
 	Applications map[string]AppDef `json:"applications" yaml:"applications"`
+	// SourceRepo records the logical repository that supplied this saved kit.
+	// Absent in legacy cache records; it is not authored in bundle YAML.
+	SourceRepo string `json:"sourceRepo,omitempty" yaml:"-"`
 	// Experimental carries the BETA features a bundle declares in its top-level
 	// `experimental:` section, keyed by feature id, each with the modules its
 	// switch turns on.
@@ -187,6 +190,13 @@ var EmptyDef = Def{
 // IsEmpty reports whether the bundle has no applications.
 func (b *Def) IsEmpty() bool {
 	return len(b.Applications) == 0 && len(b.CiteckApps) == 0
+}
+
+// MatchesRef reports whether a saved kit can supply this namespace reference.
+// Legacy cache records have no repository metadata until they are first read.
+func (b *Def) MatchesRef(ref Ref) bool {
+	return b != nil && !b.IsEmpty() && (b.SourceRepo == "" || b.SourceRepo == ref.Repo) &&
+		(strings.EqualFold(ref.Key, "LATEST") || b.Key.Version == ref.Key)
 }
 
 // ExperimentalFeatures lists the opt-in switches this bundle offers, sorted by

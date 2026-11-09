@@ -521,17 +521,17 @@ func (r *Runtime) RestoreCachedBundle(def *bundle.Def) {
 //
 // Persisting is right HERE and not on the load path (SetDependencyState draws
 // the same line): the runtime exists and its status is live, so the write
-// records the truth rather than a placeholder. The caller has nothing to do
-// with a failed write — the reload itself succeeded — so the error is not
-// returned, but persistUnderLock leaves the write owed and the loop retries it.
-func (r *Runtime) SetCachedBundle(def *bundle.Def) {
+// records the truth rather than a placeholder. Ordinary reload can continue
+// after a failed write, but a caller changing the repository must wait
+// for a durable cache identity. Failed writes remain owed and the loop retries.
+func (r *Runtime) SetCachedBundle(def *bundle.Def) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if def == nil || def.IsEmpty() {
-		return
+		return nil
 	}
 	r.cachedBundle = def
-	_ = r.persistUnderLock("cache-bundle")
+	return r.persistUnderLock("cache-bundle")
 }
 
 // SetManualStoppedApps restores persisted manual stopped apps (called before Start).

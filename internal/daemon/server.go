@@ -745,7 +745,8 @@ func (d *Daemon) doReloadEx(forceGitPull, startNotRegenerate, refreshImages, req
 	}
 	resolveResult, bundleFallback, resolveErr := resolveBundleWithCacheFallback(
 		resolver, nsCfg.BundleRef, d.store, act.workspaceID, nsID, fallbackWS, "on reload", !requireGitSync)
-	// Explicit updates report failed refreshes even over a usable cache.
+	// Explicit updates report failed Git syncs even over a usable cache. A
+	// removed definition with a saved bundle is normal repository maintenance.
 	resolveErr = errors.Join(resolveErr, explicitGitRefreshError(resolver, requireGitSync))
 	if resolveErr != nil {
 		return fmt.Errorf("resolve bundle: %w", resolveErr)
@@ -767,7 +768,7 @@ func (d *Daemon) doReloadEx(forceGitPull, startNotRegenerate, refreshImages, req
 	// cache learns nothing, and doing it would hide how long the namespace has
 	// been running on a bundle its repo no longer has.
 	if !bundleFallback && resolveResult != nil && act.runtime != nil {
-		act.runtime.SetCachedBundle(resolveResult.Bundle)
+		_ = act.runtime.SetCachedBundle(resolveResult.Bundle) // runtime retains failed writes for retry
 	}
 
 	// Appfiles are intentionally NOT extracted here — same rule as Start().
@@ -954,7 +955,7 @@ func (d *Daemon) doReloadEx(forceGitPull, startNotRegenerate, refreshImages, req
 		// and applied" response is best-effort here — the persisted patch is
 		// saved and will apply on the next real reconcile, but nothing was
 		// reconciled by this call.
-		slog.Warn("Bundle fallback produced a smaller app set; preserving current runtime",
+		slog.Info("Bundle fallback produced a smaller app set; preserving current runtime",
 			"current", currentAppCount, "fallback", len(genResp.Applications))
 		return nil
 	}

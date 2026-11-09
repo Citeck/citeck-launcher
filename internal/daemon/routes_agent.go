@@ -130,7 +130,7 @@ func agentOperationContracts() []api.AgentOperationDto {
 		agentOperation("dependencies.rollback", "POST", api.Dependencies+"/{id}/rollback", "Switch back to retained dependency data; writes made after upgrade become unreachable.", "dependency in active namespace", "application/json rollback acknowledgement; observe dependency/namespace progress", "citeck deps rollback <id> --detach"),
 		agentOperation("content-storage.options", "GET", api.ContentStorageOptions, "Inspect S3 availability for a selected bundle without pulling git repositories.", "selected bundle", "application/json ContentStorageOptionsDto"),
 		agentOperation("content-storage.provision", "POST", api.NamespaceContentStorageProvision, "Retry connecting the active namespace's managed S3 content storage.", "active namespace", "HTTP 202 application/json ActionResultDto; observe namespace.contentStorage"),
-		agentOperation("features.list", "GET", api.ExperimentalFeatures, "List the experimental (beta) features a bundle offers. Without bundle query parameters it answers for the active namespace's bundle, with enabled reflecting that namespace's choices.", "active namespace (or a selected bundle)", "application/json ExperimentalFeaturesDto; reason=BUNDLE_UNRESOLVED when the bundle is not on disk", "citeck features --format json"),
+		agentOperation("features.list", "GET", api.ExperimentalFeatures, "List the experimental (beta) features a bundle offers. Without bundle query parameters it answers for the active namespace's bundle, with enabled reflecting that namespace's choices.", "active namespace (or a selected bundle)", "application/json ExperimentalFeaturesDto; reason=BUNDLE_UNRESOLVED when neither a current definition nor a matching saved namespace bundle is available", "citeck features --format json"),
 		agentOperation("features.enable", "PUT", api.NamespaceEdit, "Switch an experimental (beta) feature on for a namespace by sending the resulting state of every offered feature: the ids currently on plus this one.", "namespace id in active workspace", action, "citeck features enable <id>"),
 		agentOperation("features.disable", "PUT", api.NamespaceEdit, "Switch an experimental (beta) feature off for a namespace by sending the resulting state of every offered feature: the ids currently on without this one.", "namespace id in active workspace", action, "citeck features disable <id>"),
 		agentOperation("snapshots.list", "GET", api.Snapshots, "List available namespace snapshots.", "active namespace", "application/json snapshot list", "citeck snapshot list --format json"),
@@ -201,6 +201,7 @@ func addAgentOperationDetails(op *api.AgentOperationDto) {
 		for _, name := range []string{"bundleRepo", "bundleKey", "workspaceId"} {
 			op.Parameters = append(op.Parameters, agentParameter(name, "query", "string", "Selected bundle/workspace; empty bundle uses the active namespace.", false))
 		}
+		op.Parameters = append(op.Parameters, agentParameter("namespaceId", "query", "string", "Existing namespace in the selected workspace. Its matching saved kit is used if the definition was removed; empty uses the active namespace when applicable. New selections cannot borrow another namespace cache.", false))
 	case "features.enable", "features.disable":
 		op.Async = true
 		op.Parameters[0].Description = "Namespace id: namespace.status id for the active namespace, or an id from namespace.list."
@@ -210,7 +211,7 @@ func addAgentOperationDetails(op *api.AgentOperationDto) {
 		}}, "enabledExperimentalFeatures")
 		op.Notes = []string{
 			"Read features.list first and send the full resulting list of offered ids, never a single id: the body is the state of every feature the namespace's bundle offers.",
-			"Do not send stored ids the bundle does not offer (features a later release graduated): the daemon keeps them on its own and refuses unknown ids with EXPERIMENTAL_FEATURE_UNKNOWN (400). While the bundle is not on disk the change is refused (409).",
+			"Do not send stored ids the bundle does not offer (features a later release graduated): the daemon keeps them on its own and refuses unknown ids with EXPERIMENTAL_FEATURE_UNKNOWN (400). When neither a current definition nor a matching saved namespace bundle is available the change is refused (409).",
 			"The active namespace is reloaded: a running namespace creates or removes the modules' containers, a stopped one applies the change on its next start. Disabling keeps the modules' data volumes.",
 		}
 	case "snapshots.export":

@@ -648,9 +648,11 @@ export async function getContentStorageOptions(
   bundleKey: string,
   workspaceId?: string,
   signal?: AbortSignal,
+  namespaceId?: string,
 ): Promise<ContentStorageOptionsDto> {
   const params = new URLSearchParams({ bundleRepo, bundleKey })
   if (workspaceId) params.set('workspaceId', workspaceId)
+  if (namespaceId) params.set('namespaceId', namespaceId)
   return request('GET', `/content-storage/options?${params.toString()}`, { signal })
 }
 
@@ -665,9 +667,11 @@ export async function getExperimentalFeatures(
   bundleKey: string,
   workspaceId?: string,
   signal?: AbortSignal,
+  namespaceId?: string,
 ): Promise<ExperimentalFeaturesDto> {
   const params = new URLSearchParams({ bundleRepo, bundleKey })
   if (workspaceId) params.set('workspaceId', workspaceId)
+  if (namespaceId) params.set('namespaceId', namespaceId)
   return request('GET', `/experimental-features?${params.toString()}`, { signal })
 }
 

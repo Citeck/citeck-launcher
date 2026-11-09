@@ -27,6 +27,17 @@ import (
 // probe can treat this as a benign outcome via errors.Is(err, ErrNoBundles).
 var ErrNoBundles = errors.New("no bundles found")
 
+// NotFoundError identifies a selected bundle whose definition is absent.
+// It is distinct from a failed Git sync or an invalid bundle definition.
+type NotFoundError struct {
+	Key string
+	Dir string
+}
+
+func (e *NotFoundError) Error() string {
+	return fmt.Sprintf("bundle %s not found in %s", e.Key, e.Dir)
+}
+
 // DefaultBundlesRepo is the canonical launcher-workspace git remote. Exported
 // so daemon code (workspace CRUD routes, helpers) can reuse the same value
 // without duplicating the URL.
@@ -994,13 +1005,14 @@ func (r *Resolver) Resolve(ref Ref) (*ResolveResult, error) {
 
 	bundlePath := findBundleFile(bundlesDir, key)
 	if bundlePath == "" {
-		return nil, fmt.Errorf("bundle %s not found in %s", key, bundlesDir)
+		return nil, &NotFoundError{Key: key, Dir: bundlesDir}
 	}
 
 	def, err := parseBundleFile(bundlePath, key, aliasMap, imageRepoMap, r.log())
 	if err != nil {
 		return nil, err
 	}
+	def.SourceRepo = ref.Repo
 	var failure *RepoSyncError
 	if errors.As(r.bundlePullErr, &failure) {
 		failure.CacheAvailable = CachedRepoMatches(repoDir, failure.URL)

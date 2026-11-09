@@ -1,6 +1,7 @@
 package setup
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -11,7 +12,44 @@ import (
 	"github.com/citeck/citeck-launcher/internal/bundle"
 	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/namespace"
+	"github.com/citeck/citeck-launcher/internal/storage"
 )
+
+func TestSetupUsesItsSavedBundleAfterDefinitionRemoval(t *testing.T) {
+	config.SetDesktopMode(false)
+	t.Cleanup(config.ResetDesktopMode)
+	t.Setenv("CITECK_HOME", t.TempDir())
+	writeSetupWorkspace(t)
+	require.NoError(t, os.WriteFile(filepath.Join(config.DataDir(), "repo", "workspace-v1.yml"),
+		[]byte("bundleRepos:\n  - id: community\n    path: community\n  - id: enterprise\n    path: enterprise\n"), 0o600))
+	require.NoError(t, os.Remove(filepath.Join(config.DataDir(), "repo", "community", "2026.2.yaml")))
+	store, err := storage.NewFileStore(config.ConfDir(), filepath.Join(config.DataDir(), "runtime"))
+	require.NoError(t, err)
+	def := &bundle.Def{Key: bundle.Key{Version: "2026.2"}, Applications: map[string]bundle.AppDef{"SavedApp": {Image: "saved:1.0"}}}
+	raw, err := json.Marshal(namespace.NsPersistedState{CachedBundle: def})
+	require.NoError(t, err)
+	require.NoError(t, store.SaveNamespaceState("", "ns1", "STOPPED", string(raw)))
+	cfg := &namespace.Config{ID: "ns1", BundleRef: bundle.Ref{Repo: "community", Key: "2026.2"}}
+	resolved := resolveSetupBundle("2.18.4", cfg)
+	require.NotNil(t, resolved)
+	require.Equal(t, []string{"SavedApp"}, appListFrom(resolved, cfg))
+	cfg.ID = "another-namespace"
+	require.Nil(t, resolveSetupBundle("2.18.4", cfg))
+	cfg.ID = "ns1"
+	cfg.BundleRef.Key = "another-version"
+	require.Nil(t, resolveSetupBundle("2.18.4", cfg))
+	def.SourceRepo = "community"
+	raw, err = json.Marshal(namespace.NsPersistedState{CachedBundle: def})
+	require.NoError(t, err)
+	require.NoError(t, store.SaveNamespaceState("", "ns1", "STOPPED", string(raw)))
+	cfg.BundleRef = bundle.Ref{Repo: "enterprise", Key: "2026.2"}
+	require.Nil(t, resolveSetupBundle("2.18.4", cfg), "same version in another repository must not reuse the old kit")
+	require.NoError(t, os.Remove(filepath.Join(config.DataDir(), "repo", "community", "2026.3.yaml")))
+	cfg.BundleRef = bundle.Ref{Repo: "community", Key: "LATEST"}
+	resolved = resolveSetupBundle("2.18.4", cfg)
+	require.NotNil(t, resolved)
+	require.Equal(t, []string{"SavedApp"}, appListFrom(resolved, cfg))
+}
 
 // writeSetupWorkspace lays out a manual-import workspace ({CITECK_HOME}/data/repo,
 // no .git — the resolveWorkspace priority-1 path, same layout

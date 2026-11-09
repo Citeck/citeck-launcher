@@ -112,8 +112,12 @@ selected state and is not a reason to bypass Launcher.
 
 Experimental (beta) features are bundle-declared modules a namespace opts into.
 `features.list` answers for the active namespace's bundle (`enabled` reflects its
-choices; `reason: BUNDLE_UNRESOLVED` means the bundle is not on disk — refresh it
-first). `features.enable` and `features.disable` share one route: the edit PUT whose
+choices). Existing namespaces transparently use their matching saved kit when
+the selected YAML has been removed, including beta edits and S3 option reads.
+`reason: BUNDLE_UNRESOLVED` means neither the current definition nor that saved
+kit is available. Both option endpoints accept `namespaceId` with `workspaceId`
+for an inactive namespace; a new selection cannot borrow another namespace's kit.
+`features.enable` and `features.disable` share one route: the edit PUT whose
 `enabledExperimentalFeatures` body is the resulting state of EVERY offered feature,
 so read `features.list` first and send the full list, never a single id and never
 stored ids the bundle does not offer (the daemon keeps those on its own and refuses

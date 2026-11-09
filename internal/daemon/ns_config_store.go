@@ -67,7 +67,7 @@ func (d *Daemon) launcherFloorRefusal(wsID string, cfg *namespace.Config) *errLa
 	if strings.EqualFold(strings.TrimSpace(cfg.BundleRef.Key), "LATEST") {
 		return nil
 	}
-	res, err := d.resolveBundleOffline(wsID, cfg.BundleRef)
+	res, err := d.resolveBundleOffline(wsID, cfg.BundleRef, cfg.ID)
 	if err != nil || res == nil || res.Bundle == nil {
 		return nil
 	}
@@ -81,19 +81,47 @@ func (d *Daemon) launcherFloorRefusal(wsID string, cfg *namespace.Config) *errLa
 	}
 }
 
-// resolveBundleOffline resolves a bundle ref from what is already on disk —
-// no git — for the write gates, which run on every config write (a rename
-// included) and must never wait on a sync.
-func (d *Daemon) resolveBundleOffline(wsID string, ref bundle.Ref) (*bundle.ResolveResult, error) {
+// resolveBundleOffline reads local definitions or the existing namespace's saved
+// bundle. An explicit namespace ID also supports editing an inactive namespace.
+// Without one, only the active namespace with exactly this ref may supply cache.
+// A new selection must never borrow another namespace's saved bundle.
+func (d *Daemon) resolveBundleOffline(wsID string, ref bundle.Ref, namespaceIDs ...string) (*bundle.ResolveResult, error) {
 	resolver := authenticatedBundleResolver(config.BundlesDataDir(wsID), d.secretReaderFunc()).
+		WithWorkspaceRepo(lookupWorkspaceRepoOpts(d.store, d.secretService, wsID)).
 		WithWorkspaceOverlay(workspaceConfigOverlay(d.store, wsID)).
 		WithLauncherVersion(d.version)
 	resolver.SetOffline(true)
-	res, err := resolver.Resolve(ref)
+	nsID := ""
+	if len(namespaceIDs) > 0 {
+		nsID = namespaceIDs[0]
+	}
+	act := d.active()
+	if nsID == "" && act.workspaceID == wsID && act.nsConfig != nil && act.nsConfig.BundleRef == ref {
+		nsID = act.nsConfig.ID
+	}
+	var res *bundle.ResolveResult
+	var err error
+	stored, storedErr := d.loadNamespaceConfigForCache(wsID, nsID)
+	if storedErr == nil && stored != nil && stored.BundleRef == ref {
+		ws := resolver.ResolveWorkspaceOnly()
+		if act.workspaceID == wsID && act.workspaceConfig != nil {
+			ws = act.workspaceConfig
+		}
+		res, _, err = resolveBundleWithCacheFallback(resolver, ref, d.store, wsID, nsID, ws, "offline", false)
+	} else {
+		res, err = resolver.Resolve(ref)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("resolve bundle %s offline: %w", ref, err)
 	}
 	return res, nil
+}
+
+func (d *Daemon) loadNamespaceConfigForCache(wsID, nsID string) (*namespace.Config, error) {
+	if d.store == nil || nsID == "" {
+		return nil, nil
+	}
+	return d.loadNamespaceConfigFromStore(wsID, nsID)
 }
 
 // persistNamespaceConfig is the SINGLE write path for namespace config. It
@@ -121,6 +149,9 @@ func (d *Daemon) persistNamespaceConfig(wsID, nsID string, bytesToStore []byte) 
 	}
 	if refusal := d.contentStorageRefusal(wsID, stored, cfg); refusal != nil {
 		return refusal
+	}
+	if err := d.preserveCacheRepositoryBeforeChange(wsID, nsID, stored.bundleRef, cfg.BundleRef); err != nil {
+		return err
 	}
 	if err := d.store.SaveNamespaceConfig(wsID, nsID, cfg.Name, string(bytesToStore)); err != nil {
 		return fmt.Errorf("save namespace config: %w", err)

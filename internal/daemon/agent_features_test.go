@@ -39,7 +39,7 @@ func TestAgentCatalogDocumentsTheFeaturesOperations(t *testing.T) {
 	for _, p := range list.Parameters {
 		params = append(params, p.Name)
 	}
-	assert.ElementsMatch(t, []string{"bundleRepo", "bundleKey", "workspaceId"}, params)
+	assert.ElementsMatch(t, []string{"bundleRepo", "bundleKey", "workspaceId", "namespaceId"}, params)
 
 	for id, verb := range map[string]string{"features.enable": "enable", "features.disable": "disable"} {
 		op, ok := ops[id]
