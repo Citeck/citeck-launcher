@@ -19,7 +19,7 @@ import (
 )
 
 func TestArtifactDownloadBoundToDeveloperTokenAndExpiry(t *testing.T) {
-	store, err := OpenStore(t.TempDir() + "/state.json")
+	store, err := OpenStore(testStorePath(t))
 	require.NoError(t, err)
 	dev, value, err := store.Create("dev", Developer, nil)
 	require.NoError(t, err)
@@ -69,7 +69,7 @@ func TestArtifactDownloadBoundToDeveloperTokenAndExpiry(t *testing.T) {
 	require.Equal(t, 401, w.Code)
 }
 func TestArtifactsStreamLargeFilesAndDetectChangedSize(t *testing.T) {
-	s, err := OpenStore(t.TempDir() + "/state.json")
+	s, err := OpenStore(testStorePath(t))
 	require.NoError(t, err)
 	token, value, err := s.Create("dev", Developer, nil)
 	require.NoError(t, err)
@@ -102,7 +102,7 @@ func TestArtifactsStreamLargeFilesAndDetectChangedSize(t *testing.T) {
 	require.NoError(t, response.Body.Close())
 }
 func TestSystemArtifactQuotaTTLAndPartialCleanup(t *testing.T) {
-	store, err := OpenStore(t.TempDir() + "/state.json")
+	store, err := OpenStore(testStorePath(t))
 	require.NoError(t, err)
 	service := New(store, &fakeBackend{})
 	defer service.Close()
@@ -157,7 +157,7 @@ func TestSystemArtifactQuotaTTLAndPartialCleanup(t *testing.T) {
 	require.Zero(t, artifactCount(service))
 }
 func TestDefaultOffPersistsOnlyExplicitEnable(t *testing.T) {
-	path := t.TempDir() + "/state.json"
+	path := testStorePath(t)
 	store, err := OpenStore(path)
 	require.NoError(t, err)
 	service := New(store, &fakeBackend{})
@@ -193,7 +193,7 @@ func TestDefaultOffPersistsOnlyExplicitEnable(t *testing.T) {
 	require.False(t, restarted.Settings().Enabled)
 	require.NoError(t, restarted.Close())
 	// An old/migrated profile with no enabled field is still disabled.
-	legacyPath := t.TempDir() + "/state.json"
+	legacyPath := testStorePath(t)
 	require.NoError(t, os.WriteFile(legacyPath, []byte(`{"settings":{"port":19380},"tokens":[]}`), 0o600))
 	restarted, err = OpenStore(legacyPath)
 	require.NoError(t, err)
@@ -210,7 +210,7 @@ func (b cancelBackend) Call(ctx context.Context, _ string, _ Arguments) (any, er
 	return nil, fmt.Errorf("test canceled backend: %w", ctx.Err())
 }
 func TestSDKRequestCancellationReachesBackend(t *testing.T) {
-	store, err := OpenStore(t.TempDir() + "/state.json")
+	store, err := OpenStore(testStorePath(t))
 	require.NoError(t, err)
 	_, value, err := store.Create("dev", Developer, nil)
 	require.NoError(t, err)

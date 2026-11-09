@@ -49,7 +49,7 @@ and [docs/agent-api.md](docs/agent-api.md).
 
 ### Go + Web UI (primary)
 
-Go 1.26.10 or newer is required (`go.mod` is the CI toolchain source of truth).
+Go 1.27.3 or newer is required (`go.mod` is the CI toolchain source of truth). macOS binaries require macOS 13 Ventura or newer (Go 1.27's platform floor; packaging metadata must match).
 
 See [docs/development-checks.md](docs/development-checks.md) for full frontend
 dependency audits and supervisor process-fixture cleanup requirements.
@@ -66,7 +66,7 @@ make test-coverage            # Go coverage report → dist/coverage.html
 make lint                     # Run Go (golangci-lint) + Web (eslint) linters
 make fmt                      # Format Go code
 make tidy                     # go mod tidy
-make tools                    # Install golangci-lint v2.11.4
+make tools                    # Install golangci-lint v2.15.0
 make clean                    # Remove build artifacts
 dist/bin/citeck-server start --foreground   # Run daemon in foreground
 ./dist/bin/citeck-launcher            # Run desktop app (Wails webview)
@@ -260,7 +260,7 @@ Rules when changing strings:
 
 ### Go
 - Standard `gofmt` formatting
-- `golangci-lint` v2.11.4 with 20 linters (`.golangci.yml`): dupl, errorlint, gochecknoinits, gocritic, gocyclo, gosec, govet (shadow), ineffassign, misspell (US), modernize, nakedret, nestif, prealloc, revive, staticcheck, testifylint, unconvert, unparam, unused, wrapcheck. **Always run `make tools` before linting to get the pinned CI version** — newer gosec taint analysis catches more G703/G706 false positives than 2.7.2.
+- `golangci-lint` v2.15.0 with 20 linters (`.golangci.yml`): dupl, errorlint, gochecknoinits, gocritic, gocyclo, gosec, govet (shadow), ineffassign, misspell (US), modernize, nakedret, nestif, prealloc, revive, staticcheck, testifylint, unconvert, unparam, unused, wrapcheck. **Always run `make tools` before linting to get the pinned CI version** — v2.15.0 supports Go 1.27; older pinned analyzers cannot decode its export data.
 - Tabs for indentation (Go standard)
 - Custom slog handler (`fsutil.CleanLogHandler`): `2026-04-01T02:58:51Z INFO  Message key=value`
 
@@ -576,7 +576,7 @@ at each step and reacting programmatically.
 > CGO + GTK3 dev headers for the deadcode gate.
 
 GitHub Actions (four workflows):
-- **Test suite** (`.github/workflows/test.yml`, reusable `workflow_call` — never triggered on its own): `go vet`, `golangci-lint v2.11.4`, `go test -race ./internal/...`, `pnpm vitest run`, full server build, linux/arm64 cross-compile check, `GOOS=windows GOARCH=amd64 go vet` and `go vet -tags integration`, plus the contract gates added in 2.5.x: per-package coverage floors (`scripts/ci/coverage-floor.sh`), reachable-vuln scan (`scripts/ci/govulncheck.sh`, triaged via `scripts/ci/govulncheck-allowlist.txt`), dead-code check (`scripts/ci/deadcode.sh`, built with `-tags desktop,gtk3`), and `pnpm audit --prod --audit-level high` (triage advisories via `web/package.json` → `pnpm.auditConfig.ignoreCves` / `ignoreGhsas`). Single source of truth for "is this commit good?". **`make check` mirrors this job step-for-step** (plus eslint) for local runs.
+- **Test suite** (`.github/workflows/test.yml`, reusable `workflow_call` — never triggered on its own): `go vet`, `golangci-lint v2.15.0`, `go test -race ./internal/...`, `pnpm vitest run`, full server build, linux/arm64 cross-compile check, `GOOS=windows GOARCH=amd64 go vet` and `go vet -tags integration`, plus the contract gates added in 2.5.x: per-package coverage floors (`scripts/ci/coverage-floor.sh`), reachable-vuln scan (`scripts/ci/govulncheck.sh`, triaged via `scripts/ci/govulncheck-allowlist.txt`), dead-code check (`scripts/ci/deadcode.sh`, built with `-tags desktop,gtk3`), and `pnpm audit --prod --audit-level high` (triage advisories via `web/package.json` → `pnpm.auditConfig.ignoreCves` / `ignoreGhsas`). Single source of truth for "is this commit good?". **`make check` mirrors this job step-for-step** (plus eslint) for local runs.
 - **CI workflow** (`.github/workflows/ci.yml`): a thin trigger shim that just calls test.yml. Runs ONLY on `pull_request` → master and `push` → `release/**` branches — **plain pushes to master do NOT run CI** (the tag-time run in release-go.yml is the gate for what gets published).
 - **Vulnerability scan** (`.github/workflows/vuln-scan.yml`): weekly (Mondays 05:17 UTC) plus manual dispatch — the allowlisted govulncheck gate and `pnpm audit` on master, to catch new advisories between releases.
 - **Release workflow** (`.github/workflows/release-go.yml`): triggered by `v*.*.*` tags; runs test.yml as a gate, then builds server binaries for **all six desktop targets** — `{linux,darwin,windows} x {amd64,arm64}`, cross-compiled with `CGO_ENABLED=0` on one ubuntu runner (matrix build) — plus desktop installers and publishes the GitHub release directly (`draft: false`). Uses `go-version-file: go.mod`. Contains a MANDATORY release-signing step: signature verification is active (`internal/update/signature.go` embeds a real key), so the step fails the build if `RELEASE_SIGNING_KEY` is not configured rather than shipping an unsigned release that bricks auto-update.

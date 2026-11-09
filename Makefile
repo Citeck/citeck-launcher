@@ -55,7 +55,7 @@ check:
 	@test -f $(WEBDIST)/index.html || echo '<html></html>' > $(WEBDIST)/index.html
 	@echo "==> [1/10] go vet"
 	go vet ./...
-	@echo "==> [2/10] golangci-lint (v2.11.4 pinned)"
+	@echo "==> [2/10] golangci-lint (v2.15.0 pinned)"
 	$(GOLANGCI_LINT) run ./...
 	@echo "==> [3/10] go test -race -cover ./internal/... (slow: namespace ~160s)"
 	set -o pipefail; go test -race -cover ./internal/... | tee $(COVERAGE_TXT)
@@ -239,7 +239,7 @@ jvm-attach-class:
 
 tools:
 	@echo "Installing dev tools..."
-	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4
+	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
 
 dev-daemon: web-deps
 	go run ./cmd/citeck start --foreground &

@@ -4,19 +4,13 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
 )
 
 func TestHandleDesktopFocus_CallsWrapperWindowFocus(t *testing.T) {
-	// Keep Unix socket paths short even with a long checkout/TMPDIR.
-	dir, dirErr := os.MkdirTemp("", "focus-")
-	if dirErr != nil {
-		t.Fatal(dirErr)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	dir := daemonSocketDir(t)
 	sock := filepath.Join(dir, "wrapper.sock")
 	ln, err := net.Listen("unix", sock)
 	if err != nil {

@@ -77,8 +77,7 @@ func renderProblems(t *i18n.Translator, problems []msg.Message) string {
 // distinction matters because the two have different authors: one is the
 // launcher talking to a person, the other is a library talking to a log.
 func renderPlanError(t *i18n.Translator, err error) string {
-	var refused *migrate.PlanRefusedError
-	if errors.As(err, &refused) {
+	if refused, ok := errors.AsType[*migrate.PlanRefusedError](err); ok {
 		return renderProblems(t, refused.Problems)
 	}
 	return err.Error()

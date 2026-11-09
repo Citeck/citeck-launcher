@@ -806,8 +806,7 @@ func (r *Resolver) resolveWorkspace() (cfg *WorkspaceConfig, repoDir string) {
 	// failed pull even — especially — when a cached clone answered anyway.
 	r.wsPullErr = syncErr
 	if wsCfg := r.loadWorkspaceConfigOverlaid(defaultRepoDir); wsCfg != nil {
-		var failure *RepoSyncError
-		if errors.As(syncErr, &failure) {
+		if failure, ok := errors.AsType[*RepoSyncError](syncErr); ok {
 			failure.CacheAvailable = CachedRepoMatches(defaultRepoDir, repoURL)
 		}
 		return wsCfg, defaultRepoDir
@@ -817,8 +816,7 @@ func (r *Resolver) resolveWorkspace() (cfg *WorkspaceConfig, repoDir string) {
 	// nothing else loaded (e.g. offline with no bundles/workspace clone yet).
 	if repoIsManagedClone {
 		if wsCfg := r.loadWorkspaceConfigOverlaid(localRepoDir); wsCfg != nil {
-			var failure *RepoSyncError
-			if errors.As(syncErr, &failure) {
+			if failure, ok := errors.AsType[*RepoSyncError](syncErr); ok {
 				failure.CacheAvailable = CachedRepoMatches(localRepoDir, repoURL)
 			}
 			return wsCfg, localRepoDir
@@ -1001,8 +999,7 @@ func (r *Resolver) Resolve(ref Ref) (*ResolveResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	var failure *RepoSyncError
-	if errors.As(r.bundlePullErr, &failure) {
+	if failure, ok := errors.AsType[*RepoSyncError](r.bundlePullErr); ok {
 		failure.CacheAvailable = CachedRepoMatches(repoDir, failure.URL)
 	}
 	return &ResolveResult{Bundle: def, Workspace: wsCfg}, nil
@@ -1276,8 +1273,7 @@ func (r *Resolver) SyncBundleRepo(cfg *WorkspaceConfig, repoID string) (string, 
 		return wsRepoDir, nil
 	}
 	dir := r.syncBundleRepo(repoID, *repo)
-	var failure *RepoSyncError
-	if errors.As(r.bundlePullErr, &failure) {
+	if failure, ok := errors.AsType[*RepoSyncError](r.bundlePullErr); ok {
 		versions := ListBundleVersions(filepath.Join(dir, repo.Path))
 		failure.CacheAvailable = len(versions) > 0 && CachedRepoMatches(dir, failure.URL)
 	}

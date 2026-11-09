@@ -180,8 +180,8 @@ func TestHandleSetAdminPassword_SurvivesResolveSystemSecrets(t *testing.T) {
 	// and a legacy SecretService row lingers from an older launcher version.
 	require.NoError(t, d.store.SetStateValue(systemsecrets.Key(systemsecrets.IDAdminPassword), "old-password"))
 	require.NoError(t, d.secretService.SaveSecret(storage.Secret{
-		SecretMeta: storage.SecretMeta{ID: "_admin_password", Name: "_admin_password", Type: storage.SecretSystem},
-		Value:      "old-password",
+		ID: "_admin_password", Name: "_admin_password", Type: storage.SecretSystem,
+		Value: "old-password",
 	}))
 
 	rec := postAdminPassword(d, `{"password":"rotated-pw-9"}`)

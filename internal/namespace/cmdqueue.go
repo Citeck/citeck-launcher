@@ -125,8 +125,8 @@ func (q *CmdQueue) Enqueue(cmd runtimeCmd) error {
 	}
 }
 
-// Chan returns the receive end for use in select.
-func (q *CmdQueue) Chan() <-chan runtimeCmd {
+// channel returns the receive end for use in the runtime loop select.
+func (q *CmdQueue) channel() <-chan runtimeCmd {
 	return q.ch
 }
 

@@ -455,11 +455,10 @@ func dumpWritePath(cmd, binds []string) (hostPath string, ok bool) {
 // end of a DumpScript-shaped command line — the in-container path gzip's
 // stdout was redirected to.
 func dumpRedirectTarget(script string) (string, bool) {
-	idx := strings.LastIndex(script, "> '")
-	if idx == -1 {
+	_, rest, ok := strings.CutLast(script, "> '")
+	if !ok {
 		return "", false
 	}
-	rest := script[idx+len("> '"):]
 	if !strings.HasSuffix(rest, "'") {
 		return "", false
 	}

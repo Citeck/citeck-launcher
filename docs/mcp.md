@@ -350,7 +350,9 @@ Shared reload materialization uses the same boundary, preserves unchanged mtime,
 permissions and edited overlays, and returns write/merge errors before handing
 new desired definitions/hashes to the runtime. An unavailable current overlay is
 not an empty document: replay a delta if possible, otherwise fail while keeping
-the disk entry and persisted edit. Safely written other files need not roll back.
+the disk entry and persisted edit. Safely written other files need not roll back. If a saved edit prevents daemon
+boot, use the explicit, backed-up [offline file recovery](offline-file-recovery.md)
+while the daemon and desktop wrapper are stopped; no edit is silently discarded.
 
 ## JVM commands and diagnostic downloads
 
@@ -375,8 +377,11 @@ namespace/application status, masked namespace config and api_auth token,
 goroutine stacks, migration reports, bounded logs and update manifest when
 available. Existing masking is preserved; logs are not promised secret-free.
 It streams ZIP output to a private temporary file outside workspaces, not through
-an in-memory response recorder. Writer/ZIP errors refuse the artifact and clean
-partial files.
+an in-memory response recorder. Unavailable source files are skipped without following unsafe paths; the ZIP
+then contains `INCOMPLETE.txt` listing the omitted sources, while later logs are
+still collected. Writer/ZIP errors, cancellation and quota failures refuse the
+artifact and clean partial files. Ordinary HTTP diagnostic downloads abort on
+fatal transfer errors rather than silently completing.
 
 Artifact metadata contains `id`, `name`, `size`, `expiresAt`, sensitivity and a
 relative `/artifacts/<opaque-id>` URL on the **same MCP listener**. Downloads
@@ -408,7 +413,11 @@ trap - EXIT HUP INT TERM
 
 Downloads stream bytes (no base64/heap-sized buffer), never automatically delete
 the source and have a 30-minute observation/transfer ceiling. Handles expire after
-30 minutes; at most 16 handles and 64 GiB registered source bytes are allowed.
+30 minutes from registration, including during an active download: the absolute
+TTL closes the handle and can interrupt a transfer begun near expiry. Downloads
+do not extend retention. Discard any partial response and request a fresh handle
+when authorized; the source heap is not deleted. At most 16 handles and 64 GiB
+registered source bytes are allowed.
 Each temporary system ZIP is capped at 256 MiB, total system artifacts/reservations
 at 512 MiB. Quota/storage failures are explicit. TTL, disable/shutdown and the
 next process startup clean only Launcher's own temporary ZIPs, never app exports.

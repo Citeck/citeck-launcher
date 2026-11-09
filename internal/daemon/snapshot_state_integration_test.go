@@ -44,7 +44,7 @@ func TestSnapshotTransactionDockerFailureAndRetry(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	source, _ := newNsSecretService(t)
-	require.NoError(t, source.SaveSecret(storage.Secret{SecretMeta: storage.SecretMeta{ID: storage.NamespaceSecretID("source", "original", "key"), Name: "key", Type: storage.SecretNamespace, Scope: storage.NamespaceSecretScope("source", "original")}, Value: "fixture-source-key"}))
+	require.NoError(t, source.SaveSecret(storage.Secret{ID: storage.NamespaceSecretID("source", "original", "key"), Name: "key", Type: storage.SecretNamespace, Scope: storage.NamespaceSecretScope("source", "original"), Value: "fixture-source-key"}))
 	data := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(data, "volumes", "postgres3"), 0o700))
 	require.NoError(t, os.WriteFile(filepath.Join(data, "volumes", "postgres3", "payload"), []byte("fixture-source-data"), 0o600))
@@ -60,7 +60,7 @@ func TestSnapshotTransactionDockerFailureAndRetry(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, target.SetMasterPassword("different-target-vault-fixture", false))
 	id := storage.NamespaceSecretID("target", "new", "key")
-	require.NoError(t, target.SaveSecret(storage.Secret{SecretMeta: storage.SecretMeta{ID: id, Name: "key", Type: storage.SecretNamespace, Scope: storage.NamespaceSecretScope("target", "new")}, Value: "fixture-old-key"}))
+	require.NoError(t, target.SaveSecret(storage.Secret{ID: id, Name: "key", Type: storage.SecretNamespace, Scope: storage.NamespaceSecretScope("target", "new"), Value: "fixture-old-key"}))
 	old := namespace.NsPersistedState{Status: namespace.NsStatusStopped, Dependencies: map[deps.ID]deps.DependencyState{deps.Postgres: {Image: "postgres:18", VolumeGen: 2}}}
 	raw, err := json.Marshal(old)
 	require.NoError(t, err)

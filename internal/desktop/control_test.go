@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -17,12 +16,7 @@ import (
 // socket's parent dir itself — otherwise net.Listen("unix", …) fails (on
 // Windows opaquely, as WSAENETDOWN), bricking a clean install.
 func TestControlServerStartCreatesMissingSockDir(t *testing.T) {
-	// Keep the socket path within the Unix limit even with a long TMPDIR.
-	dir, dirErr := os.MkdirTemp("", "control-")
-	if dirErr != nil {
-		t.Fatal(dirErr)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	dir := desktopSocketDir(t)
 	sock := filepath.Join(dir, "run", "wrapper.sock") // "run" does not exist yet
 	cs := NewControlServer(sock)
 	if err := cs.Start(); err != nil {
@@ -35,7 +29,7 @@ func TestControlServerStartCreatesMissingSockDir(t *testing.T) {
 }
 
 func TestControlServerDispatchesVerb(t *testing.T) {
-	sock := filepath.Join(t.TempDir(), "wrapper.sock")
+	sock := filepath.Join(desktopSocketDir(t), "wrapper.sock")
 	cs := NewControlServer(sock)
 	got := make(chan json.RawMessage, 1)
 	cs.Handle("window.focus", func(params json.RawMessage) (any, error) {
@@ -72,7 +66,7 @@ func TestControlServerDispatchesVerb(t *testing.T) {
 }
 
 func TestControlServerUnknownVerb404(t *testing.T) {
-	sock := filepath.Join(t.TempDir(), "wrapper.sock")
+	sock := filepath.Join(desktopSocketDir(t), "wrapper.sock")
 	cs := NewControlServer(sock)
 	if err := cs.Start(); err != nil {
 		t.Fatalf("Start: %v", err)

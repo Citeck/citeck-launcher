@@ -401,15 +401,12 @@ func resolveTemplateVars(s string) string {
 // extractDBName extracts the database name from a JDBC or MongoDB URL.
 // jdbc:postgresql://host:port/dbname?params -> dbname
 func extractDBName(url string) string {
-	idx := strings.LastIndex(url, "/")
-	if idx < 0 {
+	_, name, ok := strings.CutLast(url, "/")
+	if !ok {
 		return ""
 	}
-	name := url[idx+1:]
-	// Strip query parameters
-	if qIdx := strings.IndexByte(name, '?'); qIdx >= 0 {
-		name = name[:qIdx]
-	}
+	// Strip query parameters.
+	name, _, _ = strings.Cut(name, "?")
 	return name
 }
 

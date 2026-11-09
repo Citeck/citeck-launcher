@@ -142,11 +142,9 @@ func (s *namespaceSecrets) PrepareRestore(values map[string]string) (func() erro
 		for index, name := range names {
 			row, exists := rows[name]
 			if !exists {
-				row = storage.Secret{SecretMeta: storage.SecretMeta{
-					ID:   storage.NamespaceSecretID(s.workspaceID, s.namespaceID, name),
+				row = storage.Secret{ID: storage.NamespaceSecretID(s.workspaceID, s.namespaceID, name),
 					Name: name, Type: storage.SecretNamespace,
-					Scope: storage.NamespaceSecretScope(s.workspaceID, s.namespaceID),
-				}}
+					Scope: storage.NamespaceSecretScope(s.workspaceID, s.namespaceID)}
 			}
 			row.Value = values[name]
 			if saveErr := s.svc.SaveSecret(row); saveErr != nil {

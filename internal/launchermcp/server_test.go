@@ -53,7 +53,7 @@ func sdkSession(t *testing.T, endpoint, value string) *mcp.ClientSession {
 func TestSDKRoleMatrixEveryTool(t *testing.T) {
 	for _, role := range []Role{Observer, Developer} {
 		t.Run(string(role), func(t *testing.T) {
-			store, err := OpenStore(t.TempDir() + "/state.json")
+			store, err := OpenStore(testStorePath(t))
 			require.NoError(t, err)
 			token, value, err := store.Create("agent", role, nil)
 			require.NoError(t, err)
@@ -101,7 +101,7 @@ func TestSDKRoleMatrixEveryTool(t *testing.T) {
 	}
 }
 func TestHTTPBoundary(t *testing.T) {
-	store, err := OpenStore(t.TempDir() + "/state.json")
+	store, err := OpenStore(testStorePath(t))
 	require.NoError(t, err)
 	_, value, err := store.Create("test", Observer, nil)
 	require.NoError(t, err)
@@ -168,7 +168,7 @@ func TestHTTPBoundary(t *testing.T) {
 	require.Equal(t, 413, w.Code, w.Body.String())
 }
 func TestConfigureLoopbackAndBindFailure(t *testing.T) {
-	store, err := OpenStore(t.TempDir() + "/state.json")
+	store, err := OpenStore(testStorePath(t))
 	require.NoError(t, err)
 	service := New(store, &fakeBackend{})
 	defer service.Close()

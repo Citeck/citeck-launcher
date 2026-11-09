@@ -18,8 +18,8 @@ import (
 func TestRegistryBindingEndpoint(t *testing.T) {
 	d, mux := secretsTestMux(t)
 	require.NoError(t, d.secretService.SaveSecret(storage.Secret{
-		SecretMeta: storage.SecretMeta{ID: "reg-harbor", Type: storage.SecretRegistryAuth, Host: "harbor.citeck.ru", Username: "u"},
-		Value:      "p",
+		ID: "reg-harbor", Type: storage.SecretRegistryAuth, Host: "harbor.citeck.ru", Username: "u",
+		Value: "p",
 	}))
 
 	post := func(body string) *httptest.ResponseRecorder {
@@ -86,8 +86,8 @@ func TestMissingRegistryAuthEndpoint(t *testing.T) {
 
 	// Provide a credential and bind it → no longer missing.
 	require.NoError(t, svc.SaveSecret(storage.Secret{
-		SecretMeta: storage.SecretMeta{ID: "reg", Type: storage.SecretRegistryAuth, Username: "u"},
-		Value:      "p",
+		ID: "reg", Type: storage.SecretRegistryAuth, Username: "u",
+		Value: "p",
 	}))
 	require.NoError(t, store.SetRegistryBinding("ws1", "enterprise-registry.citeck.ru", "reg"))
 	assert.Empty(t, missing())

@@ -39,13 +39,11 @@ func TestBuildRegistryAuthCache_TypedBasic(t *testing.T) {
 	}
 	reader := &fakeSecretReader{secrets: map[string]storage.Secret{
 		"registry-private": {
-			SecretMeta: storage.SecretMeta{
-				ID:       "registry-private",
-				Type:     storage.SecretRegistryAuth,
-				Scope:    host,
-				Username: "alice",
-			},
-			Value: "pa:ss:wo:rd",
+			ID:       "registry-private",
+			Type:     storage.SecretRegistryAuth,
+			Scope:    host,
+			Username: "alice",
+			Value:    "pa:ss:wo:rd",
 		},
 	}}
 	got := buildRegistryAuthCache(reposByHost, reader, nil)
@@ -71,13 +69,13 @@ func TestBuildRegistryAuthCache_BindingWins(t *testing.T) {
 	}
 	reader := &fakeSecretReader{secrets: map[string]storage.Secret{
 		"bound": {
-			SecretMeta: storage.SecretMeta{ID: "bound", Type: storage.SecretRegistryAuth, Username: "svc"},
-			Value:      "pw",
+			ID: "bound", Type: storage.SecretRegistryAuth, Username: "svc",
+			Value: "pw",
 		},
 		// A scope-matching secret that MUST be ignored because the binding wins.
 		"scoped": {
-			SecretMeta: storage.SecretMeta{ID: "scoped", Type: storage.SecretRegistryAuth, Scope: "images-repo:" + host, Username: "other"},
-			Value:      "nope",
+			ID: "scoped", Type: storage.SecretRegistryAuth, Scope: "images-repo:" + host, Username: "other",
+			Value: "nope",
 		},
 	}}
 	got := buildRegistryAuthCache(reposByHost, reader, map[string]string{host: "bound"})
@@ -95,7 +93,7 @@ func TestBuildRegistryAuthCache_BindingWins(t *testing.T) {
 func TestBuildRegistryAuthCache_BindingWithoutImageRepo(t *testing.T) {
 	host := "extra-registry.citeck.ru"
 	reader := &fakeSecretReader{secrets: map[string]storage.Secret{
-		"s": {SecretMeta: storage.SecretMeta{ID: "s", Type: storage.SecretRegistryAuth, Username: "u"}, Value: "p"},
+		"s": {ID: "s", Type: storage.SecretRegistryAuth, Username: "u", Value: "p"},
 	}}
 	got := buildRegistryAuthCache(map[string]bundle.ImageRepo{}, reader, map[string]string{host: "s"})
 	auth := got[host]
@@ -118,11 +116,9 @@ func TestBuildRegistryAuthCache_LegacyPackedValue(t *testing.T) {
 	}
 	reader := &fakeSecretReader{secrets: map[string]storage.Secret{
 		"registry-private": {
-			SecretMeta: storage.SecretMeta{
-				ID:    "registry-private",
-				Type:  storage.SecretRegistryAuth,
-				Scope: host,
-			},
+			ID:    "registry-private",
+			Type:  storage.SecretRegistryAuth,
+			Scope: host,
 			Value: "alice:simple",
 		},
 	}}
@@ -147,13 +143,11 @@ func TestBuildRegistryAuthCache_KotlinMigrationScope(t *testing.T) {
 	}
 	reader := &fakeSecretReader{secrets: map[string]storage.Secret{
 		"images-repo:" + host: {
-			SecretMeta: storage.SecretMeta{
-				ID:       "images-repo:" + host,
-				Type:     storage.SecretRegistryAuth,
-				Scope:    "images-repo:" + host,
-				Username: "harbor-user",
-			},
-			Value: "harbor:p:w",
+			ID:       "images-repo:" + host,
+			Type:     storage.SecretRegistryAuth,
+			Scope:    "images-repo:" + host,
+			Username: "harbor-user",
+			Value:    "harbor:p:w",
 		},
 	}}
 	got := buildRegistryAuthCache(reposByHost, reader, nil)
@@ -177,9 +171,7 @@ func TestBuildRegistryAuthCache_SharedHostKeepsItsCredentials(t *testing.T) {
 	}}
 	reader := &fakeSecretReader{secrets: map[string]storage.Secret{
 		"registry-enterprise": {
-			SecretMeta: storage.SecretMeta{
-				ID: "registry-enterprise", Type: storage.SecretRegistryAuth, Scope: host, Username: "alice",
-			},
+			ID: "registry-enterprise", Type: storage.SecretRegistryAuth, Scope: host, Username: "alice",
 			Value: "secret",
 		},
 	}}
@@ -201,9 +193,7 @@ func TestRegistryAuthFunc_FollowsTheImagesRepo(t *testing.T) {
 	}}
 	reader := &fakeSecretReader{secrets: map[string]storage.Secret{
 		"registry-enterprise": {
-			SecretMeta: storage.SecretMeta{
-				ID: "registry-enterprise", Type: storage.SecretRegistryAuth, Scope: host, Username: "alice",
-			},
+			ID: "registry-enterprise", Type: storage.SecretRegistryAuth, Scope: host, Username: "alice",
 			Value: "secret",
 		},
 	}}

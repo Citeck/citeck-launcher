@@ -107,9 +107,16 @@ func Start(opts StartOptions) error {
 	if err := ensureDaemonDirs(); err != nil {
 		return err
 	}
-	daemonCfg := loadEffectiveDaemonConfig(opts)
-	if err := guardSingleDaemonInstance(socketPath); err != nil {
+	// Offline recovery holds the same lock before opening namespace state.
+	// Keep it for the entire daemon lifetime, including slow/failed boot.
+	profileLock, err := acquireDaemonProfileLock(config.HomeDir(), socketPath, 5*time.Second)
+	if err != nil {
 		return err
+	}
+	defer profileLock.Close()
+	daemonCfg := loadEffectiveDaemonConfig(opts)
+	if instanceErr := guardSingleDaemonInstance(socketPath); instanceErr != nil {
+		return instanceErr
 	}
 
 	// Bind the socket BEFORE the slow boot phase and serve the boot handler on

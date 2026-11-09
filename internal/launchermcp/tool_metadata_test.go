@@ -66,7 +66,7 @@ func validToolArguments(tool expectedToolContract) map[string]any {
 
 func metadataSession(t *testing.T, role Role) (*mcp.ClientSession, *fakeBackend, string) {
 	t.Helper()
-	store, err := OpenStore(t.TempDir() + "/state.json")
+	store, err := OpenStore(testStorePath(t))
 	require.NoError(t, err)
 	_, value, err := store.Create("metadata-test", role, nil)
 	require.NoError(t, err)

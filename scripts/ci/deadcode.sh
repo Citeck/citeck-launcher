@@ -13,7 +13,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
-XTOOLS_VERSION=v0.45.0 # golang.org/x/tools — pin so CI results are reproducible
+XTOOLS_VERSION=v0.52.0 # golang.org/x/tools — pin so CI results are reproducible
 ALLOWLIST=scripts/ci/deadcode-allowlist.txt
 
 echo "Running deadcode@${XTOOLS_VERSION} (tags: desktop,gtk3, including tests)..."

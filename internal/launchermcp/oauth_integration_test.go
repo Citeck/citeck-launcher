@@ -184,7 +184,7 @@ func TestOAuthRetryOwnedWorkerRecoversWithoutAuthenticationAndJoins(t *testing.T
 }
 
 func TestOAuthServiceOwnsRetryLifecycle(t *testing.T) {
-	store, err := OpenStore(t.TempDir() + "/state.json")
+	store, err := OpenStore(testStorePath(t))
 	require.NoError(t, err)
 	service := New(store, &fakeBackend{})
 	defer service.Close()
@@ -275,7 +275,7 @@ func TestOAuthPrincipalSDKResourceRoleMatrixUsesOwnerRole(t *testing.T) {
 			require.NoError(t, err)
 			port, err := strconv.Atoi(text)
 			require.NoError(t, err)
-			store, err := OpenStore(t.TempDir() + "/state.json")
+			store, err := OpenStore(testStorePath(t))
 			require.NoError(t, err)
 			require.NoError(t, store.SetSettings(Settings{Enabled: true, Port: port}))
 			client, err := store.oauth.registerClient(context.Background(), "unverified", []string{testOAuthCallback})

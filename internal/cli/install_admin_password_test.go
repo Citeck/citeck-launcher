@@ -45,8 +45,8 @@ func TestReadAdminPasswordFromOpenStore_LegacySecretServiceFallback(t *testing.T
 	require.NoError(t, err)
 	require.NoError(t, svc.SetMasterPassword(storage.DefaultMasterPassword, true))
 	require.NoError(t, svc.SaveSecret(storage.Secret{
-		SecretMeta: storage.SecretMeta{ID: "_admin_password", Name: "_admin_password", Type: storage.SecretSystem},
-		Value:      "legacy-pw-456",
+		ID: "_admin_password", Name: "_admin_password", Type: storage.SecretSystem,
+		Value: "legacy-pw-456",
 	}))
 
 	require.Equal(t, "legacy-pw-456", readAdminPasswordFromOpenStore(store))
@@ -61,8 +61,8 @@ func TestReadAdminPasswordFromOpenStore_PlainStateWinsOverLegacy(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, svc.SetMasterPassword(storage.DefaultMasterPassword, true))
 	require.NoError(t, svc.SaveSecret(storage.Secret{
-		SecretMeta: storage.SecretMeta{ID: "_admin_password", Name: "_admin_password", Type: storage.SecretSystem},
-		Value:      "legacy-pw",
+		ID: "_admin_password", Name: "_admin_password", Type: storage.SecretSystem,
+		Value: "legacy-pw",
 	}))
 	require.NoError(t, store.SetStateValue("_sys_admin_password", "current-pw"))
 
@@ -100,8 +100,8 @@ func TestReadAdminPasswordFromOpenStore_CustomMasterPasswordLocked(t *testing.T)
 	require.NoError(t, err)
 	require.NoError(t, svc.SetMasterPassword("user-master-pw", false))
 	require.NoError(t, svc.SaveSecret(storage.Secret{
-		SecretMeta: storage.SecretMeta{ID: "_admin_password", Name: "_admin_password", Type: storage.SecretSystem},
-		Value:      "unreachable-pw",
+		ID: "_admin_password", Name: "_admin_password", Type: storage.SecretSystem,
+		Value: "unreachable-pw",
 	}))
 
 	require.Empty(t, readAdminPasswordFromOpenStore(store))
@@ -114,10 +114,8 @@ func TestInstallReadsImportedNamespaceAdminPassword(t *testing.T) {
 	require.NoError(t, svc.SetMasterPassword(storage.DefaultMasterPassword, true))
 	require.NoError(t, systemsecrets.Set(store, svc, systemsecrets.IDAdminPassword, "profile-fixture"))
 	name := systemsecrets.NamespaceName(systemsecrets.IDAdminPassword)
-	require.NoError(t, svc.SaveSecret(storage.Secret{SecretMeta: storage.SecretMeta{
-		ID: storage.NamespaceSecretID("ws", "ns", name), Name: name,
-		Type: storage.SecretNamespace, Scope: storage.NamespaceSecretScope("ws", "ns"),
-	}, Value: "imported-fixture"}))
+	require.NoError(t, svc.SaveSecret(storage.Secret{ID: storage.NamespaceSecretID("ws", "ns", name), Name: name,
+		Type: storage.SecretNamespace, Scope: storage.NamespaceSecretScope("ws", "ns"), Value: "imported-fixture"}))
 	require.NoError(t, store.SetState(storage.LauncherState{WorkspaceID: "ws", SelectedNs: map[string]string{"ws": "ns"}}))
 	require.Equal(t, "imported-fixture", readAdminPasswordFromOpenStore(store))
 	require.NoError(t, store.SetState(storage.LauncherState{WorkspaceID: "ws", SelectedNs: map[string]string{"ws": "other"}}))

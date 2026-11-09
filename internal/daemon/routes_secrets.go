@@ -69,15 +69,13 @@ func (d *Daemon) handleCreateSecret(w http.ResponseWriter, r *http.Request) {
 	}
 
 	secret := storage.Secret{
-		SecretMeta: storage.SecretMeta{
-			ID:       req.ID,
-			Name:     req.Name,
-			Type:     storage.SecretType(req.Type),
-			Scope:    req.Scope,
-			Host:     req.Host,
-			Username: req.Username,
-		},
-		Value: req.Value,
+		ID:       req.ID,
+		Name:     req.Name,
+		Type:     storage.SecretType(req.Type),
+		Scope:    req.Scope,
+		Host:     req.Host,
+		Username: req.Username,
+		Value:    req.Value,
 	}
 
 	if err := d.secretWriterFunc().SaveSecret(secret); err != nil {

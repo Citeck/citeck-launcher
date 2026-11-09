@@ -16,7 +16,7 @@ func TestSecretCredentials(t *testing.T) {
 	}{
 		{
 			name:     "typed username wins, password with colons untouched",
-			secret:   Secret{SecretMeta: SecretMeta{Username: "alice"}, Value: "pa:ss:wo:rd"},
+			secret:   Secret{Username: "alice", Value: "pa:ss:wo:rd"},
 			wantUser: "alice", wantPass: "pa:ss:wo:rd", wantOK: true,
 		},
 		{
@@ -41,7 +41,7 @@ func TestSecretCredentials(t *testing.T) {
 		},
 		{
 			name:   "typed username with empty password",
-			secret: Secret{SecretMeta: SecretMeta{Username: "alice"}, Value: ""},
+			secret: Secret{Username: "alice", Value: ""},
 			wantOK: false,
 		},
 		{

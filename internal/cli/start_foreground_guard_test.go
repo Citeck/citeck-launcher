@@ -4,6 +4,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"slices"
 	"testing"
 )
 
@@ -131,8 +132,8 @@ func isInsideNotForegroundBlock(root, target ast.Node) bool {
 			return true
 		}
 		if n == target {
-			for i := len(stack) - 1; i >= 0; i-- {
-				ifStmt, ok := stack[i].(*ast.IfStmt)
+			for _, ancestor := range slices.Backward(stack) {
+				ifStmt, ok := ancestor.(*ast.IfStmt)
 				if !ok {
 					continue
 				}

@@ -12,7 +12,7 @@ import (
 
 func startStubSocketServer(t *testing.T, handler http.Handler) string {
 	t.Helper()
-	dir := t.TempDir()
+	dir := desktopSocketDir(t)
 	sockPath := filepath.Join(dir, "stub.sock")
 	ln, err := net.Listen("unix", sockPath)
 	if err != nil {
@@ -61,7 +61,7 @@ func TestNotifyExistingInstance_ErrorStatus(t *testing.T) {
 }
 
 func TestNotifyExistingInstance_NoDaemon(t *testing.T) {
-	dir := t.TempDir()
+	dir := desktopSocketDir(t)
 	sockPath := filepath.Join(dir, "nonexistent.sock")
 	err := NotifyExistingInstance(sockPath)
 	if err == nil {

@@ -6,7 +6,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -64,10 +63,7 @@ func TestUpdateApplyLiftsUnixResponseDeadlineDuringActiveDownload(t *testing.T) 
 	}))
 	t.Cleanup(proxy.Close)
 	d := &Daemon{updateSvc: update.NewService("2.4.0", t.TempDir(), update.WithBaseURLs(proxy.URL, proxy.URL), update.WithSigningPublicKeyHex(""))}
-	// An owned short path avoids the Unix socket's platform length limit.
-	dir, dirErr := os.MkdirTemp("", "upd-")
-	require.NoError(t, dirErr)
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	dir := daemonSocketDir(t)
 	path := filepath.Join(dir, "socket")
 	socket, socketErr := bindBootSocket(path)
 	require.NoError(t, socketErr)

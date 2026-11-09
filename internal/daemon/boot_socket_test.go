@@ -41,12 +41,9 @@ func newBootHarness(t *testing.T) *bootHarness {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("CITECK_HOME", home)
-	// RunDir is /run/citeck in server mode; keep the socket inside the test's
-	// own tree (and short enough for the ~108-byte sun_path limit).
-	runDir, err := os.MkdirTemp("", "citeck-run")
-	require.NoError(t, err)
+	// Never use the installation run directory or a long TMPDIR for sockets.
+	runDir := daemonSocketDir(t)
 	t.Setenv("CITECK_RUN", runDir)
-	t.Cleanup(func() { _ = os.RemoveAll(runDir) })
 
 	h := &bootHarness{
 		socketPath: config.SocketPath(),

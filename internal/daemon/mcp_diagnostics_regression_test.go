@@ -60,7 +60,7 @@ func TestMCPJVMCancelClosesSilentDockerHijackAndReleasesTarget(t *testing.T) {
 	require.NoError(t, err)
 	defer dc.Close()
 	d := mcpFixture(t)
-	store, err := launchermcp.OpenStore(t.TempDir() + "/state.json")
+	store, err := launchermcp.OpenStore(privateMCPStorePath(t))
 	require.NoError(t, err)
 	d.mcp = launchermcp.New(store, mcpBackend{d})
 	defer d.mcp.Close()

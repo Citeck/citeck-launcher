@@ -80,7 +80,7 @@ func (r *Runtime) StepOnce() StepResult {
 	}
 	// Drain whatever command(s) are buffered. Empty queue → quiescent step.
 	select {
-	case first := <-r.cmdQueue.Chan():
+	case first := <-r.cmdQueue.channel():
 		res.Quiescent = false
 		r.cmdQueue.Drain(first, func(c runtimeCmd) {
 			// Surface the command as a synthetic EventDto so tests can observe

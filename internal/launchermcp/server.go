@@ -126,7 +126,13 @@ func (s *Service) Configure(v Settings) error {
 		return errors.New("MCP service is closed")
 	}
 	if v.Enabled && s.startupError != nil {
-		return s.startupError
+		// Retry only a failed startup cleanup, before any listener/artifacts
+		// can exist. An ordinary Configure must never sweep live ZIPs.
+		s.startupError = s.cleanupTemporaryArtifacts()
+		if s.startupError != nil {
+			s.lastError = "MCP temporary artifact cleanup failed"
+			return s.startupError
+		}
 	}
 	if v.Port < 1024 || v.Port > 65535 {
 		return errors.New("port must be 1024..65535")
@@ -157,6 +163,9 @@ func (s *Service) Configure(v Settings) error {
 	s.server = next
 	s.port = v.Port
 	s.lastError = ""
+	if s.startupError != nil {
+		s.lastError = "MCP temporary artifact cleanup failed"
+	}
 	if oldListener != nil {
 		_ = oldListener.Close()
 	}
@@ -253,8 +262,7 @@ func (s *Service) Handler(port int) http.Handler {
 				}
 				slog.Info("MCP tool", "credentialKind", token.Kind, "credentialId", token.ID, "operation", definition.tool.Name, "workspaceId", args.WorkspaceID, "namespaceId", args.NamespaceID, "outcome", outcome)
 				if err != nil {
-					var refusal *ToolError
-					if errors.As(err, &refusal) {
+					if refusal, ok := errors.AsType[*ToolError](err); ok {
 						b, _ := json.Marshal(refusal)
 						return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}, nil, nil
 					}

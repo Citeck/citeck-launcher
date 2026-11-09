@@ -277,8 +277,7 @@ func (s *Service) writeOAuthFailure(w http.ResponseWriter, err error) {
 		oauthHTTPError(w, 503, "temporarily_unavailable", "OAuth operation unavailable; retry later")
 		return
 	}
-	var protocol *fosite.RFC6749Error
-	if errors.As(err, &protocol) {
+	if _, ok := errors.AsType[*fosite.RFC6749Error](err); ok {
 		code := "invalid_grant"
 		if errors.Is(err, fosite.ErrInvalidRequest) {
 			code = "invalid_request"

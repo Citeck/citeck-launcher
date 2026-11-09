@@ -69,7 +69,7 @@ func (r *Runtime) runtimeLoop() {
 			// loop exits — otherwise observers miss the final transitions.
 			r.flushEvents()
 			return
-		case cmd := <-r.cmdQueue.Chan():
+		case cmd := <-r.cmdQueue.channel():
 			// Drain coalesces adjacent buffered commands, then applies each
 			// survivor inline via applyCommand. cmdStop / cmdDetach terminate
 			// via shutdownComplete closure; the loop exits on the next iteration.

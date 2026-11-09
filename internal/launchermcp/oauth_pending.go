@@ -145,7 +145,13 @@ func (s *Store) beginAuthorization(ctx context.Context, input url.Values) (pendi
 			return mcpStorageError(err)
 		}
 		now := time.Now().UTC()
-		p = pendingAuthorization{OAuthPending: OAuthPending{ID: id, ClientID: input.Get("client_id"), ClientName: name, CorrelationCode: strings.ToUpper(id[:8]), Resource: resource, Scope: oauthScope, Status: "pending", CreatedAt: now, ExpiresAt: now.Add(5 * time.Minute), GrantLifetimeSeconds: int(oauthGrantLifetime.Seconds())}, form: cloneOAuthForm(input), epoch: u.settings.Epoch}
+		p = pendingAuthorization{
+			ID: id, ClientID: input.Get("client_id"), ClientName: name,
+			CorrelationCode: strings.ToUpper(id[:8]), Resource: resource, Scope: oauthScope,
+			Status: "pending", CreatedAt: now, ExpiresAt: now.Add(5 * time.Minute),
+			GrantLifetimeSeconds: int(oauthGrantLifetime.Seconds()),
+			form:                 cloneOAuthForm(input), epoch: u.settings.Epoch,
+		}
 		_, err = u.q.ExecContext(ctx, "INSERT INTO oauth_pending(id,client,request,nonce_hash,csrf_hash,correlation,created,expiry,epoch,resource,status) VALUES(?,?,?,?,?,?,?,?,?,?,'pending')", id, p.ClientID, string(encoded), nh[:], ch[:], p.CorrelationCode, now.UnixNano(), p.ExpiresAt.UnixNano(), u.settings.Epoch, resource)
 		return mcpStorageError(err)
 	})

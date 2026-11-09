@@ -286,6 +286,7 @@ func (s *Service) cleanupTemporaryArtifacts() error {
 		return fmt.Errorf("artifacts: %w", err)
 	}
 	defer f.Close()
+	var cleanupErr error
 	for {
 		entries, e := f.ReadDir(100)
 		for _, entry := range entries {
@@ -294,20 +295,22 @@ func (s *Service) cleanupTemporaryArtifacts() error {
 			}
 			info, err := root.Lstat(entry.Name())
 			if err != nil {
-				return fmt.Errorf("artifacts: %w", err)
+				cleanupErr = errors.Join(cleanupErr, fmt.Errorf("inspect temporary artifact %q: %w", entry.Name(), err))
+				continue
 			}
 			if !info.Mode().IsRegular() {
-				return errors.New("unexpected temporary artifact entry")
+				cleanupErr = errors.Join(cleanupErr, fmt.Errorf("unexpected temporary artifact entry %q", entry.Name()))
+				continue
 			}
 			if operationErr := root.Remove(entry.Name()); operationErr != nil {
-				return fmt.Errorf("artifacts: %w", operationErr)
+				cleanupErr = errors.Join(cleanupErr, fmt.Errorf("remove temporary artifact %q: %w", entry.Name(), operationErr))
 			}
 		}
 		if errors.Is(e, io.EOF) {
-			return nil
+			return cleanupErr
 		}
 		if e != nil {
-			return fmt.Errorf("artifacts: %w", e)
+			return errors.Join(cleanupErr, fmt.Errorf("read temporary artifacts: %w", e))
 		}
 	}
 }

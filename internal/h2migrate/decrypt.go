@@ -128,10 +128,8 @@ func ImportDecryptedSecrets(decrypted map[string]json.RawMessage, store storage.
 	count := 0
 	for id, s := range secretsMap {
 		secret := storage.Secret{
-			SecretMeta: storage.SecretMeta{
-				ID:   id,
-				Name: id,
-			},
+			ID:   id,
+			Name: id,
 		}
 		switch s.Type {
 		case "TOKEN":

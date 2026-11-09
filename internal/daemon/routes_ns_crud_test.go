@@ -468,8 +468,8 @@ func TestDeleteNamespaceDeletesItsOwnSecrets(t *testing.T) {
 	_, err = loadNamespaceSecrets(d.secretService, "wsMain", "nskeep", wsSecrets("db", "v"), nsSecretsSeed)
 	require.NoError(t, err)
 	require.NoError(t, d.secretService.SaveSecret(storage.Secret{
-		SecretMeta: storage.SecretMeta{ID: "user-token", Name: "token", Type: storage.SecretGitToken},
-		Value:      "t",
+		ID: "user-token", Name: "token", Type: storage.SecretGitToken,
+		Value: "t",
 	}))
 
 	rec := httptest.NewRecorder()

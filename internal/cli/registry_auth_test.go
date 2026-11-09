@@ -79,12 +79,10 @@ func saveTestRegistryCred(t *testing.T, value string) {
 	}
 	defer store.Close()
 	if err := store.SaveSecret(storage.Secret{
-		SecretMeta: storage.SecretMeta{
-			ID:    "registry-private",
-			Name:  "test",
-			Type:  storage.SecretRegistryAuth,
-			Scope: "test",
-		},
+		ID:    "registry-private",
+		Name:  "test",
+		Type:  storage.SecretRegistryAuth,
+		Scope: "test",
 		Value: value,
 	}); err != nil {
 		t.Fatalf("save secret: %v", err)
@@ -198,8 +196,7 @@ func TestCheckRegistryAuthForBundle_MalformedCredNonTTY(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for malformed cred in non-TTY, got nil")
 	}
-	var ece ExitCodeError
-	if !errors.As(err, &ece) {
+	if _, ok := errors.AsType[ExitCodeError](err); !ok {
 		t.Fatalf("expected ExitCodeError, got %T: %v", err, err)
 	}
 }

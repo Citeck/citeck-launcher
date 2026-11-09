@@ -107,8 +107,8 @@ func TestUnlockLegacyPBKDF2Envelope(t *testing.T) {
 func TestRawDBEncryptedValues(t *testing.T) {
 	store := newTestSQLiteStore(t)
 	require.NoError(t, store.SaveSecret(Secret{
-		SecretMeta: SecretMeta{ID: "tok", Name: "Token", Type: SecretGitToken},
-		Value:      "super-secret-token",
+		ID: "tok", Name: "Token", Type: SecretGitToken,
+		Value: "super-secret-token",
 	}))
 
 	svc, err := NewSecretService(store)
@@ -128,8 +128,8 @@ func TestRawDBEncryptedValues(t *testing.T) {
 
 	// SaveSecret through service should also encrypt in DB
 	require.NoError(t, svc.SaveSecret(Secret{
-		SecretMeta: SecretMeta{ID: "new", Name: "New", Type: SecretGitToken},
-		Value:      "plaintext-token",
+		ID: "new", Name: "New", Type: SecretGitToken,
+		Value: "plaintext-token",
 	}))
 	var rawValue string
 	err = store.DB().QueryRow("SELECT value FROM secrets WHERE id = ?", "new").Scan(&rawValue)
@@ -150,8 +150,8 @@ func TestSecretServiceBothStores(t *testing.T) {
 			t.Run("SetMasterPassword+Unlock", func(t *testing.T) {
 				store := newStore(t)
 				require.NoError(t, store.SaveSecret(Secret{
-					SecretMeta: SecretMeta{ID: "tok", Name: "Token", Type: SecretGitToken},
-					Value:      "secret-value-123",
+					ID: "tok", Name: "Token", Type: SecretGitToken,
+					Value: "secret-value-123",
 				}))
 
 				svc, err := NewSecretService(store)
@@ -200,8 +200,8 @@ func TestSecretServiceBothStores(t *testing.T) {
 			t.Run("LockedState", func(t *testing.T) {
 				store := newStore(t)
 				require.NoError(t, store.SaveSecret(Secret{
-					SecretMeta: SecretMeta{ID: "s1", Name: "S1", Type: SecretGitToken},
-					Value:      "val",
+					ID: "s1", Name: "S1", Type: SecretGitToken,
+					Value: "val",
 				}))
 
 				svc, err := NewSecretService(store)
@@ -218,8 +218,8 @@ func TestSecretServiceBothStores(t *testing.T) {
 
 				// SaveSecret returns ErrSecretsLocked
 				err = svc2.SaveSecret(Secret{
-					SecretMeta: SecretMeta{ID: "new", Name: "New", Type: SecretGitToken},
-					Value:      "val",
+					ID: "new", Name: "New", Type: SecretGitToken,
+					Value: "val",
 				})
 				require.ErrorIs(t, err, ErrSecretsLocked)
 
@@ -281,8 +281,8 @@ func TestSecretServiceBothStores(t *testing.T) {
 			t.Run("ResetSecrets", func(t *testing.T) {
 				store := newStore(t)
 				require.NoError(t, store.SaveSecret(Secret{
-					SecretMeta: SecretMeta{ID: "s1", Name: "S1", Type: SecretGitToken},
-					Value:      "val1",
+					ID: "s1", Name: "S1", Type: SecretGitToken,
+					Value: "val1",
 				}))
 
 				svc, err := NewSecretService(store)
@@ -317,8 +317,8 @@ func TestSecretServiceBothStores(t *testing.T) {
 			t.Run("DeleteSecretPassthrough", func(t *testing.T) {
 				store := newStore(t)
 				require.NoError(t, store.SaveSecret(Secret{
-					SecretMeta: SecretMeta{ID: "s1", Name: "S1", Type: SecretGitToken},
-					Value:      "val",
+					ID: "s1", Name: "S1", Type: SecretGitToken,
+					Value: "val",
 				}))
 
 				svc, err := NewSecretService(store)

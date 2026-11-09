@@ -241,8 +241,7 @@ func TestKeycloakInitScript_UserCheckBash(t *testing.T) {
 
 	// We expect exit code 1 (not found): citeck-launcher is NOT citeck.
 	require.Error(t, err, "exact-match check must return non-zero (not found) for citeck-launcher when SA_USER=citeck")
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) {
+	if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
 		require.Equal(t, 1, exitErr.ExitCode(), "expected grep to exit 1 (not found)")
 	}
 

@@ -56,6 +56,7 @@ func (s *Service) authorizeOAuth(w http.ResponseWriter, r *http.Request) {
 		oauthHTTPError(w, 500, "server_error", "page unavailable")
 		return
 	}
+	//nolint:gosec // G124: the canonical OAuth issuer is HTTP loopback, so Secure would break the ceremony; HttpOnly and Strict are set.
 	http.SetCookie(w, &http.Cookie{Name: oauthCookieName(), Value: nonce, Path: pendingBrowserPath(p.ID), HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: 600})
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'nonce-"+csrf+"'; style-src 'nonce-"+csrf+"'; connect-src 'self'; form-action http://127.0.0.1:* http://localhost:* http://[::1]:*; base-uri 'none'; frame-ancestors 'none'")

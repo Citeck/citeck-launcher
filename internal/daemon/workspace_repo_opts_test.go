@@ -123,7 +123,7 @@ func TestBuildWorkspaceRepoOpts_BasicSecretUsesValue(t *testing.T) {
 		SecretID: "basic-cred",
 	}
 	sec := &fakeSecretReader{secrets: map[string]storage.Secret{
-		"basic-cred": {SecretMeta: storage.SecretMeta{Username: "deploy-user"}, Value: "s3cr3t:with:colons"},
+		"basic-cred": {Username: "deploy-user", Value: "s3cr3t:with:colons"},
 	}}
 
 	opts := buildWorkspaceRepoOpts(ws, sec)
@@ -180,8 +180,8 @@ func TestMigrateWorkspaceSecretLinks_BackfillsLegacyLink(t *testing.T) {
 		require.NoError(t, store.SaveWorkspace(ws))
 	}
 	sec := &fakeSecretReader{secrets: map[string]storage.Secret{
-		workspaceRepoSecretKey("ws-old"): {SecretMeta: storage.SecretMeta{ID: workspaceRepoSecretKey("ws-old"), Type: storage.SecretGitToken}, Value: "glpat-old"},
-		"shared-token":                   {SecretMeta: storage.SecretMeta{ID: "shared-token", Type: storage.SecretGitToken}, Value: "glpat-shared"},
+		workspaceRepoSecretKey("ws-old"): {ID: workspaceRepoSecretKey("ws-old"), Type: storage.SecretGitToken, Value: "glpat-old"},
+		"shared-token":                   {ID: "shared-token", Type: storage.SecretGitToken, Value: "glpat-shared"},
 	}}
 
 	migrateWorkspaceSecretLinks(store, sec)

@@ -15,7 +15,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
-GOVULNCHECK_VERSION=v1.3.0 # golang.org/x/vuln — keep in sync with the triage notes
+GOVULNCHECK_VERSION=v1.9.0 # golang.org/x/vuln — keep in sync with the triage notes
 ALLOWLIST=scripts/ci/govulncheck-allowlist.txt
 
 # govulncheck builds the module, which needs internal/daemon/webdist to exist

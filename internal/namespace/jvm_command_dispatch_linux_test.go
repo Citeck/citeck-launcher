@@ -77,8 +77,7 @@ func TestAttachJcmdFallbackOnlyBeforeDispatch(t *testing.T) {
 			return "container result", nil
 		}
 		_, gotErr := attachJcmdVia(context.Background(), "cid", "GC.run", nil, host, fallback)
-		var dispatched *jvmattach.DispatchError
-		if errors.As(err, &dispatched) {
+		if _, dispatched := errors.AsType[*jvmattach.DispatchError](err); dispatched {
 			require.Error(t, gotErr)
 			require.Zero(t, attempts)
 		} else {

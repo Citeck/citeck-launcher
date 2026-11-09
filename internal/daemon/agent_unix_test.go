@@ -24,7 +24,7 @@ import (
 func TestAgentDiscoveryOverUnixSocket(t *testing.T) {
 	config.SetDesktopMode(false)
 	t.Cleanup(config.ResetDesktopMode)
-	runDir := t.TempDir()
+	runDir := daemonSocketDir(t)
 	t.Setenv("CITECK_RUN", runDir)
 	t.Setenv("CITECK_HOST", "")
 	listener, err := net.Listen("unix", config.SocketPath())

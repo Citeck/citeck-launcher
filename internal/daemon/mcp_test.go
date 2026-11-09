@@ -124,7 +124,7 @@ func TestMCPSpringEligibilityAndResetIsolation(t *testing.T) {
 func TestMCPTargetDoesNotCrossWorkspaceAndStopDoesNotWaitForReload(t *testing.T) {
 	d := mcpFixture(t)
 	b := mcpBackend{d}
-	a := launchermcp.Arguments{Target: launchermcp.Target{WorkspaceID: "beta", NamespaceID: "same"}, App: "emodel"}
+	a := launchermcp.Arguments{WorkspaceID: "beta", NamespaceID: "same", App: "emodel"}
 	_, err := b.Call(context.Background(), "application_settings_write", a)
 	require.ErrorContains(t, err, "TARGET_CHANGED")
 	require.Empty(t, d.active().runtime.AppPatch("emodel"))
@@ -152,7 +152,7 @@ func TestMCPTargetDoesNotCrossWorkspaceAndStopDoesNotWaitForReload(t *testing.T)
 }
 func TestMCPManagementRequiresListenerProvenance(t *testing.T) {
 	d := mcpFixture(t)
-	store, err := launchermcp.OpenStore(t.TempDir() + "/state.json")
+	store, err := launchermcp.OpenStore(privateMCPStorePath(t))
 	require.NoError(t, err)
 	d.mcpStore = store
 	d.mcp = launchermcp.New(store, mcpBackend{d})
@@ -303,7 +303,7 @@ func TestSDKAgainstRealDaemonBackendAndSystemArtifact(t *testing.T) {
 }
 func TestMCPJVMRefusalKeepsTypedGate(t *testing.T) {
 	d := mcpFixture(t)
-	s, e := launchermcp.OpenStore(t.TempDir() + "/state.json")
+	s, e := launchermcp.OpenStore(privateMCPStorePath(t))
 	require.NoError(t, e)
 	d.mcp = launchermcp.New(s, mcpBackend{d})
 	_, e = (mcpBackend{d}).Call(context.Background(), "jvm_command", launchermcp.Arguments{Target: targetOf(d.active()), App: "emodel", Command: "VM.flags"})

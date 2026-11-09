@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -59,6 +60,11 @@ func RecoveryMiddleware(next http.Handler) http.Handler {
 		rw := &recoveryWriter{ResponseWriter: w}
 		defer func() {
 			if err := recover(); err != nil {
+				// net/http uses this sentinel to terminate an incomplete stream.
+				// Swallowing it would turn a failed ZIP/download into a clean EOF.
+				if panicErr, ok := err.(error); ok && errors.Is(panicErr, http.ErrAbortHandler) {
+					panic(http.ErrAbortHandler)
+				}
 				stack := debug.Stack()
 				//nolint:gosec // G706: panic stack trace logged for debugging
 				slog.Error("Panic recovered in HTTP handler",

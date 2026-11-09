@@ -199,8 +199,8 @@ func FindNewerBundle(bundlesDir, currentKey, launcherVersion string) *NewerBundl
 // "2026.2" → ""). compareBundleVersions ranks every unscoped version above
 // every scoped one, so comparisons only make sense inside one scope.
 func bundleScopeOf(key string) string {
-	if idx := strings.LastIndex(key, "/"); idx >= 0 {
-		return key[:idx]
+	if scope, _, ok := strings.CutLast(key, "/"); ok {
+		return scope
 	}
 	return ""
 }

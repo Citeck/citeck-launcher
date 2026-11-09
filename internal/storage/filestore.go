@@ -615,15 +615,13 @@ func (s *FileStore) readSecret(path string) (*Secret, error) {
 		}
 	}
 	return &Secret{
-		SecretMeta: SecretMeta{
-			ID:        sf.ID,
-			Name:      sf.Name,
-			Type:      sf.Type,
-			Scope:     sf.Scope,
-			Host:      host,
-			Username:  username,
-			CreatedAt: sf.CreatedAt,
-		},
-		Value: value,
+		ID:        sf.ID,
+		Name:      sf.Name,
+		Type:      sf.Type,
+		Scope:     sf.Scope,
+		Host:      host,
+		Username:  username,
+		CreatedAt: sf.CreatedAt,
+		Value:     value,
 	}, nil
 }

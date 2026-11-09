@@ -59,14 +59,12 @@ func testStoreSecrets(t *testing.T, store Store) {
 
 	// Save
 	sec := Secret{
-		SecretMeta: SecretMeta{
-			ID:        "git-token",
-			Name:      "GitLab Token",
-			Type:      SecretGitToken,
-			Scope:     "global",
-			CreatedAt: time.Now().Truncate(time.Second),
-		},
-		Value: "glpat-xxxx",
+		ID:        "git-token",
+		Name:      "GitLab Token",
+		Type:      SecretGitToken,
+		Scope:     "global",
+		CreatedAt: time.Now().Truncate(time.Second),
+		Value:     "glpat-xxxx",
 	}
 	if err := store.SaveSecret(sec); err != nil {
 		t.Fatalf("SaveSecret() error: %v", err)
@@ -110,14 +108,12 @@ func testStoreSecrets(t *testing.T, store Store) {
 	// (Kotlin AuthSecret.Basic parity). Splitting on ':' would truncate the
 	// password; the storage layer must preserve both fields verbatim.
 	basic := Secret{
-		SecretMeta: SecretMeta{
-			ID:       "basic-1",
-			Name:     "Registry creds",
-			Type:     SecretRegistryAuth,
-			Scope:    "registry.example.com",
-			Username: "alice",
-		},
-		Value: "pa:ss:wo:rd",
+		ID:       "basic-1",
+		Name:     "Registry creds",
+		Type:     SecretRegistryAuth,
+		Scope:    "registry.example.com",
+		Username: "alice",
+		Value:    "pa:ss:wo:rd",
 	}
 	err = store.SaveSecret(basic)
 	if err != nil {

@@ -123,13 +123,21 @@ func cloneOAuthForm(form url.Values) url.Values {
 	}
 	return next
 }
+
+// Preserve Fosite's pointer error representation: its protocol mapper uses
+// errors.As for *RFC6749Error, and dereferencing it to satisfy printf's pointer
+// diagnostic would lose that contract. Wrap through the error interface instead.
+func wrapOAuthProtocolError(err error) error {
+	return fmt.Errorf("OAuth protocol: %w", err)
+}
+
 func (p *oauthProvider) validateRedirect(ctx context.Context, form url.Values) error {
 	client, err := p.storage.GetClient(ctx, form.Get("client_id"))
 	if err != nil {
 		return mcpStorageError(err)
 	}
 	if !matchesOAuthRedirect(client.GetRedirectURIs(), form.Get("redirect_uri")) {
-		return fosite.ErrInvalidRequest.WithDescription("registered OAuth redirect required")
+		return wrapOAuthProtocolError(fosite.ErrInvalidRequest.WithDescription("registered OAuth redirect required"))
 	}
 	return nil
 }
@@ -271,7 +279,7 @@ func (p *oauthProvider) prevalidateExchange(ctx context.Context, form url.Values
 		return nil
 	}
 	if r.GetRequestForm().Get("redirect_uri") != form.Get("redirect_uri") {
-		return fosite.ErrInvalidGrant.WithDescription("OAuth code redirect mismatch")
+		return wrapOAuthProtocolError(fosite.ErrInvalidGrant.WithDescription("OAuth code redirect mismatch"))
 	}
 	if err := p.strategy.ValidateAuthorizeCode(ctx, r, form.Get("code")); err != nil {
 		return fmt.Errorf("OAuth code: %w", err)

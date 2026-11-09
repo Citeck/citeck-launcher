@@ -9,7 +9,7 @@ import (
 )
 
 func TestCallWrapperVerb(t *testing.T) {
-	sock := filepath.Join(t.TempDir(), "wrapper.sock")
+	sock := filepath.Join(daemonSocketDir(t), "wrapper.sock")
 	ln, err := net.Listen("unix", sock)
 	if err != nil {
 		t.Fatalf("listen: %v", err)

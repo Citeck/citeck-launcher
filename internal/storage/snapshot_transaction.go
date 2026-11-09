@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 
@@ -63,7 +64,7 @@ func (ss *SecretService) CommitNamespaceSnapshot(state SnapshotState, values map
 	}
 	rows := make([]Secret, 0, len(values))
 	for name, value := range values {
-		row := Secret{SecretMeta: SecretMeta{ID: NamespaceSecretID(state.WorkspaceID, state.NamespaceID, name), Name: name, Type: SecretNamespace, Scope: NamespaceSecretScope(state.WorkspaceID, state.NamespaceID)}, Value: value}
+		row := Secret{ID: NamespaceSecretID(state.WorkspaceID, state.NamespaceID, name), Name: name, Type: SecretNamespace, Scope: NamespaceSecretScope(state.WorkspaceID, state.NamespaceID), Value: value}
 		if meta, have := existing[name]; have {
 			row.SecretMeta = meta
 		}
@@ -167,8 +168,8 @@ func snapshotMkdirAll(path string, mode os.FileMode) error {
 	if err := os.MkdirAll(path, mode); err != nil {
 		return fmt.Errorf("create snapshot metadata directory: %w", err)
 	}
-	for index := len(created) - 1; index >= 0; index-- {
-		if err := syncSnapshotDir(created[index]); err != nil {
+	for _, directory := range slices.Backward(created) {
+		if err := syncSnapshotDir(directory); err != nil {
 			return err
 		}
 	}
@@ -357,7 +358,7 @@ func validSnapshotJournal(j snapshotFileJournal) bool {
 		if json.Unmarshal(change.After, &file) != nil || file.ID != change.SecretID {
 			return false
 		}
-		row := Secret{SecretMeta: SecretMeta{ID: file.ID, Name: file.Name, Type: file.Type, Scope: file.Scope}, Value: file.Value}
+		row := Secret{ID: file.ID, Name: file.Name, Type: file.Type, Scope: file.Scope, Value: file.Value}
 		if validateSnapshotCommit(j.State, []Secret{row}) != nil {
 			return false
 		}

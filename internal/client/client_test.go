@@ -4,6 +4,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -36,8 +37,17 @@ func TestDetectTransport_EnvHost(t *testing.T) {
 }
 
 func TestDetectTransport_UnixSocket(t *testing.T) {
-	// Create a real Unix listener so DetectTransport can dial it
-	dir := t.TempDir()
+	// Keep the real socket within the macOS 104-byte limit, independent of
+	// the test name and TMPDIR. MkdirTemp creates an isolated private directory.
+	base := ""
+	if runtime.GOOS != "windows" {
+		base = "/tmp"
+	}
+	dir, err := os.MkdirTemp(base, "client-sock-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	sockPath := filepath.Join(dir, "daemon.sock")
 	ln, err := net.Listen("unix", sockPath)
 	if err != nil {

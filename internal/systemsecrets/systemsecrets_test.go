@@ -133,10 +133,8 @@ func TestGet_PrioritySecretServiceMigrates(t *testing.T) {
 	require.NoError(t, svc.SetMasterPassword("test-password", false))
 
 	require.NoError(t, svc.SaveSecret(storage.Secret{
-		SecretMeta: storage.SecretMeta{
-			ID:   IDCiteckSA,
-			Type: storage.SecretSystem,
-		},
+		ID:    IDCiteckSA,
+		Type:  storage.SecretSystem,
 		Value: "legacy-sa-value",
 	}))
 
@@ -197,8 +195,8 @@ func TestSet_PersistsStateAndDeletesLegacyRow(t *testing.T) {
 	// Pre-existing install: old value in state + lingering legacy row.
 	require.NoError(t, store.SetStateValue(Key(IDAdminPassword), "old-password"))
 	require.NoError(t, svc.SaveSecret(storage.Secret{
-		SecretMeta: storage.SecretMeta{ID: IDAdminPassword, Name: IDAdminPassword, Type: storage.SecretSystem},
-		Value:      "old-password",
+		ID: IDAdminPassword, Name: IDAdminPassword, Type: storage.SecretSystem,
+		Value: "old-password",
 	}))
 
 	require.NoError(t, Set(store, svc, IDAdminPassword, "rotated-pw"))
@@ -239,8 +237,8 @@ func TestInspect_ReportsAllHomesInPriorityOrder(t *testing.T) {
 
 	require.NoError(t, store.SetStateValue(Key(IDJWT), "state-value"))
 	require.NoError(t, svc.SaveSecret(storage.Secret{
-		SecretMeta: storage.SecretMeta{ID: IDJWT, Name: IDJWT, Type: storage.SecretSystem},
-		Value:      "row-value",
+		ID: IDJWT, Name: IDJWT, Type: storage.SecretSystem,
+		Value: "row-value",
 	}))
 	plainPath := PlainFilePath(IDJWT)
 	require.NoError(t, os.WriteFile(plainPath, []byte("file-value"), 0o600))
@@ -282,8 +280,8 @@ func TestInspect_EmptyAndLockedService(t *testing.T) {
 	// contributes nothing — Inspect must not error or block on it.
 	require.NoError(t, svc.SetMasterPassword("custom-master", false))
 	require.NoError(t, svc.SaveSecret(storage.Secret{
-		SecretMeta: storage.SecretMeta{ID: IDOIDC, Name: IDOIDC, Type: storage.SecretSystem},
-		Value:      "hidden",
+		ID: IDOIDC, Name: IDOIDC, Type: storage.SecretSystem,
+		Value: "hidden",
 	}))
 	locked, err := storage.NewSecretService(store)
 	require.NoError(t, err)

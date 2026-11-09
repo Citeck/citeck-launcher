@@ -207,12 +207,10 @@ func namespaceSecretRow(wsID, nsID, scope, rowID, secretID, value string) storag
 		rowID = namespaceSecretRowID(wsID, nsID, secretID)
 	}
 	return storage.Secret{
-		SecretMeta: storage.SecretMeta{
-			ID:    rowID,
-			Name:  secretID,
-			Type:  storage.SecretNamespace,
-			Scope: scope,
-		},
+		ID:    rowID,
+		Name:  secretID,
+		Type:  storage.SecretNamespace,
+		Scope: scope,
 		Value: value,
 	}
 }

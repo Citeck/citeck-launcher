@@ -253,9 +253,9 @@ func (r *Runtime) emitRestartEvent(app *AppRuntime, reason, detail, diagnostics 
 // next call returns "readopted_failing" (not in the bad-set) → no duplicate
 // WARN. Must be called with r.mu held (read-only access).
 func (r *Runtime) lastRestartReason(name string) string {
-	for i := len(r.restartEvents) - 1; i >= 0; i-- {
-		if r.restartEvents[i].App == name {
-			return r.restartEvents[i].Reason
+	for _, event := range slices.Backward(r.restartEvents) {
+		if event.App == name {
+			return event.Reason
 		}
 	}
 	return ""

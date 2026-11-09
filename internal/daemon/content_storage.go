@@ -64,18 +64,15 @@ func (e *errStoredConfigUnreadable) Unwrap() error { return e.err }
 // reports whether it did. Every write route (create, edit, upgrade, raw config
 // PUT) calls it before its own error mapping.
 func (d *Daemon) writeConfigGateRefusal(w http.ResponseWriter, r *http.Request, err error) bool {
-	var floor *errLauncherTooOld
-	if errors.As(err, &floor) {
+	if floor, ok := errors.AsType[*errLauncherTooOld](err); ok {
 		d.writeLauncherTooOldError(w, r, floor)
 		return true
 	}
-	var cs *errContentStorageRefused
-	if errors.As(err, &cs) {
+	if cs, ok := errors.AsType[*errContentStorageRefused](err); ok {
 		writeErrorCode(w, http.StatusConflict, cs.code, d.translatorFor(r).Render(cs.message))
 		return true
 	}
-	var unreadable *errStoredConfigUnreadable
-	if errors.As(err, &unreadable) {
+	if _, ok := errors.AsType[*errStoredConfigUnreadable](err); ok {
 		writeInternalError(w, err)
 		return true
 	}

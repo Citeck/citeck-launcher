@@ -132,7 +132,7 @@ func TestDetectSingleRootDir(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			files := make([]*zip.File, len(tt.names))
 			for i, n := range tt.names {
-				files[i] = &zip.File{FileHeader: zip.FileHeader{Name: n}}
+				files[i] = &zip.File{Name: n}
 			}
 			assert.Equal(t, tt.expect, detectSingleRootDir(files))
 		})

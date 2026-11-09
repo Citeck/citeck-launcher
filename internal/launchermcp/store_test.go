@@ -65,7 +65,7 @@ func TestTokenStoreHashOnlyRestartExpiryRevocationAndDiskFailure(t *testing.T) {
 	require.False(t, ok)
 }
 func TestTokenStatePermissionsAndRolesFailClosed(t *testing.T) {
-	path := t.TempDir() + "/state.json"
+	path := testStorePath(t)
 	s, err := OpenStore(path)
 	require.NoError(t, err)
 	_, _, err = s.Create("x", Observer, nil)
@@ -85,7 +85,7 @@ func TestTokenStatePermissionsAndRolesFailClosed(t *testing.T) {
 	require.Error(t, err)
 }
 func TestManualTokenExpiryBoundBeforePersistence(t *testing.T) {
-	s, err := OpenStore(t.TempDir() + "/state.json")
+	s, err := OpenStore(testStorePath(t))
 	require.NoError(t, err)
 	defer s.Close()
 	for _, expiry := range []time.Time{
@@ -114,7 +114,7 @@ func TestManualTokenExpiryBoundBeforePersistence(t *testing.T) {
 }
 
 func TestLastUsedFailureIsStillRateLimited(t *testing.T) {
-	s, err := OpenStore(t.TempDir() + "/state.json")
+	s, err := OpenStore(testStorePath(t))
 	require.NoError(t, err)
 	defer s.Close()
 	_, value, err := s.Create("agent", Observer, nil)

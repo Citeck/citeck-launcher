@@ -28,13 +28,13 @@ func TestANamespaceSecretIsStoredPlainUntilAMasterPasswordExists(t *testing.T) {
 			require.NoError(t, err)
 			require.False(t, svc.IsEncrypted())
 
-			ns := Secret{SecretMeta: SecretMeta{ID: "ns:n1:db", Name: "db", Type: SecretNamespace, Scope: "ns:n1"}, Value: "observer"}
+			ns := Secret{ID: "ns:n1:db", Name: "db", Type: SecretNamespace, Scope: "ns:n1", Value: "observer"}
 			require.NoError(t, svc.SaveSecret(ns))
 			raw, err := store.GetSecret("ns:n1:db")
 			require.NoError(t, err)
 			assert.Equal(t, "observer", raw.Value, "no master password yet: stored as is")
 
-			user := Secret{SecretMeta: SecretMeta{ID: "tok", Name: "tok", Type: SecretRegistryAuth}, Value: "t"}
+			user := Secret{ID: "tok", Name: "tok", Type: SecretRegistryAuth, Value: "t"}
 			require.ErrorIs(t, svc.SaveSecret(user), ErrEncryptionNotSetUp, "user secrets keep the old rule")
 
 			require.NoError(t, svc.SetMasterPassword("pwd", false))
@@ -45,7 +45,7 @@ func TestANamespaceSecretIsStoredPlainUntilAMasterPasswordExists(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, "observer", got.Value)
 
-			require.NoError(t, svc.SaveSecret(Secret{SecretMeta: SecretMeta{ID: "ns:n1:other", Name: "other", Type: SecretNamespace, Scope: "ns:n1"}, Value: "v"}))
+			require.NoError(t, svc.SaveSecret(Secret{ID: "ns:n1:other", Name: "other", Type: SecretNamespace, Scope: "ns:n1", Value: "v"}))
 			raw, err = store.GetSecret("ns:n1:other")
 			require.NoError(t, err)
 			assert.NotEqual(t, "v", raw.Value, "and every later write is encrypted")

@@ -5,7 +5,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"testing"
 
 	"github.com/citeck/citeck-launcher/internal/api"
@@ -24,9 +23,7 @@ import (
 // name, which can exceed the operating system's Unix socket path limit.
 func TestExperimentalFeaturesEditOverTheClient(t *testing.T) {
 	t.Setenv("CITECK_HOME", t.TempDir())
-	runDir, dirErr := os.MkdirTemp("", "exp-")
-	require.NoError(t, dirErr)
-	t.Cleanup(func() { _ = os.RemoveAll(runDir) })
+	runDir := daemonSocketDir(t)
 	t.Setenv("CITECK_RUN", runDir)
 	t.Setenv("CITECK_HOST", "")
 	d, mux := newNsCrudTestDaemon(t)

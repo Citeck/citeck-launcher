@@ -303,10 +303,8 @@ func SetForNamespace(store storage.Store, svc *storage.SecretService, wsID, nsID
 		return Set(store, svc, id, value)
 	}
 	name := NamespaceName(id)
-	if saveErr := svc.SaveSecret(storage.Secret{SecretMeta: storage.SecretMeta{
-		ID: storage.NamespaceSecretID(wsID, nsID, name), Name: name,
-		Type: storage.SecretNamespace, Scope: storage.NamespaceSecretScope(wsID, nsID),
-	}, Value: value}); saveErr != nil {
+	if saveErr := svc.SaveSecret(storage.Secret{ID: storage.NamespaceSecretID(wsID, nsID, name), Name: name,
+		Type: storage.SecretNamespace, Scope: storage.NamespaceSecretScope(wsID, nsID), Value: value}); saveErr != nil {
 		return fmt.Errorf("persist namespace system credential %s: %w", id, saveErr)
 	}
 	return nil

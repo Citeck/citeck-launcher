@@ -75,11 +75,7 @@ func serveAttach(t *testing.T, sock, reply string) <-chan string {
 
 func newTestAttacher(t *testing.T) (attacher *Attacher, procRoot string) {
 	t.Helper()
-	// os.MkdirTemp, not t.TempDir: unix socket paths are capped at ~108 bytes
-	// and t.TempDir embeds the (long) test name.
-	procRoot, err := os.MkdirTemp("", "jvmattach")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = os.RemoveAll(procRoot) })
+	procRoot = attachSocketDir(t)
 
 	a := New()
 	a.ProcRoot = procRoot

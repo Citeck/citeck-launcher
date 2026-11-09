@@ -200,11 +200,11 @@ func TestFeaturesListLines(t *testing.T) {
 
 // The command tree over a real socket: `citeck features` prints the daemon's
 // DTO verbatim in JSON mode, and `citeck features enable` reaches the edit
-// endpoint of the namespace `GET /namespace` named. Run with TMPDIR=/tmp — a
-// unix socket path has a length limit the default macOS temp dir exceeds.
+// endpoint of the namespace `GET /namespace` named. Use a short socket directory
+// even when macOS supplies a long TMPDIR.
 func TestFeaturesCommands_OverTheSocket(t *testing.T) {
 	depsTestSetup(t)
-	dir := t.TempDir()
+	dir := cliSocketDir(t)
 	t.Setenv("CITECK_RUN", dir)
 	t.Setenv("CITECK_HOST", "")
 	listener, err := net.Listen("unix", filepath.Join(dir, "daemon.sock"))

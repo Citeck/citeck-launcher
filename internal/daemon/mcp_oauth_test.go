@@ -34,7 +34,7 @@ func TestMCPOAuthClientFlow(t *testing.T) {
 }
 func testMCPOAuthClientFlow(t *testing.T, role launchermcp.Role) {
 	d := mcpFixture(t)
-	store, err := launchermcp.OpenStore(filepath.Join(t.TempDir(), "mcp.db"))
+	store, err := launchermcp.OpenStore(privateMCPStorePath(t))
 	require.NoError(t, err)
 	d.mcpStore = store
 	d.mcp = launchermcp.New(store, mcpBackend{d})
@@ -51,7 +51,7 @@ func testMCPOAuthClientFlow(t *testing.T, role launchermcp.Role) {
 	endpoint := public.URL + "/mcp"
 	mux := http.NewServeMux()
 	d.registerRoutes(mux)
-	socket := filepath.Join(t.TempDir(), "s")
+	socket := filepath.Join(daemonSocketDir(t), "s")
 	listener, err := net.Listen("unix", socket)
 	require.NoError(t, err)
 	ownerServer := &http.Server{Handler: unixHandlerChain(mux), ReadHeaderTimeout: time.Second}

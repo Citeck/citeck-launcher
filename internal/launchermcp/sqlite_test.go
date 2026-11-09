@@ -16,7 +16,7 @@ import (
 )
 
 func TestSQLiteManualMigrationAndActualOldReaderFence(t *testing.T) {
-	path := t.TempDir() + "/state.json"
+	path := testStorePath(t)
 	old, err := legacyreader.OpenStore(path)
 	require.NoError(t, err)
 	token, raw, err := old.Create("permanent", legacyreader.Developer, nil)
@@ -52,6 +52,31 @@ func TestSQLiteManualMigrationAndActualOldReaderFence(t *testing.T) {
 	require.FileExists(t, filepath.Join(s.dir, "legacy.backup"))
 }
 
+func TestSQLitePrivateLeafIsRequiredButReadableAncestorsAreAllowed(t *testing.T) {
+	ancestor := filepath.Join(t.TempDir(), "readable-ancestor")
+	require.NoError(t, os.Mkdir(ancestor, 0o700))
+	require.NoError(t, os.Chmod(ancestor, 0o755))
+
+	// An existing 0755 leaf must be refused, not silently chmodded. This is
+	// the condition that permissive macOS TempDir fixtures used to hit.
+	_, err := OpenStore(filepath.Join(ancestor, "state.json"))
+	require.ErrorContains(t, err, "owner-only")
+	entries, err := os.ReadDir(ancestor)
+	require.NoError(t, err)
+	require.Empty(t, entries, "unsafe private leaf must not acquire database authority")
+
+	// That same directory is a valid trusted ancestor of a fresh 0700 leaf.
+	s, err := OpenStore(filepath.Join(ancestor, "private", "state.json"))
+	require.NoError(t, err)
+	defer s.Close()
+	info, err := os.Stat(ancestor)
+	require.NoError(t, err)
+	require.Equal(t, os.FileMode(0o755), info.Mode().Perm(), "do not mutate ancestor permissions")
+	info, err = os.Stat(s.dir)
+	require.NoError(t, err)
+	require.Equal(t, os.FileMode(0o700), info.Mode().Perm())
+}
+
 func TestSQLiteOwnerLockPrivateSidecarsAndReconnectPolicy(t *testing.T) {
 	// A trusted ancestor alias is canonicalized; the private leaf is not a link.
 	base := t.TempDir()
@@ -81,7 +106,7 @@ func TestSQLiteOwnerLockPrivateSidecarsAndReconnectPolicy(t *testing.T) {
 func TestSQLiteSchemaAndRootCorruptionNeverResetAuthority(t *testing.T) {
 	for _, corrupt := range []string{"PRAGMA user_version=999", "DROP TABLE oauth_access", "PRAGMA ignore_check_constraints=ON; UPDATE mcp_root SET key=X'01'"} {
 		t.Run(corrupt, func(t *testing.T) {
-			s, err := OpenStore(t.TempDir() + "/state.json")
+			s, err := OpenStore(testStorePath(t))
 			require.NoError(t, err)
 			path := s.path
 			_, err = s.db.Exec(corrupt)

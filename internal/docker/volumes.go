@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -127,8 +128,8 @@ func (c *Client) VolumeSize(ctx context.Context, name string) (int64, error) {
 	// `du -s` prints the total as the LAST line ("<kb>\t/vol"); any permission
 	// warnings precede it. Scan from the end for the first numeric first-field.
 	lines := strings.Split(strings.TrimSpace(out), "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		fields := strings.Fields(lines[i])
+	for _, line := range slices.Backward(lines) {
+		fields := strings.Fields(line)
 		if len(fields) == 0 {
 			continue
 		}

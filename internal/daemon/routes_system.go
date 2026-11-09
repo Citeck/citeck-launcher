@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/citeck/citeck-launcher/internal/fsutil"
 	"io"
 	"log/slog"
 	"net/http"
@@ -18,6 +17,7 @@ import (
 
 	"github.com/citeck/citeck-launcher/internal/api"
 	"github.com/citeck/citeck-launcher/internal/config"
+	"github.com/citeck/citeck-launcher/internal/fsutil"
 	"github.com/citeck/citeck-launcher/internal/namespace"
 	"github.com/citeck/citeck-launcher/internal/update"
 	"gopkg.in/yaml.v3"
@@ -107,6 +107,9 @@ func (d *Daemon) writeSystemDumpZip(ctx context.Context, w http.ResponseWriter, 
 	w.Header().Set("Content-Disposition", "attachment; filename=system-dump.zip")
 	if operationErr := d.streamSystemDumpZip(ctx, w, d.active(), dump, nsCfgYAML, daemonCfgYAML); operationErr != nil {
 		slog.Warn("System dump transfer incomplete", "operationErr", operationErr)
+		// A fatal writer/cancellation error must not look like a completed
+		// download. Source omissions are instead recorded inside the ZIP.
+		panic(http.ErrAbortHandler)
 	}
 }
 
@@ -152,13 +155,14 @@ func (d *Daemon) streamSystemDumpZip(ctx context.Context, w io.Writer, act activ
 			return operationErr
 		}
 	}
-	if operationErr := addReportsChecked(zw); operationErr != nil {
+	var warnings []string
+	if operationErr := addReportsChecked(add, &warnings); operationErr != nil {
 		return operationErr
 	}
-	if operationErr := addRotatedLogsChecked(zw, config.DaemonLogPath(), "daemon-logs"); operationErr != nil {
+	if operationErr := addRotatedLogsChecked(add, config.DaemonLogPath(), "daemon-logs", &warnings); operationErr != nil {
 		return operationErr
 	}
-	if operationErr := addRotatedLogsChecked(zw, config.LauncherLogPath(), "launcher-logs"); operationErr != nil {
+	if operationErr := addRotatedLogsChecked(add, config.LauncherLogPath(), "launcher-logs", &warnings); operationErr != nil {
 		return operationErr
 	}
 	if data, e := readDumpFile(update.ManifestPath(config.UpdatesDir())); e == nil {
@@ -166,7 +170,7 @@ func (d *Daemon) streamSystemDumpZip(ctx context.Context, w io.Writer, act activ
 			return operationErr
 		}
 	} else if !errors.Is(e, os.ErrNotExist) {
-		return e
+		warnings = append(warnings, "updates/manifest.json")
 	}
 	if act.runtime != nil && act.dockerClient != nil {
 		for _, app := range act.runtime.Apps() {
@@ -178,11 +182,24 @@ func (d *Daemon) streamSystemDumpZip(ctx context.Context, w io.Writer, act activ
 			if e != nil {
 				name += ".err"
 				logs = "application log unavailable"
+				warnings = append(warnings, name)
 			}
 			if operationErr := add(name, []byte(stripAnsi(logs))); operationErr != nil {
 				return operationErr
 			}
 		}
+	}
+	if len(warnings) > 0 {
+		// Entry labels only: raw filesystem errors may contain private host paths.
+		var report strings.Builder
+		report.WriteString("This diagnostic ZIP is incomplete. Unavailable sources (not followed or read):\n")
+		for _, name := range warnings {
+			fmt.Fprintf(&report, "%q\n", name)
+		}
+		return add("INCOMPLETE.txt", []byte(report.String()))
+	}
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("collect diagnostic ZIP: %w", err)
 	}
 	return nil
 }
@@ -190,13 +207,37 @@ func (d *Daemon) streamSystemDumpZip(ctx context.Context, w io.Writer, act activ
 const maxDumpLogSize = 2 * 1024 * 1024
 
 func readDumpFile(path string) ([]byte, error) { return readTailFile(path, maxDumpLogSize) }
-func readTailFile(path string, limit int64) ([]byte, error) {
-	root, err := fsutil.OpenCanonicalRoot(filepath.Dir(path))
+
+// Only the installation home is trusted to be a symlink. All source parents
+// (logs, reports, updates) must be traversed no-follow from that pinned home.
+func openDumpParent(path string) (*os.Root, string, error) {
+	root, err := fsutil.OpenCanonicalRoot(config.HomeDir())
 	if err != nil {
-		return nil, fmt.Errorf("routes system: %w", err)
+		return nil, "", fmt.Errorf("open diagnostic home: %w", err)
 	}
 	defer root.Close()
-	f, err := fsutil.OpenRegularRooted(root, filepath.Base(path))
+	relative, err := filepath.Rel(config.HomeDir(), path)
+	if err != nil {
+		return nil, "", fmt.Errorf("diagnostic source path: %w", err)
+	}
+	parent, leaf, err := fsutil.RootedParent(root, filepath.ToSlash(relative), false)
+	if err != nil {
+		return nil, "", fmt.Errorf("pin diagnostic source parent: %w", err)
+	}
+	return parent, leaf, nil
+}
+
+func readTailFile(path string, limit int64) ([]byte, error) {
+	parent, leaf, err := openDumpParent(path)
+	if err != nil {
+		return nil, err
+	}
+	defer parent.Close()
+	return readTailRooted(parent, leaf, limit)
+}
+
+func readTailRooted(root *os.Root, leaf string, limit int64) ([]byte, error) {
+	f, err := fsutil.OpenRegularRooted(root, leaf)
 	if err != nil {
 		return nil, fmt.Errorf("routes system: %w", err)
 	}
@@ -216,47 +257,56 @@ func readTailFile(path string, limit int64) ([]byte, error) {
 	}
 	return data, nil
 }
-func addReportsChecked(zw *zip.Writer) error {
-	entries, err := os.ReadDir(config.ReportsDir())
+func addReportsChecked(add func(string, []byte) error, warnings *[]string) error {
+	root, _, err := openDumpParent(filepath.Join(config.ReportsDir(), ".scan"))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("routes system: %w", err)
+		*warnings = append(*warnings, "reports/")
+		return nil
+	}
+	defer root.Close()
+	dir, err := root.Open(".")
+	if err != nil {
+		*warnings = append(*warnings, "reports/")
+		return nil
+	}
+	defer dir.Close()
+	entries, err := dir.ReadDir(-1)
+	if err != nil {
+		*warnings = append(*warnings, "reports/")
+		return nil
 	}
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
 		}
-		data, err := readDumpFile(filepath.Join(config.ReportsDir(), e.Name()))
+		name := "reports/" + e.Name()
+		data, err := readTailRooted(root, e.Name(), maxDumpLogSize)
 		if err != nil {
-			return err
+			*warnings = append(*warnings, name)
+			continue
 		}
-		fw, err := zw.Create("reports/" + e.Name())
-		if err != nil {
-			return fmt.Errorf("routes system: %w", err)
-		}
-		if _, err = fw.Write(data); err != nil {
-			return fmt.Errorf("routes system: %w", err)
+		if operationErr := add(name, data); operationErr != nil {
+			return operationErr
 		}
 	}
 	return nil
 }
-func addRotatedLogsChecked(zw *zip.Writer, path, dir string) error {
+func addRotatedLogsChecked(add func(string, []byte) error, path, dir string, warnings *[]string) error {
 	for _, suffix := range []string{"", ".1", ".2", ".3"} {
 		data, err := readDumpFile(path + suffix)
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
+		name := dir + "/" + filepath.Base(path+suffix)
 		if err != nil {
-			return err
+			*warnings = append(*warnings, name)
+			continue
 		}
-		fw, err := zw.Create(dir + "/" + filepath.Base(path+suffix))
-		if err != nil {
-			return fmt.Errorf("create diagnostic log entry: %w", err)
-		}
-		if _, err = fw.Write(data); err != nil {
-			return fmt.Errorf("routes system: %w", err)
+		if operationErr := add(name, data); operationErr != nil {
+			return operationErr
 		}
 	}
 	return nil

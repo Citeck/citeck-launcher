@@ -13,7 +13,7 @@ import (
 )
 
 func TestAttachDiagnosticOutputIsBoundedAtSocket(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "attach.sock")
+	path := filepath.Join(attachSocketDir(t), "attach.sock")
 	listener, err := net.Listen("unix", path)
 	require.NoError(t, err)
 	defer listener.Close()

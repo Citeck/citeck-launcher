@@ -15,7 +15,7 @@ func transactionFixture(t *testing.T, store Store) (*SecretService, SnapshotStat
 	require.NoError(t, err)
 	require.NoError(t, svc.SetMasterPassword("transaction-fixture-vault", false))
 	id := NamespaceSecretID("ws", "ns", "key")
-	require.NoError(t, svc.SaveSecret(Secret{SecretMeta: SecretMeta{ID: id, Name: "key", Type: SecretNamespace, Scope: NamespaceSecretScope("ws", "ns")}, Value: "fixture-old"}))
+	require.NoError(t, svc.SaveSecret(Secret{ID: id, Name: "key", Type: SecretNamespace, Scope: NamespaceSecretScope("ws", "ns"), Value: "fixture-old"}))
 	state := SnapshotState{WorkspaceID: "ws", NamespaceID: "ns", Status: "STOPPED", JSON: `{"status":"STOPPED","snapshotImportPending":true,"pin":"old"}`}
 	require.NoError(t, store.SaveNamespaceState("ws", "ns", state.Status, state.JSON))
 	return svc, state, id
@@ -104,7 +104,7 @@ func TestFileSnapshotCrashRecoveryUsesCommitMarker(t *testing.T) {
 				oldState := []byte(`{"status":"STOPPED","snapshotImportPending":true,"pin":"old"}`)
 				require.NoError(t, store.SaveNamespaceState("ws", "ns", "STOPPED", string(oldState)))
 				id := NamespaceSecretID("ws", "ns", "key")
-				row := Secret{SecretMeta: SecretMeta{ID: id, Name: "key", Type: SecretNamespace, Scope: NamespaceSecretScope("ws", "ns")}, Value: "fixture-old"}
+				row := Secret{ID: id, Name: "key", Type: SecretNamespace, Scope: NamespaceSecretScope("ws", "ns"), Value: "fixture-old"}
 				var before []byte
 				if existed {
 					require.NoError(t, store.SaveSecret(row))

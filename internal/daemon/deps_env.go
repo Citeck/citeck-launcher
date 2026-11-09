@@ -117,11 +117,11 @@ var _ migrate.Env = (*depsEnv)(nil)
 func (d *Daemon) newDepsEnv(act activeNamespace) *depsEnv {
 	dc := depsDockerOf(act.dockerClient)
 	return &depsEnv{
-		d:                     d,
-		act:                   act,
-		dockerDependencyProbe: dockerDependencyProbe{dc: dc, volumesBase: act.volumesBase},
-		stopWait:              depsStopTimeout,
-		stopPoll:              depsStopPoll,
+		d:   d,
+		act: act,
+		dc:  dc, volumesBase: act.volumesBase,
+		stopWait: depsStopTimeout,
+		stopPoll: depsStopPoll,
 	}
 }
 
@@ -842,8 +842,8 @@ func desktopSharesHostFilesystem(goos string) bool { return goos == "linux" }
 // whose fourth (or third) column is the word "Available".
 func parseDfAvailableKB(out string) (int64, error) {
 	lines := strings.Split(strings.TrimSpace(out), "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		f := strings.Fields(lines[i])
+	for _, line := range slices.Backward(lines) {
+		f := strings.Fields(line)
 		if len(f) < 5 {
 			continue
 		}

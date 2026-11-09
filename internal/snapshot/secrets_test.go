@@ -29,9 +29,7 @@ func snapshotVault(t *testing.T, password string) (*storage.SecretService, *stor
 
 func putNamespaceSecret(t *testing.T, svc *storage.SecretService, ws, ns, name, value string) {
 	t.Helper()
-	require.NoError(t, svc.SaveSecret(storage.Secret{SecretMeta: storage.SecretMeta{
-		ID: storage.NamespaceSecretID(ws, ns, name), Name: name, Type: storage.SecretNamespace, Scope: storage.NamespaceSecretScope(ws, ns),
-	}, Value: value}))
+	require.NoError(t, svc.SaveSecret(storage.Secret{ID: storage.NamespaceSecretID(ws, ns, name), Name: name, Type: storage.SecretNamespace, Scope: storage.NamespaceSecretScope(ws, ns), Value: value}))
 }
 
 func TestNamespaceSnapshotSecretsPortableAcrossVaults(t *testing.T) {
@@ -39,7 +37,7 @@ func TestNamespaceSnapshotSecretsPortableAcrossVaults(t *testing.T) {
 	putNamespaceSecret(t, source, "source-ws", "source-ns", "seaweedfs-s3-key", "fixture-source-key")
 	putNamespaceSecret(t, source, "source-ws", "source-ns", "empty-constant", "")
 	putNamespaceSecret(t, source, "other-ws", "source-ns", "other", "fixture-other")
-	require.NoError(t, source.SaveSecret(storage.Secret{SecretMeta: storage.SecretMeta{ID: "global-registry", Name: "registry", Type: storage.SecretRegistryAuth, Scope: "global"}, Value: "fixture-registry"}))
+	require.NoError(t, source.SaveSecret(storage.Secret{ID: "global-registry", Name: "registry", Type: storage.SecretRegistryAuth, Scope: "global", Value: "fixture-registry"}))
 	values, err := NamespaceSecrets(source, "source-ws", "source-ns").Read()
 	require.NoError(t, err)
 	require.Len(t, values, 2)

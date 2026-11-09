@@ -53,8 +53,8 @@ func putSecret(t *testing.T, mux *http.ServeMux, id, body string) *httptest.Resp
 func TestHandleUpdateSecret_PartialKeepsValue(t *testing.T) {
 	d, mux := secretsTestMux(t)
 	require.NoError(t, d.secretService.SaveSecret(storage.Secret{
-		SecretMeta: storage.SecretMeta{ID: "git-token-1", Name: "Old name", Type: storage.SecretGitToken, Scope: "global"},
-		Value:      "glpat-original",
+		ID: "git-token-1", Name: "Old name", Type: storage.SecretGitToken, Scope: "global",
+		Value: "glpat-original",
 	}))
 
 	rec := putSecret(t, mux, "git-token-1", `{"name":"Renamed","scope":"team-a"}`)
@@ -78,8 +78,8 @@ func TestHandleUpdateSecret_PartialKeepsValue(t *testing.T) {
 func TestHandleUpdateSecret_UpdatesValueWhenProvided(t *testing.T) {
 	d, mux := secretsTestMux(t)
 	require.NoError(t, d.secretService.SaveSecret(storage.Secret{
-		SecretMeta: storage.SecretMeta{ID: "git-token-2", Name: "Token", Type: storage.SecretGitToken},
-		Value:      "glpat-old",
+		ID: "git-token-2", Name: "Token", Type: storage.SecretGitToken,
+		Value: "glpat-old",
 	}))
 
 	rec := putSecret(t, mux, "git-token-2", `{"value":"glpat-new"}`)
@@ -109,8 +109,8 @@ func TestHandleUpdateSecret_NotFound(t *testing.T) {
 func TestHandleUpdateSecret_NeverReturnsValue(t *testing.T) {
 	d, mux := secretsTestMux(t)
 	require.NoError(t, d.secretService.SaveSecret(storage.Secret{
-		SecretMeta: storage.SecretMeta{ID: "git-token-3", Name: "Token", Type: storage.SecretGitToken},
-		Value:      "glpat-old-value",
+		ID: "git-token-3", Name: "Token", Type: storage.SecretGitToken,
+		Value: "glpat-old-value",
 	}))
 
 	rec := putSecret(t, mux, "git-token-3", `{"value":"glpat-new-value"}`)
@@ -373,8 +373,8 @@ func TestHandleResetSecrets_ClearsPendingBlob(t *testing.T) {
 	d, mux := secretsTestMux(t)
 
 	require.NoError(t, d.secretService.SaveSecret(storage.Secret{
-		SecretMeta: storage.SecretMeta{ID: "git-token-1", Name: "tok", Type: storage.SecretGitToken, Scope: "global"},
-		Value:      "glpat-x",
+		ID: "git-token-1", Name: "tok", Type: storage.SecretGitToken, Scope: "global",
+		Value: "glpat-x",
 	}))
 	require.NoError(t, d.store.PutSecretBlob("pending-kotlin-blob"))
 

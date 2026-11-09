@@ -35,7 +35,7 @@ func gitRecoveryFixture(t *testing.T) (*Daemon, *http.ServeMux, *httptest.Server
 	d.activeNs = &activeNamespace{workspaceID: "private"}
 	require.NoError(t, d.store.SaveWorkspace(storage.WorkspaceDto{ID: "private", RepoURL: server.URL + "/workspace.git", AuthType: "TOKEN", SecretID: "workspace-token"}))
 	for _, id := range []string{"workspace-token", "a-bundle-token", "z-unrelated", "replacement"} {
-		require.NoError(t, d.secretService.SaveSecret(storage.Secret{SecretMeta: storage.SecretMeta{ID: id, Name: id, Type: storage.SecretGitToken}, Value: "fixture-credential"}))
+		require.NoError(t, d.secretService.SaveSecret(storage.Secret{ID: id, Name: id, Type: storage.SecretGitToken, Value: "fixture-credential"}))
 	}
 	dir := filepath.Join(config.BundlesDataDir("private"), "bundles", "workspace")
 	require.NoError(t, os.MkdirAll(dir, 0o750))

@@ -74,8 +74,8 @@ func TestBuildSecretsChecks_ShadowedCopies(t *testing.T) {
 	// (the daemon migrates + deletes it on next start).
 	require.NoError(t, store.SetStateValue(systemsecrets.Key(systemsecrets.IDJWT), "same-value"))
 	require.NoError(t, svc.SaveSecret(storage.Secret{
-		SecretMeta: storage.SecretMeta{ID: systemsecrets.IDJWT, Name: systemsecrets.IDJWT, Type: storage.SecretSystem},
-		Value:      "same-value",
+		ID: systemsecrets.IDJWT, Name: systemsecrets.IDJWT, Type: storage.SecretSystem,
+		Value: "same-value",
 	}))
 
 	// _admin_password: DIVERGING copy in the pre-Store plain file → ERROR

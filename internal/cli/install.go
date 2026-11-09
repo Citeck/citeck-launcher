@@ -169,7 +169,7 @@ func runInstall(info BuildInfo, workspaceZip string, offline bool) (retErr error
 	}
 	fmt.Println() //nolint:forbidigo // CLI output
 	locale := promptSelect("Language / Язык / 语言", langOptions)
-	localeCode := strings.SplitN(locale, " ", 2)[0]
+	localeCode, _, _ := strings.Cut(locale, " ")
 	initI18n(localeCode)
 
 	// --- Step 2: Welcome (in selected language) ---
@@ -268,8 +268,7 @@ hostStep:
 	// --- Step 5: Release + registry auth (registry is a conditional sub-step) ---
 	for {
 		if err := resolveRelease(&nsCfg, isOffline, info.Version); err != nil {
-			var floorErr *errReleaseFloorTooOld
-			if errors.As(err, &floorErr) {
+			if floorErr, ok := errors.AsType[*errReleaseFloorTooOld](err); ok {
 				// A floor refusal is not fatal to the wizard — every answer
 				// already given (host, TLS, proxy port, auth, admin password)
 				// stays intact. Print the refusal and re-show the release
@@ -869,14 +868,12 @@ func findAuthRepos(wsCfg *bundle.WorkspaceConfig, usedPrefixes map[string]bool) 
 func saveRegistrySecret(svc *storage.SecretService, repo bundle.ImageRepo, username, password string) error {
 	host := registryHost(repo.URL)
 	if err := svc.SaveSecret(storage.Secret{
-		SecretMeta: storage.SecretMeta{
-			ID:       "registry-" + repo.ID,
-			Name:     host + " credentials",
-			Type:     storage.SecretRegistryAuth,
-			Scope:    host,
-			Username: username,
-		},
-		Value: password,
+		ID:       "registry-" + repo.ID,
+		Name:     host + " credentials",
+		Type:     storage.SecretRegistryAuth,
+		Scope:    host,
+		Username: username,
+		Value:    password,
 	}); err != nil {
 		return fmt.Errorf("save secret: %w", err)
 	}

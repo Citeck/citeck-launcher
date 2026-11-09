@@ -85,6 +85,7 @@ func NewRootCmd(info BuildInfo) *cobra.Command {
 		newExecCmd(),
 		newDescribeCmd(),
 		newEditCmd(),
+		newRecoverFileCmd(),
 		newDiagnoseCmd(),
 		newHealthCmd(),
 		newCleanCmd(),
@@ -104,8 +105,7 @@ func NewRootCmd(info BuildInfo) *cobra.Command {
 func Execute(info BuildInfo) {
 	root := NewRootCmd(info)
 	if err := root.Execute(); err != nil {
-		var ece ExitCodeError
-		if errors.As(err, &ece) {
+		if ece, ok := errors.AsType[ExitCodeError](err); ok {
 			if !output.IsJSON() {
 				output.Errf("Error: %v", ece.Err)
 			}

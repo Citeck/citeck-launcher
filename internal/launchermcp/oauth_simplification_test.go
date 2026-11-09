@@ -38,6 +38,9 @@ func TestSQLiteVersionUpgradePreservesActualCredentials(t *testing.T) {
 			dir := filepath.Join(t.TempDir(), "private")
 			require.NoError(t, os.Mkdir(dir, 0o700))
 			path := filepath.Join(dir, "mcp.db")
+			// SQLite's default file mode follows umask. Pre-create this old-schema
+			// fixture privately, just as production creates its database file.
+			require.NoError(t, os.WriteFile(path, nil, 0o600))
 			db, err := sql.Open("sqlite", sqliteDSN(path))
 			require.NoError(t, err)
 			db.SetMaxOpenConns(1)
@@ -125,7 +128,7 @@ func TestSQLiteVersionUpgradePreservesActualCredentials(t *testing.T) {
 }
 
 func TestUnsupportedExperimentalJSONIsNotModified(t *testing.T) {
-	dir := t.TempDir()
+	dir := testPrivateDir(t)
 	raw := []byte(`{"version":2,"settings":{"port":19380},"oauth":{"key":"unreadable"}}`)
 	path := filepath.Join(dir, "state.json")
 	require.NoError(t, os.WriteFile(path, raw, 0o600))

@@ -191,8 +191,7 @@ func lifecycleUpgrade(selfPath, installedVer, newVer string) error {
 		// about — and restarting the SAME binary, which re-adopts the running
 		// containers, is the safe next step. The backup taken above is left in
 		// place; the binary on disk is untouched.
-		var stateErr *stateNotSavedError
-		if errors.As(err, &stateErr) {
+		if stateErr, ok := errors.AsType[*stateNotSavedError](err); ok {
 			for _, line := range stateNotSavedAbortLines(stateErr.detail) {
 				output.PrintText("%s", line)
 			}

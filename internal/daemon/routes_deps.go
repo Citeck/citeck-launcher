@@ -791,8 +791,7 @@ func (d *Daemon) handleDependencyMigrate(w http.ResponseWriter, r *http.Request)
 			//nolint:gosec // G706: id passed deps.Lookup (a fixed registry)
 			slog.Error("Dependency migration failed", "dependency", id, "err", runErr)
 			rep.Outcome, rep.Err = "failed", runErr.Error()
-			var sf *migrate.StepFailure
-			if errors.As(runErr, &sf) {
+			if sf, ok := errors.AsType[*migrate.StepFailure](runErr); ok {
 				rep.Diagnostics = sf.Diagnostics
 			}
 			// The failure is a step's own error — a docker refusal, a psql

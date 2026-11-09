@@ -31,7 +31,7 @@ type oauthTestCore struct {
 
 func newOAuthTestCore(t *testing.T) *oauthTestCore {
 	t.Helper()
-	s, err := OpenStore(t.TempDir() + "/state.json")
+	s, err := OpenStore(testStorePath(t))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	require.NoError(t, s.SetSettings(Settings{Enabled: true, Port: DefaultPort}))

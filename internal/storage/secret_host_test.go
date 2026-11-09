@@ -69,13 +69,11 @@ func TestFileStoreRegistryHostBackfill(t *testing.T) {
 
 	// Write a legacy registry secret with no host, scope = images-repo:<host>.
 	require.NoError(t, store.SaveSecret(Secret{
-		SecretMeta: SecretMeta{
-			ID:       "images-repo:enterprise-registry.citeck.ru",
-			Type:     SecretRegistryAuth,
-			Scope:    "images-repo:enterprise-registry.citeck.ru",
-			Username: "svc",
-		},
-		Value: "pass",
+		ID:       "images-repo:enterprise-registry.citeck.ru",
+		Type:     SecretRegistryAuth,
+		Scope:    "images-repo:enterprise-registry.citeck.ru",
+		Username: "svc",
+		Value:    "pass",
 	}))
 
 	got, err := store.GetSecret("images-repo:enterprise-registry.citeck.ru")
@@ -85,8 +83,8 @@ func TestFileStoreRegistryHostBackfill(t *testing.T) {
 
 	// An explicitly-saved host wins and round-trips.
 	require.NoError(t, store.SaveSecret(Secret{
-		SecretMeta: SecretMeta{ID: "reg2", Type: SecretRegistryAuth, Host: "harbor.citeck.ru", Username: "u"},
-		Value:      "p",
+		ID: "reg2", Type: SecretRegistryAuth, Host: "harbor.citeck.ru", Username: "u",
+		Value: "p",
 	}))
 	got2, err := store.GetSecret("reg2")
 	require.NoError(t, err)

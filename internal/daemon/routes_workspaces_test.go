@@ -240,8 +240,8 @@ func TestWorkspaceDelete_NeverDeletesSharedSecret(t *testing.T) {
 	d.secretService = svc
 	require.NoError(t, svc.SetMasterPassword("test-master", false))
 	require.NoError(t, svc.SaveSecret(storage.Secret{
-		SecretMeta: storage.SecretMeta{ID: "shared-gitlab-token", Name: "GitLab", Type: storage.SecretGitToken},
-		Value:      "glpat-shared",
+		ID: "shared-gitlab-token", Name: "GitLab", Type: storage.SecretGitToken,
+		Value: "glpat-shared",
 	}))
 	require.NoError(t, d.store.SaveWorkspace(storage.WorkspaceDto{
 		ID: "ws-del", Name: "Doomed", RepoURL: "https://gitlab.example.com/x.git",

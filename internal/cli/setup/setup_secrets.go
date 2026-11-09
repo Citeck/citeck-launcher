@@ -105,8 +105,8 @@ func writePendingSecretsLocal(sctx *setupContext, svc *storage.SecretService, ti
 		// Attempt to read old value for backup.
 		if oldVal, oldErr := svc.GetSecret(key); oldErr == nil && oldVal != nil && oldVal.Value != "" {
 			if bErr := svc.SaveSecret(storage.Secret{
-				SecretMeta: storage.SecretMeta{ID: backupKey},
-				Value:      oldVal.Value,
+				ID:    backupKey,
+				Value: oldVal.Value,
 			}); bErr != nil {
 				slog.Warn("Failed to backup secret locally", "key", key, "err", bErr)
 			} else {
@@ -115,8 +115,8 @@ func writePendingSecretsLocal(sctx *setupContext, svc *storage.SecretService, ti
 		}
 
 		if err := svc.SaveSecret(storage.Secret{
-			SecretMeta: storage.SecretMeta{ID: key},
-			Value:      value,
+			ID:    key,
+			Value: value,
 		}); err != nil {
 			return nil, fmt.Errorf("save secret %s: %w", key, err)
 		}

@@ -173,6 +173,7 @@ func (d *Daemon) handleAuthSession(w http.ResponseWriter, r *http.Request) {
 		writeErrorCode(w, http.StatusUnauthorized, api.ErrCodeAuthRequired, "invalid or missing token")
 		return
 	}
+	//nolint:gosec // G124: Secure follows actual TLS; the loopback HTTP dev handshake must also work.
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookieName,
 		Value:    auth.createSession(),

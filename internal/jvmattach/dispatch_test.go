@@ -14,6 +14,7 @@ func (w partialRequestWriter) Write(_ []byte) (int, error) { return 2, w.err }
 func TestWriteRequestMarksPartialDeliveryUncertain(t *testing.T) {
 	for _, cause := range []error{nil, io.ErrClosedPipe} {
 		err := writeRequest(partialRequestWriter{cause}, "1\x00jcmd\x00GC.run\x00\x00\x00")
+		require.ErrorContains(t, err, "write attach request")
 		var dispatched *DispatchError
 		require.ErrorAs(t, err, &dispatched)
 		require.True(t, dispatched.Uncertain)

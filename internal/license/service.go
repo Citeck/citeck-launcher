@@ -182,14 +182,12 @@ func (s *Service) Add(lic Instance) error {
 		return fmt.Errorf("marshal license: %w", err)
 	}
 	secret := storage.Secret{
-		SecretMeta: storage.SecretMeta{
-			ID:        SecretIDPrefix + lic.ID,
-			Name:      summary(lic),
-			Type:      SecretType,
-			Scope:     lic.Tenant,
-			CreatedAt: time.Now().UTC(),
-		},
-		Value: string(body),
+		ID:        SecretIDPrefix + lic.ID,
+		Name:      summary(lic),
+		Type:      SecretType,
+		Scope:     lic.Tenant,
+		CreatedAt: time.Now().UTC(),
+		Value:     string(body),
 	}
 	if err := s.secrets.SaveSecret(secret); err != nil {
 		return fmt.Errorf("save license: %w", err)

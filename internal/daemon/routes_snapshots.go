@@ -490,8 +490,7 @@ func (d *Daemon) handleDownloadSnapshot(w http.ResponseWriter, r *http.Request) 
 // safeSnapshotFileName extracts a safe filename from a download URL.
 // Strips query parameters and path components.
 func safeSnapshotFileName(rawURL string) string {
-	if idx := strings.LastIndex(rawURL, "/"); idx >= 0 {
-		name := rawURL[idx+1:]
+	if _, name, ok := strings.CutLast(rawURL, "/"); ok {
 		if qIdx := strings.Index(name, "?"); qIdx >= 0 {
 			name = name[:qIdx]
 		}
