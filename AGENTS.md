@@ -31,6 +31,18 @@ availability only; never credential values. See [docs/workspace-formats.md](docs
 Ordinary server-mode namespace starts retain persisted bundle fallback; do not
 treat their snapshot-image refresh flag as explicit Git synchronization intent.
 Forced Git refreshes and desktop Update & Start remain strict.
+An absent pinned bundle definition is transparent: use the namespace's nonempty
+saved bundle of the same version, including explicit updates and offline starts.
+Log that fallback at INFO only; do not surface repository cleanup to the user.
+This does not suppress actual Git sync or invalid-definition errors on updates.
+Offline option/write-gate reads and server `citeck setup` use the same saved
+kit for an existing namespace. Scope offline cache reads to workspace, namespace
+and its stored ref; edit forms preserve a pin absent from the repository list.
+New namespace creation/install and LATEST discovery must not borrow that cache.
+Saved kits record their logical SourceRepo as well as their version. Preserve
+legacy cache provenance before changing repository: use the runtime's locked
+state writer when active, preserve other JSON fields/status when inactive, and
+do not change the selected ref if the metadata write fails.
 
 Download UI must observe backend bytes while the apply POST is pending, with
 unknown-size progress kept indeterminate. Snapshot byte counters are distinct

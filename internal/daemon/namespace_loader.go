@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -158,9 +159,10 @@ func resolveBundleRepoDir(wsID string, repo bundle.BundlesRepo) string {
 // workspace repo is independent of the bundle repo whose pull just failed, so
 // the caller passes its best already-loaded workspace config (without it the
 // fallback would strand every webapp's datasources / env / volume bindings).
-// logLabel distinguishes the flows in the warning ("" or "on reload").
-// allowCacheFallback=false (--offline startup) keeps "local data missing" a
-// hard error instead of silently serving a possibly-stale cache.
+// logLabel distinguishes the flows in the log ("" or "on reload").
+// allowCacheFallback controls fallback on sync/parse failures. A missing pinned
+// definition always permits its saved bundle: repository cleanup must not stop
+// an existing namespace, including during explicit updates and offline starts.
 //
 // Returns (result, usedFallback, err): err is non-nil only when resolution
 // failed AND no cache was usable — the caller decides between hard-failing
@@ -174,23 +176,28 @@ func resolveBundleWithCacheFallback(
 	if err == nil {
 		return res, false, nil
 	}
-	if allowCacheFallback {
-		cachedState := loadNsStateFromStore(store, wsID, nsID)
-		if cachedState != nil && cachedState.CachedBundle != nil && !cachedState.CachedBundle.IsEmpty() {
-			msg := "Bundle resolution failed, using cached bundle"
-			if logLabel != "" {
-				msg = "Bundle resolution failed " + logLabel + ", using cached bundle"
-			}
-			slog.Warn(msg, "ref", ref, "err", err,
-				"cachedVersion", cachedState.CachedBundle.Key.Version,
-				"cachedApps", len(cachedState.CachedBundle.Applications))
-			return &bundle.ResolveResult{Bundle: cachedState.CachedBundle, Workspace: fallbackWS}, true, nil
-		}
+	var missing *bundle.NotFoundError
+	missingDefinition := errors.As(err, &missing) || (strings.EqualFold(ref.Key, "LATEST") && errors.Is(err, bundle.ErrNoBundles))
+	// Callers add flow-specific context to the original resolution error.
+	if !allowCacheFallback && !missingDefinition {
+		return nil, false, err //nolint:wrapcheck // startup/reload own the error context
 	}
-	// Returned unwrapped on purpose: the reload caller adds its own
-	// "resolve bundle:" context, and the startup caller surfaces the raw
-	// resolver error verbatim as bundleError for the UI banner.
-	return nil, false, err //nolint:wrapcheck // callers wrap with flow-specific context
+	cachedState := loadNsStateFromStore(store, wsID, nsID)
+	if cachedState == nil || !cachedState.CachedBundle.MatchesRef(ref) {
+		return nil, false, err //nolint:wrapcheck // startup/reload own the error context
+	}
+	if cachedState.CachedBundle.SourceRepo == "" {
+		cachedState.CachedBundle.SourceRepo = ref.Repo
+	}
+	if missingDefinition {
+		slog.Info("Using saved bundle; repository definition is absent", "ref", ref.String(), //nolint:gosec // G706: string attributes are escaped by CleanLogHandler.
+			"workspace", wsID, "namespace", nsID)
+	} else {
+		slog.Warn("Bundle resolution failed; using cached bundle", "ref", ref.String(), "err", err.Error(), //nolint:gosec // G706: dynamic values are string attributes escaped by CleanLogHandler.
+			"phase", logLabel, "cachedVersion", cachedState.CachedBundle.Key.Version,
+			"cachedApps", len(cachedState.CachedBundle.Applications))
+	}
+	return &bundle.ResolveResult{Bundle: cachedState.CachedBundle, Workspace: fallbackWS}, true, nil
 }
 
 // generateAndWriteRuntimeFiles runs the namespace generator and applies the
@@ -371,8 +378,8 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 	// as the cache-fallback workspace — it comes from the workspace repo (or
 	// local repo dir) which is independent of the bundle repo whose git pull
 	// just failed (workspace-v1.yml is the source of truth for jdbc URLs,
-	// ${PG_HOST} substitution, etc.). Offline mode keeps "local data missing"
-	// a hard error — no cache fallback.
+	// ${PG_HOST} substitution, etc.). Offline mode may still use a saved pinned
+	// bundle whose YAML is absent; other resolution failures remain errors.
 	var bundleError string
 	preservedWS := wsCfg
 	if preservedWS == nil {

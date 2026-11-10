@@ -283,12 +283,16 @@ export function NamespaceEditDialog({
   }, [bundles, bundleRepo, bundleKey, t])
 
   // Keep bundleKey valid + concrete. The UI no longer offers a symbolic
-  // "LATEST": normalize it (and any stale pin not in the current repo's list)
-  // to the concrete newest version (versions[0]), which the dropdown marks
+  // "LATEST": normalize it and new selections to the concrete newest version
+  // (versions[0]), which the dropdown marks
   // "(LATEST)". This also pins a namespace that was stored as "LATEST" to the
   // concrete latest on the next save — intentional, the symbolic option is gone.
   useEffect(() => {
     if (!bundleRepo) return
+    // An existing namespace keeps its concrete pin even after repository
+    // cleanup. Its saved bundle still supplies the same configuration.
+    if (mode === 'edit' && loadedBundle?.repo === bundleRepo
+      && loadedBundle.key === bundleKey && !/^latest$/i.test(bundleKey)) return
     const repo = bundles.find((b) => b.repo === bundleRepo)
     const versions = repo?.versions ?? []
     if (versions.length === 0) return
@@ -301,7 +305,7 @@ export function NamespaceEditDialog({
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setBundleKey(versions[0])
     }
-  }, [bundleRepo, bundles, bundleKey])
+  }, [bundleRepo, bundles, bundleKey, mode, loadedBundle])
 
   // Ask which content storage the selected bundle can have, whenever the
   // selection changes — and again after a bundle-list refresh, which is how a
@@ -312,11 +316,11 @@ export function NamespaceEditDialog({
     if (!open || !bundleRepo || !bundleKey) return
     const bundle = `${bundleRepo}\n${bundleKey}`
     const ctl = new AbortController()
-    getContentStorageOptions(bundleRepo, bundleKey, mode === 'create' ? workspaceId : undefined, ctl.signal)
+    getContentStorageOptions(bundleRepo, bundleKey, mode === 'create' ? workspaceId : undefined, ctl.signal, mode === 'edit' ? nsId : undefined)
       .then((o) => setS3Options({ bundle, option: o.s3 }))
       .catch(() => {})
     return () => ctl.abort()
-  }, [open, mode, workspaceId, bundleRepo, bundleKey, bundles])
+  }, [open, mode, workspaceId, nsId, bundleRepo, bundleKey, bundles])
 
   // The same for the beta features the selected bundle offers. Best-effort
   // too: a failed request leaves the answer unknown and the section hidden.
@@ -324,11 +328,11 @@ export function NamespaceEditDialog({
     if (!open || !bundleRepo || !bundleKey) return
     const bundle = `${bundleRepo}\n${bundleKey}`
     const ctl = new AbortController()
-    getExperimentalFeatures(bundleRepo, bundleKey, mode === 'create' ? workspaceId : undefined, ctl.signal)
+    getExperimentalFeatures(bundleRepo, bundleKey, mode === 'create' ? workspaceId : undefined, ctl.signal, mode === 'edit' ? nsId : undefined)
       .then((o) => setExpFeatures({ bundle, features: o.features ?? [], reason: o.reason }))
       .catch(() => {})
     return () => ctl.abort()
-  }, [open, mode, workspaceId, bundleRepo, bundleKey, bundles])
+  }, [open, mode, workspaceId, nsId, bundleRepo, bundleKey, bundles])
 
   // When the user picks a different bundle repo, auto-select that repo's latest
   // release (versions are newest-first). Only fires on a manual repo change —
@@ -836,4 +840,3 @@ export function NamespaceEditDialog({
     </>
   )
 }
-

@@ -190,9 +190,12 @@ citeck features --format json        # DTO GET /experimental-features как е�
 
 ## API
 
-* `GET /api/v1/experimental-features?bundleRepo=&bundleKey=[&workspaceId=]` — функции,
+* `GET /api/v1/experimental-features?bundleRepo=&bundleKey=[&workspaceId=][&namespaceId=]` — функции,
   которые предлагает bundle (резолв offline, как у `/content-storage/options`);
-  `reason: BUNDLE_UNRESOLVED`, если bundle нет на диске.
+  для существующего namespace доступен сохранённый комплект, если его YAML
+  удалён. `namespaceId` задаёт конкретный namespace, включая неактивный;
+  без него кэш используется только для ссылки активного namespace.
+  `reason: BUNDLE_UNRESOLVED`, если нет ни файла, ни подходящего кэша.
 * `POST /api/v1/namespaces` — поле `experimentalFeatures: [ids]`.
 * `GET /api/v1/namespaces/{id}/edit` — `experimentalFeatures: [{id, title, description, apps, enabled}]`
   для хранимого bundle и `storedExperimentalFeatures: [ids]` — все сохранённые

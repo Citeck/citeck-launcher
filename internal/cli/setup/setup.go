@@ -2,6 +2,7 @@ package setup
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -115,13 +116,22 @@ func resolveAppList(launcherVersion string, nsCfg *namespace.Config) []string {
 
 // resolveSetupBundle resolves the namespace's bundle OFFLINE (see
 // resolveAppList for the logger and the launcher version). Nil when the bundle
-// cannot be read from disk.
+// has neither a local definition nor a matching saved namespace bundle.
 func resolveSetupBundle(launcherVersion string, nsCfg *namespace.Config) *bundle.ResolveResult {
 	quiet := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	resolver := bundle.NewResolver(config.DataDir()).WithLogger(quiet).WithLauncherVersion(launcherVersion)
 	resolver.SetOffline(true)
 
 	result, err := resolver.Resolve(nsCfg.BundleRef)
+	var missing *bundle.NotFoundError
+	latest := strings.EqualFold(nsCfg.BundleRef.Key, "LATEST")
+	if (errors.As(err, &missing) || (latest && errors.Is(err, bundle.ErrNoBundles))) && nsCfg.ID != "" {
+		state := namespace.LoadNsState(config.ResolveVolumesBase("", nsCfg.ID), nsCfg.ID)
+		if state != nil && state.CachedBundle.MatchesRef(nsCfg.BundleRef) {
+			quiet.Info("Using saved bundle; repository definition is absent", "ref", nsCfg.BundleRef)
+			return &bundle.ResolveResult{Bundle: state.CachedBundle, Workspace: resolver.ResolveWorkspaceOnly()}
+		}
+	}
 	if err != nil || result == nil || result.Bundle == nil {
 		if err != nil {
 			slog.Debug("Bundle resolve failed, falling back to namespace config", "err", err)

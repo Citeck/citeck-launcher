@@ -26,12 +26,12 @@ import (
 // one outcome the whole mechanism must never produce.
 
 // offeredExperimentalFeatures resolves the bundle offline and answers the BETA
-// features it offers; ok is false when the bundle cannot be read from disk.
-func (d *Daemon) offeredExperimentalFeatures(wsID string, ref bundle.Ref) ([]bundle.ExperimentalFeature, bool) {
+// features it offers; ok is false when neither local YAML nor saved state works.
+func (d *Daemon) offeredExperimentalFeatures(wsID string, ref bundle.Ref, namespaceIDs ...string) ([]bundle.ExperimentalFeature, bool) {
 	if ref.IsEmpty() {
 		return nil, false
 	}
-	res, err := d.resolveBundleOffline(wsID, ref)
+	res, err := d.resolveBundleOffline(wsID, ref, namespaceIDs...)
 	if err != nil || res == nil || res.Bundle == nil {
 		return nil, false
 	}
@@ -62,7 +62,7 @@ func experimentalFeatureDtos(features []bundle.ExperimentalFeature, enabled map[
 // for the request's locale. Nil when the bundle offers nothing or cannot be
 // read, and the form shows no section.
 func (d *Daemon) experimentalFeaturesForEdit(r *http.Request, wsID string, nsCfg *namespace.Config) []api.ExperimentalFeatureDto {
-	features, ok := d.offeredExperimentalFeatures(wsID, nsCfg.BundleRef)
+	features, ok := d.offeredExperimentalFeatures(wsID, nsCfg.BundleRef, nsCfg.ID)
 	if !ok || len(features) == 0 {
 		return nil
 	}
@@ -83,16 +83,27 @@ func (d *Daemon) handleExperimentalFeatures(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	ref := bundle.Ref{Repo: q.Get("bundleRepo"), Key: q.Get("bundleKey")}
+	nsID := q.Get("namespaceId")
+	if nsID != "" && !validateID(nsID) {
+		writeError(w, http.StatusBadRequest, "invalid namespace id")
+		return
+	}
 	var enabled map[string]bool
-	if act := d.active(); act.nsConfig != nil && act.workspaceID == wsID {
+	var subject *namespace.Config
+	if nsID != "" {
+		subject, _ = d.loadNamespaceConfigForCache(wsID, nsID)
+	} else if act := d.active(); act.workspaceID == wsID {
+		subject = act.nsConfig
+	}
+	if subject != nil {
 		if ref.IsEmpty() {
-			ref = act.nsConfig.BundleRef
+			ref = subject.BundleRef
 		}
-		if ref == act.nsConfig.BundleRef {
-			enabled = act.nsConfig.ExperimentalEnabled()
+		if ref == subject.BundleRef {
+			enabled = subject.ExperimentalEnabled()
 		}
 	}
-	features, ok := d.offeredExperimentalFeatures(wsID, ref)
+	features, ok := d.offeredExperimentalFeatures(wsID, ref, nsID)
 	if !ok {
 		writeJSON(w, api.ExperimentalFeaturesDto{Features: []api.ExperimentalFeatureDto{},
 			Reason: api.ExperimentalFeaturesBundleUnresolved})
@@ -147,7 +158,7 @@ func (d *Daemon) applyEditExperimentalFeatures(w http.ResponseWriter, wsID strin
 		return true
 	}
 	wanted := namespace.NormalizeExperimentalFeatures(*requested)
-	offered, ok := d.offeredExperimentalFeatures(wsID, current.BundleRef)
+	offered, ok := d.offeredExperimentalFeatures(wsID, current.BundleRef, current.ID)
 	if !ok {
 		writeErrorCode(w, http.StatusConflict, api.ErrCodeExperimentalFeatureUnknown,
 			fmt.Sprintf("cannot change experimental features: bundle %s is not available on disk, so what it offers cannot be verified; refresh the bundle list and retry",

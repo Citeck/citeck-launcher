@@ -216,8 +216,8 @@ func stripYAMLComment(line string) string {
 //     edit that keeps both: refusing a rename because the workspace changed
 //     under a namespace that cannot go back to DB would leave it uneditable,
 //     and the generator reports that state anyway (ContentStorageProblem).
-//     A bundle that is not on disk cannot be asked, so choosing S3 with one
-//     is refused too: S3 cannot be undone, and an unverified choice is the
+//     A bundle with neither local YAML nor matching saved state cannot be
+//     asked, so choosing S3 is refused: an unverified choice is the
 //     one way to be stuck with it.
 func (d *Daemon) contentStorageRefusal(wsID string, stored storedContentStorage, next *namespace.Config) *errContentStorageRefused {
 	if next == nil {
@@ -233,7 +233,7 @@ func (d *Daemon) contentStorageRefusal(wsID string, stored storedContentStorage,
 	if !transition.RequiresAvailability {
 		return nil
 	}
-	avail, ok := d.contentStorageAvailability(wsID, next.BundleRef)
+	avail, ok := d.contentStorageAvailability(wsID, next.BundleRef, next.ID)
 	if !ok {
 		return &errContentStorageRefused{
 			code:    api.ErrCodeContentStorageUnavailable,
@@ -252,12 +252,12 @@ func (d *Daemon) contentStorageRefusal(wsID string, stored storedContentStorage,
 }
 
 // contentStorageAvailability resolves the bundle OFFLINE and answers the S3
-// availability for it; ok is false when the bundle cannot be read from disk.
-func (d *Daemon) contentStorageAvailability(wsID string, ref bundle.Ref) (namespace.ContentStorageAvailability, bool) {
+// availability; ok is false without both local YAML and usable saved state.
+func (d *Daemon) contentStorageAvailability(wsID string, ref bundle.Ref, namespaceIDs ...string) (namespace.ContentStorageAvailability, bool) {
 	if ref.IsEmpty() {
 		return namespace.ContentStorageAvailability{}, false
 	}
-	res, err := d.resolveBundleOffline(wsID, ref)
+	res, err := d.resolveBundleOffline(wsID, ref, namespaceIDs...)
 	if err != nil || res == nil || res.Bundle == nil {
 		return namespace.ContentStorageAvailability{}, false
 	}
@@ -292,13 +292,22 @@ func (d *Daemon) handleContentStorageOptions(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	ref := bundle.Ref{Repo: q.Get("bundleRepo"), Key: q.Get("bundleKey")}
+	nsID := q.Get("namespaceId")
+	if nsID != "" && !validateID(nsID) {
+		writeError(w, http.StatusBadRequest, "invalid namespace id")
+		return
+	}
 	if ref.IsEmpty() {
-		if act := d.active(); act.nsConfig != nil && act.workspaceID == wsID {
+		if nsID != "" {
+			if subject, _ := d.loadNamespaceConfigForCache(wsID, nsID); subject != nil {
+				ref = subject.BundleRef
+			}
+		} else if act := d.active(); act.nsConfig != nil && act.workspaceID == wsID {
 			ref = act.nsConfig.BundleRef
 		}
 	}
 	opt := api.ContentStorageOptionDto{Reason: api.ContentStorageBundleUnresolved}
-	if avail, ok := d.contentStorageAvailability(wsID, ref); ok {
+	if avail, ok := d.contentStorageAvailability(wsID, ref, nsID); ok {
 		opt = api.ContentStorageOptionDto{
 			Available:     avail.Available,
 			Reason:        avail.Reason,
@@ -373,7 +382,7 @@ func switchedToS3(before namespace.ContentStorageType, after *namespace.Config) 
 func (d *Daemon) requiredAppsFor(wsID string, cfg *namespace.Config) []string {
 	ws := d.workspaceConfigFor(wsID)
 	if ws == nil {
-		if res, err := d.resolveBundleOffline(wsID, cfg.BundleRef); err == nil && res != nil {
+		if res, err := d.resolveBundleOffline(wsID, cfg.BundleRef, cfg.ID); err == nil && res != nil {
 			ws = res.Workspace
 		}
 	}
