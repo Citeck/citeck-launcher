@@ -33,10 +33,17 @@ Keep `make tools` and the CI linter pin aligned. The vulnerability and dead-code
 allowlists do not change just because the tools were upgraded: investigate any
 new findings rather than silently adding exceptions.
 
-Go 1.27 raises the minimum macOS version to **13 Ventura** for both the desktop
-wrapper and the server/daemon payload. `packaging/macos/Info.plist` therefore
-sets `LSMinimumSystemVersion` to `13.0`; this also affects daemon-only auto-updates
-used with older installed wrappers.
+The project's supported macOS baseline is **14 Sonoma**. The desktop package's
+`packaging/macos/Info.plist` sets `LSMinimumSystemVersion` to `14.0`.
+This is a project policy, not Go's own floor: Go 1.27 requires macOS 13 Ventura,
+including for pure-Go server/daemon auto-update payloads. Native macOS `make`
+targets and the standalone macOS release script set the **14.0** compile/link
+target for CGO builds through
+`scripts/macos-compiler.sh`: it appends the target after Wails' older
+package-level CGO flags, including intermediate and final links. Existing CC/CXX
+commands and arguments are retained; nested make does not wrap them twice.
+Bare `go` commands outside these entry points do not acquire this environment.
+Explicit custom `-extld` overrides remain the caller's responsibility.
 
 ## Frontend dependency audit
 

@@ -60,12 +60,13 @@ hook. On alpha.98/macOS that hook still uses pinch magnification. The Go helper
 does not retroactively change installed wrappers: obtaining Wails 3.0.0 page
 zoom requires upgrading the desktop wrapper, not just its daemon payload.
 
-Go 1.27.3 requires macOS 13 Ventura or newer, above Wails' pageZoom API floor.
-The macOS package declares `LSMinimumSystemVersion=13.0` to match this toolchain
-boundary. The requirement also applies to the server binary used as the desktop
-auto-update daemon payload; keeping an older wrapper does not preserve macOS 12
-compatibility with newly built payloads. See the
-[Go 1.27 Darwin requirements](https://go.dev/doc/go1.27#darwin).
+The project's supported macOS baseline is **14 Sonoma**. The desktop package
+declares `LSMinimumSystemVersion=14.0`, matching the native CGO compiler/linker
+target. Go 1.27.3 itself requires macOS 13 Ventura or newer, including for pure-Go
+server binaries used as desktop auto-update daemon payloads. Daemon-only updates
+do not replace the installed wrapper or change its minimum-OS metadata. Keeping
+an older wrapper does not preserve macOS 12 compatibility with newly built
+payloads. See the [Go 1.27 Darwin requirements](https://go.dev/doc/go1.27#darwin).
 
 ## DevTools and build tags
 

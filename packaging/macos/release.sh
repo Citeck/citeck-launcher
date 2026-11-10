@@ -9,6 +9,15 @@ set -euo pipefail
 VERSION="${VERSION:?VERSION env required}"; VERSION="${VERSION#v}"
 ARCH="${ARCH:?ARCH env required}"
 
+# Also cover direct invocation, not only the environment inherited from make.
+if [[ "$(uname -s)" == Darwin ]]; then
+  compiler="$(cd "$(dirname "$0")/../.." && pwd)/scripts/macos-compiler.sh"
+  MACOSX_DEPLOYMENT_TARGET="$(bash "$compiler" --print-target)"
+  CC="$(bash "$compiler" --print-command CC)"
+  CXX="$(bash "$compiler" --print-command CXX)"
+  export MACOSX_DEPLOYMENT_TARGET CC CXX
+fi
+
 mkdir -p dist/bin
 # private_mac_apis lets Wails open the in-app inspector (tray DevTools, F12);
 # without it OpenDevTools is a no-op on macOS. Same tags as the Makefile's

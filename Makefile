@@ -10,6 +10,19 @@ BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 # Use bash for all recipes so they run identically on Linux, macOS, and the
 # Windows runner (Git Bash) — the release-* targets rely on POSIX tools.
 SHELL := bash
+
+# Keep native macOS compilation and every cgo/external link on the same floor.
+# Wails supplies older #cgo targets, so CGO_*FLAGS alone cannot override them.
+ifeq ($(shell uname -s),Darwin)
+export MACOSX_DEPLOYMENT_TARGET := $(shell bash scripts/macos-compiler.sh --print-target)
+override CC := $(shell bash scripts/macos-compiler.sh --print-command CC)
+override CXX := $(shell bash scripts/macos-compiler.sh --print-command CXX)
+ifeq ($(and $(strip $(CC)),$(strip $(CXX))),)
+$(error Cannot configure the macOS compiler deployment target)
+endif
+export CC CXX
+endif
+
 BUILDDIR := dist/bin
 BINARY   := $(BUILDDIR)/citeck-server
 DESKTOP  := $(BUILDDIR)/citeck-launcher
