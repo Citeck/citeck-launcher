@@ -182,11 +182,20 @@ valid connections. Changing the port permanently invalidates old OAuth grants,
 even if the port is later changed back. Manual tokens remain independent of the
 OAuth issuer and keep their original expiries.
 
+Browser admission uses fixed global one-minute buckets: **240 status polls**,
+**120 completion requests**, and **120 malformed/unknown browser routes** (480
+requests total). Polling cannot consume the completion reserve. Refusals return
+429 with Retry-After; route, method and browser proof checks still apply.
+
 A successful revoke means its write was saved. On a known connection's SQL write
 failure, Launcher denies it in memory, reports **revocation unconfirmed**, and
 retries with backoff. Keep Launcher running and retry/refresh until saved. If
 Launcher exits before persistence succeeds, repeat the revoke after restart.
-A failure or timeout is not a durable-success receipt.
+A failure or timeout is not a durable-success receipt. Settings distinguishes
+this revocation debt from **storage outcome unconfirmed**, which closes MCP until
+Launcher restarts. Status warnings remain visible even if connection metadata
+cannot be read; empty token lists are not presented as authoritative during a
+storage warning. Unknown warning values use a neutral localized notice.
 
 ## Roles and authority
 
@@ -360,22 +369,32 @@ while the daemon and desktop wrapper are stopped; no edit is silently discarded.
 For example `command:"VM.flags", args:["-all"]`. These are HotSpot attach protocol
 data, **not a host-shell command**. Existing non-JVM/no-container gates, per-app
 liveness suspension/release and Java 8 gzip compatibility remain in force.
-Commands have a bounded 32 KiB output; truncation is explicit and means the final
-outcome may be unknown. Cancellation of observation does not prove cancellation
-of the JVM action. There is no automatic replay.
+Commands have a bounded 32 KiB output. Docker exec retains stdout and stderr
+separately under one shared payload budget, with an additional header/source cap.
+Truncation returns bounded partial output with `outcome: unknown`,
+`truncated: true`, and `replaySafe: false`, not an unobserved exit 0. A complete
+stream whose exec is still running also has an unknown outcome. Observation
+stops at the cap without waiting for the action to finish. Cancellation of
+observation does not prove cancellation of the JVM action. There is no automatic
+replay.
 
 `heap_dump_create` chooses the export filename; it does not accept a host
 output path. `heap_dumps_list` lists regular `.hprof`/`.hprof.gz` files only.
 `heap_dump_download` accepts one such `heapFile` name and registers a download
 handle; arbitrary export downloads/removal are not offered. A source heap is
-never removed by MCP. Files are opened safely and the **opened handle** is retained,
-not a host pathname to reopen later.
+never removed by MCP. Incomplete dump observation (including output truncation)
+does not register a completed artifact, even if a possibly growing file exists;
+the source is left for later inspection. Files are opened safely and the **opened
+handle** is retained, not a host pathname to reopen later.
 
 `system_dump_create` produces the existing **daemon diagnostic ZIP**, not the
 full `citeck dump-system-info` CLI host/subprocess inventory. It includes daemon,
 namespace/application status, masked namespace config and api_auth token,
 goroutine stacks, migration reports, bounded logs and update manifest when
-available. Existing masking is preserved; logs are not promised secret-free.
+available. Literal SMTP passwords and external S3 secret keys in namespace.yml
+are masked along with authentication passwords; `secret:` references remain
+references, and the active credentials are not mutated. Logs and arbitrary
+application configuration are not promised secret-free.
 It streams ZIP output to a private temporary file outside workspaces, not through
 an in-memory response recorder. Unavailable source files are skipped without following unsafe paths; the ZIP
 then contains `INCOMPLETE.txt` listing the omitted sources, while later logs are

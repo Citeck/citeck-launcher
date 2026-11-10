@@ -54,10 +54,13 @@ func (r *Runtime) JVMCommand(ctx context.Context, appName, command string, args 
 		out, cmdErr = r.attachJcmd(ctx, containerID, command, args...)
 		return cmdErr
 	})
-	if err != nil {
-		return "", err
+	if budget := fsutil.DiagnosticOutputLimit(ctx); budget != nil && budget.Truncated.Load() {
+		if err == nil {
+			err = errors.New("JVM command observation truncated")
+		}
+		return out, &jvmattach.DispatchError{Err: err, Uncertain: true}
 	}
-	return out, nil
+	return out, err
 }
 
 // HeapDump writes a heap dump into the app's export directory and returns its
@@ -191,7 +194,7 @@ func attachJcmdVia(ctx context.Context, containerID, command string, args []stri
 		}
 		var dispatched *jvmattach.DispatchError
 		if errors.As(err, &dispatched) || ctx.Err() != nil {
-			return "", err
+			return out, err
 		}
 		slog.Debug("Host attach command failed, trying the in-container client",
 			"container", containerID, "err", err)
@@ -216,7 +219,7 @@ func (r *Runtime) attachHostCommand(ctx context.Context, containerID, verb strin
 	}
 	out, err := att.Command(ctx, pid, verb, args...)
 	if err != nil {
-		return "", fmt.Errorf("attach to jvm pid %d: %w", pid, err)
+		return out, fmt.Errorf("attach to jvm pid %d: %w", pid, err)
 	}
 	return out, nil
 }

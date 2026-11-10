@@ -64,10 +64,20 @@ func (s *Service) authorizeOAuth(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(page.Bytes())
 }
 
+// browserOAuthRoute is shared by admission and dispatch; limiter keys never
+// contain the browser's request id, even for malformed intercepted paths.
+func browserOAuthRoute(path string) (id, action string, valid bool) {
+	tail, ok := strings.CutPrefix(path, "/oauth/requests/")
+	if !ok {
+		return "", "", false
+	}
+	id, action, ok = strings.Cut(tail, "/")
+	return id, action, ok && len(id) == 64 && (action == "status" || action == "finish")
+}
+
 func (s *Service) browserOAuth(w http.ResponseWriter, r *http.Request, port int) {
-	tail := strings.TrimPrefix(r.URL.Path, "/oauth/requests/")
-	id, action, ok := strings.Cut(tail, "/")
-	if !ok || len(id) != 64 || (action != "status" && action != "finish") {
+	id, action, ok := browserOAuthRoute(r.URL.Path)
+	if !ok {
 		http.NotFound(w, r)
 		return
 	}

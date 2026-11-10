@@ -833,6 +833,8 @@ const es = {
   'mcp.oauth.allow': 'Permitir acceso',
   'mcp.oauth.deny': 'Denegar',
   'mcp.oauth.actionFailed': 'Operación sin confirmar. Actualice los metadatos antes de reintentar.',
+  'mcp.oauth.storageWarning': 'El resultado del almacenamiento de MCP no está confirmado. MCP permanecerá cerrado hasta que se reinicie Launcher. Las listas de conexiones y tokens pueden estar incompletas.',
+  'mcp.oauth.genericWarning': 'MCP ha notificado una advertencia de almacenamiento. La información de conexiones y tokens puede estar incompleta. Actualice los metadatos para comprobar el estado actual.',
   'mcp.oauth.revokeWarning': 'La revocación no se guardó. La conexión está bloqueada en el Launcher actual, pero podría volver tras reiniciarlo. Mantenga Launcher abierto y repita la revocación hasta que se guarde.',
 } satisfies Translations
 

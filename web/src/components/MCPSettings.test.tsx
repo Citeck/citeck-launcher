@@ -8,6 +8,8 @@ import type { MCPOAuthPending, MCPStatus } from '../lib/api'
 
 vi.mock('../lib/api', () => ({ ApiError: class extends Error {}, approveMCPOAuth: vi.fn(), denyMCPOAuth: vi.fn(), revokeMCPOAuth: vi.fn(), getMCPOAuthPending: vi.fn(), getMCPOAuthConnections: vi.fn(), getMCPStatus: vi.fn(), configureMCP: vi.fn(), createMCPToken: vi.fn(), revokeMCPToken: vi.fn() }))
 vi.mock('../lib/clipboard', () => ({ copyText: vi.fn() }))
+const storageWarning = 'MCP storage outcome is unconfirmed; MCP is closed until restart'
+const revocationWarning = 'Revocation was NOT saved. This connection is denied in this process; retry is pending. If Launcher exits before a successful save, repeat the revocation after restart.'
 const status: MCPStatus = { enabled: false, port: 19380, listening: false, endpoint: 'http://127.0.0.1:19380/mcp', tokens: [] }
 const token = { id: 'id', name: 'Pi', role: 'observer' as const, createdAt: '2026-01-01T00:00:00Z' }
 const value = 'citeck_mcp_fixture_only_once'
@@ -526,8 +528,8 @@ describe('MCPSettings — owner OAuth decisions and connections', () => {
 
   it('clears a loaded unsaved-revocation warning after a successful revoke retry', async () => {
     oauthFixture()
-    vi.mocked(getMCPStatus).mockResolvedValue({ ...status, enabled: true, oauthWarning: 'revocation pending' })
-    vi.mocked(getMCPOAuthConnections).mockResolvedValue({ connections: [connection], warning: 'revocation pending' })
+    vi.mocked(getMCPStatus).mockResolvedValue({ ...status, enabled: true, oauthWarning: revocationWarning })
+    vi.mocked(getMCPOAuthConnections).mockResolvedValue({ connections: [connection], warning: revocationWarning })
     render(<MCPSettings />)
     expect(await screen.findByRole('alert')).toHaveTextContent('may return after restart')
     vi.mocked(revokeMCPOAuth).mockResolvedValue({ status: 'revoked' })
@@ -762,7 +764,7 @@ describe('MCPSettings — owner OAuth decisions and connections', () => {
 
   it('does not report an unsaved revoke as durable success', async () => {
     oauthFixture()
-    vi.mocked(revokeMCPOAuth).mockRejectedValue(new ApiError('MCP_OAUTH_REVOCATION_UNCONFIRMED: write failed', 503, ''))
+    vi.mocked(revokeMCPOAuth).mockRejectedValue(new ApiError('MCP_OAUTH_REVOCATION_UNCONFIRMED: ' + revocationWarning, 503, ''))
     render(<MCPSettings />)
     fireEvent.click(await screen.findByRole('button', { name: 'Revoke Connected Pi' }))
     await waitFor(() => expect(screen.getAllByRole('alert').some((a) => a.textContent?.includes('may return after restart'))).toBe(true))
@@ -792,5 +794,244 @@ describe('MCPSettings — owner OAuth decisions and connections', () => {
     expect(screen.queryByText('Invalid Date')).not.toBeInTheDocument()
     view.unmount()
     useI18nStore.getState().setLocale('en', false)
+  })
+})
+
+
+describe('MCPSettings — independent storage warning observations', () => {
+  for (const first of ['status', 'connections'] as const) {
+    it(`keeps status storage closure when empty connections resolve ${first === 'status' ? 'second' : 'first'}`, async () => {
+      let resolveStatus!: (value: MCPStatus) => void
+      let resolveConnections!: (value: { connections: [] }) => void
+      vi.mocked(getMCPStatus).mockReturnValue(new Promise((resolve) => { resolveStatus = resolve }))
+      vi.mocked(getMCPOAuthConnections).mockReturnValue(new Promise((resolve) => { resolveConnections = resolve }))
+      render(<MCPSettings />)
+      const loaded = { ...status, oauthWarning: storageWarning }
+      if (first === 'status') {
+        await act(async () => resolveStatus(loaded))
+        expect(screen.getByRole('alert')).toHaveTextContent(t('mcp.oauth.storageWarning'))
+        await act(async () => resolveConnections({ connections: [] }))
+      } else {
+        await act(async () => resolveConnections({ connections: [] }))
+        await act(async () => resolveStatus(loaded))
+      }
+      const alert = screen.getByRole('alert')
+      expect(alert).toHaveTextContent(t('mcp.oauth.storageWarning'))
+      expect(alert).not.toHaveTextContent('This connection is denied')
+      expect(alert.parentElement).toHaveAttribute('aria-label', t('mcp.title'))
+      expect(screen.queryByText(t('mcp.empty'))).not.toBeInTheDocument()
+      expect(screen.queryByText(storageWarning)).not.toBeInTheDocument()
+    })
+  }
+
+  it('retains successful status and storage warning when the connection request fails', async () => {
+    vi.mocked(getMCPStatus).mockResolvedValue({ ...status, oauthWarning: storageWarning })
+    vi.mocked(getMCPOAuthConnections).mockRejectedValue(new Error('connections unavailable'))
+    render(<MCPSettings />)
+    expect(await screen.findByText(t('mcp.oauth.storageWarning'))).toBeInTheDocument()
+    expect(screen.getByText(status.endpoint)).toBeInTheDocument()
+    expect(screen.queryByText(t('mcp.empty'))).not.toBeInTheDocument()
+  })
+
+  it('applies status refresh before pending settles and despite failed connections, preserving unsaved inputs', async () => {
+    render(<MCPSettings />)
+    await screen.findByText('Not listening')
+    fireEvent.change(screen.getByLabelText('Loopback port'), { target: { value: '19444' } })
+    fireEvent.click(screen.getByLabelText('Enable MCP'))
+    let resolvePending!: (value: { pending: [] }) => void
+    vi.mocked(getMCPOAuthPending).mockReturnValue(new Promise((resolve) => { resolvePending = resolve }))
+    vi.mocked(getMCPOAuthConnections).mockRejectedValue(new Error('secondary failed'))
+    vi.mocked(getMCPStatus).mockResolvedValue({ ...status, port: 19555, endpoint: 'http://127.0.0.1:19555/mcp', oauthWarning: storageWarning })
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh metadata' }))
+    expect(await screen.findByText(t('mcp.oauth.storageWarning'))).toBeInTheDocument()
+    expect(screen.getByText('http://127.0.0.1:19555/mcp')).toBeInTheDocument()
+    expect(screen.getByLabelText('Loopback port')).toHaveValue(19444)
+    expect(screen.getByLabelText('Enable MCP')).toBeChecked()
+    expect(screen.queryByText(t('mcp.empty'))).not.toBeInTheDocument()
+    await act(async () => resolvePending({ pending: [] }))
+    expect(await screen.findByText(/secondary failed/)).toBeInTheDocument()
+    expect(configureMCP).not.toHaveBeenCalled()
+    vi.mocked(getMCPStatus).mockResolvedValue(status)
+    vi.mocked(getMCPOAuthConnections).mockResolvedValue({ connections: [] })
+    vi.mocked(getMCPOAuthPending).mockResolvedValue({ pending: [] })
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh metadata' })).toBeEnabled())
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh metadata' }))
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
+    expect(screen.getByText(t('mcp.empty'))).toBeInTheDocument()
+  })
+
+  for (const warning of [revocationWarning, 'new storage warning: ' + storageWarning]) {
+    it(`classifies only exact wire values: ${warning === revocationWarning ? 'revocation' : 'generic'}`, async () => {
+      vi.mocked(getMCPStatus).mockResolvedValue({ ...status, oauthWarning: warning })
+      render(<MCPSettings />)
+      const key = warning === revocationWarning ? 'mcp.oauth.revokeWarning' : 'mcp.oauth.genericWarning'
+      expect(await screen.findByRole('alert')).toHaveTextContent(t(key))
+      expect(screen.queryByText(warning)).not.toBeInTheDocument()
+    })
+  }
+
+  it('uses the connection warning independently of a clean status and clears it after a confirmed read', async () => {
+    vi.mocked(getMCPOAuthConnections).mockResolvedValue({ connections: [], warning: storageWarning })
+    render(<MCPSettings />)
+    expect(await screen.findByText(t('mcp.oauth.storageWarning'))).toBeInTheDocument()
+    await screen.findByText('Not listening')
+    vi.mocked(getMCPOAuthConnections).mockResolvedValue({ connections: [] })
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh metadata' }))
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
+  })
+
+  it('does not erase storage closure on an unrelated successful revoke and empty connection read', async () => {
+    oauthFixture()
+    vi.mocked(getMCPStatus).mockResolvedValue({ ...status, enabled: true, oauthWarning: storageWarning })
+    render(<MCPSettings />)
+    await screen.findByRole('button', { name: 'Revoke Connected Pi' })
+    vi.mocked(revokeMCPOAuth).mockResolvedValue({ status: 'revoked' })
+    vi.mocked(getMCPOAuthConnections).mockResolvedValue({ connections: [] })
+    fireEvent.click(screen.getByRole('button', { name: 'Revoke Connected Pi' }))
+    await waitFor(() => expect(getMCPOAuthConnections).toHaveBeenCalledTimes(2))
+    expect(screen.getByText(t('mcp.oauth.storageWarning'))).toBeInTheDocument()
+    expect(screen.queryByText(t('mcp.empty'))).not.toBeInTheDocument()
+  })
+})
+
+
+describe('MCPSettings — reviewed warning envelope and reconciliation regressions', () => {
+  for (const [suffix, key] of [
+    [storageWarning, 'mcp.oauth.storageWarning'],
+    [revocationWarning, 'mcp.oauth.revokeWarning'],
+    ['new failure: ' + storageWarning, 'mcp.oauth.genericWarning'],
+    ['', 'mcp.oauth.genericWarning'],
+  ] as const) {
+    it(`classifies the exact failed-revoke envelope suffix: ${suffix || 'empty'}`, async () => {
+      oauthFixture()
+      const message = 'MCP_OAUTH_REVOCATION_UNCONFIRMED: ' + suffix
+      vi.mocked(revokeMCPOAuth).mockRejectedValue(new ApiError(message, 503, ''))
+      render(<MCPSettings />)
+      await screen.findByRole('button', { name: 'Revoke Connected Pi' })
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: 'Revoke Connected Pi' }))
+      expect(await screen.findByRole('alert')).toHaveTextContent(t(key))
+      for (const other of ['mcp.oauth.storageWarning', 'mcp.oauth.revokeWarning', 'mcp.oauth.genericWarning'] as const) {
+        if (other !== key) expect(screen.queryByText(t(other))).not.toBeInTheDocument()
+      }
+      expect(screen.queryByText(message)).not.toBeInTheDocument()
+      if (suffix) expect(screen.queryByText(suffix)).not.toBeInTheDocument()
+      expect(getMCPStatus).toHaveBeenCalledTimes(1)
+    })
+  }
+
+  it('retires loaded revocation debt after approval and a newer clean connections read', async () => {
+    oauthFixture()
+    vi.mocked(getMCPStatus).mockResolvedValue({ ...status, enabled: true, oauthWarning: revocationWarning })
+    vi.mocked(getMCPOAuthConnections).mockResolvedValue({ connections: [connection], warning: revocationWarning })
+    render(<MCPSettings />)
+    expect(await screen.findByRole('alert')).toHaveTextContent(t('mcp.oauth.revokeWarning'))
+    await screen.findByRole('button', { name: 'Allow access' })
+    vi.mocked(approveMCPOAuth).mockResolvedValue({ status: 'approved' })
+    vi.mocked(getMCPOAuthPending).mockResolvedValue({ pending: [] })
+    vi.mocked(getMCPOAuthConnections).mockResolvedValue({ connections: [connection] })
+    fireEvent.click(screen.getByRole('button', { name: 'Allow access' }))
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
+    expect(approveMCPOAuth).toHaveBeenCalledTimes(1)
+    expect(revokeMCPOAuth).not.toHaveBeenCalled()
+    expect(getMCPStatus).toHaveBeenCalledTimes(1)
+    expect(screen.getByText('Connected Pi')).toBeInTheDocument()
+  })
+
+  for (const warning of [revocationWarning, storageWarning, 'unknown storage warning']) {
+    it(`reconciles only known debt when refreshed status precedes a newer clean connections response: ${warning}`, async () => {
+      render(<MCPSettings />)
+      await screen.findByText('Not listening')
+      fireEvent.change(screen.getByLabelText('Loopback port'), { target: { value: '19444' } })
+      fireEvent.click(screen.getByLabelText('Enable MCP'))
+      const refreshedStatus = deferred<MCPStatus>()
+      const refreshedConnections = deferred<{ connections: [] }>()
+      vi.mocked(getMCPStatus).mockReturnValue(refreshedStatus.promise)
+      vi.mocked(getMCPOAuthConnections).mockReturnValue(refreshedConnections.promise)
+      fireEvent.click(screen.getByRole('button', { name: 'Refresh metadata' }))
+      await act(async () => refreshedStatus.resolve({ ...status, oauthWarning: warning }))
+      const key = warning === revocationWarning ? 'mcp.oauth.revokeWarning' : warning === storageWarning ? 'mcp.oauth.storageWarning' : 'mcp.oauth.genericWarning'
+      expect(screen.getByRole('alert')).toHaveTextContent(t(key))
+      await act(async () => refreshedConnections.resolve({ connections: [] }))
+      if (warning === revocationWarning) expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+      else expect(screen.getByRole('alert')).toHaveTextContent(t(key))
+      expect(screen.getByLabelText('Loopback port')).toHaveValue(19444)
+      expect(screen.getByLabelText('Enable MCP')).toBeChecked()
+    })
+  }
+
+  it('retains a newer warning-bearing status if refresh connections resolved first', async () => {
+    render(<MCPSettings />)
+    await screen.findByText('Not listening')
+    const refreshedStatus = deferred<MCPStatus>()
+    const refreshedConnections = deferred<{ connections: [] }>()
+    vi.mocked(getMCPStatus).mockReturnValue(refreshedStatus.promise)
+    vi.mocked(getMCPOAuthConnections).mockReturnValue(refreshedConnections.promise)
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh metadata' }))
+    await act(async () => refreshedConnections.resolve({ connections: [] }))
+    await act(async () => refreshedStatus.resolve({ ...status, oauthWarning: revocationWarning }))
+    expect(screen.getByRole('alert')).toHaveTextContent(t('mcp.oauth.revokeWarning'))
+  })
+})
+
+
+describe('MCPSettings — storage closure recovery guidance takes presentation precedence', () => {
+  it('replaces loaded retryable-debt guidance when a retry reports an uncertain commit', async () => {
+    oauthFixture()
+    vi.mocked(getMCPStatus).mockResolvedValue({ ...status, enabled: true, oauthWarning: revocationWarning })
+    vi.mocked(getMCPOAuthConnections).mockResolvedValue({ connections: [connection], warning: revocationWarning })
+    vi.mocked(revokeMCPOAuth).mockRejectedValue(new ApiError('MCP_OAUTH_REVOCATION_UNCONFIRMED: ' + storageWarning, 503, ''))
+    render(<MCPSettings />)
+    expect(await screen.findByRole('alert')).toHaveTextContent(t('mcp.oauth.revokeWarning'))
+    fireEvent.click(await screen.findByRole('button', { name: 'Revoke Connected Pi' }))
+    expect(await screen.findByText(t('mcp.oauth.storageWarning'))).toBeInTheDocument()
+    expect(screen.queryByText(t('mcp.oauth.revokeWarning'))).not.toBeInTheDocument()
+    expect(screen.queryByText(/Keep Launcher open and retry/)).not.toBeInTheDocument()
+    expect(screen.queryByText(t('mcp.empty'))).not.toBeInTheDocument()
+    expect(getMCPStatus).toHaveBeenCalledTimes(1)
+  })
+
+  for (const closureSource of ['status', 'connections'] as const) {
+    for (const first of ['status', 'connections'] as const) {
+      it(`prioritizes closure from ${closureSource} with ${first} resolving first, without erasing stale debt`, async () => {
+        const initialStatus = deferred<MCPStatus>()
+        const initialConnections = deferred<{ connections: []; warning: string }>()
+        vi.mocked(getMCPStatus).mockReturnValue(initialStatus.promise)
+        vi.mocked(getMCPOAuthConnections).mockReturnValue(initialConnections.promise)
+        render(<MCPSettings />)
+        const loaded = { ...status, oauthWarning: closureSource === 'status' ? storageWarning : revocationWarning }
+        const saved = { connections: [] as [], warning: closureSource === 'connections' ? storageWarning : revocationWarning }
+        if (first === 'status') {
+          await act(async () => initialStatus.resolve(loaded))
+          await act(async () => initialConnections.resolve(saved))
+        } else {
+          await act(async () => initialConnections.resolve(saved))
+          await act(async () => initialStatus.resolve(loaded))
+        }
+        expect(screen.getByRole('alert')).toHaveTextContent(t('mcp.oauth.storageWarning'))
+        expect(screen.queryByText(t('mcp.oauth.revokeWarning'))).not.toBeInTheDocument()
+        // Remove only the closure observation; the other source's debt must
+        // reappear, proving precedence did not mutate or discard its state.
+        if (closureSource === 'status') {
+          vi.mocked(getMCPStatus).mockResolvedValue(status)
+          vi.mocked(getMCPOAuthConnections).mockRejectedValue(new Error('connections unavailable'))
+        } else {
+          vi.mocked(getMCPStatus).mockRejectedValue(new Error('status unavailable'))
+          vi.mocked(getMCPOAuthConnections).mockResolvedValue({ connections: [], warning: revocationWarning })
+        }
+        fireEvent.click(screen.getByRole('button', { name: 'Refresh metadata' }))
+        expect(await screen.findByText(t('mcp.oauth.revokeWarning'))).toBeInTheDocument()
+        expect(screen.queryByText(t('mcp.oauth.storageWarning'))).not.toBeInTheDocument()
+      })
+    }
+  }
+
+  it('keeps an unknown source warning generic alongside known storage closure', async () => {
+    vi.mocked(getMCPStatus).mockResolvedValue({ ...status, oauthWarning: storageWarning })
+    vi.mocked(getMCPOAuthConnections).mockResolvedValue({ connections: [], warning: 'unknown warning with ' + revocationWarning })
+    render(<MCPSettings />)
+    expect(await screen.findByText(t('mcp.oauth.storageWarning'))).toBeInTheDocument()
+    expect(await screen.findByText(t('mcp.oauth.genericWarning'))).toBeInTheDocument()
+    expect(screen.queryByText(t('mcp.oauth.revokeWarning'))).not.toBeInTheDocument()
   })
 })

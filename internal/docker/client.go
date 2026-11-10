@@ -1107,13 +1107,18 @@ func (c *Client) ExecInContainerSplit(ctx context.Context, containerID string, c
 	budget := fsutil.DiagnosticOutputLimit(ctx)
 	if budget != nil {
 		var truncated bool
-		stdout, truncated, err = readLogsBounded(attachResp.Reader, budget.Bytes)
+		stdout, stderr, truncated, err = readExecBounded(attachResp.Reader, budget.Bytes)
 		if truncated {
 			budget.Truncated.Store(true)
-			return stdout, "", 0, err
+		}
+		if ctx.Err() != nil {
+			return stdout, stderr, -1, fmt.Errorf("read exec output: %w", ctx.Err())
+		}
+		if truncated {
+			return stdout, stderr, -1, ErrExecObservationIncomplete
 		}
 		if err != nil {
-			return stdout, "", -1, err
+			return stdout, stderr, -1, err
 		}
 	}
 	if budget == nil {
@@ -1141,6 +1146,9 @@ func (c *Client) ExecInContainerSplit(ctx context.Context, containerID string, c
 		return stdout, stderr, -1, err //nolint:wrapcheck // thin Docker SDK wrapper
 	}
 
+	if budget != nil && inspectResp.Running {
+		return stdout, stderr, -1, ErrExecObservationIncomplete
+	}
 	return stdout, stderr, inspectResp.ExitCode, nil
 }
 

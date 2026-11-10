@@ -2,11 +2,15 @@ package daemon
 
 import (
 	"context"
+	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -123,6 +127,100 @@ func TestMCPDiagnosticDispatchVerdicts(t *testing.T) {
 				require.ErrorAs(t, gotErr, &refusal)
 				require.Nil(t, value, "an explicit JVM refusal must not be reported completed")
 			}
+		})
+	}
+}
+
+// Portable embedded-attach path: Linux host discovery fails before dispatch,
+// while macOS/Windows select this path directly. Only a fake SDK transport runs.
+func TestMCPEmbeddedBoundedObservation(t *testing.T) {
+	for _, tool := range []string{"jvm_command", "heap_dump_create"} {
+		t.Run(tool, func(t *testing.T) {
+			d := mcpFixture(t)
+			base := t.TempDir()
+			var execs atomic.Int32
+			var heapPath string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case strings.HasSuffix(r.URL.Path, "/containers/cid/json"):
+					_, _ = io.WriteString(w, `{"Id":"cid","State":{"Pid":0}}`)
+				case strings.HasSuffix(r.URL.Path, "/exec"):
+					id := execs.Add(1)
+					if id == 1 && tool == "heap_dump_create" {
+						var body struct{ Cmd []string }
+						if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+							http.Error(w, err.Error(), 500)
+							return
+						}
+						fields := strings.Fields(body.Cmd[len(body.Cmd)-1])
+						heapPath = filepath.Join(namespace.ExportDirFor(base, "emodel"), filepath.Base(fields[len(fields)-1]))
+						if err := os.WriteFile(heapPath, []byte("still growing"), 0o600); err != nil {
+							http.Error(w, err.Error(), 500)
+							return
+						}
+					}
+					w.WriteHeader(http.StatusCreated)
+					_, _ = fmt.Fprintf(w, `{"Id":"exec%d"}`, id)
+				case strings.HasSuffix(r.URL.Path, "/start"):
+					conn, buf, err := w.(http.Hijacker).Hijack()
+					if err != nil {
+						return
+					}
+					defer conn.Close()
+					_, _ = buf.WriteString("HTTP/1.1 101 UPGRADED\r\nContent-Type: application/vnd.docker.raw-stream\r\nConnection: Upgrade\r\nUpgrade: tcp\r\n\r\n")
+					_ = buf.Flush()
+					if strings.Contains(r.URL.Path, "/exec1/") {
+						text := strings.Repeat("partial JVM output\n", 2000)
+						var header [8]byte
+						header[0] = 1
+						binary.BigEndian.PutUint32(header[4:], uint32(len(text)))
+						_, _ = conn.Write(header[:])
+						_, _ = io.WriteString(conn, text)
+						_, _ = io.Copy(io.Discard, conn)
+					}
+				case strings.Contains(r.URL.Path, "/exec/") && strings.HasSuffix(r.URL.Path, "/json"):
+					if strings.Contains(r.URL.Path, "/exec1/") {
+						http.Error(w, "must not inspect after truncation", 500)
+						return
+					}
+					_, _ = io.WriteString(w, `{"ExitCode":0}`)
+				default:
+					w.WriteHeader(http.StatusOK)
+				}
+			}))
+			defer srv.Close()
+			t.Setenv("DOCKER_HOST", strings.Replace(srv.URL, "http://", "tcp://", 1))
+			t.Setenv("DOCKER_API_VERSION", "1.54")
+			dc, err := docker.NewClient("alpha", "same")
+			require.NoError(t, err)
+			defer dc.Close()
+			store, err := launchermcp.OpenStore(privateMCPStorePath(t))
+			require.NoError(t, err)
+			d.mcp = launchermcp.New(store, mcpBackend{d})
+			defer d.mcp.Close()
+			rt := namespace.NewRuntime(d.activeNs.nsConfig, dc, base)
+			defer rt.Shutdown()
+			rt.InjectAppsForTest(&namespace.AppRuntime{Name: "emodel", ContainerID: "cid", Status: namespace.AppStatusRunning, Def: appdef.ApplicationDef{Name: "emodel", IsJVM: true}})
+			d.activeNs.runtime = rt
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			value, err := (mcpBackend{d}).Call(ctx, tool, launchermcp.Arguments{Target: targetOf(d.active()), App: "emodel", Command: "GC.run"})
+			require.NoError(t, err)
+			require.NoError(t, ctx.Err())
+			verdict := value.(map[string]any)
+			require.Equal(t, "unknown", verdict["outcome"])
+			require.Equal(t, false, verdict["replaySafe"])
+			require.NotContains(t, verdict, "artifact")
+			if tool == "jvm_command" {
+				require.Equal(t, true, verdict["truncated"])
+				require.Len(t, verdict["output"], 32<<10)
+				require.Contains(t, verdict["output"], "partial JVM output")
+			} else {
+				require.FileExists(t, heapPath)
+			}
+			require.EqualValues(t, 2, execs.Load(), "one dispatch plus attach cleanup, no replay")
+			require.True(t, d.targetMu.TryLock())
+			d.targetMu.Unlock()
 		})
 	}
 }

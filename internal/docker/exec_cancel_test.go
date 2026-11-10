@@ -17,6 +17,10 @@ import (
 // Like the MCP cancellation fixture, this serves a real SDK 101 upgrade, but
 // callers deliberately do not install a diagnostic output limit.
 func newExecHijackTestClient(t *testing.T, stream func(net.Conn), inspectStatus, exitCode int) *Client {
+	return newExecHijackInspectTestClient(t, stream, inspectStatus, exitCode, false)
+}
+
+func newExecHijackInspectTestClient(t *testing.T, stream func(net.Conn), inspectStatus, exitCode int, running bool) *Client {
 	t.Helper()
 	cleanupCtx, cleanup := context.WithCancel(context.Background())
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -39,7 +43,7 @@ func newExecHijackTestClient(t *testing.T, stream func(net.Conn), inspectStatus,
 		case strings.HasSuffix(r.URL.Path, "/json"):
 			w.WriteHeader(inspectStatus)
 			if inspectStatus == http.StatusOK {
-				_, _ = io.WriteString(w, `{"ExitCode":`+strconv.Itoa(exitCode)+`}`)
+				_, _ = io.WriteString(w, `{"ExitCode":`+strconv.Itoa(exitCode)+`,"Running":`+strconv.FormatBool(running)+`}`)
 			} else {
 				_, _ = io.WriteString(w, `{"message":"inspection unavailable"}`)
 			}

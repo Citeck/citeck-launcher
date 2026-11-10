@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -344,5 +345,62 @@ func TestOAuthHTTPCanceledAdmissionDoesNotCloseAuthority(t *testing.T) {
 			_, _, _, err = h.store.beginAuthorization(context.Background(), h.authorizeForm())
 			require.NoError(t, err)
 		})
+	}
+}
+
+func TestOAuthBrowserPollingReservesCompletion(t *testing.T) {
+	h := newOAuthTestCore(t)
+	s := New(h.store, &fakeBackend{})
+	defer s.Close()
+	b := startBrowserCeremony(t, h, s)
+	for range 240 {
+		require.Equal(t, 200, browserRequest(s, b, "status", b.nonce, b.csrf, "").Code)
+	}
+	refused := browserRequest(s, b, "status", b.nonce, b.csrf, "")
+	require.Equal(t, 429, refused.Code)
+	require.Equal(t, "60", refused.Header().Get("Retry-After"))
+	require.NoError(t, h.store.ApproveOAuthPending(context.Background(), b.id, ""))
+	require.Equal(t, 303, browserRequest(s, b, "finish", b.nonce, b.csrf, canonicalIssuer(DefaultPort)).Code)
+	// Replay stays refused, independently of polling admission.
+	for range 119 {
+		require.Equal(t, 409, browserRequest(s, b, "finish", b.nonce, b.csrf, canonicalIssuer(DefaultPort)).Code)
+	}
+	refused = browserRequest(s, b, "finish", b.nonce, b.csrf, canonicalIssuer(DefaultPort))
+	require.Equal(t, 429, refused.Code)
+	require.Equal(t, "60", refused.Header().Get("Retry-After"))
+	require.Equal(t, 1, testCount(t, h.store, "oauth_codes"))
+}
+
+func TestOAuthBrowserMalformedAdmissionHasFixedCardinality(t *testing.T) {
+	h := newOAuthTestCore(t)
+	s := New(h.store, &fakeBackend{})
+	defer s.Close()
+	handler := s.Handler(DefaultPort)
+	for i := range 121 {
+		path := "/oauth/requests/" + strings.Repeat("a", 64) + "/status/" + strconv.Itoa(i)
+		r := httptest.NewRequest("GET", canonicalIssuer(DefaultPort)+path, http.NoBody)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		if i < 120 {
+			require.Equal(t, 404, w.Code)
+		} else {
+			require.Equal(t, 429, w.Code)
+			require.Equal(t, "60", w.Header().Get("Retry-After"))
+		}
+	}
+	require.Len(t, s.oauthRates, 1)
+	require.Contains(t, s.oauthRates, "browser-invalid")
+	// Exact valid routes with wrong methods remain admitted then refused, and
+	// cannot create keys from ids or suffixes.
+	for _, action := range []string{"status", "finish"} {
+		r := httptest.NewRequest("DELETE", canonicalIssuer(DefaultPort)+"/oauth/requests/"+strings.Repeat("b", 64)+"/"+action, http.NoBody)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		require.Equal(t, 405, w.Code)
+	}
+	require.Len(t, s.oauthRates, 3)
+	for _, path := range []string{"/oauth/requests/short/status", "/oauth/requests/" + strings.Repeat("a", 64) + "/finish/", "/prefix/oauth/requests/" + strings.Repeat("a", 64) + "/status"} {
+		_, _, valid := browserOAuthRoute(path)
+		require.False(t, valid, path)
 	}
 }

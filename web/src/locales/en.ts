@@ -839,6 +839,8 @@ const en = {
   'mcp.oauth.allow': 'Allow access',
   'mcp.oauth.deny': 'Deny',
   'mcp.oauth.actionFailed': 'Operation not confirmed. Refresh metadata before retrying.',
+  'mcp.oauth.storageWarning': 'The MCP storage outcome is unconfirmed. MCP is closed until Launcher restarts. Connection and token lists may be incomplete.',
+  'mcp.oauth.genericWarning': 'MCP reported a storage warning. Connection and token information may be incomplete. Refresh metadata to check the current state.',
   'mcp.oauth.revokeWarning': 'Revocation was not saved. This connection is denied in the running Launcher, but may return after restart. Keep Launcher open and retry revocation until it is saved.',
 } satisfies Record<string, string>
 

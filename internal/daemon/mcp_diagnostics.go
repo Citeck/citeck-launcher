@@ -161,7 +161,12 @@ func (d *Daemon) mcpDiagnostic(ctx context.Context, act activeNamespace, tool st
 	}
 	output, err := act.runtime.JVMCommand(limited, a.App, a.Command, a.Args...)
 	if err != nil {
-		return diagnosticError(ctx, err)
+		verdict, failure := diagnosticError(ctx, err)
+		if unknown, ok := verdict.(map[string]any); ok {
+			unknown["output"] = output[:min(len(output), budget.Bytes)]
+			unknown["truncated"] = budget.Truncated.Load() || len(output) > budget.Bytes
+		}
+		return verdict, failure
 	}
 	// Mocks/alternate runtime backends must not bypass the output cap either.
 	truncated := budget.Truncated.Load() || len(output) > 32<<10

@@ -833,6 +833,8 @@ const ja = {
   'mcp.oauth.allow': 'アクセスを許可',
   'mcp.oauth.deny': '拒否',
   'mcp.oauth.actionFailed': '操作を確認できませんでした。再試行する前にメタデータを更新してください。',
+  'mcp.oauth.storageWarning': 'MCP ストレージの処理結果を確認できません。Launcher を再起動するまで MCP は閉鎖されます。接続とトークンの一覧は不完全な可能性があります。',
+  'mcp.oauth.genericWarning': 'MCP がストレージに関する警告を報告しました。接続とトークンの情報は不完全な可能性があります。メタデータを更新して現在の状態を確認してください。',
   'mcp.oauth.revokeWarning': '取り消しを保存できませんでした。実行中の Launcher ではこの接続は拒否されていますが、再起動後に復活する可能性があります。Launcher を開いたまま、保存されるまで取り消しを再試行してください。',
 } satisfies Translations
 

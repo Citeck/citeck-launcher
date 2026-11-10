@@ -73,13 +73,13 @@ func (r *Runtime) runAttachInContainer(ctx context.Context, containerID, cmd str
 	argv := append([]string{"java", "-cp", attachClassDir, appfiles.AttachClassName, "0", cmd}, args...)
 	out, code, err := r.docker.ExecInContainer(ctx, containerID, argv)
 	if err != nil {
-		return "", &jvmattach.DispatchError{Err: fmt.Errorf("run attach client: %w", err), Uncertain: true}
+		return out, &jvmattach.DispatchError{Err: fmt.Errorf("run attach client: %w", err), Uncertain: true}
 	}
 	if code != 0 {
 		// The embedded client uses the same exit code for pre-dispatch errors,
 		// JVM refusals and lost replies; without a typed wire verdict we cannot
 		// assert which happened. Preserve the failure, never claim completion.
-		return "", &jvmattach.DispatchError{Err: fmt.Errorf("attach client exit=%d: %s", code, truncateForLog(out)), Uncertain: true}
+		return out, &jvmattach.DispatchError{Err: fmt.Errorf("attach client exit=%d: %s", code, truncateForLog(out)), Uncertain: true}
 	}
 	if strings.TrimSpace(out) == "" {
 		// Exit 0 with no output is not a result. Returning it as one would

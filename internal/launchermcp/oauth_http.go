@@ -140,8 +140,14 @@ func (s *Service) serveOAuth(w http.ResponseWriter, r *http.Request, port int, h
 	case r.URL.Path == "/authorize":
 		limit = 20
 	case strings.HasPrefix(r.URL.Path, "/oauth/requests/"):
-		bucket = "browser"
-		limit = 240
+		bucket = "browser-invalid"
+		if _, action, valid := browserOAuthRoute(r.URL.Path); valid {
+			bucket = "browser-finish"
+			if action == "status" {
+				bucket = "browser-status"
+				limit = 240
+			}
+		}
 	}
 	if !s.allowOAuthRequest(bucket, limit) {
 		w.Header().Set("Retry-After", "60")

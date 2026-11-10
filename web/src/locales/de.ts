@@ -833,6 +833,8 @@ const de = {
   'mcp.oauth.allow': 'Zugriff erlauben',
   'mcp.oauth.deny': 'Ablehnen',
   'mcp.oauth.actionFailed': 'Vorgang nicht bestätigt. Aktualisieren Sie vor einem erneuten Versuch die Metadaten.',
+  'mcp.oauth.storageWarning': 'Das MCP-Speicherergebnis ist unbestätigt. MCP bleibt bis zum Neustart von Launcher geschlossen. Die Verbindungs- und Tokenlisten sind möglicherweise unvollständig.',
+  'mcp.oauth.genericWarning': 'MCP hat eine Speicherwarnung gemeldet. Verbindungs- und Tokeninformationen sind möglicherweise unvollständig. Aktualisieren Sie die Metadaten, um den aktuellen Zustand zu prüfen.',
   'mcp.oauth.revokeWarning': 'Der Widerruf wurde nicht gespeichert. Die Verbindung ist im laufenden Launcher gesperrt, könnte aber nach einem Neustart zurückkehren. Lassen Sie Launcher geöffnet und wiederholen Sie den Widerruf, bis er gespeichert ist.',
 } satisfies Translations
 

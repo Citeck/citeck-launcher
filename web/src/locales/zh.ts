@@ -833,6 +833,8 @@ const zh = {
   'mcp.oauth.allow': '允许访问',
   'mcp.oauth.deny': '拒绝',
   'mcp.oauth.actionFailed': '操作尚未确认。请刷新元数据后再重试。',
+  'mcp.oauth.storageWarning': 'MCP 存储结果尚未确认。在 Launcher 重启之前，MCP 保持关闭。连接和令牌列表可能不完整。',
+  'mcp.oauth.genericWarning': 'MCP 报告了存储警告。连接和令牌信息可能不完整。请刷新元数据以检查当前状态。',
   'mcp.oauth.revokeWarning': '撤销尚未保存。此连接在当前运行的 Launcher 中已被拒绝，但重启后可能恢复。请保持 Launcher 打开并重试撤销，直到保存成功。',
 } satisfies Translations
 

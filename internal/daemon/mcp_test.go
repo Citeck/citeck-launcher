@@ -201,6 +201,9 @@ func (b mcpBearer) RoundTrip(r *http.Request) (*http.Response, error) {
 func TestSDKAgainstRealDaemonBackendAndSystemArtifact(t *testing.T) {
 	t.Setenv("CITECK_HOME", t.TempDir())
 	d := mcpFixture(t)
+	d.activeNs.nsConfig.Email = &namespace.EmailConfig{Host: "smtp.example", Username: "mailer", Password: "smtp-literal-unique"}
+	d.activeNs.nsConfig.S3 = &namespace.S3Config{Endpoint: "https://s3.example", AccessKey: "identity", SecretKey: "s3-literal-unique"}
+	d.activeNs.nsConfig.Authentication.Users = []string{"admin:auth-literal-unique"}
 	store, err := launchermcp.OpenStore(filepath.Join(config.ConfDir(), "mcp-private", "state.json"))
 	require.NoError(t, err)
 	d.mcpStore = store
@@ -283,6 +286,7 @@ func TestSDKAgainstRealDaemonBackendAndSystemArtifact(t *testing.T) {
 	require.NoError(t, response.Body.Close())
 	require.Equal(t, payload.Artifact.Size, int64(len(body)))
 	require.NotContains(t, string(body), value)
+	assertDumpCredentialsMasked(t, readDumpZip(t, body)["namespace.yml"])
 	z, err := zip.NewReader(bytes.NewReader(body), int64(len(body)))
 	require.NoError(t, err)
 	for _, entry := range z.File {
@@ -295,6 +299,8 @@ func TestSDKAgainstRealDaemonBackendAndSystemArtifact(t *testing.T) {
 		require.NotContains(t, string(data), value)
 		require.NotContains(t, string(data), "\"hash\"")
 	}
+	require.Equal(t, "smtp-literal-unique", d.activeNs.nsConfig.Email.Password)
+	require.Equal(t, "s3-literal-unique", d.activeNs.nsConfig.S3.SecretKey)
 	require.NoError(t, store.Revoke(token.ID))
 	response, err = httpClient.Get(server.URL + payload.Artifact.URL)
 	require.NoError(t, err)

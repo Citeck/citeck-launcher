@@ -12,6 +12,25 @@ const buttonClass = `${controlClass} hover:bg-muted`
 const primaryClass = `${controlClass} bg-primary text-background hover:brightness-95`
 const inputClass = 'w-full rounded border border-border bg-background px-2.5 py-1.5 text-sm focus:outline-none focus:border-primary'
 
+// Exact wire values from launchermcp/oauth_transaction.go; unknown future
+// warnings remain visible without guessing a connection's revocation outcome.
+const storageUnconfirmed = 'MCP storage outcome is unconfirmed; MCP is closed until restart'
+const revocationUnconfirmed = 'Revocation was NOT saved. This connection is denied in this process; retry is pending. If Launcher exits before a successful save, repeat the revocation after restart.'
+const revocationErrorPrefix = 'MCP_OAUTH_REVOCATION_UNCONFIRMED'
+type MCPWarningKey = 'mcp.oauth.storageWarning' | 'mcp.oauth.revokeWarning' | 'mcp.oauth.genericWarning'
+function warningKey(warning?: string): MCPWarningKey | null {
+  if (!warning) return null
+  if (warning === storageUnconfirmed) return 'mcp.oauth.storageWarning'
+  if (warning === revocationUnconfirmed) return 'mcp.oauth.revokeWarning'
+  return 'mcp.oauth.genericWarning'
+}
+
+// Only confirmed newer connection reads retire known revocation debt. Storage
+// closure and unknown status warnings require a new status observation.
+function clearRevocationWarning(current: MCPStatus | null) {
+  return current?.oauthWarning === revocationUnconfirmed ? { ...current, oauthWarning: undefined } : current
+}
+
 function CopyButton({ value, label }: { value: string; label: string }) {
   const { t } = useTranslation()
   const [copied, setCopied] = useState(false)
@@ -79,7 +98,7 @@ export function MCPSettings() {
       if (active && version === oauthVersion.current) { setConnections(value.connections); setOAuthWarning(value.warning ?? '') }
     }).catch((err: unknown) => { if (active && version === oauthVersion.current) setOAuthError(String(err)) })
     getMCPStatus().then((value) => {
-      if (!active) return
+      if (!active || version !== oauthVersion.current) return
       setStatus(value); setEnabled(value.enabled); setPort(String(value.port))
     }).catch((err: unknown) => { if (active) setLoadError(String(err)) })
     return () => { active = false; controller.abort() }
@@ -109,6 +128,7 @@ export function MCPSettings() {
             const saved = await getMCPOAuthConnections(controller.signal)
             if (active && version === oauthVersion.current) {
               setConnections(saved.connections); setOAuthWarning(saved.warning ?? '')
+              if (!saved.warning) setStatus(clearRevocationWarning)
               for (const id of finished) approvedRequests.current.delete(id)
             }
           }
@@ -133,12 +153,23 @@ export function MCPSettings() {
       // An accepted decision is never offered again, even if the refetch fails.
       if (action === 'revoke') setConnections((rows) => rows?.map((c) => c.id === id ? { ...c, revoked: true, revokedAt: new Date().toISOString() } : c) ?? null)
       else setPending((rows) => rows.filter((p) => p.id !== id))
-      const [requests, saved] = await Promise.all([getMCPOAuthPending(), getMCPOAuthConnections()])
-      if (mounted.current) { setPending(requests.pending); setConnections(saved.connections); setOAuthWarning(saved.warning ?? '') }
+      const results = await Promise.allSettled([
+        getMCPOAuthPending().then((requests) => { if (mounted.current) setPending(requests.pending) }),
+        getMCPOAuthConnections().then((saved) => {
+          if (!mounted.current) return
+          setConnections(saved.connections); setOAuthWarning(saved.warning ?? '')
+          if (!saved.warning) setStatus(clearRevocationWarning)
+        }),
+      ])
+      const failed = results.find((result) => result.status === 'rejected')
+      if (failed?.status === 'rejected') throw failed.reason
     } catch (err) {
       if (mounted.current) {
-        setOAuthError(String(err))
-        if (action === 'revoke' && err instanceof ApiError && err.message.startsWith('MCP_OAUTH_REVOCATION_UNCONFIRMED')) setOAuthWarning('unconfirmed')
+        if (action === 'revoke' && err instanceof ApiError && (err.message === revocationErrorPrefix || err.message.startsWith(revocationErrorPrefix + ': '))) {
+          // The daemon envelope carries the current storage warning, not always
+          // retryable debt. Empty/unknown suffixes must still render generically.
+          setOAuthWarning(err.message.slice(revocationErrorPrefix.length + 2) || revocationErrorPrefix)
+        } else setOAuthError(String(err))
       }
     }
     finally { mutationPending.current = false; if (mounted.current) setOAuthBusy(null) }
@@ -150,10 +181,23 @@ export function MCPSettings() {
     oauthVersion.current++
     setRefreshing(true); setRefreshError('')
     try {
-      const [value, requests, saved] = await Promise.all([getMCPStatus(), getMCPOAuthPending(), getMCPOAuthConnections()])
-      if (mounted.current) { setPending(requests.pending); setConnections(saved.connections); setOAuthWarning(saved.warning ?? ''); setOAuthError(''); setPendingError('') }
-      // Refresh metadata only: preserve unsaved enabled/port inputs.
-      if (mounted.current) setStatus(value)
+      const results = await Promise.allSettled([
+        getMCPStatus().then((value) => {
+          // Apply independently of secondary reads; preserve unsaved inputs.
+          if (mounted.current) setStatus(value)
+        }),
+        getMCPOAuthPending().then((value) => {
+          if (mounted.current) { setPending(value.pending); setPendingError('') }
+        }),
+        getMCPOAuthConnections().then((value) => {
+          if (mounted.current) {
+            setConnections(value.connections); setOAuthWarning(value.warning ?? ''); setOAuthError('')
+            if (!value.warning) setStatus(clearRevocationWarning)
+          }
+        }),
+      ])
+      const failed = results.find((result) => result.status === 'rejected')
+      if (mounted.current && failed?.status === 'rejected') setRefreshError(String(failed.reason))
     } catch (err) { if (mounted.current) setRefreshError(String(err)) }
     finally { mutationPending.current = false; if (mounted.current) setRefreshing(false) }
   }
@@ -185,7 +229,10 @@ export function MCPSettings() {
       // state even if the secondary metadata read fails; never repeat the PUT.
       try {
         const saved = await getMCPOAuthConnections()
-        if (mounted.current) { setConnections(saved.connections); setOAuthWarning(saved.warning ?? ''); setRefreshError('') }
+        if (mounted.current) {
+          setConnections(saved.connections); setOAuthWarning(saved.warning ?? ''); setRefreshError('')
+          if (!saved.warning) setStatus(clearRevocationWarning)
+        }
       } catch (err) { if (mounted.current) setRefreshError(String(err)) }
     } catch (err) { if (mounted.current) setConfigError(String(err)) } finally { mutationPending.current = false; if (mounted.current) setSaving(false) }
   }
@@ -200,6 +247,10 @@ export function MCPSettings() {
     } catch (err) { if (mounted.current) setRevokeError(String(err)) } finally { mutationPending.current = false; if (mounted.current) setRevoking(null) }
   }
 
+  const warningKeys = [...new Set([warningKey(status?.oauthWarning), warningKey(oauthWarning)])].filter((key) => key !== null)
+  const visibleWarningKeys = warningKeys.filter((key) => key !== 'mcp.oauth.revokeWarning' || !warningKeys.includes('mcp.oauth.storageWarning'))
+  const unreliableEmptyList = warningKeys.includes('mcp.oauth.storageWarning') || warningKeys.includes('mcp.oauth.genericWarning')
+
   return (
     <section aria-label={t('mcp.title')} className="rounded-lg border border-border bg-card p-4 space-y-5">
       <div className="space-y-1">
@@ -211,6 +262,7 @@ export function MCPSettings() {
         </div>
         <p className="text-xs text-muted-foreground">{t('mcp.description')}</p>
       </div>
+      {visibleWarningKeys.map((key) => <p key={key} role="alert" className="text-sm text-destructive break-words">{t(key)}</p>)}
       {!status && (loadError ? <div className="space-y-2">
         <p role="alert" className="text-sm text-destructive break-words">{t('mcp.loadFailed')} {loadError}</p>
         <button type="button" className={buttonClass} onClick={() => { setLoadError(''); setLoadAttempt((n) => n + 1) }}>{t('mcp.retry')}</button>
@@ -257,7 +309,6 @@ export function MCPSettings() {
               {!c.revoked && <button type="button" className={`${buttonClass} justify-self-start sm:justify-self-end`} disabled={!!oauthBusy || saving || !!revoking || refreshing || creating} aria-label={t('mcp.revokeNamed', { name: c.name || c.clientName || c.clientId })} onClick={() => void oauthAction(c.id, 'revoke')}>{oauthBusy === c.id && <Loader2 size={14} className="animate-spin" aria-hidden="true" />}{t('mcp.revoke')}</button>}
             </li>)}
           </ul>}
-          {oauthWarning && <p role="alert" className="text-sm text-destructive break-words">{t('mcp.oauth.revokeWarning')}</p>}
           {oauthError && <p role="alert" className="text-sm text-destructive break-words">{t('mcp.oauth.actionFailed')} {oauthError}</p>}
         </div>
         <div className="space-y-3 border-t border-border pt-4">
@@ -270,7 +321,7 @@ export function MCPSettings() {
           </div>
           <p className="text-xs text-muted-foreground">{t('mcp.lastUsedHelp')}</p>
           {refreshError && <p role="alert" className="text-sm text-destructive break-words">{t('mcp.metadataRefreshFailed')} {refreshError}</p>}
-          {status.tokens.length === 0 ? <p className="text-sm text-muted-foreground">{t('mcp.empty')}</p> : <ul className="divide-y divide-border">
+          {status.tokens.length === 0 ? (unreliableEmptyList ? null : <p className="text-sm text-muted-foreground">{t('mcp.empty')}</p>) : <ul className="divide-y divide-border">
             {status.tokens.map((token) => {
               const lastUsed = formatDateTime(token.lastUsedAt)
               const expired = !!token.expiresAt && Date.parse(token.expiresAt) <= now

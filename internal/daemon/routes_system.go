@@ -548,10 +548,26 @@ func (d *Daemon) handleDiagnosticsFile(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(data) //nolint:gosec // G705 XSS taint: Content-Type is text/plain, not HTML
 }
 
-// maskNamespaceConfigSecrets returns a shallow copy of the config with passwords in
-// authentication.users replaced by "***". Does not mutate the original config.
+// maskNamespaceConfigSecrets masks literal credentials without mutating the active
+// config or resolving namespace secret references.
 func maskNamespaceConfigSecrets(cfg *namespace.Config) *namespace.Config {
 	out := *cfg
+	maskLiteral := func(value string) string {
+		if value == "" || strings.HasPrefix(value, "secret:") {
+			return value
+		}
+		return "***"
+	}
+	if cfg.Email != nil {
+		email := *cfg.Email
+		email.Password = maskLiteral(email.Password)
+		out.Email = &email
+	}
+	if cfg.S3 != nil {
+		s3 := *cfg.S3
+		s3.SecretKey = maskLiteral(s3.SecretKey)
+		out.S3 = &s3
+	}
 	if len(out.Authentication.Users) > 0 {
 		masked := make([]string, len(out.Authentication.Users))
 		for i, u := range out.Authentication.Users {
