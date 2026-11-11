@@ -205,7 +205,7 @@ future workspaces/namespaces. There is **no workspace/namespace ACL**.
 | Role | Tools |
 |---|---|
 | Observer | `launcher_status`, `workspaces_list`, `namespaces_list`, `namespace_status`, `application_logs`, `daemon_logs` |
-| Developer | All Observer tools; `workspace_select`, `namespace_select`, `namespace_start`, `namespace_stop`, `namespace_reload_preview`, `namespace_reload`, `application_start`, `application_stop`, `application_restart`; `application_settings_read/write/reset`; `spring_files_list`, `spring_file_read/write/reset`; `jvm_command`, `heap_dump_create`, `heap_dumps_list`, `heap_dump_download`, `system_dump_create` |
+| Developer | All Observer tools; `workspace_select`, `namespace_select`, `namespace_start`, `namespace_stop`, `namespace_reload_preview`, `namespace_reload`, `application_start`, `application_stop`, `application_restart`; `application_config_read/write/reset`, `application_files_list`, `application_file_read/write/reset`; legacy `application_settings_read/write/reset` and `spring_files_list`, `spring_file_read/write/reset`; `jvm_command`, `heap_dump_create`, `heap_dumps_list`, `heap_dump_download`, `system_dump_create` |
 
 Observer cannot read settings/files, mutate anything, run diagnostics or download
 artifacts, including by directly calling a tool omitted from discovery. Role,
@@ -215,7 +215,12 @@ mutation already accepted. Tools are stateless; GET event streams and persistent
 MCP sessions are not supported. The JSON-RPC server is the official SDK, not a
 handwritten implementation.
 
-**Developer is trusted application-level code authority, not a sandbox.**
+**Developer is trusted full application-editor authority, not a sandbox.**
+Like the UI, it can change images, commands, mounts, probes, dependencies and
+public port bindings, and edit mounted scripts/configuration. A mount or command
+can expose host resources: grant this role only to agents trusted with that
+power. Native backend validation, dependency-data version gates, target checks
+and long-operation locks remain enforced.
 Arbitrary JAVA_OPTS/JDWP, env, profiles and Spring configuration can execute code
 inside the application. Arbitrary HotSpot jcmd commands may change flags, write
 files as the JVM user, execute application code or terminate the JVM. Heap dumps
@@ -225,8 +230,8 @@ system diagnostics may contain secrets; denying the secret API does not redact
 arbitrary application output.
 
 Not exposed: host/container shell/exec, generic HTTP/operation proxy, secret,
-vault/registry/Git credential APIs, token management, arbitrary ApplicationDef
-or host paths, image/mount/command/probe/dependency edits, workspace/namespace
+vault/registry/Git credential APIs, token management, arbitrary host-file access
+outside application relative bind mounts, workspace/namespace
 creation/deletion/configuration, bundle/auth/TLS changes, snapshots, data
 migration/rollback, volume deletion/clean, Launcher installation/update/shutdown.
 JVM commands themselves retain the trusted power described above.
@@ -257,10 +262,13 @@ Use this sequence, always within the human's requested task:
    Current IDs remain preconditions, not destination fields. `namespace_select`
    also requires `destinationWorkspaceId` equal to the current workspace; switch
    workspace separately first. Re-read `launcher_status` after selection.
-4. Read before editing; send only the settings fields that should change. Before
-   applying reload, review `namespace_reload_preview` and its multi-app impact.
-   After Spring file save/reset reports `applyRequired`, explicitly reload to
-   derive deployment hashes; save alone is not evidence of restart.
+4. Read before editing. For `application_config_write`, edit and resubmit the
+   **complete `content`** returned by `application_config_read`, never just the
+   changed fields. Only legacy `application_settings_write` merges partial
+   settings. Mounted-file writes also submit complete content. Before applying
+   reload, review `namespace_reload_preview` and its multi-app impact. After
+   **any** file save/reset reports `applyRequired`, explicitly reload to derive
+   deployment hashes; save alone is not evidence of restart.
 5. After any action, read status and persistence/recovery errors. Acceptance is
    not completion. App stop persists detach; app start clears it but does not
    start stopped dependencies. An app can stay held until those are explicitly
@@ -306,6 +314,53 @@ recovery blockers. Native long-operation, dependency-image and snapshot recovery
 gates still apply. Stop remains available while an ordinary reload is running.
 A missing/timeout response means **unknown**, not permission to replay.
 
+### Full application editor (UI parity)
+
+Use `application_config_read` to obtain the full effective ApplicationDef YAML
+(`content`) and generated `baseline`. Submit the **complete edited YAML** as
+`content` to `application_config_write`; this is not a partial settings merge.
+All UI-editable fields are available: image, command, volumes, environments,
+resources, ports (including public bindings), probes and dependencies.
+`application_config_reset` removes **all** ApplicationDef overrides, like UI Reset.
+The same native handlers perform validation, dependency-image protection,
+persistence and reload; a running namespace may recreate affected containers.
+
+Use `application_files_list` for mounted `path`/`edited` records, then
+`application_file_read/write/reset` with the returned path (with or without `./`).
+Editable formats match the UI: yaml, yml, json, kt, java, js, lua, sh, txt, conf
+and Dockerfile. Nested files, non-JVM apps, proxy configuration and scripts are
+supported; binary mounts are not text editor targets. Paths must belong to the
+app's relative bind mounts, never arbitrary absolute host paths. Discovery, reads
+and writes all use pinned directory handles: symlinks (including intermediate
+directory links) and special files are excluded. Discovery refuses a mount over
+500 traversed entries or depth 64, rather than returning an incomplete list.
+Read returns `content` plus generated `baseline`. Write submits complete content
+and uses the **same native delta validation as the UI**. For single-document
+YAML/JSON whose generated baseline is a mapping, the edited document must remain
+a valid mapping: empty content, scalars and arrays are refused. Other text
+formats (such as scripts/Lua/conf) and baselines that are not mappings use
+textual deltas, including empty text; multi-document YAML also uses textual
+deltas. There is no Spring-only file allowlist.
+A write reports `applyRequired`. Preview and explicitly reload afterwards to
+apply deployment hashes. Reset clears only that
+file's delta and restores generated content when available; without a generated
+baseline it clears the delta without inventing original content. Like legacy
+Spring tools, reset reports `applyRequired`: preview and explicitly reload.
+
+**Editor size budgets:** the entire incoming HTTP request is limited to **256 KiB**,
+including the JSON-RPC envelope and JSON escaping. Each serialized tool result
+has a separate **256 KiB** budget. Reads return **both `content` and `baseline`**
+within that one result budget, plus escaping and metadata: an unchanged 140 KiB
+ASCII file with an equally sized baseline will not fit. Config reads additionally
+pass through the bounded native response adapter. Oversized editable documents
+are refused, never truncated. These tools have no range/partial-document mode:
+do **not** shorten content or submit a partial definition to bypass a size error.
+
+### Legacy compatibility helpers
+
+The older settings and Spring tools remain available with their existing narrow
+contracts; use the full editor tools above when their restrictions are unsuitable.
+
 `application_settings_write` merges only supplied typed settings into the latest
 baseline plus override, serialized with native app editing:
 
@@ -337,8 +392,9 @@ Reset returns resources and environment to generated baseline, not necessarily
 uncapped CPU; it preserves unrelated image, command and mount overrides.
 Supplying `ports` replaces requested bindings while retaining existing public
 ones; an empty array removes only loopback bindings. Omitted settings stay unchanged. Non-loopback bindings already
-present are preserved verbatim on unrelated edits/reset; MCP cannot add or widen
-`*`, `0.0.0.0`, `[::]`, LAN addresses or hostnames. Addressless port specs use the
+present are preserved verbatim on unrelated edits/reset; **these legacy settings
+helpers** cannot add or widen `*`, `0.0.0.0`, `[::]`, LAN addresses or hostnames.
+The full `application_config_write` editor does allow public bindings, like the UI. Addressless port specs use the
 launcher's existing IPv4 loopback default. IPv6 loopback requires host support.
 
 Spring tools expose **only generated immediate**

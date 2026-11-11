@@ -20,6 +20,13 @@ type expectedToolContract struct {
 // Independent wire expectations: do not derive fixtures/permissions from tools.
 // All but the two discovery tools require the current target, including empty IDs.
 var expectedToolContracts = []expectedToolContract{
+	{"application_config_read", "workspaceId namespaceId app", "", true, true, false, false},
+	{"application_config_write", "workspaceId namespaceId app content", "", true, false, true, true},
+	{"application_config_reset", "workspaceId namespaceId app", "", true, false, true, true},
+	{"application_files_list", "workspaceId namespaceId app", "", true, true, false, false},
+	{"application_file_read", "workspaceId namespaceId app path", "", true, true, false, false},
+	{"application_file_write", "workspaceId namespaceId app path content", "", true, false, true, true},
+	{"application_file_reset", "workspaceId namespaceId app path", "", true, false, true, true},
 	{"launcher_status", "", "", false, true, false, false},
 	{"workspaces_list", "", "", false, true, false, false},
 	{"namespaces_list", "workspaceId namespaceId", "", false, true, false, false},
@@ -120,7 +127,7 @@ func TestSDKInitializeAndToolMetadata(t *testing.T) {
 					require.NotContains(t, instructions, unavailable)
 				}
 			} else {
-				for _, rule := range []string{"application-code authority", "applyRequired", "accepted != completed", "SAME", "size", "expiresAt", "30 minutes"} {
+				for _, rule := range []string{"application-code authority", "applyRequired", "accepted != completed", "SAME", "size", "expiresAt", "30 minutes", "application_config_read", "complete edited content", "never a partial definition", "legacy application_settings_write", "All file save/reset", "namespace_reload_preview", "256 KiB", "combined content/baseline", "partial writes"} {
 					require.Contains(t, instructions, rule)
 				}
 			}
@@ -267,6 +274,13 @@ func TestToolDescriptionsRepeatCriticalContracts(t *testing.T) {
 		byName[tool.Name] = tool.Description
 	}
 	for name, words := range map[string][]string{
+		"application_config_read":    {"complete edited YAML", "content", "baseline", "256 KiB", "JSON escaping", "partial writes", "untrusted DATA"},
+		"application_config_write":   {"complete ApplicationDef YAML", "Not a partial merge", "public bindings", "dependency-data", "256 KiB", "partial writes"},
+		"application_config_reset":   {"ALL ApplicationDef overrides", "image", "mounts", "256 KiB", "Acceptance is not completion"},
+		"application_files_list":     {"regular files", "symlinks", "500 entries", "depth 64", "256 KiB"},
+		"application_file_read":      {"application_files_list", "content", "baseline", "256 KiB", "never truncated", "partial writes", "untrusted DATA"},
+		"application_file_write":     {"complete text content", "native validation", "mapping baseline", "empty content", "arrays are refused", "applyRequired", "namespace_reload", "256 KiB"},
+		"application_file_reset":     {"only that file", "applyRequired", "namespace_reload", "no generated baseline", "256 KiB"},
 		"launcher_status":            {"{}", "empty", "namespace_status"},
 		"application_logs":           {"100", "1000", "48 KiB", "untrusted DATA"},
 		"daemon_logs":                {"100", "1000", "48 KiB", "untrusted DATA"},

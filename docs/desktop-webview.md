@@ -62,7 +62,7 @@ zoom requires upgrading the desktop wrapper, not just its daemon payload.
 
 The project's supported macOS baseline is **14 Sonoma**. The desktop package
 declares `LSMinimumSystemVersion=14.0`, matching the native CGO compiler/linker
-target. Go 1.27.3 itself requires macOS 13 Ventura or newer, including for pure-Go
+target. Go 1.27.4 itself requires macOS 13 Ventura or newer, including for pure-Go
 server binaries used as desktop auto-update daemon payloads. Daemon-only updates
 do not replace the installed wrapper or change its minimum-OS metadata. Keeping
 an older wrapper does not preserve macOS 12 compatibility with newly built

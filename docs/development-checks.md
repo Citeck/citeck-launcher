@@ -7,12 +7,12 @@ a Mac; a Darwin cross-lint run does not execute them.
 
 ## Go toolchain and analysis tools
 
-`go.mod` requires **Go 1.27.3** and is the source of truth for every CI/release
+`go.mod` requires **Go 1.27.4** and is the source of truth for every CI/release
 `actions/setup-go` step. To use exactly that version locally (including after a
 previous shell exported an older `GOTOOLCHAIN`):
 
 ```sh
-export GOTOOLCHAIN=go1.27.3
+export GOTOOLCHAIN=go1.27.4
 go version
 make tools
 make check

@@ -61,7 +61,7 @@ and [docs/agent-api.md](docs/agent-api.md).
 
 ### Go + Web UI (primary)
 
-Go 1.27.3 or newer is required (`go.mod` is the CI toolchain source of truth). The project's supported macOS baseline is macOS 14 Sonoma; desktop packaging metadata and the native compiler target must match. Go 1.27 itself has a lower platform floor of macOS 13, including for pure-Go server/daemon payloads.
+Go 1.27.4 or newer is required (`go.mod` is the CI toolchain source of truth). The project's supported macOS baseline is macOS 14 Sonoma; desktop packaging metadata and the native compiler target must match. Go 1.27 itself has a lower platform floor of macOS 13, including for pure-Go server/daemon payloads.
 
 See [docs/development-checks.md](docs/development-checks.md) for full frontend
 dependency audits and supervisor process-fixture cleanup requirements.

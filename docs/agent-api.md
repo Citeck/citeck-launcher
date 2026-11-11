@@ -241,6 +241,7 @@ trusted local transport; creating a token does not enable the listener. Compatib
 local clients can also Sign in using PKCE S256 and a separate trusted-owner
 approval. The public MCP listener never accepts that approval: only the existing
 Unix/desktop management API does. See
-[Local agent access (MCP)](mcp.md) for tools, target preconditions, trusted JVM
-code authority, connection lifetimes/revocation, server-only Unix approval,
+[Local agent access (MCP)](mcp.md) for tools, target preconditions, full application
+config/mounted-file editing and trusted container/host-resource/JVM authority,
+connection lifetimes/revocation, server-only Unix approval,
 private diagnostic downloads and native-client/Lima URL limitations.

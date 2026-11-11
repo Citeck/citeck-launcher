@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"maps"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/citeck/citeck-launcher/internal/api"

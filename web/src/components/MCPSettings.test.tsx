@@ -121,7 +121,10 @@ describe('MCPSettings — daemon-global local management', () => {
     const dialog = await openCreate()
     expect(within(dialog).queryByRole('note')).not.toBeInTheDocument()
     fireEvent.click(within(dialog).getByRole('radio', { name: /Developer/ }))
-    expect(screen.getByRole('note')).toHaveTextContent('execute application code')
+    const warning = screen.getByRole('note')
+    for (const authority of ['images', 'commands', 'mounts', 'public ports', 'mounted scripts', 'execute code', 'expose host resources']) {
+      expect(warning).toHaveTextContent(authority)
+    }
     fireEvent.click(screen.getByLabelText('Never expires'))
     expect(screen.getByLabelText('Validity (days)')).toBeDisabled()
     submit()

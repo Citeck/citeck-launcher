@@ -159,6 +159,9 @@ func (b mcpBackend) Call(ctx context.Context, tool string, a launchermcp.Argumen
 			return nil, fmt.Errorf("mcp backend: %w", err)
 		}
 		return map[string]any{"content": text, "truncated": truncated}, nil
+	case "application_config_read", "application_config_write", "application_config_reset",
+		"application_files_list", "application_file_read", "application_file_write", "application_file_reset":
+		return d.mcpAppEditor(ctx, tool, a)
 	case "application_settings_read", "application_settings_write", "application_settings_reset":
 		return d.mcpAppSettings(ctx, act, tool, a)
 	case "spring_files_list", "spring_file_read", "spring_file_write", "spring_file_reset":

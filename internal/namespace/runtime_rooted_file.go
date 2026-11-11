@@ -12,10 +12,20 @@ import (
 // reset affects exactly one delta. A persist refusal remains visible through
 // StateWriteError and the normal dirty-debt retry, as for the native editor.
 func (r *Runtime) EditGeneratedFile(key string, content []byte, reset bool, write func([]byte) error) error {
+	return r.editMountedFile(key, content, reset, true, write)
+}
+
+// EditMountedFile uses the native editor's delta semantics, including files
+// without a generated baseline, with a caller-owned rooted write boundary.
+func (r *Runtime) EditMountedFile(key string, content []byte, reset bool, write func([]byte) error) error {
+	return r.editMountedFile(key, content, reset, false, write)
+}
+
+func (r *Runtime) editMountedFile(key string, content []byte, reset, requireGenerated bool, write func([]byte) error) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	baseline, ok := r.lastGenFiles[key]
-	if !ok {
+	if !ok && (requireGenerated || reset) {
 		return fmt.Errorf("generated file %q not found", key)
 	}
 	if reset {
