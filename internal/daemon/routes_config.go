@@ -193,6 +193,7 @@ func (d *Daemon) handleGetNamespace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dto := runtime.ToNamespaceDto()
+	localizeLinkDescriptions(dto.Links, d.translatorFor(r).Locale())
 	// Owned by the daemon, not the runtime: it covers precisely the stretch
 	// BEFORE the runtime is handed the command (see Daemon.updateInFlight), and
 	// only for the namespace the pass is pinned to.
@@ -1155,4 +1156,16 @@ func (d *Daemon) handleSetLogLevel(w http.ResponseWriter, r *http.Request) {
 	d.logLevel.Set(level)
 	slog.Info("Log level changed", "level", level.String())
 	writeJSON(w, api.ActionResultDto{Success: true, Message: fmt.Sprintf("log level set to %s", level.String())})
+}
+
+// localizeLinkDescriptions renders each workspace link's tooltip in the
+// reader's language: the runtime builds the namespace DTO once for every
+// client, so the per-language texts travel in LinkDto.Descriptions and are
+// chosen here, where the request's locale is known.
+func localizeLinkDescriptions(links []api.LinkDto, locale string) {
+	for i := range links {
+		if s := bundle.LocalizedText(links[i].Descriptions).Resolve(locale); s != "" {
+			links[i].Description = s
+		}
+	}
 }

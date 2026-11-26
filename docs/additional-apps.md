@@ -39,6 +39,7 @@ the config. In **server mode** the container is internal to the Docker network
 | `shmSize` | no | `/dev/shm` size. |
 | `stopTimeout` | no | Per-app graceful-stop budget in seconds (SIGTERM→SIGKILL); `0` = daemon default. |
 | `cloudConfig` | no | Keys the desktop CloudConfigServer hands this service when it is stopped in the launcher and run from an IDE. Strings take the same `${VAR}` substitution as env; numbers, booleans, lists and maps pass through. |
+| `postgresDatabases` | no | Databases the service gets in the **stand's own** `postgres` (Launcher 2.20+), see [A database in the stand's postgres](#a-database-in-the-stands-postgres-postgresdatabases). |
 | `type` | no | Empty for a container (this table). `POSTGRES` / `QDRANT` make the entry a dependency the launcher knows, with its own settings — see [Additional databases and stores](databases.md). `SEAWEEDFS` supplies a managed mini profile: volume generations, command, standard probes and desktop ports; optional `settings` is a scalar YAML map, not a command array; see [SeaweedFS updates](seaweedfs-upgrade.md). |
 
 These cover **every container-level knob** the launcher's own app generators set, so
@@ -56,7 +57,9 @@ init-action exec, init-container env/cmd, cloudConfig):
 
 > There is **no** single `${PG_USER}`/`${PG_PASSWORD}` for the stand's own database —
 > the platform uses a per-database `user==password==dbName` convention. A service that
-> needs a database of its own declares one: an entry with `type: POSTGRES`
+> needs a database asks for one in the stand's `postgres` with `postgresDatabases`
+> (same convention, see [below](#a-database-in-the-stands-postgres-postgresdatabases)),
+> or declares a cluster of its own: an entry with `type: POSTGRES`
 > ([Additional databases and stores](databases.md)), its password a `${secret:<id>}`.
 
 **Boundary.** `additionalApps` defines a *container* on the namespace network. It does
@@ -68,6 +71,47 @@ proxy path is out of `additionalApps`' scope. The one entry the launcher does wi
 the one a workspace `contentStorage.s3` block names: on a namespace that stores its
 content in S3, ecos-content waits for it and is connected to it once — see
 [Content storage](content-storage.md).
+
+## A database in the stand's postgres (`postgresDatabases`)
+
+Launcher 2.20+. An entry that keeps its data in PostgreSQL can use the stand's own
+`postgres` instead of a cluster of its own:
+
+```yaml
+additionalApps:
+  - name: litellm
+    kind: THIRD_PARTY
+    postgresDatabases: [litellm]
+    environments:
+      DATABASE_URL: postgresql://litellm:litellm@${PG_HOST}:${PG_PORT}/litellm
+```
+
+* Each name becomes a database **and** a role of that name whose password is the
+  name too — the init action the platform runs for its webapps' datasources
+  (`/init_db_and_user.sh <name>`). The database is dumped, migrated and rolled back
+  together with the platform's own (`citeck deps upgrade postgres`), and is visible
+  in pgAdmin like any other.
+* The entry gets `dependsOn: [postgres]` by itself.
+* The database is created on **every stand of the workspace**, whether the service
+  runs there or not — the rule Keycloak's database follows. The init actions of
+  `postgres` feed its deployment hash, so a database that came and went with its
+  service would recreate `postgres` each time a feature is switched; this way
+  switching the service on or off leaves `postgres` alone, at the price of an empty
+  database where the service is off. A workspace update that **adds** such an entry
+  recreates `postgres` once on every stand, as a new platform database does.
+* Names are lower-case identifiers (`^[a-z][a-z0-9_]{0,62}$`). The server's own
+  databases (`postgres`, `template0`, `template1`), the platform's `citeck_` prefix
+  and PostgreSQL's `pg_` prefix are refused. An entry asking for such a name is
+  **ignored as a whole** with a warning in the log; the rest of `additionalApps`
+  stays.
+* The password follows the platform convention, as for every webapp database: the
+  stand's `postgres` is reachable only from the namespace network (and from
+  `127.0.0.1` in desktop mode). A service that needs a secret password keeps its
+  own `type: POSTGRES` cluster.
+
+Older launchers do not read the key: the service starts against a database that
+does not exist. Ship such an entry only in a bundle that requires 2.20 (or behind
+an experimental feature that says so).
 
 ## Example — the EDI simulator (`citeck-edi-sim`)
 

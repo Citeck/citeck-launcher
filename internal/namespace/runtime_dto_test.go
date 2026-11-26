@@ -204,3 +204,26 @@ func TestInitStepDisplayName(t *testing.T) {
 	// Degenerate ref — fall back to the raw image rather than empty.
 	assert.Equal(t, "citeck/", initStepDisplayName("citeck/"))
 }
+
+// TestCustomLinkCarriesItsTranslations pins that a workspace link's tooltip
+// leaves the runtime in plain text with every language beside it: the request
+// that serves the DTO picks the reader's (daemon.localizeLinkDescriptions).
+func TestCustomLinkCarriesItsTranslations(t *testing.T) {
+	r := newRuntimeForTest(testConfig(), newMockDocker(), t.TempDir())
+	r.SetCustomLinks([]bundle.WorkspaceLink{
+		{Name: "Gateway", URL: "http://x/g", Description: "LLM gateway",
+			Descriptions: bundle.LocalizedText{"ru": "LLM-шлюз", "en": "LLM gateway"}},
+		{Name: "OnlyTranslations", URL: "http://x/t",
+			Descriptions: bundle.LocalizedText{"ru": "Только перевод", "en": "Translations only"}},
+	})
+
+	byName := map[string]api.LinkDto{}
+	for _, l := range r.ToNamespaceDto().Links {
+		byName[l.Name] = l
+	}
+	g := byName["Gateway"]
+	assert.Equal(t, "LLM gateway", g.Description)
+	assert.Equal(t, "LLM-шлюз", g.Descriptions["ru"])
+	assert.Equal(t, "Translations only", byName["OnlyTranslations"].Description,
+		"without a plain text the English translation is the fallback")
+}

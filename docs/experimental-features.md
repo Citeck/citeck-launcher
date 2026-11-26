@@ -109,6 +109,12 @@ additionalApps:
 генерируется, webapp без записи в bundle не генерируется, зависящие от них
 приложения выпадают через стандартную проверку `dependsOn`.
 
+Если модулю нужно, чтобы на него смотрели платформенные webapps (например, `ai` и
+`rag` должны ходить в LLM-шлюз, а не к провайдеру), это тоже конфигурация workspace:
+`webapps[].companions.<модуль>` задаёт окружение и `dependsOn`, которые webapp получает
+только пока модуль есть на стенде (Launcher 2.20+). См.
+[additional-apps.md](additional-apps.md#companion-settings-for-webapps-webappscompanions).
+
 ## Namespace: включение
 
 Пользователь включает функции в диалоге создания или редактирования стенда — секция

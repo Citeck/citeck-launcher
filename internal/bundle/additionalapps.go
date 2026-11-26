@@ -2,6 +2,9 @@ package bundle
 
 import (
 	"fmt"
+	"log/slog"
+	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/citeck/citeck-launcher/internal/appdef"
@@ -164,6 +167,18 @@ type AdditionalAppProps struct {
 	// own configuration syntax. Strings take the same ${VAR} / ${secret:<id>}
 	// substitution as env; numbers, booleans, lists and maps pass through.
 	CloudConfig map[string]any `yaml:"cloudConfig,omitempty" json:"cloudConfig,omitempty"`
+	// PostgresDatabases are databases this service gets in the stand's OWN
+	// PostgreSQL (`postgres`), created the way the platform creates its
+	// webapps' databases: `/init_db_and_user.sh <name>` makes a database and a
+	// role of that name whose password is the name too. The entry then depends
+	// on `postgres` and reaches it as ${PG_HOST}:${PG_PORT}. No cluster is
+	// added (that is `type: POSTGRES`): the database lives, is dumped,
+	// migrated and rolled back together with the platform's own. Like
+	// Keycloak's, the database is created on EVERY stand of the workspace,
+	// whether the service runs there or not, so switching it on or off does
+	// not recreate postgres. Names are lower-case identifiers; see
+	// ValidatePostgresDatabaseName. Launcher 2.20+.
+	PostgresDatabases []string `yaml:"postgresDatabases,omitempty" json:"postgresDatabases,omitempty"`
 }
 
 // IsEnabled reports whether the additional app should be deployed (default true).
@@ -234,6 +249,54 @@ func ValidateAdditionalApps(apps []AdditionalAppProps) error {
 		if a.StopTimeout < 0 {
 			return fmt.Errorf("additionalApps[%q]: stopTimeout must be >= 0", name)
 		}
+	}
+	return nil
+}
+
+// withUsableDatabases drops an entry that asks for a postgres database it may
+// not have (see ValidatePostgresDatabaseName) — that entry only, out loud. It
+// is not a ValidateAdditionalApps error on purpose: those drop the whole
+// section, and one mistyped database name must not take the observer and every
+// other service of the workspace with it. Dropping the entry rather than the
+// name keeps the service from starting against a database that was never made.
+func withUsableDatabases(apps []AdditionalAppProps, path string, logger *slog.Logger) []AdditionalAppProps {
+	return slices.DeleteFunc(slices.Clone(apps), func(a AdditionalAppProps) bool {
+		for _, db := range a.PostgresDatabases {
+			if err := ValidatePostgresDatabaseName(db); err != nil {
+				logger.Warn("additionalApps entry asks for an invalid postgres database; ignoring the entry",
+					"name", a.Name, "path", path, "err", err)
+				return true
+			}
+		}
+		return false
+	})
+}
+
+// postgresDatabaseNamePattern is what an additionalApps entry may ask the
+// stand's postgres to create. The name reaches init_db_and_user.sh through
+// `sh -c` and becomes the database, the role and the role's password, so it is
+// held to a plain lower-case identifier that needs no quoting anywhere.
+var postgresDatabaseNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}$`)
+
+// reservedPostgresDatabases are the databases of the stand's postgres that are
+// not a service's to claim: the server's own. The platform's databases
+// (citeck_emodel, citeck_keycloak, …) are covered by the citeck_ prefix, and
+// pg_ is reserved by PostgreSQL itself for role names.
+var reservedPostgresDatabases = map[string]bool{"postgres": true, "template0": true, "template1": true}
+
+// ValidatePostgresDatabaseName checks a postgresDatabases entry: a lower-case
+// identifier of at most 63 characters (PostgreSQL's limit) that does not name a
+// database of the server or of the platform.
+func ValidatePostgresDatabaseName(db string) error {
+	switch {
+	case !postgresDatabaseNamePattern.MatchString(db):
+		return fmt.Errorf("%q: use a lower-case identifier: a letter, then letters, digits or _ (up to 63)", db)
+	case reservedPostgresDatabases[db]:
+		return fmt.Errorf("%q is a database of the PostgreSQL server itself", db)
+	case strings.HasPrefix(db, "citeck_"):
+		return fmt.Errorf("%q: the citeck_ prefix belongs to the platform's databases", db)
+	case strings.HasPrefix(db, "pg_"):
+		return fmt.Errorf("%q: the pg_ prefix is reserved by PostgreSQL", db)
 	}
 	return nil
 }

@@ -230,6 +230,16 @@ func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secre
 	wireContentStorage(ctx)
 	pruneAppsWithMissingDeps(ctx)
 
+	// Databases additionalApps entries ask for in the stand's postgres
+	// (postgresDatabases) — for every entry, generated here or not, so the
+	// postgres definition does not change when a service comes or goes.
+	wireAdditionalAppDatabases(ctx)
+
+	// Workspace-declared companion settings (webapps[].companions), on the
+	// final set: a companion the two passes above removed wires nothing, and
+	// the dependsOn it adds can no longer cost the webapp its place.
+	wireWorkspaceCompanions(ctx)
+
 	if err := checkAppDependencyErrors(ctx); err != nil {
 		return nil, err
 	}

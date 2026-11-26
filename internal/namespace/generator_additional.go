@@ -122,6 +122,12 @@ func generateAdditionalApps(ctx *NsGenContext) {
 		for _, d := range def.DependsOn {
 			app.AddDependsOn(d)
 		}
+		// The databases themselves are created by wireAdditionalAppDatabases;
+		// the dependency is declared here so a stand without postgres prunes
+		// the service like any missing target.
+		if len(def.PostgresDatabases) > 0 {
+			app.AddDependsOn(appdef.AppPostgres)
+		}
 		if len(def.CloudConfig) > 0 {
 			ctx.CloudConfig[name] = resolveCloudConfig(def.CloudConfig, ctx)
 		}

@@ -101,6 +101,27 @@ type WebappConfig struct {
 	ID           string             `yaml:"id"`
 	Aliases      []string           `yaml:"aliases"`
 	DefaultProps WebappDefaultProps `yaml:"defaultProps"`
+	// Companions are settings the webapp receives only while the named app is
+	// part of the namespace — e.g. ai and rag pointed at an LLM gateway that a
+	// stand switched on as an experimental feature. Keyed by the companion's
+	// app name. The workspace owns the property names, so a launcher never has
+	// to know a service's configuration keys to wire it to another service.
+	Companions map[string]WebappCompanionProps `yaml:"companions,omitempty"`
+}
+
+// WebappCompanionProps is what a webapp gets while one companion app is in the
+// namespace. Applied after the generated set is final (secrets resolved,
+// dependsOn prune done), so a companion that did not make it into the
+// namespace leaves the webapp exactly as it would be without the entry.
+type WebappCompanionProps struct {
+	// Environments take the same ${VAR} and ${secret:<id>} templates as
+	// defaultProps. They override the workspace defaults of the webapp and
+	// yield to the namespace's own webapps[<id>].environments.
+	Environments map[string]string `yaml:"environments,omitempty"`
+	// DependsOn lists apps the webapp waits for while the companion is present
+	// — usually the companion itself. A name absent from the namespace is
+	// skipped rather than pruning the webapp.
+	DependsOn []string `yaml:"dependsOn,omitempty"`
 }
 
 // ProxyConfig describes the proxy app aliases.
@@ -533,8 +554,13 @@ type WorkspaceLink struct {
 	Icon        string   `yaml:"icon,omitempty"`        // /icons/<icon>.svg in the UI; else a generic link glyph
 	Order       float64  `yaml:"order,omitempty"`       // sidebar sort key (built-ins use ~ -100..101)
 	Category    string   `yaml:"category,omitempty"`    // grouping header (e.g. "Apps", "Resources")
-	Description string   `yaml:"description,omitempty"` // hover tooltip
+	Description string   `yaml:"description,omitempty"` // hover tooltip; plain text, the fallback for Descriptions
 	DependsOn   []string `yaml:"dependsOn,omitempty"`   // app IDs this link depends on
+	// Descriptions is the tooltip per language ({ru: …, en: …}); the reader's
+	// language is chosen per request, like the built-in links' tooltips. A key
+	// of its own, because a launcher before 2.20 reads description as plain
+	// text and would fail to load the whole workspace config on a map there.
+	Descriptions LocalizedText `yaml:"descriptions,omitempty"`
 }
 
 // ImageReposByHost maps a registry host to the imageRepo whose credential the
@@ -1157,6 +1183,8 @@ func parseWorkspaceConfig(raw []byte, path string, logger *slog.Logger) *Workspa
 	// Validate additionalApps non-fatally: a malformed entry in the shared workspace
 	// config must not block resolution for everyone. Drop the whole section and log
 	// so the maintainer sees it; the rest of the workspace config still applies.
+	// An entry asking for an unusable postgres database costs only itself.
+	cfg.AdditionalApps = withUsableDatabases(cfg.AdditionalApps, path, logger)
 	if err := ValidateAdditionalApps(cfg.AdditionalApps); err != nil {
 		logger.Warn("Invalid additionalApps in workspace config; ignoring them", "path", path, "err", err)
 		cfg.AdditionalApps = nil

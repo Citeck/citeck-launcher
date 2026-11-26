@@ -691,6 +691,11 @@ type LinkDto struct {
 	Custom    bool     `json:"custom,omitempty"`
 	Disabled  bool     `json:"disabled,omitempty"`  // custom link: a present dependency is not RUNNING
 	DependsOn []string `json:"dependsOn,omitempty"` // custom link: app IDs it depends on (for tooltips)
+	// Descriptions is a custom link's tooltip per language, as the workspace
+	// wrote it (bundle.LocalizedText). It never reaches the wire: the namespace
+	// DTO is built once for every client, and the request that serves it
+	// renders Description in that client's language.
+	Descriptions map[string]string `json:"-"`
 }
 
 // EventDto represents a server-sent event for state changes.

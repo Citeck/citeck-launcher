@@ -1,6 +1,7 @@
 package namespace
 
 import (
+	"cmp"
 	"fmt"
 	goruntime "runtime"
 	"sort"
@@ -340,11 +341,14 @@ func (r *Runtime) generateLinks() []api.LinkDto {
 			Icon:        cl.Icon,
 			Order:       order,
 			Category:    category,
-			Description: cl.Description,
+			Description: cmp.Or(cl.Description, cl.Descriptions.Resolve("en")),
 			Custom:      true,
 			Disabled:    disabled,
 			DependsOn:   cl.DependsOn,
 		})
+		// The request that serves the DTO renders the tooltip in the reader's
+		// language from these (daemon.localizeLinkDescriptions).
+		links[len(links)-1].Descriptions = cl.Descriptions
 	}
 
 	// Localize the two built-in category headers ("Apps" / "Resources"),
