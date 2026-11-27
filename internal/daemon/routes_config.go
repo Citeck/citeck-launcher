@@ -1161,11 +1161,15 @@ func (d *Daemon) handleSetLogLevel(w http.ResponseWriter, r *http.Request) {
 // localizeLinkDescriptions renders each workspace link's tooltip in the
 // reader's language: the runtime builds the namespace DTO once for every
 // client, so the per-language texts travel in LinkDto.Descriptions and are
-// chosen here, where the request's locale is known.
+// chosen here, where the request's locale is known. A non-empty plain
+// Description acts as the fallback after the reader's language and "en" so
+// omitting "en" from Descriptions does not replace it with an unrelated
+// language.
 func localizeLinkDescriptions(links []api.LinkDto, locale string) {
 	for i := range links {
-		if s := bundle.LocalizedText(links[i].Descriptions).Resolve(locale); s != "" {
-			links[i].Description = s
+		if len(links[i].Descriptions) == 0 {
+			continue
 		}
+		links[i].Description = bundle.LocalizedText(links[i].Descriptions).ResolveOr(locale, links[i].Description)
 	}
 }

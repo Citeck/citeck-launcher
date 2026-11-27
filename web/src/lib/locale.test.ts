@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { getNamespace, postGitSkipPull } from './api'
 import { useI18nStore } from './i18n'
+import { useDashboardStore } from './store'
 import { connectEvents } from './websocket'
 
 /**
@@ -72,6 +73,57 @@ describe('every daemon request states the UI locale', () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ id: 'ns1' }))
     await getNamespace()
     expect(lastHeaders()['X-Citeck-Locale']).toBe('ja')
+  })
+
+  it('refetches GET /namespace with the new locale when a namespace is open', async () => {
+    useDashboardStore.setState({
+      namespace: {
+        id: 'ns1',
+        name: 'Demo',
+        status: 'RUNNING',
+        bundleRef: 'community:2026.4',
+        apps: [],
+        links: [{ name: 'LiteLLM', url: 'http://127.0.0.1:14000/ui', order: 1000, description: 'LLM gateway', custom: true }],
+      },
+    })
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.includes('/api/v1/namespace')) {
+        return jsonResponse({
+          id: 'ns1',
+          name: 'Demo',
+          status: 'RUNNING',
+          bundleRef: 'community:2026.4',
+          apps: [],
+          links: [{ name: 'LiteLLM', url: 'http://127.0.0.1:14000/ui', order: 1000, description: 'LLM-шлюз', custom: true }],
+        })
+      }
+      if (url.includes('/api/v1/health')) {
+        return jsonResponse({ status: 'healthy', healthy: true, checks: [] })
+      }
+      return jsonResponse({ active: false })
+    })
+
+    try {
+      useI18nStore.getState().setLocale('ru', false)
+      await vi.waitFor(() => {
+        expect(useDashboardStore.getState().namespace?.links?.[0]?.description).toBe('LLM-шлюз')
+      })
+      const nsCall = fetchMock.mock.calls.find(([url]) => typeof url === 'string' && url.includes('/api/v1/namespace'))
+      expect(nsCall).toBeDefined()
+      expect(((nsCall![1] as RequestInit).headers as Record<string, string>)['X-Citeck-Locale']).toBe('ru')
+
+      // Switching to the same locale does not trigger another fetch.
+      fetchMock.mockClear()
+      useI18nStore.getState().setLocale('ru', false)
+      expect(fetchMock).not.toHaveBeenCalled()
+
+      // When no namespace is open, changing locale does not fetch GET /namespace.
+      useDashboardStore.setState({ namespace: null })
+      useI18nStore.getState().setLocale('de', false)
+      expect(fetchMock).not.toHaveBeenCalled()
+    } finally {
+      useDashboardStore.setState({ namespace: null })
+    }
   })
 })
 

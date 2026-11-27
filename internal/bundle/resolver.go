@@ -96,6 +96,14 @@ type WebappDefaultProps struct {
 	DependsOn []string `yaml:"dependsOn,omitempty"`
 }
 
+// companionProblem records an unusable companions section or companion block
+// discovered during total YAML decoding of a WebappConfig; parseWorkspaceConfig
+// logs each problem and clears the slice.
+type companionProblem struct {
+	companion string // empty when the whole companions section has the wrong shape
+	problem   string
+}
+
 // WebappConfig describes a webapp with its aliases and default props.
 type WebappConfig struct {
 	ID           string             `yaml:"id"`
@@ -106,13 +114,18 @@ type WebappConfig struct {
 	// stand switched on as an experimental feature. Keyed by the companion's
 	// app name. The workspace owns the property names, so a launcher never has
 	// to know a service's configuration keys to wire it to another service.
-	Companions map[string]WebappCompanionProps `yaml:"companions,omitempty"`
+	//
+	// Decoded manually in UnmarshalYAML (yaml:"-") so a malformed companions
+	// shape never fails the whole WorkspaceConfig; broken sections/blocks are
+	// dropped with a warning in parseWorkspaceConfig.
+	Companions map[string]WebappCompanionProps `yaml:"-"`
+
+	companionProblems []companionProblem
 }
 
 // WebappCompanionProps is what a webapp gets while one companion app is in the
-// namespace. Applied after the generated set is final (secrets resolved,
-// dependsOn prune done), so a companion that did not make it into the
-// namespace leaves the webapp exactly as it would be without the entry.
+// namespace. Applied so a companion that did not make it into the namespace
+// leaves the webapp exactly as it would be without the entry.
 type WebappCompanionProps struct {
 	// Environments take the same ${VAR} and ${secret:<id>} templates as
 	// defaultProps. They override the workspace defaults of the webapp and
@@ -122,6 +135,142 @@ type WebappCompanionProps struct {
 	// — usually the companion itself. A name absent from the namespace is
 	// skipped rather than pruning the webapp.
 	DependsOn []string `yaml:"dependsOn,omitempty"`
+}
+
+// UnmarshalYAML decodes a WebappConfig while keeping `companions` total: a
+// shape typo in `companions`, a companion block, `environments`, or `dependsOn`
+// drops only the broken section or block and records a problem for
+// parseWorkspaceConfig to log, preserving the webapp and the rest of
+// WorkspaceConfig.
+func (w *WebappConfig) UnmarshalYAML(node *yaml.Node) error {
+	*w = WebappConfig{}
+	type rawWebappConfig WebappConfig
+	var raw rawWebappConfig
+	if err := node.Decode(&raw); err != nil {
+		return err
+	}
+	*w = WebappConfig(raw)
+
+	var compField struct {
+		Companions yaml.Node `yaml:"companions"`
+	}
+	if err := node.Decode(&compField); err == nil {
+		w.Companions, w.companionProblems = decodeWebappCompanions(&compField.Companions)
+	}
+	return nil
+}
+
+func decodeWebappCompanions(node *yaml.Node) (map[string]WebappCompanionProps, []companionProblem) {
+	node = followAlias(node)
+	if node == nil || node.Kind == 0 || (node.Kind == yaml.ScalarNode && node.Tag == nullTag) {
+		return nil, nil
+	}
+	if node.Kind != yaml.MappingNode {
+		return nil, []companionProblem{{problem: "companions must be a mapping of companion app name to settings"}}
+	}
+	out := make(map[string]WebappCompanionProps)
+	var problems []companionProblem
+	for _, e := range mappingEntries(node) {
+		name := strings.TrimSpace(e.key)
+		if name == "" {
+			problems = append(problems, companionProblem{problem: "companion app name must not be empty"})
+			continue
+		}
+		props, problem := decodeWebappCompanionProps(e.node)
+		if problem != "" {
+			problems = append(problems, companionProblem{companion: name, problem: problem})
+			continue
+		}
+		out[name] = props
+	}
+	if len(out) == 0 {
+		out = nil
+	}
+	return out, problems
+}
+
+func decodeWebappCompanionProps(node *yaml.Node) (WebappCompanionProps, string) {
+	node = followAlias(node)
+	if node == nil || node.Kind == 0 || (node.Kind == yaml.ScalarNode && node.Tag == nullTag) {
+		return WebappCompanionProps{}, ""
+	}
+	if node.Kind != yaml.MappingNode {
+		return WebappCompanionProps{}, "companion block must be a mapping"
+	}
+	var props WebappCompanionProps
+	for _, e := range mappingEntries(node) {
+		switch e.key {
+		case "environments":
+			envs, problem := decodeCompanionEnvironments(e.node)
+			if problem != "" {
+				return WebappCompanionProps{}, problem
+			}
+			props.Environments = envs
+		case "dependsOn":
+			deps, problem := decodeCompanionDependsOn(e.node)
+			if problem != "" {
+				return WebappCompanionProps{}, problem
+			}
+			props.DependsOn = deps
+		}
+	}
+	return props, ""
+}
+
+func decodeCompanionEnvironments(node *yaml.Node) (map[string]string, string) {
+	node = followAlias(node)
+	if node == nil || node.Kind == 0 || (node.Kind == yaml.ScalarNode && node.Tag == nullTag) {
+		return nil, ""
+	}
+	if node.Kind != yaml.MappingNode {
+		return nil, "environments must be a mapping of key to string"
+	}
+	envs := make(map[string]string)
+	for _, e := range mappingEntries(node) {
+		v := followAlias(e.node)
+		if v == nil || v.Kind != yaml.ScalarNode {
+			return nil, fmt.Sprintf("environments[%q] must be a scalar value", e.key)
+		}
+		if v.Tag == nullTag {
+			envs[e.key] = ""
+			continue
+		}
+		var s string
+		if err := v.Decode(&s); err != nil {
+			return nil, fmt.Sprintf("environments[%q]: %v", e.key, err)
+		}
+		envs[e.key] = s
+	}
+	if len(envs) == 0 {
+		return nil, ""
+	}
+	return envs, ""
+}
+
+func decodeCompanionDependsOn(node *yaml.Node) ([]string, string) {
+	node = followAlias(node)
+	if node == nil || node.Kind == 0 || (node.Kind == yaml.ScalarNode && node.Tag == nullTag) {
+		return nil, ""
+	}
+	if node.Kind != yaml.SequenceNode {
+		return nil, "dependsOn must be a list of app names"
+	}
+	if len(node.Content) == 0 {
+		return nil, ""
+	}
+	deps := make([]string, 0, len(node.Content))
+	for _, item := range node.Content {
+		item = followAlias(item)
+		if item == nil || item.Kind != yaml.ScalarNode || item.Tag == nullTag {
+			return nil, "dependsOn entries must be strings"
+		}
+		var s string
+		if err := item.Decode(&s); err != nil {
+			return nil, "dependsOn entries must be strings"
+		}
+		deps = append(deps, s)
+	}
+	return deps, ""
 }
 
 // ProxyConfig describes the proxy app aliases.
@@ -1209,6 +1358,21 @@ func parseWorkspaceConfig(raw []byte, path string, logger *slog.Logger) *Workspa
 	if problem := cfg.ContentStorage.Problem(); problem != "" {
 		logger.Warn("Workspace contentStorage block is unusable; ignoring it", "problem", problem, "path", path)
 		cfg.ContentStorage = nil
+	}
+	// Same rule for webapps[].companions: malformed sections or blocks were
+	// dropped during UnmarshalYAML so the webapp and the rest of WorkspaceConfig
+	// survive; log each dropped item once here.
+	for i := range cfg.Webapps {
+		for _, p := range cfg.Webapps[i].companionProblems {
+			if p.companion == "" {
+				logger.Warn("Workspace webapp companions section is unusable; ignoring it",
+					"webapp", cfg.Webapps[i].ID, "problem", p.problem, "path", path)
+			} else {
+				logger.Warn("Workspace webapp companion block is unusable; ignoring it",
+					"webapp", cfg.Webapps[i].ID, "companion", p.companion, "problem", p.problem, "path", path)
+			}
+		}
+		cfg.Webapps[i].companionProblems = nil
 	}
 	return &cfg
 }

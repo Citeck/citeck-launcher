@@ -124,8 +124,9 @@ func generateAdditionalApps(ctx *NsGenContext) {
 		}
 		// The databases themselves are created by wireAdditionalAppDatabases;
 		// the dependency is declared here so a stand without postgres prunes
-		// the service like any missing target.
-		if len(def.PostgresDatabases) > 0 {
+		// the service like any missing target. Only untyped raw containers may
+		// ask for databases in the stand's postgres.
+		if !def.IsTyped() && len(def.PostgresDatabases) > 0 {
 			app.AddDependsOn(appdef.AppPostgres)
 		}
 		if len(def.CloudConfig) > 0 {

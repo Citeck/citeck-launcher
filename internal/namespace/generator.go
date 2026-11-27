@@ -221,6 +221,13 @@ func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secre
 	checkConfiguredDependsOnTargets(ctx)
 	warnWorkspaceDependsOnTargets(ctx)
 
+	// Workspace-declared companion environments (webapps[].companions) for
+	// companions that survive secrets and dependsOn pruning: applied BEFORE
+	// excludeAppsMissingSecrets so a surviving companion that overrides a
+	// defaultProps env carrying a missing ${secret:...} rescues the webapp and
+	// its dependents, while an absent/excluded/pruned companion wires nothing.
+	appliedCompanions := wireWorkspaceCompanionEnvs(ctx)
+
 	// Drop any app whose dependsOn points at an app that wasn't generated
 	// (transitively); see pruneAppsWithMissingDeps. Content storage is wired
 	// between the two: the S3 provider is exactly the kind of app the secrets
@@ -235,10 +242,10 @@ func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secre
 	// postgres definition does not change when a service comes or goes.
 	wireAdditionalAppDatabases(ctx)
 
-	// Workspace-declared companion settings (webapps[].companions), on the
-	// final set: a companion the two passes above removed wires nothing, and
-	// the dependsOn it adds can no longer cost the webapp its place.
-	wireWorkspaceCompanions(ctx)
+	// Companion dependsOn edges on the final surviving app set: absent targets
+	// are skipped instead of pruning the webapp, and cyclic edges are skipped
+	// with a warning.
+	wireWorkspaceCompanionDeps(ctx, appliedCompanions)
 
 	if err := checkAppDependencyErrors(ctx); err != nil {
 		return nil, err

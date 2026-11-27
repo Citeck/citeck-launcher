@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
-	"slices"
 	"strings"
 
 	"github.com/citeck/citeck-launcher/internal/appdef"
@@ -178,7 +177,13 @@ type AdditionalAppProps struct {
 	// whether the service runs there or not, so switching it on or off does
 	// not recreate postgres. Names are lower-case identifiers; see
 	// ValidatePostgresDatabaseName. Launcher 2.20+.
-	PostgresDatabases []string `yaml:"postgresDatabases,omitempty" json:"postgresDatabases,omitempty"`
+	//
+	// Decoded manually in UnmarshalYAML (yaml:"-") so a malformed YAML shape
+	// (e.g. a scalar instead of a list) never fails the whole WorkspaceConfig;
+	// instead postgresDBProblem records the error and withUsableDatabases drops
+	// only this entry.
+	PostgresDatabases []string `yaml:"-" json:"postgresDatabases,omitempty"`
+	postgresDBProblem string
 }
 
 // IsEnabled reports whether the additional app should be deployed (default true).
@@ -254,22 +259,41 @@ func ValidateAdditionalApps(apps []AdditionalAppProps) error {
 }
 
 // withUsableDatabases drops an entry that asks for a postgres database it may
-// not have (see ValidatePostgresDatabaseName) — that entry only, out loud. It
-// is not a ValidateAdditionalApps error on purpose: those drop the whole
+// not have (see ValidatePostgresDatabaseName) or carries an unreadable
+// postgresDatabases shape — that entry only, out loud. Typed entries
+// (POSTGRES, QDRANT, SEAWEEDFS) ignore postgresDatabases and keep their place.
+// It is not a ValidateAdditionalApps error on purpose: those drop the whole
 // section, and one mistyped database name must not take the observer and every
 // other service of the workspace with it. Dropping the entry rather than the
 // name keeps the service from starting against a database that was never made.
 func withUsableDatabases(apps []AdditionalAppProps, path string, logger *slog.Logger) []AdditionalAppProps {
-	return slices.DeleteFunc(slices.Clone(apps), func(a AdditionalAppProps) bool {
+	out := make([]AdditionalAppProps, 0, len(apps))
+	for _, a := range apps {
+		if a.IsTyped() {
+			a.PostgresDatabases = nil
+			a.postgresDBProblem = ""
+			out = append(out, a)
+			continue
+		}
+		if a.postgresDBProblem != "" {
+			logger.Warn("additionalApps entry has an unusable postgresDatabases value; ignoring the entry",
+				"name", a.Name, "path", path, "problem", a.postgresDBProblem)
+			continue
+		}
+		bad := false
 		for _, db := range a.PostgresDatabases {
 			if err := ValidatePostgresDatabaseName(db); err != nil {
 				logger.Warn("additionalApps entry asks for an invalid postgres database; ignoring the entry",
 					"name", a.Name, "path", path, "err", err)
-				return true
+				bad = true
+				break
 			}
 		}
-		return false
-	})
+		if !bad {
+			out = append(out, a)
+		}
+	}
+	return out
 }
 
 // postgresDatabaseNamePattern is what an additionalApps entry may ask the
@@ -278,27 +302,63 @@ func withUsableDatabases(apps []AdditionalAppProps, path string, logger *slog.Lo
 // held to a plain lower-case identifier that needs no quoting anywhere.
 var postgresDatabaseNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}$`)
 
-// reservedPostgresDatabases are the databases of the stand's postgres that are
-// not a service's to claim: the server's own. The platform's databases
-// (citeck_emodel, citeck_keycloak, …) are covered by the citeck_ prefix, and
-// pg_ is reserved by PostgreSQL itself for role names.
-var reservedPostgresDatabases = map[string]bool{"postgres": true, "template0": true, "template1": true}
+// reservedPostgresDatabases are the names the stand's postgres cannot accept
+// for a database/role pair: the server's own databases, plus "public" and
+// "none" which PostgreSQL forbids as role names even when quoted. The
+// platform's databases (citeck_emodel, citeck_keycloak, …) are covered by the
+// citeck_ prefix, and pg_ is reserved by PostgreSQL itself for role names.
+var reservedPostgresDatabases = map[string]bool{
+	"postgres":  true,
+	"template0": true,
+	"template1": true,
+	"public":    true,
+	"none":      true,
+}
 
 // ValidatePostgresDatabaseName checks a postgresDatabases entry: a lower-case
 // identifier of at most 63 characters (PostgreSQL's limit) that does not name a
-// database of the server or of the platform.
+// database or role reserved by PostgreSQL or by the platform.
 func ValidatePostgresDatabaseName(db string) error {
 	switch {
 	case !postgresDatabaseNamePattern.MatchString(db):
 		return fmt.Errorf("%q: use a lower-case identifier: a letter, then letters, digits or _ (up to 63)", db)
 	case reservedPostgresDatabases[db]:
-		return fmt.Errorf("%q is a database of the PostgreSQL server itself", db)
+		return fmt.Errorf("%q is reserved by PostgreSQL", db)
 	case strings.HasPrefix(db, "citeck_"):
 		return fmt.Errorf("%q: the citeck_ prefix belongs to the platform's databases", db)
 	case strings.HasPrefix(db, "pg_"):
 		return fmt.Errorf("%q: the pg_ prefix is reserved by PostgreSQL", db)
 	}
 	return nil
+}
+
+// decodePostgresDatabases reads a postgresDatabases YAML node totally: never
+// returns a YAML error, reporting any shape problem as a non-empty string so
+// parseWorkspaceConfig can drop only the affected additionalApps entry.
+func decodePostgresDatabases(node *yaml.Node) ([]string, string) {
+	node = followAlias(node)
+	if node == nil || node.Kind == 0 || (node.Kind == yaml.ScalarNode && node.Tag == nullTag) {
+		return nil, ""
+	}
+	if node.Kind != yaml.SequenceNode {
+		return nil, "postgresDatabases must be a list of database names"
+	}
+	if len(node.Content) == 0 {
+		return nil, ""
+	}
+	dbs := make([]string, 0, len(node.Content))
+	for _, item := range node.Content {
+		item = followAlias(item)
+		if item == nil || item.Kind != yaml.ScalarNode || item.Tag == nullTag {
+			return nil, "postgresDatabases entries must be strings"
+		}
+		var s string
+		if err := item.Decode(&s); err != nil {
+			return nil, "postgresDatabases entries must be strings"
+		}
+		dbs = append(dbs, s)
+	}
+	return dbs, ""
 }
 
 // UnmarshalYAML reads the entry as the DTO its `type` names. It is one node
@@ -341,6 +401,15 @@ func (a *AdditionalAppProps) UnmarshalYAML(value *yaml.Node) error {
 		a.Type = AppTypeContainer
 		if strings.EqualFold(strings.TrimSpace(head.Type), AppTypeSeaweedFS) {
 			a.Type = AppTypeSeaweedFS
+			a.PostgresDatabases = nil
+			a.postgresDBProblem = ""
+			return nil
+		}
+		var dbField struct {
+			PostgresDatabases yaml.Node `yaml:"postgresDatabases"`
+		}
+		if err := value.Decode(&dbField); err == nil {
+			a.PostgresDatabases, a.postgresDBProblem = decodePostgresDatabases(&dbField.PostgresDatabases)
 		}
 		return nil
 	}

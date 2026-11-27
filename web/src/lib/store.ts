@@ -7,6 +7,7 @@ import { connectDesktopEvents, isWailsDesktop } from './desktopEvents'
 import { useLongOpStore } from './longOp'
 import { registryHostOf, isAuthErrorText } from './registry'
 import { useDepsStore } from './depsStore'
+import { useI18nStore } from './i18n'
 
 interface EventStream {
   close: () => void
@@ -525,3 +526,15 @@ return ({
     stream?.close()
   },
 })})
+
+// Refetch the active namespace when the UI locale changes so server-localized
+// fields (custom links[].descriptions, dependency messages, etc.) update
+// immediately without a page reload. Guarded on `namespace !== null` so
+// Welcome/boot screens do not trigger redundant fetches, and subscribed here
+// rather than inside i18n.ts to avoid a circular import.
+useI18nStore.subscribe((state, prev) => {
+  if (state.locale === prev.locale) return
+  if (useDashboardStore.getState().namespace !== null) {
+    void useDashboardStore.getState().fetchData()
+  }
+})

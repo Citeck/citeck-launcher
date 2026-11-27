@@ -107,11 +107,14 @@ S3-хранилища контента — `seaweedfs-s3-key` и `seaweedfs-jwt`
 
 `${secret:<id>}` подставляется везде, где подставляются `${JWT_SECRET}` и
 `${ZK_HOST}`: env веб-приложений из конфигурации workspace (`defaultWebappProps`,
-`webapps[].defaultProps`; env из `namespace.yml` не подставляется); env, cmd,
-init-контейнеры, init-действия и `cloudConfig:` записей `additionalApps`; ключ
-`password:` у `type: POSTGRES`; `secretKey` блока `contentStorage.s3` — его
-значение генератор передаёт в штатное окружение ecos-content для S3
-(см. [Хранение контента](content-storage.md)).
+`webapps[].defaultProps`, `webapps[].companions.<name>.environments`; env из
+`namespace.yml` не подставляется); env, cmd, init-контейнеры, init-действия и
+`cloudConfig:` записей `additionalApps`; ключ `password:` у `type: POSTGRES`;
+`secretKey` блока `contentStorage.s3` — его значение генератор передаёт в штатное
+окружение ecos-content для S3 (см. [Хранение контента](content-storage.md)).
+Для `webapps[].companions` ключи, перекрытые в `namespace.yml`, пропускаются до
+проверки секретов, а неразрешённый секрет в оставшихся ключах пропускает только
+блок этого компаньона (не исключая само веб-приложение).
 
 ## Если значения нет
 

@@ -53,8 +53,15 @@ func PlainText(s string) LocalizedText {
 // then English, then the first language the author wrote (by key, so the
 // answer does not depend on map order). Empty when there is nothing to show.
 func (t LocalizedText) Resolve(locale string) string {
+	return t.ResolveOr(locale, "")
+}
+
+// ResolveOr is Resolve with a plain-text fallback used after the reader's
+// language and English, before falling back to an arbitrary other language in
+// t. When fallback is empty, ResolveOr behaves identically to Resolve.
+func (t LocalizedText) ResolveOr(locale, fallback string) string {
 	if len(t) == 0 {
-		return ""
+		return fallback
 	}
 	if s := t[plainTextKey]; s != "" {
 		return s
@@ -66,6 +73,9 @@ func (t LocalizedText) Resolve(locale string) string {
 	}
 	if s := t["en"]; s != "" {
 		return s
+	}
+	if fallback != "" {
+		return fallback
 	}
 	for _, k := range slices.Sorted(maps.Keys(t)) {
 		if s := t[k]; s != "" {

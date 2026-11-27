@@ -88,22 +88,29 @@ additionalApps:
 
 * Each name becomes a database **and** a role of that name whose password is the
   name too — the init action the platform runs for its webapps' datasources
-  (`/init_db_and_user.sh <name>`). The database is dumped, migrated and rolled back
-  together with the platform's own (`citeck deps upgrade postgres`), and is visible
-  in pgAdmin like any other.
+  (`/init_db_and_user.sh <name>`). The database is owned by `postgres` with
+  privileges granted to the `<name>` role (which is not a `SUPERUSER`). The
+  database is dumped, migrated and rolled back together with the platform's own
+  (`citeck deps upgrade postgres`), and is visible in pgAdmin like any other.
+* Applies only to **untyped** (raw container) entries: typed entries (`type:
+  POSTGRES`, `QDRANT`, `SEAWEEDFS`) ignore `postgresDatabases`.
 * The entry gets `dependsOn: [postgres]` by itself.
 * The database is created on **every stand of the workspace**, whether the service
   runs there or not — the rule Keycloak's database follows. The init actions of
   `postgres` feed its deployment hash, so a database that came and went with its
   service would recreate `postgres` each time a feature is switched; this way
   switching the service on or off leaves `postgres` alone, at the price of an empty
-  database where the service is off. A workspace update that **adds** such an entry
+  database where the service is off. Database names across all `additionalApps`
+  entries are sorted and deduplicated globally so entry order does not alter
+  `postgres`'s deployment hash. A workspace update that **adds** such an entry
   recreates `postgres` once on every stand, as a new platform database does.
-* Names are lower-case identifiers (`^[a-z][a-z0-9_]{0,62}$`). The server's own
-  databases (`postgres`, `template0`, `template1`), the platform's `citeck_` prefix
-  and PostgreSQL's `pg_` prefix are refused. An entry asking for such a name is
-  **ignored as a whole** with a warning in the log; the rest of `additionalApps`
-  stays.
+* Names are lower-case identifiers (`^[a-z][a-z0-9_]{0,62}$`). PostgreSQL's own
+  reserved names (`postgres`, `template0`, `template1`, `public`, `none`), the
+  platform's `citeck_` prefix and PostgreSQL's `pg_` prefix are refused. An entry
+  asking for an invalid name or carrying a malformed `postgresDatabases` YAML
+  shape (for example a scalar instead of a list) is **ignored as a whole** with a
+  warning in the log; the rest of `additionalApps` and the workspace config stay
+  intact.
 * The password follows the platform convention, as for every webapp database: the
   stand's `postgres` is reachable only from the namespace network (and from
   `127.0.0.1` in desktop mode). A service that needs a secret password keeps its
@@ -112,6 +119,92 @@ additionalApps:
 Older launchers do not read the key: the service starts against a database that
 does not exist. Ship such an entry only in a bundle that requires 2.20 (or behind
 an experimental feature that says so).
+
+## Companion settings for webapps (`webapps[].companions`)
+
+Launcher 2.20+. A workspace webapp entry can declare `companions:` — environment
+variables and `dependsOn` targets that the webapp receives **only while a named
+companion app is present in the generated namespace** (for example, pointing `ai`
+and `rag` at an opt-in LiteLLM gateway without hardcoding service keys in the
+launcher):
+
+```yaml
+webapps:
+  - id: ai
+    aliases: [EcosAiApp]
+    companions:
+      litellm:
+        environments:
+          SPRING_AI_OPENAI_BASEURL: http://litellm:4000
+          SPRING_AI_OPENAI_APIKEY: sk-${secret:litellm-master-key}
+        dependsOn: [litellm]
+```
+
+* **Target scope:** `companions` applies only to generated bundle webapps listed
+  in `webapps:` (never to infrastructure containers or `additionalApps`). When
+  `webapps:` contains duplicate entries with the same `id`, the first entry wins.
+  YAML decoding is total: a malformed `companions` section or an unusable
+  companion block (wrong type for `environments` or `dependsOn`) logs a warning
+  and drops only that section or block, preserving the webapp and the rest of the
+  workspace config.
+* **Environment precedence:** `namespace.yml` (`webapps.<id>.environments`) wins,
+  followed by active `webapps[].companions.<name>.environments` (applied in
+  alphabetical order of companion name when multiple companions are active), then
+  `webapps[].defaultProps.environments`, then `defaultWebappProps.environments`.
+  A per-app `citeck edit` patch still overlays all of them.
+* **Secrets (`${secret:<id>}`):** keys already overridden in `namespace.yml` are
+  skipped **before** template/secret resolution, so an unresolved secret in an
+  overridden key does not block the rest of the companion block. If any remaining
+  key in a companion block references an unresolved secret, that block is skipped
+  whole with an error log while the webapp stays running on its own configuration.
+  If `defaultProps.environments` references an unresolved `${secret:<id>}` and a
+  surviving companion (whose own secrets and `dependsOn` chain survive) overrides
+  that key with an available value, the webapp and its dependents are kept rather
+  than excluded; if the companion is absent, excluded, or pruned, it wires nothing
+  and the webapp's own unresolved secret excludes it as usual.
+* **`dependsOn` and cycles:** companion `dependsOn` entries are wired on the final
+  surviving app set. A target absent from the namespace is skipped (it never
+  prunes the webapp), and a self-dependency (`dep == webapp id`) or any edge that
+  would close a direct or transitive `dependsOn` cycle is skipped with a warning.
+  Listing the webapp itself as its own companion is ignored with a warning.
+* **Behavior with `detachedApps`:** companion wiring is governed by whether the
+  companion app is **generated** in the namespace (`ctx.Applications`), not by
+  whether it is detached (`detachedApps`), and companions are not registered as
+  gating apps (`GatingApps`). While a companion lives under `experimental:`,
+  stands that did not opt in do not generate it at all; if the module later
+  graduates to a regular bundle entry and is held back only via `detachedApps`,
+  note that companion settings will still apply to the webapp (adjust
+  `detachedApps` or graduation rollout accordingly).
+* **Boundary (`cloudConfig` / IDE):** `webapps[].companions` modifies only
+  container `environments` and `dependsOn`. It does **not** merge `cloudConfig`
+  or alter what `CloudConfigServer` serves to a webapp started locally from an
+  IDE.
+
+## Localized link tooltips (`links[].descriptions`)
+
+Launcher 2.20+. A workspace `links[]` entry can provide per-language hover
+tooltips via `descriptions:` (`LocalizedText`) alongside the plain `description:`
+field:
+
+```yaml
+links:
+  - name: LiteLLM
+    url: http://127.0.0.1:14000/ui
+    description: "LLM gateway"
+    descriptions:
+      ru: "LLM-шлюз"
+      en: "LLM gateway"
+```
+
+* `description` remains a plain string so launchers older than 2.20 continue
+  loading the workspace config unchanged.
+* `GET /api/v1/namespace` resolves `description` per request locale and omits the
+  raw `descriptions` map from the JSON response. Resolution order: single-language
+  scalar in `descriptions` → normalized request locale (`ru-RU` → `ru`) → `"en"`
+  in `descriptions` → plain `description` → first alphabetical key in
+  `descriptions` (only when plain `description` is empty). The Web UI refetches
+  `GET /api/v1/namespace` when the user switches language so tooltips update
+  immediately without reloading the page.
 
 ## Example — the EDI simulator (`citeck-edi-sim`)
 

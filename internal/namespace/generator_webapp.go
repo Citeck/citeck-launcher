@@ -54,6 +54,10 @@ func generateWebapp(name string, ctx *NsGenContext) {
 
 	port := ctx.NextPort()
 	app := ctx.GetOrCreateApp(name)
+	if ctx.GeneratedWebapps == nil {
+		ctx.GeneratedWebapps = map[string]bool{}
+	}
+	ctx.GeneratedWebapps[name] = true
 	app.Image = ""
 	app.Kind = webappKind(name)
 	app.IsJVM = true

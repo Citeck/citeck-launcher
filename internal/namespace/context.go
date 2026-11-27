@@ -175,7 +175,11 @@ type NsGenContext struct {
 	// (generateAdditionalApps). Read by wireContentStorage: an S3 provider
 	// skipped that way exists in Applications as somebody else.
 	collidedAdditionalApps map[string]bool
-	portsCounter           atomic.Int32
+	// GeneratedWebapps records the names actually created by generateWebapp so
+	// workspace webapps[].companions only target real webapps (never infra or
+	// additionalApps entries that happen to share an id).
+	GeneratedWebapps map[string]bool
+	portsCounter     atomic.Int32
 }
 
 // NewNsGenContext creates a new generation context for the given config and bundle.
@@ -195,6 +199,7 @@ func NewNsGenContext(cfg *Config, bun *bundle.Def) *NsGenContext {
 		GatingApps:          make(map[string]bool),
 		ConfiguredDependsOn: make(map[string][]string),
 		WorkspaceDependsOn:  make(map[string][]string),
+		GeneratedWebapps:    make(map[string]bool),
 	}
 	ctx.portsCounter.Store(17020)
 	return ctx

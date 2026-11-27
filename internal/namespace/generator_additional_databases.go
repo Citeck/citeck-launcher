@@ -28,14 +28,13 @@ func wireAdditionalAppDatabases(ctx *NsGenContext) {
 	if pg == nil {
 		return
 	}
+	var dbs []string
 	for _, def := range ctx.WorkspaceConfig.AdditionalApps {
-		if len(def.PostgresDatabases) == 0 {
+		if def.IsTyped() || len(def.PostgresDatabases) == 0 {
 			continue
 		}
 		name := strings.TrimSpace(def.Name)
-		dbs := slices.Clone(def.PostgresDatabases)
-		slices.Sort(dbs)
-		for _, db := range slices.Compact(dbs) {
+		for _, db := range def.PostgresDatabases {
 			// Validation drops such an entry when the workspace config loads;
 			// this guard keeps a config that skipped it from reaching `sh -c`.
 			if err := bundle.ValidatePostgresDatabaseName(db); err != nil {
@@ -43,13 +42,17 @@ func wireAdditionalAppDatabases(ctx *NsGenContext) {
 					"name", name, "err", err)
 				continue
 			}
-			action := appdef.AppInitAction{Exec: []string{"sh", "-c", "/init_db_and_user.sh " + db}}
-			if slices.ContainsFunc(pg.InitActions, func(a appdef.AppInitAction) bool {
-				return slices.Equal(a.Exec, action.Exec)
-			}) {
-				continue
-			}
-			pg.InitActions = append(pg.InitActions, action)
+			dbs = append(dbs, db)
 		}
+	}
+	slices.Sort(dbs)
+	for _, db := range slices.Compact(dbs) {
+		action := appdef.AppInitAction{Exec: []string{"sh", "-c", "/init_db_and_user.sh " + db}}
+		if slices.ContainsFunc(pg.InitActions, func(a appdef.AppInitAction) bool {
+			return slices.Equal(a.Exec, action.Exec)
+		}) {
+			continue
+		}
+		pg.InitActions = append(pg.InitActions, action)
 	}
 }

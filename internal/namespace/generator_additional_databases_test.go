@@ -75,12 +75,58 @@ func TestAdditionalAppDatabasesAreSortedAndDeduplicated(t *testing.T) {
 	pg := findGeneratedApp(resp, appdef.AppPostgres)
 	var ours []string
 	for _, a := range pg.InitActions {
-		if a.Exec[2] == "/init_db_and_user.sh gateway" || a.Exec[2] == "/init_db_and_user.sh gateway_spend" {
+		if len(a.Exec) >= 3 && (a.Exec[2] == "/init_db_and_user.sh gateway" || a.Exec[2] == "/init_db_and_user.sh gateway_spend") {
 			ours = append(ours, a.Exec[2])
 		}
 	}
 	assert.Equal(t, []string{"/init_db_and_user.sh gateway", "/init_db_and_user.sh gateway_spend"}, ours,
 		"a stable order keeps the postgres deployment hash stable")
+}
+
+func TestAdditionalAppDatabasesGlobalSortIsOrderIndependent(t *testing.T) {
+	appA := bundle.AdditionalAppProps{Name: "svc-a", Image: "example/a:1.0.0", PostgresDatabases: []string{"zeta", "alpha"}}
+	appB := bundle.AdditionalAppProps{Name: "svc-b", Image: "example/b:1.0.0", PostgresDatabases: []string{"middle", "alpha"}}
+
+	respAB := generateWithDatabases(t, wsWithApps([]bundle.AdditionalAppProps{appA, appB}), nil)
+	respBA := generateWithDatabases(t, wsWithApps([]bundle.AdditionalAppProps{appB, appA}), nil)
+
+	pgAB := findGeneratedApp(respAB, appdef.AppPostgres)
+	pgBA := findGeneratedApp(respBA, appdef.AppPostgres)
+	require.NotNil(t, pgAB)
+	require.NotNil(t, pgBA)
+	assert.Equal(t, pgAB.InitActions, pgBA.InitActions, "reordering additionalApps must not reorder postgres InitActions")
+	assert.Equal(t, pgAB.GetHashInput(), pgBA.GetHashInput(), "reordering additionalApps must not change postgres deployment hash")
+}
+
+func TestAdditionalAppDatabasesTypedEntriesIgnored(t *testing.T) {
+	seaweed := bundle.AdditionalAppProps{
+		Name:              "seaweedfs",
+		Type:              bundle.AppTypeSeaweedFS,
+		Image:             "chrislusf/seaweedfs:4.48",
+		PostgresDatabases: []string{"should_not_exist"},
+	}
+	resp := generateWithDatabases(t, wsWithApps([]bundle.AdditionalAppProps{seaweed}), nil)
+
+	assert.Equal(t, 0, initDBCount(t, resp, "should_not_exist"), "typed SEAWEEDFS must not create stand postgres DBs")
+	sw := findGeneratedApp(resp, "seaweedfs")
+	require.NotNil(t, sw)
+	assert.NotContains(t, []string(sw.DependsOn), appdef.AppPostgres, "typed SEAWEEDFS must not depend on postgres")
+}
+
+func TestAdditionalAppDatabasePrunedWhenPostgresAbsent(t *testing.T) {
+	ws := wsWithApps([]bundle.AdditionalAppProps{gatewayWithDatabase("gateway")})
+	ctx := NewNsGenContext(basicCfg(), &bundle.Def{})
+	ctx.WorkspaceConfig = ws
+
+	generateAdditionalApps(ctx)
+	require.Contains(t, ctx.Applications, dbGateway)
+	assert.Contains(t, []string(ctx.Applications[dbGateway].DependsOn), appdef.AppPostgres)
+
+	pruneAppsWithMissingDeps(ctx)
+	assert.NotContains(t, ctx.Applications, dbGateway, "without stand postgres, app requesting postgresDatabases is pruned")
+
+	// Must be a clean no-op when stand postgres is absent.
+	wireAdditionalAppDatabases(ctx)
 }
 
 func TestAdditionalAppDatabaseIsCreatedEvenWithoutTheService(t *testing.T) {
@@ -134,6 +180,8 @@ func TestAdditionalAppDatabaseInvalidNameIsNotCreated(t *testing.T) {
 	require.NotNil(t, findGeneratedApp(resp, dbGateway))
 	pg := findGeneratedApp(resp, appdef.AppPostgres)
 	for _, a := range pg.InitActions {
-		assert.NotContains(t, a.Exec[len(a.Exec)-1], "rm -rf")
+		if len(a.Exec) > 0 {
+			assert.NotContains(t, a.Exec[len(a.Exec)-1], "rm -rf")
+		}
 	}
 }

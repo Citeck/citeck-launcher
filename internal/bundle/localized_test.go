@@ -49,6 +49,24 @@ func TestLocalizedText_Resolve(t *testing.T) {
 	assert.Empty(t, PlainText("   ").Resolve("ru"))
 }
 
+func TestLocalizedText_ResolveOr(t *testing.T) {
+	ruOnly := LocalizedText{"ru": "LLM-шлюз"}
+	assert.Equal(t, "LLM-шлюз", ruOnly.ResolveOr("ru-RU", "LLM gateway"))
+	assert.Equal(t, "LLM gateway", ruOnly.ResolveOr("en", "LLM gateway"),
+		"fallback beats an arbitrary other language when English is absent")
+	assert.Equal(t, "LLM gateway", ruOnly.ResolveOr("de", "LLM gateway"))
+	assert.Equal(t, "LLM-шлюз", ruOnly.ResolveOr("de", ""),
+		"empty fallback preserves Resolve's alphabetical fallback")
+
+	withEn := LocalizedText{"ru": "LLM-шлюз", "en": "English gateway"}
+	assert.Equal(t, "English gateway", withEn.ResolveOr("de", "Plain fallback"),
+		"explicit English in map beats plain fallback")
+
+	assert.Equal(t, "Plain override", PlainText("Plain override").ResolveOr("de", "Fallback"),
+		"plainTextKey takes top priority")
+	assert.Equal(t, "Fallback", LocalizedText(nil).ResolveOr("ru", "Fallback"))
+}
+
 // Round trips keep the author's form: a scalar stays a scalar, a map a map.
 func TestLocalizedText_RoundTrips(t *testing.T) {
 	for _, in := range []string{"title: Scanning\n", "title:\n  en: Scanning\n  ru: Сканирование\n"} {
