@@ -559,3 +559,109 @@ func TestWorkspaceCompanionsReverseDependencyRescuesOwnerAndConsumers(t *testing
 		assert.NotNil(t, findGeneratedApp(resp, companionGateway))
 	})
 }
+
+// R2-1 (round 3): two complementary companions with acyclic reverse
+// dependencies onto ai jointly supply two distinct overrides for two missing
+// defaultProps secrets. Both must activate together and rescue ai, both
+// companions, and proxy; losing either supplier (or adding a third unrescued
+// secret) must still exclude ai, both companions, and proxy.
+func TestWorkspaceCompanionsComplementaryReverseDependenciesJointlyRescue(t *testing.T) {
+	bun := &bundle.Def{
+		Applications: map[string]bundle.AppDef{
+			appdef.AppGateway: {Image: "citeck/gateway:1.0.0"},
+			appdef.AppAi:      {Image: "citeck/ai:1.0.0"},
+			"comp-a":          {Image: "example/comp-a:1.0.0"},
+			"comp-b":          {Image: "example/comp-b:1.0.0"},
+		},
+	}
+
+	makeWS := func(extraDefaultEnv map[string]string, compBExtraDeps []string, compBSecretEnv map[string]string) *bundle.WorkspaceConfig {
+		defaultEnv := map[string]string{
+			"KEY_A": "${secret:direct-a}",
+			"KEY_B": "${secret:direct-b}",
+		}
+		for k, v := range extraDefaultEnv {
+			defaultEnv[k] = v
+		}
+		return &bundle.WorkspaceConfig{
+			Webapps: []bundle.WebappConfig{
+				{ID: appdef.AppGateway},
+				{
+					ID: appdef.AppAi,
+					DefaultProps: bundle.WebappDefaultProps{
+						Environments: defaultEnv,
+					},
+					Companions: map[string]bundle.WebappCompanionProps{
+						"comp-a": {
+							Environments: map[string]string{"KEY_A": "val-${secret:secret-a}"},
+						},
+						"comp-b": {
+							Environments: map[string]string{"KEY_B": "val-${secret:secret-b}"},
+						},
+					},
+				},
+			},
+			AdditionalApps: []bundle.AdditionalAppProps{
+				{
+					Name:         "comp-a",
+					Environments: map[string]string{"TOKEN_A": "${secret:secret-a}"},
+					DependsOn:    []string{appdef.AppAi},
+				},
+				{
+					Name:         "comp-b",
+					Environments: compBSecretEnv,
+					DependsOn:    append([]string{appdef.AppAi}, compBExtraDeps...),
+				},
+			},
+		}
+	}
+
+	t.Run("two complementary companions jointly rescue ai, both companions, and proxy", func(t *testing.T) {
+		ws := makeWS(nil, nil, map[string]string{"TOKEN_B": "${secret:secret-b}"})
+		resp := generateWithCompanions(t, basicCfg(), bun, ws,
+			map[string]string{"secret-a": "aaa", "secret-b": "bbb"})
+
+		ai := findGeneratedApp(resp, appdef.AppAi)
+		require.NotNil(t, ai)
+		gotA, _ := ai.Environments.Get("KEY_A")
+		gotB, _ := ai.Environments.Get("KEY_B")
+		assert.Equal(t, "val-aaa", gotA)
+		assert.Equal(t, "val-bbb", gotB)
+		assert.NotNil(t, findGeneratedApp(resp, "comp-a"))
+		assert.NotNil(t, findGeneratedApp(resp, "comp-b"))
+		assert.NotNil(t, findGeneratedApp(resp, appdef.AppProxy))
+	})
+
+	t.Run("negative control: losing one supplier via missing own secret excludes ai, both companions, and proxy", func(t *testing.T) {
+		ws := makeWS(nil, nil, map[string]string{"TOKEN_B": "${secret:secret-b}", "BROKEN": "${secret:missing-b}"})
+		resp := generateWithCompanions(t, basicCfg(), bun, ws,
+			map[string]string{"secret-a": "aaa", "secret-b": "bbb"})
+
+		assert.Nil(t, findGeneratedApp(resp, appdef.AppAi))
+		assert.Nil(t, findGeneratedApp(resp, "comp-a"))
+		assert.Nil(t, findGeneratedApp(resp, "comp-b"))
+		assert.Nil(t, findGeneratedApp(resp, appdef.AppProxy))
+	})
+
+	t.Run("negative control: losing one supplier via missing dependency excludes ai, both companions, and proxy", func(t *testing.T) {
+		ws := makeWS(nil, []string{"absent-dep"}, map[string]string{"TOKEN_B": "${secret:secret-b}"})
+		resp := generateWithCompanions(t, basicCfg(), bun, ws,
+			map[string]string{"secret-a": "aaa", "secret-b": "bbb"})
+
+		assert.Nil(t, findGeneratedApp(resp, appdef.AppAi))
+		assert.Nil(t, findGeneratedApp(resp, "comp-a"))
+		assert.Nil(t, findGeneratedApp(resp, "comp-b"))
+		assert.Nil(t, findGeneratedApp(resp, appdef.AppProxy))
+	})
+
+	t.Run("negative control: third unrescued secret still excludes ai, both companions, and proxy", func(t *testing.T) {
+		ws := makeWS(map[string]string{"KEY_C": "${secret:unrescued}"}, nil, map[string]string{"TOKEN_B": "${secret:secret-b}"})
+		resp := generateWithCompanions(t, basicCfg(), bun, ws,
+			map[string]string{"secret-a": "aaa", "secret-b": "bbb"})
+
+		assert.Nil(t, findGeneratedApp(resp, appdef.AppAi))
+		assert.Nil(t, findGeneratedApp(resp, "comp-a"))
+		assert.Nil(t, findGeneratedApp(resp, "comp-b"))
+		assert.Nil(t, findGeneratedApp(resp, appdef.AppProxy))
+	})
+}

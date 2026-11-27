@@ -30,17 +30,33 @@ type companionWebappTarget struct {
 	nsEnv   map[string]string
 }
 
+type resolvedCompanionBlock struct {
+	envs    map[string]string
+	missing []string
+}
+
 // wireWorkspaceCompanionEnvs applies the workspace's webapps[].companions
 // environments onto generated webapps (ctx.GeneratedWebapps) before
 // excludeAppsMissingSecrets and pruneAppsWithMissingDeps.
 //
-// Only companions whose own secrets and transitive dependsOn chain survive
-// (companionSurvives) are wired:
-//   - A surviving companion overriding a defaultProps env key that held an
-//     unresolved ${secret:...} rescues the webapp (and its consumers) from
-//     exclusion.
-//   - An absent, secret-missing, or pruned companion wires nothing and never
-//     removes the webapp.
+// Survival is computed as a greatest fixpoint over ctx.Applications:
+//  1. Start with every generated app tentatively surviving.
+//  2. On each iteration, rebuild every surviving target webapp's environments
+//     from its pre-companion snapshot plus all valid companion blocks whose
+//     companion app is currently surviving (in sorted companion-name order).
+//  3. Eliminate any app that still carries an unresolved secret reference or
+//     depends on a non-surviving app, and repeat until stable.
+//
+// Because all surviving companion blocks for a webapp are evaluated together:
+//   - One or more surviving companions (including companions with acyclic
+//     reverse dependsOn edges onto the webapp) that jointly override every
+//     missing defaultProps secret rescue the webapp and its consumers.
+//   - If any companion fails (absent, missing own secret, missing dependency,
+//     or unresolved secret in its own block), it drops out, the webapp's
+//     environments are rebuilt without it, and any secret it no longer covers
+//     causes the webapp (and its dependents) to be excluded as usual.
+//   - An absent, excluded, or pruned companion wires nothing and never removes
+//     a healthy webapp.
 //   - Companions bind by presence in ctx.Applications (Variant A: detached
 //     companions remain wired and are not marked via MarkGatingApp).
 //
@@ -59,30 +75,45 @@ func wireWorkspaceCompanionEnvs(ctx *NsGenContext) []appliedCompanion {
 		return nil
 	}
 
-	checked := make(map[companionPair]bool)
-	active := make(map[companionPair]map[string]string)
-	for {
-		progressed := false
-		for i := range targets {
-			if activateCompanionsForTarget(ctx, &targets[i], checked, active) {
-				progressed = true
-			}
+	for _, t := range targets {
+		if _, self := t.ws.Companions[t.ws.ID]; self {
+			slog.Warn("Workspace webapp lists itself as a companion; ignored", "app", t.ws.ID)
 		}
-		if !progressed {
+	}
+
+	surviving := make(map[string]bool, len(ctx.Applications))
+	for name := range ctx.Applications {
+		surviving[name] = true
+	}
+	cache := make(map[companionPair]resolvedCompanionBlock)
+
+	for {
+		applySurvivingCompanionEnvs(ctx, targets, surviving, cache)
+		if !eliminateUnsurvivingApps(ctx, surviving) {
 			break
 		}
 	}
 
 	var applied []appliedCompanion
 	for _, t := range targets {
+		if !surviving[t.ws.ID] {
+			continue
+		}
 		for _, companion := range sortedCompanionNames(t.ws.Companions) {
-			if _, ok := active[companionPair{app: t.ws.ID, companion: companion}]; ok {
-				applied = append(applied, appliedCompanion{
-					appName:   t.ws.ID,
-					companion: companion,
-					dependsOn: t.ws.Companions[companion].DependsOn,
-				})
+			if companion == t.ws.ID || !surviving[companion] {
+				continue
 			}
+			block := cache[companionPair{app: t.ws.ID, companion: companion}]
+			if len(block.missing) > 0 {
+				slog.Error("Companion settings not applied: a secret they reference has no value in this namespace",
+					"app", t.ws.ID, "companion", companion, "secrets", block.missing)
+				continue
+			}
+			applied = append(applied, appliedCompanion{
+				appName:   t.ws.ID,
+				companion: companion,
+				dependsOn: t.ws.Companions[companion].DependsOn,
+			})
 		}
 	}
 	return applied
@@ -113,75 +144,74 @@ func collectCompanionTargets(ctx *NsGenContext) []companionWebappTarget {
 	return targets
 }
 
-func activateCompanionsForTarget(
+// applySurvivingCompanionEnvs rebuilds each target webapp's environments from
+// its pre-companion baseEnv plus every valid companion block whose companion
+// is currently in surviving, in sorted companion-name order.
+func applySurvivingCompanionEnvs(
 	ctx *NsGenContext,
-	t *companionWebappTarget,
-	checked map[companionPair]bool,
-	active map[companionPair]map[string]string,
-) bool {
-	changed := false
-	names := sortedCompanionNames(t.ws.Companions)
-	for _, companion := range names {
-		pair := companionPair{app: t.ws.ID, companion: companion}
-		if checked[pair] {
+	targets []companionWebappTarget,
+	surviving map[string]bool,
+	cache map[companionPair]resolvedCompanionBlock,
+) {
+	for i := range targets {
+		t := &targets[i]
+		t.app.Environments = slices.Clone(t.baseEnv)
+		if !surviving[t.ws.ID] {
 			continue
 		}
-		if companion == t.ws.ID {
-			slog.Warn("Workspace webapp lists itself as a companion; ignored", "app", t.ws.ID)
-			checked[pair] = true
-			continue
-		}
-		// Quick check: if the companion's closure fails outside this owner
-		// (absent app, companion's own missing secret, or missing dep), skip
-		// without resolving/logging companion block secrets yet.
-		if !companionClosureHealthy(ctx, companion, t.ws.ID, nil, true) {
-			continue
-		}
-		resolved, ok := resolveCompanionEnvs(ctx, t.ws.ID, companion, t.ws.Companions[companion], t.nsEnv)
-		if !ok {
-			checked[pair] = true
-			continue
-		}
-		// Verify the full closure with the proposed env overlay applied to this
-		// owner: a companion that depends on this owner (unidirectional reverse
-		// dependency) can rescue an overridden defaultProps secret, while an
-		// owner that still carries another unrescued secret will be excluded
-		// along with the companion.
-		if !companionClosureHealthy(ctx, companion, t.ws.ID, resolved, false) {
-			continue
-		}
-		checked[pair] = true
-		active[pair] = resolved
-		changed = true
-	}
-	if !changed {
-		return false
-	}
-	// Rebuild from the pre-companion snapshot in sorted companion order so
-	// precedence stays deterministic even if a chained rescue activates an
-	// alphabetically earlier companion in a later fixpoint round.
-	t.app.Environments = slices.Clone(t.baseEnv)
-	for _, companion := range names {
-		resolved, ok := active[companionPair{app: t.ws.ID, companion: companion}]
-		if !ok {
-			continue
-		}
-		for _, k := range sortedKeys(resolved) {
-			t.app.AddEnv(k, resolved[k])
+		for _, companion := range sortedCompanionNames(t.ws.Companions) {
+			if companion == t.ws.ID || !surviving[companion] {
+				continue
+			}
+			pair := companionPair{app: t.ws.ID, companion: companion}
+			block, ok := cache[pair]
+			if !ok {
+				block = resolveCompanionEnvs(ctx, t.ws.Companions[companion], t.nsEnv)
+				cache[pair] = block
+			}
+			if len(block.missing) > 0 {
+				continue
+			}
+			for _, k := range sortedKeys(block.envs) {
+				t.app.AddEnv(k, block.envs[k])
+			}
 		}
 	}
-	return true
+}
+
+// eliminateUnsurvivingApps removes from surviving any app that still carries
+// an unresolved secret reference or depends on an app not in surviving.
+func eliminateUnsurvivingApps(ctx *NsGenContext, surviving map[string]bool) bool {
+	removed := false
+	for name, alive := range surviving {
+		if !alive {
+			continue
+		}
+		app := ctx.Applications[name]
+		if len(unresolvedSecretRefs(app, ctx.CloudConfig[name])) > 0 {
+			surviving[name] = false
+			removed = true
+			continue
+		}
+		for _, dep := range app.DependsOn {
+			if !surviving[dep] {
+				surviving[name] = false
+				removed = true
+				break
+			}
+		}
+	}
+	return removed
 }
 
 // resolveCompanionEnvs resolves one companion block's non-overridden
-// environment variables, returning (nil, false) and logging an error when any
-// remaining key references a secret this namespace has no value for.
+// environment variables (skipping nsEnv keys BEFORE template/secret resolution)
+// and collects any unresolved secret IDs without logging yet.
 func resolveCompanionEnvs(
 	ctx *NsGenContext,
-	appName, companion string,
 	props bundle.WebappCompanionProps,
 	nsEnv map[string]string,
-) (map[string]string, bool) {
+) resolvedCompanionBlock {
 	resolved := make(map[string]string, len(props.Environments))
 	var missing []string
 	for _, k := range sortedKeys(props.Environments) {
@@ -196,68 +226,9 @@ func resolveCompanionEnvs(
 	}
 	if len(missing) > 0 {
 		sort.Strings(missing)
-		slog.Error("Companion settings not applied: a secret they reference has no value in this namespace",
-			"app", appName, "companion", companion, "secrets", slices.Compact(missing))
-		return nil, false
+		return resolvedCompanionBlock{missing: slices.Compact(missing)}
 	}
-	return resolved, true
-}
-
-// companionClosureHealthy reports whether companion and every app in its
-// transitive dependsOn closure exist in ctx.Applications and carry no
-// unresolved secret references (i.e. the companion will survive
-// excludeAppsMissingSecrets and pruneAppsWithMissingDeps).
-//
-// When ignoreOwnerSecrets is true, ownerName's own unresolved secrets are
-// deferred (existence and outgoing dependsOn are still checked). Otherwise, if
-// ownerOverlay is non-empty, ownerName's secrets are evaluated with
-// ownerOverlay applied on top of its current environments so a companion that
-// depends on ownerName can rescue a defaultProps secret it overrides.
-func companionClosureHealthy(
-	ctx *NsGenContext,
-	companion string,
-	ownerName string,
-	ownerOverlay map[string]string,
-	ignoreOwnerSecrets bool,
-) bool {
-	visited := make(map[string]bool)
-	var walk func(string) bool
-	walk = func(name string) bool {
-		if visited[name] {
-			return true
-		}
-		visited[name] = true
-		b, ok := ctx.Applications[name]
-		if !ok {
-			return false
-		}
-		if name == ownerName {
-			if !ignoreOwnerSecrets && len(unresolvedSecretRefsWithOverlay(b, ctx.CloudConfig[name], ownerOverlay)) > 0 {
-				return false
-			}
-		} else if len(unresolvedSecretRefs(b, ctx.CloudConfig[name])) > 0 {
-			return false
-		}
-		for _, dep := range b.DependsOn {
-			if !walk(dep) {
-				return false
-			}
-		}
-		return true
-	}
-	return walk(companion)
-}
-
-func unresolvedSecretRefsWithOverlay(app *AppBuilder, cloudCfg map[string]any, envOverlay map[string]string) []string {
-	if len(envOverlay) == 0 {
-		return unresolvedSecretRefs(app, cloudCfg)
-	}
-	tmp := *app
-	tmp.Environments = slices.Clone(app.Environments)
-	for _, k := range sortedKeys(envOverlay) {
-		tmp.AddEnv(k, envOverlay[k])
-	}
-	return unresolvedSecretRefs(&tmp, cloudCfg)
+	return resolvedCompanionBlock{envs: resolved}
 }
 
 // wireWorkspaceCompanionDeps adds the dependsOn edges of applied companion
