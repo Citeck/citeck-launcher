@@ -1,6 +1,7 @@
 package namespace
 
 import (
+	"maps"
 	"testing"
 
 	"github.com/citeck/citeck-launcher/internal/appdef"
@@ -465,9 +466,7 @@ func TestWorkspaceCompanionsReverseDependencyRescuesOwnerAndConsumers(t *testing
 		defaultEnv := map[string]string{
 			"LLM_API_KEY": "${secret:direct-provider-key}",
 		}
-		for k, v := range extraDefaultEnv {
-			defaultEnv[k] = v
-		}
+		maps.Copy(defaultEnv, extraDefaultEnv)
 		return &bundle.WorkspaceConfig{
 			Webapps: []bundle.WebappConfig{
 				{ID: appdef.AppGateway},
@@ -580,9 +579,7 @@ func TestWorkspaceCompanionsComplementaryReverseDependenciesJointlyRescue(t *tes
 			"KEY_A": "${secret:direct-a}",
 			"KEY_B": "${secret:direct-b}",
 		}
-		for k, v := range extraDefaultEnv {
-			defaultEnv[k] = v
-		}
+		maps.Copy(defaultEnv, extraDefaultEnv)
 		return &bundle.WorkspaceConfig{
 			Webapps: []bundle.WebappConfig{
 				{ID: appdef.AppGateway},

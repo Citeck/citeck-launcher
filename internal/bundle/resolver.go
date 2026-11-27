@@ -147,7 +147,7 @@ func (w *WebappConfig) UnmarshalYAML(node *yaml.Node) error {
 	type rawWebappConfig WebappConfig
 	var raw rawWebappConfig
 	if err := node.Decode(&raw); err != nil {
-		return err
+		return fmt.Errorf("decode webapp config: %w", err)
 	}
 	*w = WebappConfig(raw)
 
@@ -193,7 +193,7 @@ func decodeWebappCompanions(node *yaml.Node) (map[string]WebappCompanionProps, [
 	return out, problems
 }
 
-func decodeWebappCompanionProps(node *yaml.Node) (WebappCompanionProps, string) {
+func decodeWebappCompanionProps(node *yaml.Node) (props WebappCompanionProps, problem string) {
 	node = followAlias(node)
 	if node == nil || node.Kind == 0 || (node.Kind == yaml.ScalarNode && node.Tag == nullTag) {
 		return WebappCompanionProps{}, ""
@@ -205,19 +205,18 @@ func decodeWebappCompanionProps(node *yaml.Node) (WebappCompanionProps, string) 
 	if err != nil {
 		return WebappCompanionProps{}, err.Error()
 	}
-	var props WebappCompanionProps
 	for _, e := range entries {
 		switch e.key {
 		case "environments":
-			envs, problem := decodeCompanionEnvironments(e.node)
-			if problem != "" {
-				return WebappCompanionProps{}, problem
+			envs, errMsg := decodeCompanionEnvironments(e.node)
+			if errMsg != "" {
+				return WebappCompanionProps{}, errMsg
 			}
 			props.Environments = envs
 		case "dependsOn":
-			deps, problem := decodeCompanionDependsOn(e.node)
-			if problem != "" {
-				return WebappCompanionProps{}, problem
+			deps, errMsg := decodeCompanionDependsOn(e.node)
+			if errMsg != "" {
+				return WebappCompanionProps{}, errMsg
 			}
 			props.DependsOn = deps
 		}
@@ -225,7 +224,7 @@ func decodeWebappCompanionProps(node *yaml.Node) (WebappCompanionProps, string) 
 	return props, ""
 }
 
-func decodeCompanionEnvironments(node *yaml.Node) (map[string]string, string) {
+func decodeCompanionEnvironments(node *yaml.Node) (envs map[string]string, problem string) {
 	node = followAlias(node)
 	if node == nil || node.Kind == 0 || (node.Kind == yaml.ScalarNode && node.Tag == nullTag) {
 		return nil, ""
@@ -237,7 +236,7 @@ func decodeCompanionEnvironments(node *yaml.Node) (map[string]string, string) {
 	if err != nil {
 		return nil, err.Error()
 	}
-	envs := make(map[string]string)
+	envs = make(map[string]string)
 	for _, e := range entries {
 		v := followAlias(e.node)
 		if v == nil || v.Kind != yaml.ScalarNode {
@@ -259,30 +258,8 @@ func decodeCompanionEnvironments(node *yaml.Node) (map[string]string, string) {
 	return envs, ""
 }
 
-func decodeCompanionDependsOn(node *yaml.Node) ([]string, string) {
-	node = followAlias(node)
-	if node == nil || node.Kind == 0 || (node.Kind == yaml.ScalarNode && node.Tag == nullTag) {
-		return nil, ""
-	}
-	if node.Kind != yaml.SequenceNode {
-		return nil, "dependsOn must be a list of app names"
-	}
-	if len(node.Content) == 0 {
-		return nil, ""
-	}
-	deps := make([]string, 0, len(node.Content))
-	for _, item := range node.Content {
-		item = followAlias(item)
-		if item == nil || item.Kind != yaml.ScalarNode || item.Tag == nullTag {
-			return nil, "dependsOn entries must be strings"
-		}
-		var s string
-		if err := item.Decode(&s); err != nil {
-			return nil, "dependsOn entries must be strings"
-		}
-		deps = append(deps, s)
-	}
-	return deps, ""
+func decodeCompanionDependsOn(node *yaml.Node) (deps []string, problem string) {
+	return decodeStringListNode(node, "dependsOn", "app names")
 }
 
 // ProxyConfig describes the proxy app aliases.

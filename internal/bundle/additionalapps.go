@@ -332,33 +332,39 @@ func ValidatePostgresDatabaseName(db string) error {
 	return nil
 }
 
-// decodePostgresDatabases reads a postgresDatabases YAML node totally: never
-// returns a YAML error, reporting any shape problem as a non-empty string so
-// parseWorkspaceConfig can drop only the affected additionalApps entry.
-func decodePostgresDatabases(node *yaml.Node) ([]string, string) {
+// decodeStringListNode reads a YAML list of strings totally: never returns a
+// YAML error, reporting any shape problem as a non-empty string.
+func decodeStringListNode(node *yaml.Node, field, itemDesc string) (items []string, problem string) {
 	node = followAlias(node)
 	if node == nil || node.Kind == 0 || (node.Kind == yaml.ScalarNode && node.Tag == nullTag) {
 		return nil, ""
 	}
 	if node.Kind != yaml.SequenceNode {
-		return nil, "postgresDatabases must be a list of database names"
+		return nil, field + " must be a list of " + itemDesc
 	}
 	if len(node.Content) == 0 {
 		return nil, ""
 	}
-	dbs := make([]string, 0, len(node.Content))
+	items = make([]string, 0, len(node.Content))
 	for _, item := range node.Content {
 		item = followAlias(item)
 		if item == nil || item.Kind != yaml.ScalarNode || item.Tag == nullTag {
-			return nil, "postgresDatabases entries must be strings"
+			return nil, field + " entries must be strings"
 		}
 		var s string
 		if err := item.Decode(&s); err != nil {
-			return nil, "postgresDatabases entries must be strings"
+			return nil, field + " entries must be strings"
 		}
-		dbs = append(dbs, s)
+		items = append(items, s)
 	}
-	return dbs, ""
+	return items, ""
+}
+
+// decodePostgresDatabases reads a postgresDatabases YAML node totally: never
+// returns a YAML error, reporting any shape problem as a non-empty string so
+// parseWorkspaceConfig can drop only the affected additionalApps entry.
+func decodePostgresDatabases(node *yaml.Node) (dbs []string, problem string) {
+	return decodeStringListNode(node, "postgresDatabases", "database names")
 }
 
 // UnmarshalYAML reads the entry as the DTO its `type` names. It is one node

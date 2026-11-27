@@ -10,13 +10,13 @@ import (
 
 func TestValidatePostgresDatabaseName(t *testing.T) {
 	for _, ok := range []string{"litellm", "a", "gateway_spend2", strings.Repeat("a", 63)} {
-		assert.NoError(t, ValidatePostgresDatabaseName(ok), ok)
+		require.NoError(t, ValidatePostgresDatabaseName(ok), ok)
 	}
 	for _, bad := range []string{
 		"", "LiteLLM", "1db", "_db", "lite-llm", "db name", "db;rm -rf /", "db'", strings.Repeat("a", 64),
 		"postgres", "template0", "template1", "public", "none", "citeck_emodel", "citeck_keycloak", "pg_monitor",
 	} {
-		assert.Error(t, ValidatePostgresDatabaseName(bad), bad)
+		require.Error(t, ValidatePostgresDatabaseName(bad), bad)
 	}
 }
 
@@ -48,7 +48,7 @@ additionalApps:
 `)
 	cfg := parseWorkspaceConfig(raw, "workspace-v2.yml", nil)
 	require.NotNil(t, cfg)
-	var names []string
+	names := make([]string, 0, len(cfg.AdditionalApps))
 	for _, a := range cfg.AdditionalApps {
 		names = append(names, a.Name)
 	}

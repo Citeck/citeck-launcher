@@ -25,11 +25,10 @@ func gatewayWithDatabase(dbs ...string) bundle.AdditionalAppProps {
 	}
 }
 
-func generateWithDatabases(t *testing.T, ws *bundle.WorkspaceConfig, secrets map[string]string) *GenResp {
+func generateWithDatabases(t *testing.T, ws *bundle.WorkspaceConfig) *GenResp {
 	t.Helper()
 	config.ResetDesktopMode()
-	resp, err := Generate(basicCfg(), &bundle.Def{}, ws, SystemSecrets{JWT: "j", OIDC: "o"},
-		GenerateOpts{NamespaceSecrets: secrets})
+	resp, err := Generate(basicCfg(), &bundle.Def{}, ws, SystemSecrets{JWT: "j", OIDC: "o"}, GenerateOpts{})
 	require.NoError(t, err)
 	return resp
 }
@@ -49,7 +48,7 @@ func initDBCount(t *testing.T, resp *GenResp, db string) int {
 }
 
 func TestAdditionalAppDatabaseIsCreatedInStandPostgres(t *testing.T) {
-	resp := generateWithDatabases(t, wsWithApps([]bundle.AdditionalAppProps{gatewayWithDatabase("gateway")}), nil)
+	resp := generateWithDatabases(t, wsWithApps([]bundle.AdditionalAppProps{gatewayWithDatabase("gateway")}))
 
 	app := findGeneratedApp(resp, dbGateway)
 	require.NotNil(t, app)
@@ -67,7 +66,7 @@ func TestAdditionalAppDatabasesAreSortedAndDeduplicated(t *testing.T) {
 	resp := generateWithDatabases(t, wsWithApps([]bundle.AdditionalAppProps{
 		gatewayWithDatabase("gateway_spend", "gateway", "gateway"),
 		second,
-	}), nil)
+	}))
 
 	assert.Equal(t, 1, initDBCount(t, resp, "gateway"), "one database, however many entries ask for it")
 	assert.Equal(t, 1, initDBCount(t, resp, "gateway_spend"))
@@ -87,8 +86,8 @@ func TestAdditionalAppDatabasesGlobalSortIsOrderIndependent(t *testing.T) {
 	appA := bundle.AdditionalAppProps{Name: "svc-a", Image: "example/a:1.0.0", PostgresDatabases: []string{"zeta", "alpha"}}
 	appB := bundle.AdditionalAppProps{Name: "svc-b", Image: "example/b:1.0.0", PostgresDatabases: []string{"middle", "alpha"}}
 
-	respAB := generateWithDatabases(t, wsWithApps([]bundle.AdditionalAppProps{appA, appB}), nil)
-	respBA := generateWithDatabases(t, wsWithApps([]bundle.AdditionalAppProps{appB, appA}), nil)
+	respAB := generateWithDatabases(t, wsWithApps([]bundle.AdditionalAppProps{appA, appB}))
+	respBA := generateWithDatabases(t, wsWithApps([]bundle.AdditionalAppProps{appB, appA}))
 
 	pgAB := findGeneratedApp(respAB, appdef.AppPostgres)
 	pgBA := findGeneratedApp(respBA, appdef.AppPostgres)
@@ -105,7 +104,7 @@ func TestAdditionalAppDatabasesTypedEntriesIgnored(t *testing.T) {
 		Image:             "chrislusf/seaweedfs:4.48",
 		PostgresDatabases: []string{"should_not_exist"},
 	}
-	resp := generateWithDatabases(t, wsWithApps([]bundle.AdditionalAppProps{seaweed}), nil)
+	resp := generateWithDatabases(t, wsWithApps([]bundle.AdditionalAppProps{seaweed}))
 
 	assert.Equal(t, 0, initDBCount(t, resp, "should_not_exist"), "typed SEAWEEDFS must not create stand postgres DBs")
 	sw := findGeneratedApp(resp, "seaweedfs")
@@ -133,14 +132,14 @@ func TestAdditionalAppDatabaseIsCreatedEvenWithoutTheService(t *testing.T) {
 	// Like Keycloak's database: the postgres definition must not change when
 	// the service comes or goes, or switching a feature would recreate it.
 	withService := generateWithDatabases(t,
-		wsWithApps([]bundle.AdditionalAppProps{gatewayWithDatabase("gateway")}), nil)
+		wsWithApps([]bundle.AdditionalAppProps{gatewayWithDatabase("gateway")}))
 	pgWith := findGeneratedApp(withService, appdef.AppPostgres)
 	require.NotNil(t, pgWith)
 
 	t.Run("bundle names no image", func(t *testing.T) {
 		entry := gatewayWithDatabase("gateway")
 		entry.Image = ""
-		resp := generateWithDatabases(t, wsWithApps([]bundle.AdditionalAppProps{entry}), nil)
+		resp := generateWithDatabases(t, wsWithApps([]bundle.AdditionalAppProps{entry}))
 		assert.Nil(t, findGeneratedApp(resp, dbGateway))
 		assert.Equal(t, 1, initDBCount(t, resp, "gateway"))
 		assert.Equal(t, pgWith.InitActions, findGeneratedApp(resp, appdef.AppPostgres).InitActions,
@@ -150,14 +149,14 @@ func TestAdditionalAppDatabaseIsCreatedEvenWithoutTheService(t *testing.T) {
 		entry := gatewayWithDatabase("gateway")
 		off := false
 		entry.Enabled = &off
-		resp := generateWithDatabases(t, wsWithApps([]bundle.AdditionalAppProps{entry}), nil)
+		resp := generateWithDatabases(t, wsWithApps([]bundle.AdditionalAppProps{entry}))
 		assert.Nil(t, findGeneratedApp(resp, dbGateway))
 		assert.Equal(t, 1, initDBCount(t, resp, "gateway"))
 	})
 	t.Run("secret missing", func(t *testing.T) {
 		entry := gatewayWithDatabase("gateway")
 		entry.Environments["MASTER_KEY"] = "${secret:gateway-key}"
-		resp := generateWithDatabases(t, wsWithApps([]bundle.AdditionalAppProps{entry}), nil)
+		resp := generateWithDatabases(t, wsWithApps([]bundle.AdditionalAppProps{entry}))
 		assert.Nil(t, findGeneratedApp(resp, dbGateway))
 		assert.Equal(t, 1, initDBCount(t, resp, "gateway"))
 	})
@@ -165,7 +164,7 @@ func TestAdditionalAppDatabaseIsCreatedEvenWithoutTheService(t *testing.T) {
 		entry := gatewayWithDatabase("gateway")
 		entry.DependsOn = []string{"gateway-cache"}
 		cache := bundle.AdditionalAppProps{Name: "gateway-cache"} // no image anywhere: not generated
-		resp := generateWithDatabases(t, wsWithApps([]bundle.AdditionalAppProps{entry, cache}), nil)
+		resp := generateWithDatabases(t, wsWithApps([]bundle.AdditionalAppProps{entry, cache}))
 		assert.Nil(t, findGeneratedApp(resp, dbGateway))
 		assert.Equal(t, 1, initDBCount(t, resp, "gateway"))
 	})
@@ -176,7 +175,7 @@ func TestAdditionalAppDatabaseInvalidNameIsNotCreated(t *testing.T) {
 	// to `sh -c` even when handed a config that skipped validation.
 	resp := generateWithDatabases(t, wsWithApps([]bundle.AdditionalAppProps{
 		gatewayWithDatabase("gateway; rm -rf /"),
-	}), nil)
+	}))
 	require.NotNil(t, findGeneratedApp(resp, dbGateway))
 	pg := findGeneratedApp(resp, appdef.AppPostgres)
 	for _, a := range pg.InitActions {

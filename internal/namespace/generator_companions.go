@@ -274,12 +274,7 @@ func reachesApp(ctx *NsGenContext, start, target string) bool {
 		if !ok {
 			return false
 		}
-		for _, next := range b.DependsOn {
-			if walk(next) {
-				return true
-			}
-		}
-		return false
+		return slices.ContainsFunc(b.DependsOn, walk)
 	}
 	return walk(start)
 }
