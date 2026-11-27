@@ -184,6 +184,7 @@ return ({
   fetchData: async () => {
     const depsRevisionAtStart = depsEventRevision
     const fetchRevisionAtStart = ++fetchRevision
+    const localeAtStart = useI18nStore.getState().locale
     const isInitial = get().namespace === null
     if (isInitial) set({ loading: true })
     set({ error: null })
@@ -227,6 +228,17 @@ return ({
       // deliberately non-dismissible red banner down.
       useDepsStore.getState().setRollbackPending(namespace.dependencyRollbackPending ?? '')
       await reconcileSnapshotOperation()
+      // If the UI locale changed while this fetch was in flight (e.g.
+      // server-persisted locale restored on boot before the initial
+      // GET /namespace resolved while namespace was still null), refetch in
+      // the new locale so server-localized fields match the active UI language.
+      if (
+        fetchRevisionAtStart === fetchRevision
+        && useI18nStore.getState().locale !== localeAtStart
+        && get().namespace !== null
+      ) {
+        void get().fetchData()
+      }
     } catch (err) {
       if (fetchRevisionAtStart !== fetchRevision) return
       const msg = (err as Error).message

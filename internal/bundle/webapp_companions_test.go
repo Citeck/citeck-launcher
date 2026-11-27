@@ -123,4 +123,64 @@ links:
 			})
 		}
 	})
+
+	t.Run("cyclic YAML merge in companion drops only affected block and preserves valid anchor reuse", func(t *testing.T) {
+		raw := []byte(`
+webapps:
+  - id: ai
+    companions:
+      cyclicBlock: &selfBlock
+        <<: *selfBlock
+        environments:
+          SHOULD_DROP: "1"
+      cyclicEnv:
+        environments: &selfEnv
+          <<: *selfEnv
+          A: "1"
+      sharedA: &sharedA
+        environments: &sharedBaseEnv
+          BASE_KEY: "from-base"
+          OVERRIDE_KEY: "from-base"
+        dependsOn: [sharedA]
+      sharedB:
+        <<: *sharedA
+        environments:
+          <<: [*sharedBaseEnv, *sharedBaseEnv]
+          OVERRIDE_KEY: "from-b"
+links:
+  - name: KeepMe
+    url: https://example.com
+`)
+		cfg := parseWorkspaceConfig(raw, "workspace-v2.yml", nil)
+		require.NotNil(t, cfg)
+		require.Len(t, cfg.Webapps, 1)
+		require.Len(t, cfg.Links, 1)
+		assert.Equal(t, "KeepMe", cfg.Links[0].Name)
+
+		comps := cfg.Webapps[0].Companions
+		assert.NotContains(t, comps, "cyclicBlock", "cyclic companion block must be dropped without crashing")
+		assert.NotContains(t, comps, "cyclicEnv", "cyclic environments merge must drop only that companion block")
+		require.Contains(t, comps, "sharedA")
+		require.Contains(t, comps, "sharedB", "reusing the same anchor in independent/diamond branches must succeed")
+		assert.Equal(t, "from-base", comps["sharedB"].Environments["BASE_KEY"])
+		assert.Equal(t, "from-b", comps["sharedB"].Environments["OVERRIDE_KEY"])
+		assert.Equal(t, []string{"sharedA"}, comps["sharedB"].DependsOn)
+	})
+
+	t.Run("cyclic YAML merge at companions section drops only companions", func(t *testing.T) {
+		raw := []byte(`
+webapps:
+  - id: ai
+    companions: &selfComps
+      <<: *selfComps
+      litellm:
+        dependsOn: [litellm]
+  - id: rag
+`)
+		cfg := parseWorkspaceConfig(raw, "workspace-v2.yml", nil)
+		require.NotNil(t, cfg)
+		require.Len(t, cfg.Webapps, 2)
+		assert.Empty(t, cfg.Webapps[0].Companions)
+		assert.Equal(t, "rag", cfg.Webapps[1].ID)
+	})
 }

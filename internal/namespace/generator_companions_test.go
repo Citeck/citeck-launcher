@@ -447,3 +447,115 @@ func TestWorkspaceCompanionsStayWiredWhenCompanionIsDetached(t *testing.T) {
 	assert.False(t, resp.GatingApps[companionGateway], "companions must not call MarkGatingApp")
 	assert.True(t, resp.DependsOnDetachedApps[companionGateway], "dependsOnDetachedApps tracks the detached dependency")
 }
+
+// R2-1: unidirectional reverse dependency (gateway dependsOn ai, companion
+// block does not add ai -> gateway): startup graph is acyclic, and gateway's
+// override of ai's missing defaultProps secret must rescue ai, gateway, and
+// gateway's consumers (e.g. proxy).
+func TestWorkspaceCompanionsReverseDependencyRescuesOwnerAndConsumers(t *testing.T) {
+	bun := &bundle.Def{
+		Applications: map[string]bundle.AppDef{
+			appdef.AppGateway: {Image: "citeck/gateway:1.0.0"},
+			appdef.AppAi:      {Image: "citeck/ai:1.0.0"},
+			companionGateway:  {Image: "example/gateway:1.0.0"},
+		},
+	}
+
+	makeWS := func(extraDefaultEnv map[string]string, extraAiDeps []string) *bundle.WorkspaceConfig {
+		defaultEnv := map[string]string{
+			"LLM_API_KEY": "${secret:direct-provider-key}",
+		}
+		for k, v := range extraDefaultEnv {
+			defaultEnv[k] = v
+		}
+		return &bundle.WorkspaceConfig{
+			Webapps: []bundle.WebappConfig{
+				{ID: appdef.AppGateway},
+				{
+					ID: appdef.AppAi,
+					DefaultProps: bundle.WebappDefaultProps{
+						Environments: defaultEnv,
+						DependsOn:    extraAiDeps,
+					},
+					Companions: map[string]bundle.WebappCompanionProps{
+						companionGateway: {
+							Environments: map[string]string{
+								"LLM_API_KEY": "sk-${secret:gateway-key}",
+							},
+						},
+					},
+				},
+			},
+			AdditionalApps: []bundle.AdditionalAppProps{{
+				Name:         companionGateway,
+				Environments: map[string]string{"MASTER_KEY": "sk-${secret:gateway-key}"},
+				DependsOn:    []string{appdef.AppAi},
+			}},
+		}
+	}
+
+	t.Run("acyclic reverse dependency rescues ai, companion, and proxy", func(t *testing.T) {
+		resp := generateWithCompanions(t, basicCfg(), bun, makeWS(nil, nil),
+			map[string]string{"gateway-key": "gw-secret"})
+
+		ai := findGeneratedApp(resp, appdef.AppAi)
+		require.NotNil(t, ai, "ai must be rescued by companion that depends on ai")
+		gotKey, _ := ai.Environments.Get("LLM_API_KEY")
+		assert.Equal(t, "sk-gw-secret", gotKey)
+		assert.NotContains(t, ai.DependsOn, companionGateway)
+
+		gw := findGeneratedApp(resp, companionGateway)
+		require.NotNil(t, gw, "companion depending on rescued ai must survive")
+		assert.Contains(t, gw.DependsOn, appdef.AppAi)
+		assert.NotNil(t, findGeneratedApp(resp, appdef.AppProxy), "proxy depending on ai must survive")
+	})
+
+	t.Run("negative control: second unrescued secret still excludes ai and companion", func(t *testing.T) {
+		resp := generateWithCompanions(t, basicCfg(), bun,
+			makeWS(map[string]string{"OTHER_KEY": "${secret:unrescued}"}, nil),
+			map[string]string{"gateway-key": "gw-secret"})
+
+		assert.Nil(t, findGeneratedApp(resp, appdef.AppAi))
+		assert.Nil(t, findGeneratedApp(resp, companionGateway))
+	})
+
+	t.Run("negative control: owner with missing dep still prunes ai and companion", func(t *testing.T) {
+		resp := generateWithCompanions(t, basicCfg(), bun,
+			makeWS(nil, []string{"absent-service"}),
+			map[string]string{"gateway-key": "gw-secret"})
+
+		assert.Nil(t, findGeneratedApp(resp, appdef.AppAi))
+		assert.Nil(t, findGeneratedApp(resp, companionGateway))
+	})
+
+	t.Run("multiple companions with reverse dependency keep alphabetical precedence", func(t *testing.T) {
+		ws := makeWS(nil, nil)
+		ws.Webapps[1].Companions["alpha-comp"] = bundle.WebappCompanionProps{
+			Environments: map[string]string{
+				"LLM_API_KEY": "from-alpha",
+				"SHARED":      "from-alpha",
+			},
+		}
+		b := ws.Webapps[1].Companions[companionGateway]
+		b.Environments["SHARED"] = "from-gateway"
+		ws.Webapps[1].Companions[companionGateway] = b
+		ws.AdditionalApps = append(ws.AdditionalApps, bundle.AdditionalAppProps{
+			Name:      "alpha-comp",
+			Image:     "example/alpha:1.0.0",
+			DependsOn: []string{appdef.AppAi},
+		})
+
+		resp := generateWithCompanions(t, basicCfg(), bun, ws,
+			map[string]string{"gateway-key": "gw-secret"})
+
+		ai := findGeneratedApp(resp, appdef.AppAi)
+		require.NotNil(t, ai)
+		gotKey, _ := ai.Environments.Get("LLM_API_KEY")
+		gotShared, _ := ai.Environments.Get("SHARED")
+		// "alpha-comp" < "llm-gateway", so llm-gateway wins on both keys.
+		assert.Equal(t, "sk-gw-secret", gotKey)
+		assert.Equal(t, "from-gateway", gotShared)
+		assert.NotNil(t, findGeneratedApp(resp, "alpha-comp"))
+		assert.NotNil(t, findGeneratedApp(resp, companionGateway))
+	})
+}

@@ -168,9 +168,13 @@ func decodeWebappCompanions(node *yaml.Node) (map[string]WebappCompanionProps, [
 	if node.Kind != yaml.MappingNode {
 		return nil, []companionProblem{{problem: "companions must be a mapping of companion app name to settings"}}
 	}
+	entries, err := mappingEntriesChecked(node)
+	if err != nil {
+		return nil, []companionProblem{{problem: err.Error()}}
+	}
 	out := make(map[string]WebappCompanionProps)
 	var problems []companionProblem
-	for _, e := range mappingEntries(node) {
+	for _, e := range entries {
 		name := strings.TrimSpace(e.key)
 		if name == "" {
 			problems = append(problems, companionProblem{problem: "companion app name must not be empty"})
@@ -197,8 +201,12 @@ func decodeWebappCompanionProps(node *yaml.Node) (WebappCompanionProps, string) 
 	if node.Kind != yaml.MappingNode {
 		return WebappCompanionProps{}, "companion block must be a mapping"
 	}
+	entries, err := mappingEntriesChecked(node)
+	if err != nil {
+		return WebappCompanionProps{}, err.Error()
+	}
 	var props WebappCompanionProps
-	for _, e := range mappingEntries(node) {
+	for _, e := range entries {
 		switch e.key {
 		case "environments":
 			envs, problem := decodeCompanionEnvironments(e.node)
@@ -225,8 +233,12 @@ func decodeCompanionEnvironments(node *yaml.Node) (map[string]string, string) {
 	if node.Kind != yaml.MappingNode {
 		return nil, "environments must be a mapping of key to string"
 	}
+	entries, err := mappingEntriesChecked(node)
+	if err != nil {
+		return nil, err.Error()
+	}
 	envs := make(map[string]string)
-	for _, e := range mappingEntries(node) {
+	for _, e := range entries {
 		v := followAlias(e.node)
 		if v == nil || v.Kind != yaml.ScalarNode {
 			return nil, fmt.Sprintf("environments[%q] must be a scalar value", e.key)
@@ -502,7 +514,15 @@ type WorkspaceConfig struct {
 // exactly like an unreadable one, which for a dependency means staying on the
 // pin and for an application means disappearing.
 func followAlias(node *yaml.Node) *yaml.Node {
+	var seen map[*yaml.Node]bool
 	for node != nil && node.Kind == yaml.AliasNode {
+		if seen == nil {
+			seen = make(map[*yaml.Node]bool, 4)
+		}
+		if seen[node] {
+			return nil
+		}
+		seen[node] = true
 		node = node.Alias
 	}
 	return node
@@ -2112,11 +2132,37 @@ func documentRoot(node *yaml.Node) *yaml.Node {
 // mapping itself beats the same key coming in through a merge, wherever the
 // merge key sits, and among several merged mappings the first one wins. Merged
 // entries are listed after the explicit ones.
+// errCyclicYAMLMerge is returned by mappingEntriesChecked when a YAML merge
+// ("<<") references an ancestor mapping on the current recursion path.
+var errCyclicYAMLMerge = errors.New("cyclic YAML merge reference")
+
 func mappingEntries(node *yaml.Node) []yamlEntry {
-	node = followAlias(node)
-	if node == nil || node.Kind != yaml.MappingNode {
+	entries, err := mappingEntriesChecked(node)
+	if err != nil {
 		return nil
 	}
+	return entries
+}
+
+// mappingEntriesChecked is mappingEntries with cycle detection on the active
+// merge expansion path: reusing the same anchor in independent branches or
+// diamond merges succeeds, while a cyclic merge returns errCyclicYAMLMerge
+// instead of recursing unboundedly.
+func mappingEntriesChecked(node *yaml.Node) ([]yamlEntry, error) {
+	return mappingEntriesWalk(node, make(map[*yaml.Node]bool))
+}
+
+func mappingEntriesWalk(node *yaml.Node, onPath map[*yaml.Node]bool) ([]yamlEntry, error) {
+	node = followAlias(node)
+	if node == nil || node.Kind != yaml.MappingNode {
+		return nil, nil
+	}
+	if onPath[node] {
+		return nil, errCyclicYAMLMerge
+	}
+	onPath[node] = true
+	defer delete(onPath, node)
+
 	out := make([]yamlEntry, 0, len(node.Content)/2)
 	at := make(map[string]int, len(node.Content)/2)
 	var merges []*yaml.Node
@@ -2140,7 +2186,11 @@ func mappingEntries(node *yaml.Node) []yamlEntry {
 		out = append(out, entry)
 	}
 	for _, merged := range merges {
-		for _, e := range mappingEntries(merged) {
+		mergedEntries, err := mappingEntriesWalk(merged, onPath)
+		if err != nil {
+			return nil, err
+		}
+		for _, e := range mergedEntries {
 			if _, taken := at[e.key]; taken {
 				continue
 			}
@@ -2148,7 +2198,7 @@ func mappingEntries(node *yaml.Node) []yamlEntry {
 			out = append(out, e)
 		}
 	}
-	return out
+	return out, nil
 }
 
 // mergeTag is the tag yaml.v3 resolves the "<<" merge key to.

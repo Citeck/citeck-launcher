@@ -125,6 +125,105 @@ describe('every daemon request states the UI locale', () => {
       useDashboardStore.setState({ namespace: null })
     }
   })
+
+  it('refetches GET /namespace when locale changes while initial fetchData is still in flight', async () => {
+    useDashboardStore.setState({ namespace: null })
+
+    let resolveInitialNs!: (res: Response) => void
+    let nsCalls = 0
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.includes('/api/v1/namespace')) {
+        nsCalls++
+        if (nsCalls === 1) {
+          return new Promise<Response>((resolve) => {
+            resolveInitialNs = resolve
+          })
+        }
+        return jsonResponse({
+          id: 'ns1',
+          name: 'Demo',
+          status: 'RUNNING',
+          bundleRef: 'community:2026.4',
+          apps: [],
+          links: [{ name: 'LiteLLM', url: 'http://127.0.0.1:14000/ui', order: 1000, description: 'LLM-шлюз', custom: true }],
+        })
+      }
+      if (url.includes('/api/v1/health')) {
+        return jsonResponse({ status: 'healthy', healthy: true, checks: [] })
+      }
+      return jsonResponse({ active: false })
+    })
+
+    try {
+      // 1. Initial mount starts fetchData while namespace is null and locale is 'en'.
+      const initialFetch = useDashboardStore.getState().fetchData()
+      await vi.waitFor(() => expect(nsCalls).toBe(1))
+
+      // 2. Server-persisted locale ('ru') restores BEFORE the initial response resolves.
+      useI18nStore.getState().setLocale('ru', false)
+      expect(nsCalls).toBe(1) // namespace is still null, so subscribe does not double-fetch yet
+
+      // 3. Initial response arrives in stale 'en' — fetchData detects locale mismatch and refetches in 'ru'.
+      resolveInitialNs(jsonResponse({
+        id: 'ns1',
+        name: 'Demo',
+        status: 'RUNNING',
+        bundleRef: 'community:2026.4',
+        apps: [],
+        links: [{ name: 'LiteLLM', url: 'http://127.0.0.1:14000/ui', order: 1000, description: 'LLM gateway', custom: true }],
+      }))
+      await initialFetch
+
+      await vi.waitFor(() => {
+        expect(useDashboardStore.getState().namespace?.links?.[0]?.description).toBe('LLM-шлюз')
+      })
+      expect(nsCalls).toBe(2)
+      const nsRequests = fetchMock.mock.calls.filter(([url]) => typeof url === 'string' && url.includes('/api/v1/namespace'))
+      expect(((nsRequests[0][1] as RequestInit).headers as Record<string, string>)['X-Citeck-Locale']).toBe('en')
+      expect(((nsRequests[1][1] as RequestInit).headers as Record<string, string>)['X-Citeck-Locale']).toBe('ru')
+    } finally {
+      useDashboardStore.setState({ namespace: null })
+    }
+  })
+
+  it('does not refetch on NOT_CONFIGURED (Welcome) when locale changes during initial fetchData', async () => {
+    useDashboardStore.setState({ namespace: null })
+
+    let resolveInitialNs!: (res: Response) => void
+    let nsCalls = 0
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.includes('/api/v1/namespace')) {
+        nsCalls++
+        return new Promise<Response>((resolve) => {
+          resolveInitialNs = resolve
+        })
+      }
+      if (url.includes('/api/v1/health')) {
+        return jsonResponse({ status: 'healthy', healthy: true, checks: [] })
+      }
+      return jsonResponse({ active: false })
+    })
+
+    try {
+      const initialFetch = useDashboardStore.getState().fetchData()
+      await vi.waitFor(() => expect(nsCalls).toBe(1))
+
+      useI18nStore.getState().setLocale('ru', false)
+      resolveInitialNs({
+        ok: false,
+        status: 404,
+        statusText: 'Not Found',
+        json: async () => ({ code: 'NOT_CONFIGURED', message: 'no namespace configured' }),
+        text: async () => JSON.stringify({ code: 'NOT_CONFIGURED', message: 'no namespace configured' }),
+      } as unknown as Response)
+      await initialFetch
+
+      expect(useDashboardStore.getState().namespace).toBeNull()
+      expect(nsCalls).toBe(1)
+    } finally {
+      useDashboardStore.setState({ namespace: null })
+    }
+  })
 })
 
 describe('the SSE stream states its locale in the query string', () => {

@@ -131,14 +131,26 @@ func activateCompanionsForTarget(
 			checked[pair] = true
 			continue
 		}
-		if !companionSurvives(ctx, companion) {
+		// Quick check: if the companion's closure fails outside this owner
+		// (absent app, companion's own missing secret, or missing dep), skip
+		// without resolving/logging companion block secrets yet.
+		if !companionClosureHealthy(ctx, companion, t.ws.ID, nil, true) {
+			continue
+		}
+		resolved, ok := resolveCompanionEnvs(ctx, t.ws.ID, companion, t.ws.Companions[companion], t.nsEnv)
+		if !ok {
+			checked[pair] = true
+			continue
+		}
+		// Verify the full closure with the proposed env overlay applied to this
+		// owner: a companion that depends on this owner (unidirectional reverse
+		// dependency) can rescue an overridden defaultProps secret, while an
+		// owner that still carries another unrescued secret will be excluded
+		// along with the companion.
+		if !companionClosureHealthy(ctx, companion, t.ws.ID, resolved, false) {
 			continue
 		}
 		checked[pair] = true
-		resolved, ok := resolveCompanionEnvs(ctx, t.ws.ID, companion, t.ws.Companions[companion], t.nsEnv)
-		if !ok {
-			continue
-		}
 		active[pair] = resolved
 		changed = true
 	}
@@ -191,11 +203,23 @@ func resolveCompanionEnvs(
 	return resolved, true
 }
 
-// companionSurvives reports whether companion and every app in its transitive
-// dependsOn closure exist in ctx.Applications and carry no unresolved secret
-// references (i.e. the companion will survive excludeAppsMissingSecrets and
-// pruneAppsWithMissingDeps).
-func companionSurvives(ctx *NsGenContext, companion string) bool {
+// companionClosureHealthy reports whether companion and every app in its
+// transitive dependsOn closure exist in ctx.Applications and carry no
+// unresolved secret references (i.e. the companion will survive
+// excludeAppsMissingSecrets and pruneAppsWithMissingDeps).
+//
+// When ignoreOwnerSecrets is true, ownerName's own unresolved secrets are
+// deferred (existence and outgoing dependsOn are still checked). Otherwise, if
+// ownerOverlay is non-empty, ownerName's secrets are evaluated with
+// ownerOverlay applied on top of its current environments so a companion that
+// depends on ownerName can rescue a defaultProps secret it overrides.
+func companionClosureHealthy(
+	ctx *NsGenContext,
+	companion string,
+	ownerName string,
+	ownerOverlay map[string]string,
+	ignoreOwnerSecrets bool,
+) bool {
 	visited := make(map[string]bool)
 	var walk func(string) bool
 	walk = func(name string) bool {
@@ -207,7 +231,11 @@ func companionSurvives(ctx *NsGenContext, companion string) bool {
 		if !ok {
 			return false
 		}
-		if len(unresolvedSecretRefs(b, ctx.CloudConfig[name])) > 0 {
+		if name == ownerName {
+			if !ignoreOwnerSecrets && len(unresolvedSecretRefsWithOverlay(b, ctx.CloudConfig[name], ownerOverlay)) > 0 {
+				return false
+			}
+		} else if len(unresolvedSecretRefs(b, ctx.CloudConfig[name])) > 0 {
 			return false
 		}
 		for _, dep := range b.DependsOn {
@@ -218,6 +246,18 @@ func companionSurvives(ctx *NsGenContext, companion string) bool {
 		return true
 	}
 	return walk(companion)
+}
+
+func unresolvedSecretRefsWithOverlay(app *AppBuilder, cloudCfg map[string]any, envOverlay map[string]string) []string {
+	if len(envOverlay) == 0 {
+		return unresolvedSecretRefs(app, cloudCfg)
+	}
+	tmp := *app
+	tmp.Environments = slices.Clone(app.Environments)
+	for _, k := range sortedKeys(envOverlay) {
+		tmp.AddEnv(k, envOverlay[k])
+	}
+	return unresolvedSecretRefs(&tmp, cloudCfg)
 }
 
 // wireWorkspaceCompanionDeps adds the dependsOn edges of applied companion
